@@ -26,16 +26,32 @@ class Base(unittest.TestCase):
         self.codex_home = self.home / ".codex"
         for path in (self.home, self.cwd, self.extra, self.codex_home):
             path.mkdir(parents=True, exist_ok=True)
-        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.home), "CODEX_HOME": str(self.codex_home)}))
+        self.enterContext(
+            mock.patch.dict(
+                os.environ, {"HOME": str(self.home), "CODEX_HOME": str(self.codex_home)}
+            )
+        )
         lexists = os.path.lexists
-        self.enterContext(mock.patch("os.path.lexists", side_effect=lambda path:
-                                     os.path.commonpath((os.path.abspath(path), str(self.root))) == str(self.root)
-                                     and lexists(path)))
-        self.adapter = CodexAdapter({"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"},
-                                     "shell_network": False})
+        self.enterContext(
+            mock.patch(
+                "os.path.lexists",
+                side_effect=lambda path: (
+                    os.path.commonpath((os.path.abspath(path), str(self.root))) == str(self.root)
+                    and lexists(path)
+                ),
+            )
+        )
+        self.adapter = CodexAdapter(
+            {"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}, "shell_network": False}
+        )
         self.common = self.adapter.common
-        self.spec = Spec(workdir=str(self.work), sid="caller-id", tier=1, effort="low",
-                         access=Access(cwd=str(self.cwd), dirs=(str(self.extra),), commands=("git status",)))
+        self.spec = Spec(
+            workdir=str(self.work),
+            sid="caller-id",
+            tier=1,
+            effort="low",
+            access=Access(cwd=str(self.cwd), dirs=(str(self.extra),), commands=("git status",)),
+        )
 
     def prepare(self):
         return self.common.prepare(self.spec, False)
@@ -46,8 +62,12 @@ class Base(unittest.TestCase):
         payload = {"id": native, "cwd": cwd or str(self.cwd), "source": "exec"}
         if parent:
             payload["parent_thread_id"] = parent
-            payload["source"] = {"subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1}}}
-        path.write_text(json.dumps({"type": "session_meta", "payload": payload}) + "\n", encoding="utf-8")
+            payload["source"] = {
+                "subagent": {"thread_spawn": {"parent_thread_id": parent, "depth": 1}}
+            }
+        path.write_text(
+            json.dumps({"type": "session_meta", "payload": payload}) + "\n", encoding="utf-8"
+        )
         os.utime(path, (stamp, stamp))
         return path
 

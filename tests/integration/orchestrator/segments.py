@@ -36,14 +36,24 @@ import sessions
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}
 TEXT_KINDS = {"done": "done", "needs_input": "question", "failed": "failed"}
-RUN_STEPS = {"done": "run: in review", "needs_input": "run: needs input", "failed": "run: failed",
-             "none": "run: no outcome", "give_up": "run: gave up"}
+RUN_STEPS = {
+    "done": "run: in review",
+    "needs_input": "run: needs input",
+    "failed": "run: failed",
+    "none": "run: no outcome",
+    "give_up": "run: gave up",
+}
 STOP = {"kind": "hook", "event": "Stop"}
 SESSION = re.compile(r"(running|done|failed|needs_input|interrupted) · ")
 HARNESS_TEXTS = {router.CAP_COMMENT: "cap", router.INTERRUPTED: "interrupted"}
-RESEARCH = ("Session registries in agent harnesses", "How do agent harnesses keep track of their sessions?")
+RESEARCH = (
+    "Session registries in agent harnesses",
+    "How do agent harnesses keep track of their sessions?",
+)
 INSTRUCTIONS = "Write the PRD for a session registry."
-REPORT = "# Session registries in agent harnesses\n\nEach harness names a tmux session after its run."
+REPORT = (
+    "# Session registries in agent harnesses\n\nEach harness names a tmux session after its run."
+)
 BUILD = "Build the session registry."
 
 
@@ -105,8 +115,18 @@ class Segment(Flow):
             fields = {"state": fake_linear.NAMES[rec["state"]], "title": rec["title"], **fields}
         self.want[ident] = Want(**fields)
 
-    def expect(self, ident, *, state=None, title=None, history=(), comments=(), attachments=(), subscribers=(),
-               ledger=None):
+    def expect(
+        self,
+        ident,
+        *,
+        state=None,
+        title=None,
+        history=(),
+        comments=(),
+        attachments=(),
+        subscribers=(),
+        ledger=None,
+    ):
         want = self.want[ident]
         want.state = want.state if state is None else state
         want.title = want.title if title is None else title
@@ -118,8 +138,14 @@ class Segment(Flow):
 
     def expect_session(self, ident, sid, status):
         comments, entry = self.want[ident].comments, (HARNESS_EMAIL, f"session {sid} {status}")
-        at = next((i for i, (a, k) in enumerate(comments) if a == HARNESS_EMAIL and k.startswith(f"session {sid} ")),
-                  None)
+        at = next(
+            (
+                i
+                for i, (a, k) in enumerate(comments)
+                if a == HARNESS_EMAIL and k.startswith(f"session {sid} ")
+            ),
+            None,
+        )
         if at is None:
             comments.append(entry)
         else:
@@ -144,7 +170,9 @@ class Segment(Flow):
                 return found[0]
         elif author == HARNESS_EMAIL:
             for sid in self.sids():
-                if body.startswith(sessions.prefix(sid)) and (m := SESSION.match(body, len(sessions.prefix(sid)))):
+                if body.startswith(sessions.prefix(sid)) and (
+                    m := SESSION.match(body, len(sessions.prefix(sid)))
+                ):
                     return f"session {sid} {m[1]}"
             if m := re.fullmatch(r"Promoted to (\S+)\.", body):
                 return f"promoted {m[1]}"
@@ -157,15 +185,30 @@ class Segment(Flow):
         for ident, want in self.want.items():
             with self.fake.lock:
                 title = self.fake.find(ident)["title"]
-            actual = {"state": self.state(ident), "title": title, "history": self.history(ident),
-                      "comments": [(a, self.kind(a, b)) for a, b in self.comments(ident)],
-                      "attachments": self.attachments(ident), "subscribers": self.subscribers(ident),
-                      "ledger": self.ledger(ident)}
-            found += [f"{ident} {item} was {value!r}, want {getattr(want, item)!r}"
-                      for item, value in actual.items() if value != getattr(want, item)]
+            actual = {
+                "state": self.state(ident),
+                "title": title,
+                "history": self.history(ident),
+                "comments": [(a, self.kind(a, b)) for a, b in self.comments(ident)],
+                "attachments": self.attachments(ident),
+                "subscribers": self.subscribers(ident),
+                "ledger": self.ledger(ident),
+            }
+            found += [
+                f"{ident} {item} was {value!r}, want {getattr(want, item)!r}"
+                for item, value in actual.items()
+                if value != getattr(want, item)
+            ]
         runs = [(d["kind"], d["issue"], d["sid"], d["role"]) for d in self.runs()]
-        overall = {"runs.jsonl": (runs, self.want_runs), "problems": (self.problems(), self.want_problems)}
-        found += [f"{item} was {value!r}, want {want!r}" for item, (value, want) in overall.items() if value != want]
+        overall = {
+            "runs.jsonl": (runs, self.want_runs),
+            "problems": (self.problems(), self.want_problems),
+        }
+        found += [
+            f"{item} was {value!r}, want {want!r}"
+            for item, (value, want) in overall.items()
+            if value != want
+        ]
         if found:
             self.fail("; ".join(found))
 
@@ -174,18 +217,36 @@ class Segment(Flow):
         n = self.n_scripts
         steps = [{"kind": "progress", "name": "start", "text": f"Starting run #{n}."}]
         if outcome in ("none", "give_up"):
-            return Script(outcome, steps, [[STOP] * (drive.STOP_LIMIT - 1)] if outcome == "give_up" else [], {})
-        report = {"status": outcome, "title": f"Session registry run {n}", "summary": f"Summary #{n}."}
+            return Script(
+                outcome,
+                steps,
+                [[STOP] * (drive.STOP_LIMIT - 1)] if outcome == "give_up" else [],
+                {},
+            )
+        report = {
+            "status": outcome,
+            "title": f"Session registry run {n}",
+            "summary": f"Summary #{n}.",
+        }
         if outcome == "done":
-            report["url"] = url or self.doc_url(f"{DIRS[role]}{datetime.now(UTC):%Y-%m-%d}-{ident}-run-{n}.md")
+            report["url"] = url or self.doc_url(
+                f"{DIRS[role]}{datetime.now(UTC):%Y-%m-%d}-{ident}-run-{n}.md"
+            )
         if outcome == "needs_input":
             report["questions"] = [f"Question #{n}?"]
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
-        return Script(outcome, [*steps, {"kind": "outcome", "outcome": report}], [], {text: TEXT_KINDS[outcome]})
+        return Script(
+            outcome,
+            [*steps, {"kind": "outcome", "outcome": report}],
+            [],
+            {text: TEXT_KINDS[outcome]},
+        )
 
     def launch(self, ident, role, script, resumed, tui=False, managed=False, entry=None):
         if self.pending:
-            self.fail(f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first")
+            self.fail(
+                f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first"
+            )
         if tui and not self.server.clients:
             self.server.attach(MANAGER)
         self.n_gates += 1
@@ -195,10 +256,16 @@ class Segment(Flow):
         if entry is not None:
             res = self.run_recovery(entry)
         else:
-            flags = ("--tui", "--split-from", MANAGER, *(("--manager", MANAGER) if managed else ())) if tui else ()
+            flags = (
+                ("--tui", "--split-from", MANAGER, *(("--manager", MANAGER) if managed else ()))
+                if tui
+                else ()
+            )
             res = self.router("--issue", ident, *flags)
         if res.returncode != 0:
-            self.fail(f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}")
+            self.fail(
+                f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}"
+            )
         added = self.runs()[runs:]
         self.assertEqual(len(added), 1, f"runs.jsonl lines added: {added}")
         line = added[0]
@@ -206,18 +273,31 @@ class Segment(Flow):
         def started():
             try:
                 return self.calls()[calls:]
-            except ValueError:   # a line half appended
+            except ValueError:  # a line half appended
                 return None
+
         call = live_tmux.wait(started, TIMEOUT, "the fake claude's start")[0]
         logged, left = self.logged()[events:], self.tuis.pop(ident, None)
-        self.assertEqual([(e["src"], e["kind"], e.get("session")) for e in logged
-                          if e.get("issue") == ident and e["kind"].startswith("tui-")],
-                         [("run", "tui-closed", left)] if left else [])
+        self.assertEqual(
+            [
+                (e["src"], e["kind"], e.get("session"))
+                for e in logged
+                if e.get("issue") == ident and e["kind"].startswith("tui-")
+            ],
+            [("run", "tui-closed", left)] if left else [],
+        )
         if left:
             self.assertFalse(self.live(left), f"{left} still live")
         self.texts.update(script.texts)
-        self.pending = Pending(ident, role, line["sid"], script, gate, resumed,
-                               f"{attended.prefix(role, ident)}-{line['sid'][:8]}" if tui else None)
+        self.pending = Pending(
+            ident,
+            role,
+            line["sid"],
+            script,
+            gate,
+            resumed,
+            f"{attended.prefix(role, ident)}-{line['sid'][:8]}" if tui else None,
+        )
         return line, call["argv"], logged
 
     def agent_run(self):
@@ -230,11 +310,22 @@ class Segment(Flow):
             self.wait_end(p.sid, p.ident, sum(line[2] == p.sid for line in self.want_runs), p.role)
             self.pending = None
             if p.tui:
-                shown = self.server.tmux("display-message", "-p", "-t", f"={p.tui}:", "#{pane_dead}")
-                self.assertEqual(shown.stdout, "0\n", f"TUI session {p.tui} not running: exit {shown.returncode}, "
-                                                      f"{shown.stderr.strip()!r}")
+                shown = self.server.tmux(
+                    "display-message", "-p", "-t", f"={p.tui}:", "#{pane_dead}"
+                )
+                self.assertEqual(
+                    shown.stdout,
+                    "0\n",
+                    f"TUI session {p.tui} not running: exit {shown.returncode}, "
+                    f"{shown.stderr.strip()!r}",
+                )
                 self.tuis[p.ident] = p.tui
-            want, task, account, report = self.want[p.ident], config.TASKS[p.role], ACCOUNTS[p.role], p.script.report
+            want, task, account, report = (
+                self.want[p.ident],
+                config.TASKS[p.role],
+                ACCOUNTS[p.role],
+                p.script.report,
+            )
             self.expect_session(p.ident, p.sid, report["status"] if report else "done")
             first = "start" not in want.ledger.get(p.sid, [])
             comments, steps, changes = [(account, "start")] if first else [], ["start"], {}
@@ -263,12 +354,25 @@ class Segment(Flow):
 
     def run_recovery(self, name):
         e = self.roster()[name]
-        return subprocess.run(roster.recovery(e), cwd=e["cwd"], env={**self.env(), **self.server.inside(MANAGER)},
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
+        return subprocess.run(
+            roster.recovery(e),
+            cwd=e["cwd"],
+            env={**self.env(), **self.server.inside(MANAGER)},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
 
     def backlog_issue(self, role, title, description, labels=()):
-        ident = self.fake.issue(title, state="backlog", assignee=self.ids[ACCOUNTS[role]], project=PROJECT,
-                                description=description, labels=labels)["identifier"]
+        ident = self.fake.issue(
+            title,
+            state="backlog",
+            assignee=self.ids[ACCOUNTS[role]],
+            project=PROJECT,
+            description=description,
+            labels=labels,
+        )["identifier"]
         self.track(ident, state="backlog", title=title)
         return ident
 
@@ -282,14 +386,23 @@ class Segment(Flow):
         res = self.router("--issue", ident)
         added = self.logged()[events:]
         if res.returncode != 1:
-            self.fail("; ".join([f"router.py exit {res.returncode}: {res.stderr.strip()!r}", f"events {added}",
-                                 *([note] if note else [])]))
+            self.fail(
+                "; ".join(
+                    [
+                        f"router.py exit {res.returncode}: {res.stderr.strip()!r}",
+                        f"events {added}",
+                        *([note] if note else []),
+                    ]
+                )
+            )
         return added
 
     def backlog_not_claimed(self, ident):
         with self.step("router: backlog not claimed"):
-            self.assertEqual([(e["src"], e["kind"], e.get("issue")) for e in self.refused(ident)],
-                             [("router", "pick-none", ident)])
+            self.assertEqual(
+                [(e["src"], e["kind"], e.get("issue")) for e in self.refused(ident)],
+                [("router", "pick-none", ident)],
+            )
 
     def human_move(self, ident, to, name):
         with self.step(name):
@@ -300,8 +413,12 @@ class Segment(Flow):
         with self.step(name):
             self.fake.comment(ident, self.ids[HUMAN], text)
             self.fake.move(ident, to, actor=self.ids[HUMAN])
-            self.expect(ident, state=to, history=[(self.want[ident].state, to, HUMAN)],
-                        comments=[(HUMAN, f"human: {text}")])
+            self.expect(
+                ident,
+                state=to,
+                history=[(self.want[ident].state, to, HUMAN)],
+                comments=[(HUMAN, f"human: {text}")],
+            )
 
     def handoff(self, ident, text):
         self.human_say(ident, text, "handoff", "human: handoff")
@@ -322,16 +439,25 @@ class Segment(Flow):
             self.assertEqual(argv[argv.index("--session-id") + 1], sid)
             mine = [e for e in events if e.get("issue") == ident]
             self.assertEqual([e for e in mine if e["kind"] == "transient"], [])
-            self.assertEqual([(e["role"], e.get("task")) for e in mine if e["kind"] == "claim"], [(role, task)])
+            self.assertEqual(
+                [(e["role"], e.get("task")) for e in mine if e["kind"] == "claim"], [(role, task)]
+            )
             self.expect_runs(("start", ident, sid, role))
-            self.expect(ident, state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)])
+            self.expect(
+                ident, state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)]
+            )
             self.expect_session(ident, sid, "running")
         return sid
 
     def resume(self, ident, role, sid, script, entry=None):
         with self.step("router: resume" if entry is None else "manager: recover"):
-            line, argv, _ = self.launch(ident, role, script, True, tui=entry is not None, entry=entry)
-            self.assertEqual((line["kind"], line["issue"], line["sid"], line["role"]), ("resume", ident, sid, role))
+            line, argv, _ = self.launch(
+                ident, role, script, True, tui=entry is not None, entry=entry
+            )
+            self.assertEqual(
+                (line["kind"], line["issue"], line["sid"], line["role"]),
+                ("resume", ident, sid, role),
+            )
             self.assertNotIn("--session-id", argv)
             self.assertIn("--resume", argv)
             self.assertEqual(argv[argv.index("--resume") + 1], sid)
@@ -347,8 +473,12 @@ class Segment(Flow):
             res = self.promote_now()
             self.assertEqual((res.returncode, res.stderr, res.stdout), (0, "", ""))
             child, title = self.assert_child(ident, role, nxt)
-            self.expect(ident, state="done", history=[("handoff", "done", HARNESS_EMAIL)],
-                        comments=[(HARNESS_EMAIL, f"promoted {child}")])
+            self.expect(
+                ident,
+                state="done",
+                history=[("handoff", "done", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, f"promoted {child}")],
+            )
             self.track(child, state="todo", title=title)
         return child
 
@@ -367,18 +497,43 @@ class Segment(Flow):
             child = copy.deepcopy(self.fake.find(related[0]))
             name = self.fake.users[self.ids[HUMAN]]["name"]
         prefix, want = config.TASKS[role].prefix, self.want[ident]
-        title = f"{config.TASKS[nxt].prefix}: " + (want.title.removeprefix(f"{prefix}: ") if prefix else want.title)
-        self.assertEqual((child["assignee"], fake_linear.NAMES[child["state"]], child["project"], child["title"]),
-                         (self.ids[ACCOUNTS[nxt]], "todo", src["project"], title))
-        cutoff = max(h["createdAt"] for h in src["history"] if fake_linear.NAMES[h["toStateId"]] == "in_review")
-        said = [f"{name}, {c['createdAt']}:\n{c['body']}" for c in src["comments"]
-                if c["user"] == self.ids[HUMAN] and c["createdAt"] > cutoff]
-        head = [f"Handoff from {ident}: {src['url']}",
-                *(["## Source\n" + "\n".join(f"- {a['title']}: {a['url']}" for a in want.attachments)]
-                  if want.attachments else []),
-                *(["## Instructions\n" + "\n\n".join(said)] if said else [])]
+        title = f"{config.TASKS[nxt].prefix}: " + (
+            want.title.removeprefix(f"{prefix}: ") if prefix else want.title
+        )
+        self.assertEqual(
+            (
+                child["assignee"],
+                fake_linear.NAMES[child["state"]],
+                child["project"],
+                child["title"],
+            ),
+            (self.ids[ACCOUNTS[nxt]], "todo", src["project"], title),
+        )
+        cutoff = max(
+            h["createdAt"]
+            for h in src["history"]
+            if fake_linear.NAMES[h["toStateId"]] == "in_review"
+        )
+        said = [
+            f"{name}, {c['createdAt']}:\n{c['body']}"
+            for c in src["comments"]
+            if c["user"] == self.ids[HUMAN] and c["createdAt"] > cutoff
+        ]
+        head = [
+            f"Handoff from {ident}: {src['url']}",
+            *(
+                ["## Source\n" + "\n".join(f"- {a['title']}: {a['url']}" for a in want.attachments)]
+                if want.attachments
+                else []
+            ),
+            *(["## Instructions\n" + "\n\n".join(said)] if said else []),
+        ]
         self.assertEqual(child["description"].partition("\n\n## Comments\n")[0], "\n\n".join(head))
-        made = [(r.account, r.variables["in"]["id"]) for r in self.requests() if r.op == "promote.M_CREATE"]
+        made = [
+            (r.account, r.variables["in"]["id"])
+            for r in self.requests()
+            if r.op == "promote.M_CREATE"
+        ]
         self.assertEqual({a for a, _ in made}, {HARNESS_EMAIL})
         ids = [i for _, i in made]
         self.assertIn(child["id"], ids)
@@ -389,23 +544,40 @@ class Segment(Flow):
         self.assertIn(ident, self.want)
         with self.fake.lock:
             rec = copy.deepcopy(self.fake.find(ident))
-        self.assertEqual((rec["assignee"], fake_linear.NAMES[rec["state"]], rec["project"]),
-                         (self.ids[ACCOUNTS["pm"]], "todo", PROJECT))
+        self.assertEqual(
+            (rec["assignee"], fake_linear.NAMES[rec["state"]], rec["project"]),
+            (self.ids[ACCOUNTS["pm"]], "todo", PROJECT),
+        )
 
     def moved_to_todo(self, ident):
         with self.fake.lock:
-            return linear.last_move(self.fake.find(ident)["history"], {fake_linear.IDS["todo"]}, {self.ids[HUMAN]})
+            return linear.last_move(
+                self.fake.find(ident)["history"], {fake_linear.IDS["todo"]}, {self.ids[HUMAN]}
+            )
 
     def wait_next_second(self, ident):
         # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo, and their ts is to the second
         # (drive.stamp), so a claim within its second is no attempt
-        time.sleep(max(0, (self.moved_to_todo(ident).replace(microsecond=0) + timedelta(seconds=1)
-                           - datetime.now(UTC)).total_seconds()))
+        time.sleep(
+            max(
+                0,
+                (
+                    self.moved_to_todo(ident).replace(microsecond=0)
+                    + timedelta(seconds=1)
+                    - datetime.now(UTC)
+                ).total_seconds(),
+            )
+        )
 
     def attempts(self, ident):
-        moved, entries = self.moved_to_todo(ident), router.parse_log(os.path.join(self.logs, "runs.jsonl"))
-        return (f"{router.attempt_count(entries, ident, moved)} attempts since the human's move to Todo at "
-                f"{moved.isoformat()}; runs.jsonl at {[e[0].isoformat() for e in entries]}")
+        moved, entries = (
+            self.moved_to_todo(ident),
+            router.parse_log(os.path.join(self.logs, "runs.jsonl")),
+        )
+        return (
+            f"{router.attempt_count(entries, ident, moved)} attempts since the human's move to Todo at "
+            f"{moved.isoformat()}; runs.jsonl at {[e[0].isoformat() for e in entries]}"
+        )
 
     def prompt(self, ident, sid):
         first = self.transcript(ident, sid)[0]
@@ -435,8 +607,13 @@ class Segment(Flow):
 
     def pm_ready(self):
         with self.step("seed: backlog"):
-            src = self.fake.issue(RESEARCH[0], state="done", assignee=self.ids[ACCOUNTS["researcher"]],
-                                  project=PROJECT, description=RESEARCH[1])
+            src = self.fake.issue(
+                RESEARCH[0],
+                state="done",
+                assignee=self.ids[ACCOUNTS["researcher"]],
+                project=PROJECT,
+                description=RESEARCH[1],
+            )
             path = f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}-session-registries.md"
             report = {"url": self.doc_url(path), "title": RESEARCH[0]}
             self.publish(path, REPORT)
@@ -444,9 +621,17 @@ class Segment(Flow):
                 src["attachments"].append(dict(report))
                 name = self.fake.users[self.ids[HUMAN]]["name"]
             self.track(src["identifier"], attachments=[report])
-            ident = self.backlog_issue("pm", f"{config.TASKS['pm'].prefix}: {RESEARCH[0]}", "\n\n".join([
-                f"Handoff from {src['identifier']}: {src['url']}", f"## Source\n- {RESEARCH[0]}: {report['url']}",
-                f"## Instructions\n{name}, {fake_linear.stamp()}:\n{INSTRUCTIONS}"]))
+            ident = self.backlog_issue(
+                "pm",
+                f"{config.TASKS['pm'].prefix}: {RESEARCH[0]}",
+                "\n\n".join(
+                    [
+                        f"Handoff from {src['identifier']}: {src['url']}",
+                        f"## Source\n- {RESEARCH[0]}: {report['url']}",
+                        f"## Instructions\n{name}, {fake_linear.stamp()}:\n{INSTRUCTIONS}",
+                    ]
+                ),
+            )
         self.backlog_not_claimed(ident)
         self.human_move(ident, "todo", "human: to todo")
         return ident

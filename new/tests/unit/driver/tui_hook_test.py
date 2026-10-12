@@ -1,6 +1,7 @@
 """new/core/src/driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the
 payload on stdin, $TMUX_PANE set, PATH only a stub tmux that logs each call (no tmux runs here); in process for its one
 locked write and its load of tmux_host; and the file standing alone."""
+
 from new.tests import SRC, guards, hermetic  # noqa: F401
 
 import ast
@@ -21,7 +22,7 @@ from driver.modes import tui_hook
 
 HOOK = os.path.join(SRC, "driver", "modes", "tui_hook.py")
 PANE = "%3"
-LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"   # one event line
+LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
 WORDS = {"stop": "done", "ask": "blocked", "tool": "working"}
 MISSING = object()
@@ -37,8 +38,17 @@ if sys.argv[1] == "display-message":
 
 
 def state(root: str, events) -> dict:
-    return {"runtime": "fake", "sid": str(uuid.uuid4()), "workdir": root, "cwd": root, "project": False,
-            "transcript": "", "resume": "", "events": events, "words": dict(WORDS)}
+    return {
+        "runtime": "fake",
+        "sid": str(uuid.uuid4()),
+        "workdir": root,
+        "cwd": root,
+        "project": False,
+        "transcript": "",
+        "resume": "",
+        "events": events,
+        "words": dict(WORDS),
+    }
 
 
 def write_state(folder: str, value) -> None:
@@ -64,18 +74,32 @@ class Hook(unittest.TestCase):
             f.write(TMUX.format(python=sys.executable))
         os.chmod(os.path.join(stub, "tmux"), 0o755)
         self.log = os.path.join(self.root, "tmux.log")
-        self.env = {"PATH": stub, "TMUX_PANE": PANE, "TMUX_LOG": self.log, "TMUX_TMPDIR": self.root,
-                    "HOME": self.root}
+        self.env = {
+            "PATH": stub,
+            "TMUX_PANE": PANE,
+            "TMUX_LOG": self.log,
+            "TMUX_TMPDIR": self.root,
+            "HOME": self.root,
+        }
         self.state = state(self.root, self.events)
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):
         """Runs the hook (env: changes to self.env, None drops a key); checks it exits 0 printing nothing on stdout;
         returns its stderr."""
-        data = payload if isinstance(payload, bytes) else json.dumps({} if payload is None else payload).encode()
+        data = (
+            payload
+            if isinstance(payload, bytes)
+            else json.dumps({} if payload is None else payload).encode()
+        )
         environ = {k: v for k, v in {**self.env, **env}.items() if v is not None}
-        res = subprocess.run([sys.executable, "-I", HOOK, *([self.dir, label] if args is None else args)],
-                             input=data, capture_output=True, env=environ, timeout=60)
+        res = subprocess.run(
+            [sys.executable, "-I", HOOK, *([self.dir, label] if args is None else args)],
+            input=data,
+            capture_output=True,
+            env=environ,
+            timeout=60,
+        )
         self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
         return res.stderr.decode()
 
@@ -117,8 +141,10 @@ class Hook(unittest.TestCase):
         self.assertEqual(self.hook("tool", {"tool_name": "Bash"}), "")
         records = self.records()
         self.assertEqual([list(r) for r in records], [["ts", "label", "payload"]] * 2)
-        self.assertEqual([(r["label"], r["payload"]) for r in records],
-                         [("stop", payload), ("tool", {"tool_name": "Bash"})])
+        self.assertEqual(
+            [(r["label"], r["payload"]) for r in records],
+            [("stop", payload), ("tool", {"tool_name": "Bash"})],
+        )
         for record in records:
             self.assertRegex(record["ts"], TS)
         self.assertEqual(stat.S_IMODE(os.stat(self.hooks).st_mode), 0o600)
@@ -139,7 +165,9 @@ class Hook(unittest.TestCase):
 
     def test_a_label_without_a_word_is_recorded_and_marks_nothing(self):
         self.assertEqual(self.hook("other", {"x": 1}), "")
-        self.assertEqual([(r["label"], r["payload"]) for r in self.records()], [("other", {"x": 1})])
+        self.assertEqual(
+            [(r["label"], r["payload"]) for r in self.records()], [("other", {"x": 1})]
+        )
         self.assertEqual(self.calls(), [])
 
     def test_no_events_file_marks_the_state_with_no_line(self):
@@ -159,8 +187,18 @@ class Hook(unittest.TestCase):
         self.assertEqual((self.calls(), self.lines()), ([], ""))
 
     def test_valid_edge_states_are_accepted(self):
-        write_state(self.dir, {**self.state, "words": {}, "project": True, "cwd": "", "transcript": "/t.jsonl",
-                               "resume": "abc", "later": [1]})
+        write_state(
+            self.dir,
+            {
+                **self.state,
+                "words": {},
+                "project": True,
+                "cwd": "",
+                "transcript": "/t.jsonl",
+                "resume": "abc",
+                "later": [1],
+            },
+        )
         self.assertEqual(self.hook("stop"), "")
         self.assertEqual(len(self.records()), 1)
         self.assertEqual(self.calls(), [])
@@ -175,8 +213,15 @@ class Hook(unittest.TestCase):
         self.assertEqual([r["payload"] for r in self.records()], [cut, cut, cut, payload])
 
     def test_bad_stdin_is_an_empty_payload_and_a_stderr_line(self):
-        cases = (b"", b"not json", b"[1]", b'"text"', b"\xff\xfe\xfd", b"[" * 100000,
-                 b'{"a": "' + b"x" * (16 << 20) + b'"}')
+        cases = (
+            b"",
+            b"not json",
+            b"[1]",
+            b'"text"',
+            b"\xff\xfe\xfd",
+            b"[" * 100000,
+            b'{"a": "' + b"x" * (16 << 20) + b'"}',
+        )
         for data in cases:
             with self.subTest(data[:20]):
                 self.assertError(self.hook("tool", data), "payload")
@@ -189,8 +234,17 @@ class Hook(unittest.TestCase):
         self.assertEqual([r["payload"] for r in self.records()], [{"a": "x" * 4096}])
 
     def test_bad_arguments_write_nothing(self):
-        for args in ([], [self.dir], [self.dir, "stop", "x"], ["s1", "stop"], [self.dir + "\n", "stop"],
-                     [self.dir, ""], [self.dir, "a b"], [self.dir, "x" * 65], [self.dir, "../x"]):
+        for args in (
+            [],
+            [self.dir],
+            [self.dir, "stop", "x"],
+            ["s1", "stop"],
+            [self.dir + "\n", "stop"],
+            [self.dir, ""],
+            [self.dir, "a b"],
+            [self.dir, "x" * 65],
+            [self.dir, "../x"],
+        ):
             with self.subTest(args):
                 self.assertError(self.hook(None, args=args), "usage")
         self.assertNothingWritten()
@@ -210,8 +264,11 @@ class Hook(unittest.TestCase):
         write_state(real, self.state)
         os.unlink(path)
         self.assertError(self.hook("stop"), "session.json")
-        for make in (lambda: os.symlink(os.path.join(real, "session.json"), path), lambda: os.mkfifo(path),
-                     lambda: os.mkdir(path)):
+        for make in (
+            lambda: os.symlink(os.path.join(real, "session.json"), path),
+            lambda: os.mkfifo(path),
+            lambda: os.mkdir(path),
+        ):
             make()
             with self.subTest(stat.filemode(os.lstat(path).st_mode)):
                 self.assertError(self.hook("stop"), "session.json")
@@ -219,16 +276,28 @@ class Hook(unittest.TestCase):
         self.assertNothingWritten()
 
     def test_each_invalid_session_state_field_writes_nothing(self):
-        bad = {"words": ([], "x", None, {"a b": "done"}, {"": "done"}, {"x" * 65: "done"}, {"a/b": "done"},
-                         {"stop": "dead"}, {"stop": None}, {"stop": ["done"]}),
-               "events": ("", "events", "/a\nb", 1, []),
-               "sid": ("", "a/b", "a\tb", 1, None),
-               "runtime": ("", "Fake", "1x", "a-b", "a b", None),
-               "workdir": ("", "rel", "/a\x00b", None),
-               "cwd": ("rel", "/a\nb", None),
-               "transcript": ("rel", "/a\x7fb", None),
-               "project": ("true", 0, 1, None),
-               "resume": (None, 1, [])}
+        bad = {
+            "words": (
+                [],
+                "x",
+                None,
+                {"a b": "done"},
+                {"": "done"},
+                {"x" * 65: "done"},
+                {"a/b": "done"},
+                {"stop": "dead"},
+                {"stop": None},
+                {"stop": ["done"]},
+            ),
+            "events": ("", "events", "/a\nb", 1, []),
+            "sid": ("", "a/b", "a\tb", 1, None),
+            "runtime": ("", "Fake", "1x", "a-b", "a b", None),
+            "workdir": ("", "rel", "/a\x00b", None),
+            "cwd": ("rel", "/a\nb", None),
+            "transcript": ("rel", "/a\x7fb", None),
+            "project": ("true", 0, 1, None),
+            "resume": (None, 1, []),
+        }
         for field, values in bad.items():
             for value in (*values, MISSING):
                 with self.subTest(field=field, value=value):
@@ -240,8 +309,14 @@ class Hook(unittest.TestCase):
                     self.assertNothingWritten()
 
     def test_a_session_json_not_an_object_of_at_most_1_mib_writes_nothing(self):
-        for data in (b"", b"not json", b"[]", b'"s"', b"\xff",
-                     json.dumps({**self.state, "pad": "x" * (1 << 20)}).encode()):
+        for data in (
+            b"",
+            b"not json",
+            b"[]",
+            b'"s"',
+            b"\xff",
+            json.dumps({**self.state, "pad": "x" * (1 << 20)}).encode(),
+        ):
             with self.subTest(data[:20]):
                 write_state(self.dir, data)
                 self.assertError(self.hook("stop"), "session.json")
@@ -250,12 +325,19 @@ class Hook(unittest.TestCase):
     def test_hooks_jsonl_that_is_no_regular_file_is_refused_and_nothing_marked(self):
         target = os.path.join(self.root, "target")
         open(target, "w").close()
-        for make in (lambda: os.symlink(target, self.hooks), lambda: os.mkfifo(self.hooks),
-                     lambda: os.mkdir(self.hooks)):
+        for make in (
+            lambda: os.symlink(target, self.hooks),
+            lambda: os.mkfifo(self.hooks),
+            lambda: os.mkdir(self.hooks),
+        ):
             make()
             with self.subTest(stat.filemode(os.lstat(self.hooks).st_mode)):
                 self.assertError(self.hook("stop"), "hooks.jsonl")
-            (os.rmdir if os.path.isdir(self.hooks) and not os.path.islink(self.hooks) else os.unlink)(self.hooks)
+            (
+                os.rmdir
+                if os.path.isdir(self.hooks) and not os.path.islink(self.hooks)
+                else os.unlink
+            )(self.hooks)
         with open(target) as f:
             self.assertEqual(f.read(), "")
         self.assertNothingWritten()
@@ -268,8 +350,13 @@ class Hook(unittest.TestCase):
         self.assertEqual([r["label"] for r in self.records()], ["stop", "ask"])
 
     def test_an_unexpected_error_still_exits_0(self):
-        res = subprocess.run([sys.executable, "-I", HOOK, self.dir, "stop"], capture_output=True, env=self.env,
-                             timeout=60, preexec_fn=lambda: os.close(0))
+        res = subprocess.run(
+            [sys.executable, "-I", HOOK, self.dir, "stop"],
+            capture_output=True,
+            env=self.env,
+            timeout=60,
+            preexec_fn=lambda: os.close(0),
+        )
         self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
         self.assertError(res.stderr.decode(), "Error")
         self.assertNothingWritten()
@@ -288,9 +375,11 @@ class InProcess(unittest.TestCase):
     def test_one_write_under_an_exclusive_flock_then_the_mark(self):
         fake = types.SimpleNamespace(mark=unittest.mock.Mock(), TuiError=Exception)
         calls = unittest.mock.Mock()
-        with unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=fake), \
-                unittest.mock.patch("fcntl.flock", wraps=fcntl.flock) as flock, \
-                unittest.mock.patch("os.write", wraps=os.write) as write:
+        with (
+            unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=fake),
+            unittest.mock.patch("fcntl.flock", wraps=fcntl.flock) as flock,
+            unittest.mock.patch("os.write", wraps=os.write) as write,
+        ):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
             calls.attach_mock(fake.mark, "mark")
@@ -298,9 +387,14 @@ class InProcess(unittest.TestCase):
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
         fd = calls.mock_calls[0].args[0]
-        self.assertEqual(calls.mock_calls, [unittest.mock.call.flock(fd, fcntl.LOCK_EX),
-                                            unittest.mock.call.write(fd, data),
-                                            unittest.mock.call.mark("working", self.events)])
+        self.assertEqual(
+            calls.mock_calls,
+            [
+                unittest.mock.call.flock(fd, fcntl.LOCK_EX),
+                unittest.mock.call.write(fd, data),
+                unittest.mock.call.mark("working", self.events),
+            ],
+        )
         self.assertEqual(json.loads(data)["payload"], {"tool_name": "Bash"})
 
     def test_read_state_of_no_regular_file_leaves_no_fd_open(self):
@@ -319,8 +413,10 @@ class InProcess(unittest.TestCase):
     def test_tmux_host_is_loaded_by_its_path_with_no_sys_path_change(self):
         path, modules = list(sys.path), set(sys.modules)
         module = tui_hook.load_tmux_host()
-        self.assertEqual(os.path.realpath(module.__file__),
-                         os.path.realpath(os.path.join(SRC, "driver", "tmux_host.py")))
+        self.assertEqual(
+            os.path.realpath(module.__file__),
+            os.path.realpath(os.path.join(SRC, "driver", "tmux_host.py")),
+        )
         self.assertTrue(callable(module.mark))
         self.assertEqual(sys.path, path)
         self.assertNotIn("tmux_host", set(sys.modules) - modules)

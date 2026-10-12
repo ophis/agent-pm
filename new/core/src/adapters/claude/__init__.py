@@ -1,5 +1,6 @@
 """Claude Code's Adapter, runtime `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the rest is
 ClaudeCommon's."""
+
 from adapters.base import Adapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless import ClaudeHeadless

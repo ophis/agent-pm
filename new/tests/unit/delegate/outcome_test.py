@@ -1,5 +1,6 @@
 """delegate/outcome.py: main's drive.validate cases with the same results (FR-20), read with deliverable_file (FR-19),
 and main's save cases."""
+
 from new.tests import SRC  # noqa: F401
 
 import dataclasses
@@ -21,7 +22,16 @@ FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out
 
 
 def run(**kw):
-    return RunConfig(**{"role": "r", "tier": 2, "effort": "high", "runtime": "fake", "output": {"type": "local"}, **kw})
+    return RunConfig(
+        **{
+            "role": "r",
+            "tier": 2,
+            "effort": "high",
+            "runtime": "fake",
+            "output": {"type": "local"},
+            **kw,
+        }
+    )
 
 
 def schema():
@@ -68,17 +78,28 @@ class Schema(unittest.TestCase):
 
 class Validate(Base):
     def test_valid(self):
-        self.assertEqual(self.check({**DONE, "title": "  T  "}), Outcome("done", "T", "S", deliverable="# Doc\n"))
+        self.assertEqual(
+            self.check({**DONE, "title": "  T  "}), Outcome("done", "T", "S", deliverable="# Doc\n")
+        )
 
     def test_the_shape_schema_and_title_hold(self):
-        for data, msg in (([DONE], "not an object"), ({**DONE, "status": "maybe"}, "status 'maybe'"),
-                          ({**DONE, "summary": 3}, "must be text"), ({**DONE, "deliverable": ["x"]}, "must be text"),
-                          ({**DONE, "files": "x.md"}, "must be lists"), ({**DONE, "extra": 1}, "unknown field 'extra'"),
-                          ({**DONE, "title": "x" * 201}, "title is longer than 200"),
-                          ({**DONE, "summary": "x" * 4001}, "summary is longer than 4000"),
-                          ({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text"),
-                          ({**DONE, "files": None}, "files must be a list"), ({**DONE, "url": None}, "url must be text"),
-                          *(({**DONE, "title": title}, "printable") for title in ("", "  ", "a\nb", "a\x1b[2Jb", 5))):
+        for data, msg in (
+            ([DONE], "not an object"),
+            ({**DONE, "status": "maybe"}, "status 'maybe'"),
+            ({**DONE, "summary": 3}, "must be text"),
+            ({**DONE, "deliverable": ["x"]}, "must be text"),
+            ({**DONE, "files": "x.md"}, "must be lists"),
+            ({**DONE, "extra": 1}, "unknown field 'extra'"),
+            ({**DONE, "title": "x" * 201}, "title is longer than 200"),
+            ({**DONE, "summary": "x" * 4001}, "summary is longer than 4000"),
+            ({**DONE, "status": "needs_input", "questions": [3]}, "questions[0] must be text"),
+            ({**DONE, "files": None}, "files must be a list"),
+            ({**DONE, "url": None}, "url must be text"),
+            *(
+                ({**DONE, "title": title}, "printable")
+                for title in ("", "  ", "a\nb", "a\x1b[2Jb", 5)
+            ),
+        ):
             with self.subTest(msg=msg, data=data):
                 self.fails(data, msg)
 
@@ -92,27 +113,49 @@ class Validate(Base):
     def test_done_needs_the_deliverable_when_it_comes_back(self):
         for output in ({"type": "local"}, {"type": "orchestrator"}):
             self.fails({**DONE, "deliverable": " "}, "must carry the deliverable", output)
-        self.assertEqual(self.check({**DONE, "deliverable": ""}, {"type": "pull-request"}).deliverable, "")
-        self.assertEqual(self.check({**DONE, "status": "failed", "deliverable": ""}).status, "failed")
+        self.assertEqual(
+            self.check({**DONE, "deliverable": ""}, {"type": "pull-request"}).deliverable, ""
+        )
+        self.assertEqual(
+            self.check({**DONE, "status": "failed", "deliverable": ""}).status, "failed"
+        )
 
     def test_url_must_fit_the_destination(self):
         gh = {"type": "github", "repo": "o/docs", "branch": "main"}
         ok = "https://github.com/o/docs/blob/main/R/x.md"
         self.assertEqual(self.check({**DONE, "url": ok}, gh).url, ok)
-        for bad in ("https://evil.example/o/docs/blob/main/x.md", "https://github.com/o/docs/blob/dev/x.md"):
+        for bad in (
+            "https://evil.example/o/docs/blob/main/x.md",
+            "https://github.com/o/docs/blob/dev/x.md",
+        ):
             self.fails({**DONE, "url": bad}, "url must start with", gh)
-        for bad in (ok + "/../../../../x/y", "https://github.com/o/docs/blob/main/%2e%2e/%2e%2e/x", ok + "\n)[x](y",
-                    ok + " x", "http://github.com/o/docs/blob/main/x.md", 5):
+        for bad in (
+            ok + "/../../../../x/y",
+            "https://github.com/o/docs/blob/main/%2e%2e/%2e%2e/x",
+            ok + "\n)[x](y",
+            ok + " x",
+            "http://github.com/o/docs/blob/main/x.md",
+            5,
+        ):
             self.fails({**DONE, "url": bad}, "plain https link", gh)
         pr = {"type": "pull-request"}
-        for good in ("https://github.com/o/n/pull/7", "https://ghe.io/o/n/compare/main...b?expand=1", "https://github.com/o/n/tree/b"):
+        for good in (
+            "https://github.com/o/n/pull/7",
+            "https://ghe.io/o/n/compare/main...b?expand=1",
+            "https://github.com/o/n/tree/b",
+        ):
             self.assertEqual(self.check({**DONE, "url": good}, pr).url, good)
-        self.fails({**DONE, "url": "https://github.com/o/n/issues/1"}, "pull request, compare or tree", pr)
+        self.fails(
+            {**DONE, "url": "https://github.com/o/n/issues/1"}, "pull request, compare or tree", pr
+        )
         self.assertEqual(self.check({**DONE, "url": "https://x"}).url, "")
 
     def test_files_are_single_link_md_files_under_the_workdir(self):
         plan = self.touch("docs", "plan.md")
-        self.assertEqual(self.check({**DONE, "files": [plan, "docs/plan.md"]}).files, [os.path.realpath(plan)] * 2)
+        self.assertEqual(
+            self.check({**DONE, "files": [plan, "docs/plan.md"]}).files,
+            [os.path.realpath(plan)] * 2,
+        )
         os.makedirs(self.work + "2")
         sibling = os.path.join(self.work + "2", "x.md")
         with open(sibling, "w") as f:
@@ -120,8 +163,17 @@ class Validate(Base):
         outside = self.outside()
         os.symlink(outside, os.path.join(self.work, "link.md"))
         os.link(outside, os.path.join(self.work, "hard.md"))
-        for bad in (self.touch("notes.txt"), os.path.join(self.work, "missing.md"), sibling, "link.md", "hard.md",
-                    os.path.join(self.work, "..", "secret.md"), os.path.expanduser("~/.ssh/id_rsa"), 7, "a\0b.md"):
+        for bad in (
+            self.touch("notes.txt"),
+            os.path.join(self.work, "missing.md"),
+            sibling,
+            "link.md",
+            "hard.md",
+            os.path.join(self.work, "..", "secret.md"),
+            os.path.expanduser("~/.ssh/id_rsa"),
+            7,
+            "a\0b.md",
+        ):
             self.fails({**DONE, "files": [bad]}, "single-link .md file under the workdir")
 
 
@@ -159,8 +211,10 @@ class Read(Base):
         path = self.touch("out.md", text=text)
         for name in ("out.md", path):
             with self.subTest(name=name):
-                self.assertEqual(self.read({**FILE, "deliverable_file": name}),
-                                 Outcome("done", "T", "S", deliverable=text))
+                self.assertEqual(
+                    self.read({**FILE, "deliverable_file": name}),
+                    Outcome("done", "T", "S", deliverable=text),
+                )
 
     def test_the_read_deliverable_is_validated(self):
         self.touch("out.md", text=" \n")
@@ -171,15 +225,29 @@ class Read(Base):
         outside = self.outside()
         os.symlink(outside, os.path.join(self.work, "link.md"))
         os.link(outside, os.path.join(self.work, "hard.md"))
-        for name in ("missing.md", "notes.txt", "../secret.md", outside, "link.md", "hard.md", 7, None, ["out.md"],
-                     "a\0b.md"):
+        for name in (
+            "missing.md",
+            "notes.txt",
+            "../secret.md",
+            outside,
+            "link.md",
+            "hard.md",
+            7,
+            None,
+            ["out.md"],
+            "a\0b.md",
+        ):
             with self.subTest(name=name):
-                self.refused({**FILE, "deliverable_file": name}, "single-link .md file under the workdir")
+                self.refused(
+                    {**FILE, "deliverable_file": name}, "single-link .md file under the workdir"
+                )
 
     def test_a_fifo_is_refused_at_once(self):
         os.mkfifo(os.path.join(self.work, "out.md"))
         failed = []
-        worker = threading.Thread(target=lambda: failed.append(self.refused(FILE, "single-link .md file")), daemon=True)
+        worker = threading.Thread(
+            target=lambda: failed.append(self.refused(FILE, "single-link .md file")), daemon=True
+        )
         worker.start()
         worker.join(5)
         self.assertFalse(worker.is_alive(), "read blocked on a FIFO")
@@ -205,7 +273,10 @@ class Read(Base):
         self.touch("out.md")
         for deliverable in ("# Doc\n", ""):
             with self.subTest(deliverable=deliverable):
-                self.refused({**FILE, "deliverable": deliverable}, "give deliverable or deliverable_file, not both")
+                self.refused(
+                    {**FILE, "deliverable": deliverable},
+                    "give deliverable or deliverable_file, not both",
+                )
 
 
 class ReadRace(Base):
@@ -219,6 +290,7 @@ class ReadRace(Base):
             if not done:
                 done.append(swap())
             return real_open(path, *args, **kw)
+
         with unittest.mock.patch("os.open", side_effect=open_):
             with self.assertRaises(InvalidOutcome) as cm:
                 read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), run(), self.work)
@@ -235,18 +307,21 @@ class ReadRace(Base):
         def swap():
             os.unlink(self.target)
             os.symlink(self.secret, self.target)
+
         self.swapped(swap)
 
     def test_a_fifo(self):
         def swap():
             os.unlink(self.target)
             os.mkfifo(self.target)
+
         self.swapped(swap, "not a single-link regular file")
 
     def test_a_hard_link_to_an_outside_md_file(self):
         def swap():
             os.unlink(self.target)
             os.link(self.secret, self.target)
+
         self.swapped(swap, "not a single-link regular file")
 
     def test_a_parent_dir_swapped_for_a_symlink_out(self):
@@ -257,6 +332,7 @@ class ReadRace(Base):
         def swap():
             os.rename(os.path.dirname(self.target), os.path.join(self.work, "d-old"))
             os.symlink(out, os.path.dirname(self.target))
+
         self.swapped(swap, "no longer under the workdir")
 
     def test_a_file_replaced_after_the_open(self):
@@ -268,6 +344,7 @@ class ReadRace(Base):
             os.rename(self.target, os.path.join(self.work, "d", "kept.md"))
             os.rename(other, self.target)
             return fd
+
         with unittest.mock.patch("os.open", side_effect=open_):
             with self.assertRaises(InvalidOutcome) as cm:
                 read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), run(), self.work)
@@ -296,7 +373,9 @@ class Save(unittest.TestCase):
         os.symlink(outside, self.path)
         save(self.path, "new\n")
         with open(self.path) as f, open(outside) as g:
-            self.assertEqual((os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n"))
+            self.assertEqual(
+                (os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n")
+            )
 
     def test_no_temp_is_left_when_the_replace_fails(self):
         save(self.path, "old\n")
@@ -304,7 +383,9 @@ class Save(unittest.TestCase):
             with self.assertRaises(OSError):
                 save(self.path, "new\n")
         with open(self.path) as f:
-            self.assertEqual((f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"]))
+            self.assertEqual(
+                (f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"])
+            )
 
 
 if __name__ == "__main__":

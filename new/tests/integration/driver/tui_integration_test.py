@@ -3,6 +3,7 @@ the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook 
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
 a start while another process closes the name."""
+
 from new.tests import SRC, fake_adapter, hermetic, live_tmux
 
 import itertools
@@ -25,8 +26,8 @@ from driver.modes import tui
 
 MANAGER = "mgr"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
-IDLE = 0.5   # idle_timeout, in seconds
-WAIT = 20    # upper bound on any wait, in seconds
+IDLE = 0.5  # idle_timeout, in seconds
+WAIT = 20  # upper bound on any wait, in seconds
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
 src, fake, config, name, text = sys.argv[1:]
@@ -42,7 +43,9 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; sys.path.insert(0, sys.argv[1]); from driver import api; api.close(sys.argv[2])"
+CLOSE = (
+    "import sys; sys.path.insert(0, sys.argv[1]); from driver import api; api.close(sys.argv[2])"
+)
 SLOW_CLOSE = """import sys, time
 sys.path.insert(0, sys.argv[1])
 from driver import api
@@ -116,9 +119,16 @@ class Live(unittest.TestCase):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.events = os.path.join(self.dir, "events")
-        self.config = {"adapters": {"fake": {"implementation": "adapters.fake:FakeAdapter", "tui": True,
-                                             "scenario": os.path.join(self.dir, "scenario.json"),
-                                             "log": os.path.join(self.dir, "runtime.log")}}}
+        self.config = {
+            "adapters": {
+                "fake": {
+                    "implementation": "adapters.fake:FakeAdapter",
+                    "tui": True,
+                    "scenario": os.path.join(self.dir, "scenario.json"),
+                    "log": os.path.join(self.dir, "runtime.log"),
+                }
+            }
+        }
         patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
@@ -129,18 +139,29 @@ class Live(unittest.TestCase):
         """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
-        handle = api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name=name,
-                           **{"events": self.events, **kwargs})
+        handle = api.start(
+            "fake",
+            "tui",
+            "hello",
+            api.Spec(workdir=self.workdir),
+            name=name,
+            **{"events": self.events, **kwargs},
+        )
         self.addCleanup(handle.stop)
         return handle
 
     def lines(self, *want: str, events: str | None = None) -> None:
         """Waits until the events file's (self.events unless given) lines, times dropped, are `want`; pokes the server
         meanwhile."""
+
         def check():
             self.poke()
-            self.assertEqual([line.split(" ", 1)[1] for line in live_tmux.events(events or self.events)], list(want))
+            self.assertEqual(
+                [line.split(" ", 1)[1] for line in live_tmux.events(events or self.events)],
+                list(want),
+            )
             return True
+
         live_tmux.wait(check, what=f"events lines {want}")
 
     def poke(self):
@@ -151,18 +172,30 @@ class Live(unittest.TestCase):
 
 class TuiTest(Live):
     def test_a_session_over_hooks_send_idle_attach_and_stop(self):
-        handle = self.start("w1", {"hook": "tool", "payload": {"session_id": "n1"}},
-                            {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True},
-                            {"hook": "ask", "payload": {}}, {"read": True},
-                            {"hook": "stop", "payload": {"last_message": "r2", "tasks": [1]}}, {"read": True},
-                            sid=SID, idle_timeout=IDLE)
+        handle = self.start(
+            "w1",
+            {"hook": "tool", "payload": {"session_id": "n1"}},
+            {"hook": "stop", "payload": {"last_message": "r1"}},
+            {"read": True},
+            {"hook": "ask", "payload": {}},
+            {"read": True},
+            {"hook": "stop", "payload": {"last_message": "r2", "tasks": [1]}},
+            {"read": True},
+            sid=SID,
+            idle_timeout=IDLE,
+        )
         self.assertEqual(len(self.server.panes(f"={MANAGER}:")), 1)
         self.assertEqual(self.server.option("w1", "@sid"), SID)
-        self.assertEqual([(r["kind"], r["sid"]) for r in records.read(records.path(self.workdir))], [("session", SID)])
+        self.assertEqual(
+            [(r["kind"], r["sid"]) for r in records.read(records.path(self.workdir))],
+            [("session", SID)],
+        )
         self.assertEqual(tui.read_state("w1")["sid"], SID)
         stream = Stream(handle)
-        self.assertEqual([stream.next() for _ in range(4)],
-                         [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), api.IdleTimeout(IDLE)])
+        self.assertEqual(
+            [stream.next() for _ in range(4)],
+            [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), api.IdleTimeout(IDLE)],
+        )
         self.lines("w1 done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
 
@@ -171,8 +204,23 @@ class TuiTest(Live):
         self.lines("w1 done", "w1 blocked")
         stream.quiet(3 * IDLE)
 
-        res = subprocess.run([sys.executable, "-I", "-c", ATTACH, SRC, fake_adapter.__file__, json.dumps(self.config),
-                              "w1", "more"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=WAIT)
+        res = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                ATTACH,
+                SRC,
+                fake_adapter.__file__,
+                json.dumps(self.config),
+                "w1",
+                "more",
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=WAIT,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(json.loads(res.stdout), [SID, "live", "r1", repr(TurnEnd("r2", 1)), "r2"])
         self.assertEqual(stream.next(), TurnEnd("r2", 1))
@@ -204,7 +252,9 @@ class TuiTest(Live):
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
         found = api.sessions("w")
-        self.assertEqual((found.names, found.state("w3"), handle.state()), (None, "unknown", "unknown"))
+        self.assertEqual(
+            (found.names, found.state("w3"), handle.state()), (None, "unknown", "unknown")
+        )
         stream.quiet(1.0)
         os.chmod(self.server.socket, mode)
         self.assertEqual(api.sessions("w").state("w3"), "live")
@@ -221,7 +271,9 @@ class SameNameTest(Live):
 
     def old(self, name: str) -> tuple[api.Handle, Iterator]:
         """Session `name`'s Handle and its events() past its turn's end."""
-        handle = self.start(name, {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True})
+        handle = self.start(
+            name, {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True}
+        )
         events = handle.events()
         self.assertEqual(next(events), TurnEnd("r1", 0))
         return handle, events
@@ -231,7 +283,9 @@ class SameNameTest(Live):
         old.stop() leaves it; the new Handle gets Blocked and the blocked line."""
         mine = os.path.join(self.dir, "events-new")
         new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
-        live_tmux.wait(lambda: DIALOG in new.screen(), what="the dialog on the new session's screen")
+        live_tmux.wait(
+            lambda: DIALOG in new.screen(), what="the dialog on the new session's screen"
+        )
         self.assertEqual(next(events), Exited(-signal.SIGHUP))
         self.assertEqual((list(events), old.state()), ([], "absent"))
         old.stop()
@@ -251,12 +305,19 @@ class SameNameTest(Live):
     def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump([{"read": True}], f)
-        real, order, second, first_done = tmux_host.start, itertools.count(), threading.Event(), threading.Event()
+        real, order, second, first_done = (
+            tmux_host.start,
+            itertools.count(),
+            threading.Event(),
+            threading.Event(),
+        )
         results, threads = [], []
 
         def run():
             try:
-                results.append(api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name="w6"))
+                results.append(
+                    api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name="w6")
+                )
             except Exception as e:
                 results.append(e)
 
@@ -267,11 +328,12 @@ class SameNameTest(Live):
                 return real(*args, **kwargs)
             threads.append(threading.Thread(target=run))
             threads[0].start()
-            second.wait(1)   # unlocked, the second start prepares meanwhile
+            second.wait(1)  # unlocked, the second start prepares meanwhile
             try:
                 return real(*args, **kwargs)
             finally:
                 first_done.set()
+
         with mock.patch.object(tmux_host, "start", start):
             run()
             threads[0].join(WAIT)
@@ -279,20 +341,31 @@ class SameNameTest(Live):
         self.addCleanup(handle.stop)
         self.assertEqual(tui.read_state("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
-        self.assertEqual((handle.state(), os.listdir(tui.session_dir("w6"))), ("live", ["session.json"]))
+        self.assertEqual(
+            (handle.state(), os.listdir(tui.session_dir("w6"))), ("live", ["session.json"])
+        )
 
     def test_a_restart_after_a_close_from_another_process(self):
         old, events = self.old("w5")
-        res = subprocess.run([sys.executable, "-I", "-c", CLOSE, SRC, "w5"], capture_output=True, text=True,
-                             stdin=subprocess.DEVNULL, timeout=WAIT)
+        res = subprocess.run(
+            [sys.executable, "-I", "-c", CLOSE, SRC, "w5"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=WAIT,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.renewed("w5", old, events)
 
     def test_a_close_from_another_process_then_a_start_of_its_name_keeps_the_new_sessions_dir(self):
         self.start("w7", {"read": True})
         killed = os.path.join(self.dir, "killed")
-        closer = subprocess.Popen([sys.executable, "-I", "-c", SLOW_CLOSE, SRC, "w7", killed], text=True,
-                                  stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        closer = subprocess.Popen(
+            [sys.executable, "-I", "-c", SLOW_CLOSE, SRC, "w7", killed],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))

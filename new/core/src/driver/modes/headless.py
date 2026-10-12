@@ -1,6 +1,7 @@
 """The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two daemon threads pump
 its events and Stderr lines into one queue, and the session ends at both pipes' EOF. stop() kills the whole group, so a
 grandchild holding the pipes dies too; every wait is bounded. probe() runs a short command for its stdout."""
+
 import os
 import queue
 import signal
@@ -33,8 +34,17 @@ def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
     try:
-        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, errors="replace", process_group=0)
+        proc = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+            process_group=0,
+        )
     except (OSError, ValueError):
         return None
     try:
@@ -51,14 +61,27 @@ class HeadlessMode:
         self.run, self.proc = run, None
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], popen=None) -> None:
-        popen = popen or subprocess.Popen   # looked up per call, so a patch of subprocess.Popen applies
+        popen = (
+            popen or subprocess.Popen
+        )  # looked up per call, so a patch of subprocess.Popen applies
         self.items, self.open = queue.Queue(), 2
         self.eof = (threading.Event(), threading.Event())
-        self.proc = popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True, errors="replace", process_group=0)
+        self.proc = popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            process_group=0,
+        )
         out, err = self.proc.stdout, self.proc.stderr
-        for pipe, events, eof in ((out, self.run.events(out), self.eof[0]),
-                                  (err, (Stderr(line.rstrip("\n")) for line in err), self.eof[1])):
+        for pipe, events, eof in (
+            (out, self.run.events(out), self.eof[0]),
+            (err, (Stderr(line.rstrip("\n")) for line in err), self.eof[1]),
+        ):
             threading.Thread(target=self._pump, args=(pipe, events, eof), daemon=True).start()
 
     def _pump(self, pipe, events: Iterable[Event | Stderr], eof: threading.Event) -> None:

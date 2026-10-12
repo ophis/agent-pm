@@ -4,6 +4,7 @@ Logs its argv, pid, cwd and env (PWD, FAKE_ENV) as a JSON line, then runs the sc
 {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj} prints obj as JSON, {"raw": text} prints
 text, {"err": text} to stderr, {"sleep": s}, {"exit": n}, {"hook": label, "payload": obj} runs HOOK + [label] with obj
 on stdin, {"read": true} reads a stdin line; then exits 0."""
+
 import argparse
 import json
 import os
@@ -21,13 +22,24 @@ def main() -> int:
     parser.add_argument("hook", nargs="*")
     args = parser.parse_args()
     with open(args.log, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"argv": sys.argv[1:], "pid": os.getpid(), "cwd": os.getcwd(),
-                            "env": {k: os.environ.get(k) for k in ("PWD", "FAKE_ENV")}}) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "argv": sys.argv[1:],
+                    "pid": os.getpid(),
+                    "cwd": os.getcwd(),
+                    "env": {k: os.environ.get(k) for k in ("PWD", "FAKE_ENV")},
+                }
+            )
+            + "\n"
+        )
     with open(args.scenario, encoding="utf-8") as f:
         scenario = json.load(f)
     if isinstance(scenario, list):
         scenario = {"steps": scenario}
-    steps = scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
+    steps = (
+        scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
+    )
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
@@ -40,7 +52,9 @@ def main() -> int:
         elif "exit" in step:
             return step["exit"]
         elif "hook" in step:
-            subprocess.run([*args.hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True)
+            subprocess.run(
+                [*args.hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True
+            )
         elif "read" in step:
             sys.stdin.readline()
     return 0

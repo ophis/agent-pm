@@ -21,11 +21,32 @@ SCHEMA = os.path.join(OUTPUT, "outcome.schema.json")
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-RUN_KEYS = frozenset({"tier", "effort", "read", "write", "commands", "templates", "output", "gate", "language", "show",
-                      "cwd"})
+RUN_KEYS = frozenset(
+    {
+        "tier",
+        "effort",
+        "read",
+        "write",
+        "commands",
+        "templates",
+        "output",
+        "gate",
+        "language",
+        "show",
+        "cwd",
+    }
+)
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
-GLOBAL_KEYS = RUN_KEYS | {"roles", "users", "clients", "trusted_dirs", "status_line", "workers_per_column",
-                          "grid_retile", "team_dirs"}
+GLOBAL_KEYS = RUN_KEYS | {
+    "roles",
+    "users",
+    "clients",
+    "trusted_dirs",
+    "status_line",
+    "workers_per_column",
+    "grid_retile",
+    "team_dirs",
+}
 OLD_KEYS = frozenset({"default_task", "tasks"})
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")
 INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)
@@ -37,13 +58,22 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")
 BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
 ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
-PARAMETERS = {"<Workdir>": ("<Workdir>", "workdir"), "<scripts>": ("<scripts>", "scripts"),
-              "<tasks>": ("<tasks>", "tasks"), "<methods>": ("<methods>", "methods"), "<gate>": ("<gate>", "gate"),
-              "<out-repo>": ("<out-repo>", "output.repo"), "<out-branch>": ("<out-branch>", "output.branch"),
-              "<out-dir>": ("<out-dir>", "output.dir"), "<out-host>": ("<out-host>", "output.host"),
-              REPORT: (r"`report[` ]", REPORT)}   # prose says "report" too
-RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
-        "value and written out in full, no name or shell variable left")
+PARAMETERS = {
+    "<Workdir>": ("<Workdir>", "workdir"),
+    "<scripts>": ("<scripts>", "scripts"),
+    "<tasks>": ("<tasks>", "tasks"),
+    "<methods>": ("<methods>", "methods"),
+    "<gate>": ("<gate>", "gate"),
+    "<out-repo>": ("<out-repo>", "output.repo"),
+    "<out-branch>": ("<out-branch>", "output.branch"),
+    "<out-dir>": ("<out-dir>", "output.dir"),
+    "<out-host>": ("<out-host>", "output.host"),
+    REPORT: (r"`report[` ]", REPORT),
+}  # prose says "report" too
+RULE = (
+    "Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
+    "value and written out in full, no name or shell variable left"
+)
 PROGRESS = "agent-pm-progress"
 CHANNEL = "run.jsonl"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
@@ -54,10 +84,12 @@ LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
 FILE_REF = re.compile(r"`<(tasks|methods)>/(<task>|[\w-]+)\.md`")
 PAREN = re.compile(r"\(([^()]*)\)")
 SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
-RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "
-          "started. The input below is current: it adds to this session's earlier input. Continue the task this "
-          "session already picked or was given, following your task file's `## Resume` section; never pick it "
-          "again.\n\n")
+RESUME = (
+    "Resumed agent run after an interruption. These rules are current and may have changed since this session "
+    "started. The input below is current: it adds to this session's earlier input. Continue the task this "
+    "session already picked or was given, following your task file's `## Resume` section; never pick it "
+    "again.\n\n"
+)
 
 
 class ConfigError(Exception):
@@ -111,8 +143,11 @@ class RunConfig:
             raise ConfigError("language must be one line of text")
         if self.show is not None and (not isinstance(self.show, str) or "\n" in self.show):
             raise ConfigError("show must be one line of shell command")
-        if self.cwd and (not isinstance(self.cwd, str) or not self.cwd.isprintable()
-                         or not os.path.isabs(os.path.expanduser(self.cwd))):
+        if self.cwd and (
+            not isinstance(self.cwd, str)
+            or not self.cwd.isprintable()
+            or not os.path.isabs(os.path.expanduser(self.cwd))
+        ):
             raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
 
 
@@ -158,8 +193,10 @@ def lookup(layer: Mapping, role: str, key: str):
 
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
     if old := sorted(OLD_KEYS & set(table)):
-        raise ConfigError(f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
-                          f"run keys in [{prefix}roles.{role}] (a run without a task picks one)")
+        raise ConfigError(
+            f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
+            f"run keys in [{prefix}roles.{role}] (a run without a task picks one)"
+        )
 
 
 @dataclass(frozen=True)
@@ -181,7 +218,9 @@ class Team:
     def lookup(self, kind: str, name: str) -> str | None:
         paths = self.files.get((kind, name), ())
         if len(paths) > 1:
-            raise ConfigError(f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add")
+            raise ConfigError(
+                f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add"
+            )
         if paths and self.custom(paths[0]):
             self.check_file(kind, paths[0])
         return paths[0] if paths else None
@@ -194,8 +233,10 @@ class Team:
     def check_file(self, kind: str, path: str) -> None:
         text = _text(path)
         if text.split("\n", 1)[0].strip() == "---":
-            raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
-                              f"{repo.LOCAL}")
+            raise ConfigError(
+                f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
+                f"{repo.LOCAL}"
+            )
         if m := PLACEHOLDER.search(text):
             raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
         for m in METHOD.findall(text):
@@ -218,7 +259,11 @@ class Team:
 
     def tasks_dir(self, role: str) -> str | None:
         path = self.lookup("roles", role)
-        return os.path.join(os.path.dirname(os.path.dirname(path)), "tasks") if path and self.custom(path) else None
+        return (
+            os.path.join(os.path.dirname(os.path.dirname(path)), "tasks")
+            if path and self.custom(path)
+            else None
+        )
 
     def used(self, role: str, templates: Sequence[str] = ()) -> list[str]:
         paths = [self.lookup("roles", role)]
@@ -226,7 +271,9 @@ class Team:
         paths += [self.lookup("templates", name) for name in templates]
         return list(dict.fromkeys(p for p in paths if p and self.custom(p)))
 
-    def misnamed_error(self, kind: str | None = None, name: str | None = None) -> ConfigError | None:
+    def misnamed_error(
+        self, kind: str | None = None, name: str | None = None
+    ) -> ConfigError | None:
         for path in self.misnamed:
             stem = os.path.basename(path).removesuffix(".md")
             if kind is None or (os.path.basename(os.path.dirname(path)), stem) == (kind, name):
@@ -244,7 +291,10 @@ class Team:
 def team_dirs(root: str) -> tuple[str, ...]:
     path = os.path.join(root, CONFIG)
     try:
-        own, value = "team_dirs" in repo.read_config(path, os.devnull), repo.read_config(path).get("team_dirs")
+        own, value = (
+            "team_dirs" in repo.read_config(path, os.devnull),
+            repo.read_config(path).get("team_dirs"),
+        )
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
@@ -255,7 +305,11 @@ def team_dirs(root: str) -> tuple[str, ...]:
         raise ConfigError(f"team_dirs: want a list of absolute or ~ paths, got {value!r:.80}")
     dirs = []
     for p in value:
-        if not isinstance(p, str) or not p.startswith(("/", "~")) or not os.path.isabs(os.path.expanduser(p)):
+        if (
+            not isinstance(p, str)
+            or not p.startswith(("/", "~"))
+            or not os.path.isabs(os.path.expanduser(p))
+        ):
             raise ConfigError(f"team_dirs: {p!r:.80} is not an absolute or ~ path")
         real = os.path.realpath(os.path.expanduser(p))
         if not os.path.isdir(real):
@@ -284,8 +338,12 @@ def team(root: str, dirs: Sequence[str] = ()) -> Team:
                     misnamed.append(path)
                 else:
                     files.setdefault((kind, stem), []).append(path)
-    return Team(root=root, dirs=tuple(dirs), files={k: tuple(v) for k, v in files.items()},
-                misnamed=tuple(misnamed))
+    return Team(
+        root=root,
+        dirs=tuple(dirs),
+        files={k: tuple(v) for k, v in files.items()},
+        misnamed=tuple(misnamed),
+    )
 
 
 def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
@@ -294,10 +352,15 @@ def roles(root: str, team: Team, cfg: Mapping) -> list[str]:
             raise _no_charter(role)
     charters = {name: paths for (kind, name), paths in team.files.items() if kind == "roles"}
     core = [name for name, paths in charters.items() if not team.custom(paths[0])]
-    out = [r for r in cfg.get("roles", {}) if r in core] + sorted(r for r in core if r not in cfg.get("roles", {}))
+    out = [r for r in cfg.get("roles", {}) if r in core] + sorted(
+        r for r in core if r not in cfg.get("roles", {})
+    )
     for d in team.dirs:
-        out += sorted(name for name, paths in charters.items()
-                      if name not in out and any(os.path.dirname(os.path.dirname(p)) == d for p in paths))
+        out += sorted(
+            name
+            for name, paths in charters.items()
+            if name not in out and any(os.path.dirname(os.path.dirname(p)) == d for p in paths)
+        )
     return out
 
 
@@ -309,10 +372,14 @@ def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
     if not (lines := INDEX_LINE.findall(section)):
-        raise ConfigError(f"{rel}: no task index (a ## Tasks section of - `<task>` (`<tasks>/<task>.md`): … lines)")
+        raise ConfigError(
+            f"{rel}: no task index (a ## Tasks section of - `<task>` (`<tasks>/<task>.md`): … lines)"
+        )
     tasks = {t: what for t, _, what in lines}
     if not (default := INDEX_DEFAULT.search(section.split("\n", 1)[0])):
-        raise ConfigError(f"{rel}: ## Tasks opens without its default (unsure → `<task>` (`<tasks>/<task>.md`))")
+        raise ConfigError(
+            f"{rel}: ## Tasks opens without its default (unsure → `<task>` (`<tasks>/<task>.md`))"
+        )
     if default.group(1) not in tasks:
         raise ConfigError(f"{rel}: the default {default.group(1)!r} is not a listed task")
     for t, path in [default.groups(), *((t, path) for t, path, _ in lines)]:
@@ -321,23 +388,39 @@ def index(root: str, role: str, team: Team | None = None) -> dict[str, str]:
     own = team.tasks_dir(role) or os.path.join(root, TEXT, "tasks")
     for t in tasks:
         if not (path := team.lookup("tasks", t)):
-            raise team.misnamed_error("tasks", t) or ConfigError(f"{rel}: lists {t!r} without tasks/{t}.md")
+            raise team.misnamed_error("tasks", t) or ConfigError(
+                f"{rel}: lists {t!r} without tasks/{t}.md"
+            )
         if os.path.dirname(path) != own:
-            raise ConfigError(f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
-                              f"{team.tasks_dir(role) or 'core team/tasks'}: a role runs only its own tasks")
+            raise ConfigError(
+                f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
+                f"{team.tasks_dir(role) or 'core team/tasks'}: a role runs only its own tasks"
+            )
     return tasks
 
 
-def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[Mapping] = (),
-             team: Team | None = None) -> RunConfig:
+def load_run(
+    root: str,
+    role: str,
+    task: str | None = None,
+    *,
+    layers: Sequence[Mapping] = (),
+    team: Team | None = None,
+) -> RunConfig:
     cfg = repo.read_config(os.path.join(root, CONFIG))
     _check(cfg)
     team = _team(root, team)
     if not team.lookup("roles", role) and role not in cfg.get("roles", {}):
         raise _no_charter(role, cfg, team)
     values = _run_keys(cfg, role)
-    run = RunConfig(role=role, task=task or "", tier=values.pop("tier", None), effort=values.pop("effort", None),
-                    output=values.pop("output", {}), **values)
+    run = RunConfig(
+        role=role,
+        task=task or "",
+        tier=values.pop("tier", None),
+        effort=values.pop("effort", None),
+        output=values.pop("output", {}),
+        **values,
+    )
     for layer in layers:
         run = replace(run, **_run_keys(layer, role))
     if not (charter := team.charter(role)):
@@ -345,13 +428,22 @@ def load_run(root: str, role: str, task: str | None = None, *, layers: Sequence[
     tasks = index(root, role, team)
     if task and task not in tasks:
         raise team.misnamed_error("tasks", task) or ConfigError(
-            f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
+            f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
+        )
     return replace(run, role_title=_title(*charter))
 
 
-def resolve(root: str, client: ConfigClient, role: str, task: str | None = None, *,
-            overlays: Sequence[Mapping] = (), trusted: bool = False,
-            label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None) -> RunConfig:
+def resolve(
+    root: str,
+    client: ConfigClient,
+    role: str,
+    task: str | None = None,
+    *,
+    overlays: Sequence[Mapping] = (),
+    trusted: bool = False,
+    label: tuple[str, str] = ("run overlay", "overlay"),
+    team: Team | None = None,
+) -> RunConfig:
     """Resolve base (including local config), selected client, then caller overlays: later layers win, role values beat
     global values within a layer, and output tables replace rather than merge. The caller must set `trusted` only for
     operator-controlled local configuration: an in-process caller can opt in, so this is an API contract rather than a
@@ -384,7 +476,10 @@ def resolve(root: str, client: ConfigClient, role: str, task: str | None = None,
 def catalog(root: str, team: Team | None = None) -> dict[str, dict[str, str]]:
     team = _team(root, team)
     _roles(root)
-    return {role: index(root, role, team) for role in roles(root, team, repo.read_config(os.path.join(root, CONFIG)))}
+    return {
+        role: index(root, role, team)
+        for role in roles(root, team, repo.read_config(os.path.join(root, CONFIG)))
+    }
 
 
 def _roles(root: str) -> Mapping:
@@ -413,7 +508,11 @@ def _team_dir_roles(root: str) -> set[str]:
     names = set()
     for d in dirs:
         with contextlib.suppress(OSError):
-            names |= {n.removesuffix(".md") for n in os.listdir(os.path.join(d, "roles")) if n.endswith(".md")}
+            names |= {
+                n.removesuffix(".md")
+                for n in os.listdir(os.path.join(d, "roles"))
+                if n.endswith(".md")
+            }
     return names
 
 
@@ -449,10 +548,21 @@ def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
         raise ConfigError(f"unknown key {extra[0]!r} in [{where}]")
 
 
-def render(root: str, run: RunConfig, params: RunParams | None = None, *, client: PromptClient,
-           team: Team | None = None, tasks: str | None = None) -> str:
+def render(
+    root: str,
+    run: RunConfig,
+    params: RunParams | None = None,
+    *,
+    client: PromptClient,
+    team: Team | None = None,
+    tasks: str | None = None,
+) -> str:
     text, team = os.path.join(root, TEXT), _team(root, team)
-    names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
+    names = {
+        "role": run.role_title,
+        "role_anchor": anchor(run.role_title),
+        "language": run.language,
+    }
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
     if not (charter := team.charter(run.role)):
         raise ConfigError(f"missing file roles/{run.role}.md")
@@ -460,8 +570,11 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     guide, principles = _read(text, "guide.md"), _read(text, "principles.md")
     if not run.language:
         principles = _without(principles, "{{language}}")
-    texts = {"guide.md": fill(guide, names, "guide.md"), "principles.md": fill(principles, names, "principles.md"),
-             rel: fill(role, {}, rel)}
+    texts = {
+        "guide.md": fill(guide, names, "guide.md"),
+        "principles.md": fill(principles, names, "principles.md"),
+        rel: fill(role, {}, rel),
+    }
     parts = list(texts.items())
     for name in run.templates:
         body, label = team.read("templates", name)
@@ -472,17 +585,24 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     destination, values = _read(output, dest), {}
     if params:
-        inside = os.path.relpath(os.path.realpath(params.deliverable), os.path.realpath(params.workdir))
+        inside = os.path.relpath(
+            os.path.realpath(params.deliverable), os.path.realpath(params.workdir)
+        )
         values = {"deliverable": f"<Workdir>/{inside}"}
     else:
         destination = _without(destination, "{{deliverable}}")
-    texts |= {"output.md": fill(_read(output, "output.md"), {}, "output.md"), dest: fill(destination, values, dest)}
+    texts |= {
+        "output.md": fill(_read(output, "output.md"), {}, "output.md"),
+        dest: fill(destination, values, dest),
+    }
     parts.append(("output.md", texts["output.md"] + "\n" + texts[dest]))
     if handover := client.handover():
         texts["handover"] = fill(handover, {}, "handover")
         parts.append(("handover", f"## Return\n\n{texts['handover'].strip()}\n"))
     joined = [part for _, part in parts]
-    joined.insert(1, _parameters(root, run, params, client, texts, team, tasks or team.tasks_dir(run.role)))
+    joined.insert(
+        1, _parameters(root, run, params, client, texts, team, tasks or team.tasks_dir(run.role))
+    )
     prompt = (RESUME if params and params.resume else "") + "\n".join(joined)
     given = params.input.strip() if params else client.inline_input
     own = _unique(prompt + "\n# Input\n") if params or given else _unique(prompt)
@@ -491,34 +611,53 @@ def render(root: str, run: RunConfig, params: RunParams | None = None, *, client
     return own + f"\n{given}\n" if params or given else own
 
 
-def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, str], *,
-                     texts: Mapping[str, str] | None = None, labels: Mapping[str, str] | None = None) -> list[str]:
+def reference_errors(
+    own: str,
+    tasks: Mapping[str, str],
+    methods: Mapping[str, str],
+    *,
+    texts: Mapping[str, str] | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> list[str]:
     outline_ = outline(own)
     anchors = {a for _, _, a, _ in outline_ if a}
     entries, titles = {}, {path[-1] for _, path, _, _ in outline_}
     for _, path, a, _ in outline_:
         entries.setdefault(path, set()).add(a)
-    inside = {(kind, name): {path[1:] for _, path, _, _ in outline(text) if len(path) > 1}
-              for kind, files in (("tasks", tasks), ("methods", methods)) for name, text in files.items()}
+    inside = {
+        (kind, name): {path[1:] for _, path, _, _ in outline(text) if len(path) > 1}
+        for kind, files in (("tasks", tasks), ("methods", methods))
+        for name, text in files.items()
+    }
     named = {"tasks": list(tasks), "methods": []}
     labels = labels or {}
-    checked = (dict(texts) if texts is not None else {"prompt": own}) | {
-        labels.get(t, f"tasks/{t}.md"): x for t, x in tasks.items()} | dict(methods)
+    checked = (
+        (dict(texts) if texts is not None else {"prompt": own})
+        | {labels.get(t, f"tasks/{t}.md"): x for t, x in tasks.items()}
+        | dict(methods)
+    )
     errors = []
     for label, text in checked.items():
         for _, line in unfenced(text):
             kept, pos = [], 0
             for m in CODE_SPAN.finditer(line):
-                kept.append(line[pos:m.start()] + " ")
+                kept.append(line[pos : m.start()] + " ")
                 pos = m.end()
                 if not (ref := FILE_REF.fullmatch(m[0])) or not line.startswith(" › ", pos):
                     continue
                 kind = ref[1]
-                names = [(kind, n) for n in named[kind]] if ref[2] == "<task>" else [
-                    (kind, ref[2] if kind == "tasks" else f"methods/{ref[2]}.md")]
+                names = (
+                    [(kind, n) for n in named[kind]]
+                    if ref[2] == "<task>"
+                    else [(kind, ref[2] if kind == "tasks" else f"methods/{ref[2]}.md")]
+                )
                 found = names and all(n in inside for n in names)
-                best = _task_path(line[pos:], set.intersection(*(inside[n] for n in names))) if found else None
-                if not best or line[pos + len(best):].startswith(" › "):
+                best = (
+                    _task_path(line[pos:], set.intersection(*(inside[n] for n in names)))
+                    if found
+                    else None
+                )
+                if not best or line[pos + len(best) :].startswith(" › "):
                     errors.append(f"{label}: no such {kind[:-1]} file path: {line.strip()}")
                     pos = len(line)
                     break
@@ -529,7 +668,9 @@ def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, s
                     if target[1:] not in anchors:
                         errors.append(f"{label}: no such anchor: [{t}]({target})")
                     elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
-                        errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
+                        errors.append(
+                            f"{label}: not a path of the prompt at that anchor: [{t}]({target})"
+                        )
                 elif not SCHEME.match(target):
                     errors.append(f"{label}: relative link target: [{t}]({target})")
             plain = LINK.sub(" ", left)
@@ -542,7 +683,11 @@ def _task_path(after: str, paths) -> str | None:
     best = None
     for path in paths:
         want = " › " + " › ".join(path)
-        if after.startswith(want) and not re.match(r"\w", after[len(want):]) and (not best or len(want) > len(best)):
+        if (
+            after.startswith(want)
+            and not re.match(r"\w", after[len(want) :])
+            and (not best or len(want) > len(best))
+        ):
             best = want
     return best
 
@@ -560,26 +705,43 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
     errors = reference_errors(own, tasks, methods, texts=parts, labels=labels)
     if not errors:
         return
-    custom = [label for label in [*parts, *labels.values()] if os.path.isabs(label)]   # built-in ones are relative
+    custom = [
+        label for label in [*parts, *labels.values()] if os.path.isabs(label)
+    ]  # built-in ones are relative
     if first := next((e for e in errors if any(e.startswith(f"{c}: ") for c in custom)), None):
         raise ConfigError(first)
     error, blame = errors[0], used[0]
     line = error.split(": ", 2)[-1]
     if ": no such task file path: " in error and "`<tasks>/<task>.md`" in line:
-        blame = next((paths[t] for t in paths if team.custom(paths[t])
-                      and reference_errors(own, {t: tasks[t]}, {}, texts={"x": line})), blame)
+        blame = next(
+            (
+                paths[t]
+                for t in paths
+                if team.custom(paths[t])
+                and reference_errors(own, {t: tasks[t]}, {}, texts={"x": line})
+            ),
+            blame,
+        )
     elif ": bare reference: " in error:
         want = set(PAREN.findall(line))
         texts = {label: text for label, text in parts.items() if label in custom}
         texts |= {paths[t]: tasks[t] for t in paths if team.custom(paths[t])}
-        blame = next((label for label, text in texts.items()
-                      if any(heading and path[-1] in want for _, path, _, heading in outline(text))), blame)
+        blame = next(
+            (
+                label
+                for label, text in texts.items()
+                if any(heading and path[-1] in want for _, path, _, heading in outline(text))
+            ),
+            blame,
+        )
     raise ConfigError(f"{blame}: breaks a reference in {error}")
 
 
 def report_command(scripts: str, params: RunParams, interpreter: str = "python3") -> str:
-    return (f"{shlex.quote(interpreter)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
-            f"--to {shlex.quote(params.channel)}")
+    return (
+        f"{shlex.quote(interpreter)} {shlex.quote(os.path.join(scripts, 'report.py'))} "
+        f"--to {shlex.quote(params.channel)}"
+    )
 
 
 def outcome_schema(root: str) -> dict:
@@ -592,6 +754,7 @@ def fill(text: str, values: Mapping, where: str) -> str:
         if m.group(1) in values:
             return str(values[m.group(1)])
         return m.group(2) if m.group(2) is not None else m.group(0)
+
     out = PLACEHOLDER.sub(value, text)
     if m := PLACEHOLDER.search(out):
         raise ConfigError(f"unfilled placeholder {m.group(0)} in {where}")
@@ -628,7 +791,9 @@ def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
             section = explicit[1] if explicit else anchor(title)
             out.append((i, tuple(t for _, t in stack), section, True))
         elif m := BOLD_ITEM.match(line):
-            out.append((i, tuple(t for _, t in stack) + (re.sub(r"[:.]$", "", m[1]),), section, False))
+            out.append(
+                (i, tuple(t for _, t in stack) + (re.sub(r"[:.]$", "", m[1]),), section, False)
+            )
         last = (i, line)
     return out
 
@@ -674,25 +839,48 @@ def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
         raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
-def _parameters(root: str, run: RunConfig, params: RunParams | None, client: PromptClient,
-                texts: Mapping[str, str], team: Team, tasks: str | None = None) -> str:
+def _parameters(
+    root: str,
+    run: RunConfig,
+    params: RunParams | None,
+    client: PromptClient,
+    texts: Mapping[str, str],
+    team: Team,
+    tasks: str | None = None,
+) -> str:
     text = os.path.join(root, TEXT)
-    texts = dict(texts) | {label: body for body, label in (team.read("tasks", t) for t in index(root, run.role, team))}
+    texts = dict(texts) | {
+        label: body for body, label in (team.read("tasks", t) for t in index(root, run.role, team))
+    }
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
     texts |= {rel: _read(text, rel) for rel in named if os.path.isfile(os.path.join(text, rel))}
-    values = {"workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
-              "scripts": _code(client.scripts_path(root)), "tasks": _code(tasks or client.tasks_path(root)),
-              "methods": _code(client.methods_path(root)), "gate": _code(run.gate or "none"),
-              REPORT: _code(f"{shlex.quote(client.report_interpreter())} <scripts>/report.py --to <Workdir>/{CHANNEL}")
-              if params else ""}
-    values |= {f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()}
-    unset = {"workdir": "no run params and the client has no inline_workdir", REPORT: "no run params"}
+    values = {
+        "workdir": _code(os.path.abspath(params.workdir)) if params else client.inline_workdir,
+        "scripts": _code(client.scripts_path(root)),
+        "tasks": _code(tasks or client.tasks_path(root)),
+        "methods": _code(client.methods_path(root)),
+        "gate": _code(run.gate or "none"),
+        REPORT: _code(
+            f"{shlex.quote(client.report_interpreter())} <scripts>/report.py --to <Workdir>/{CHANNEL}"
+        )
+        if params
+        else "",
+    }
+    values |= {
+        f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()
+    }
+    unset = {
+        "workdir": "no run params and the client has no inline_workdir",
+        REPORT: "no run params",
+    }
     lines = []
     for name, (use, source) in PARAMETERS.items():
         where = next((label for label, t in texts.items() if re.search(use, t)), None)
         if where and not values.get(source):
-            raise ConfigError(f"{name} is used in {where} but Parameters doesn't define it "
-                              f"({unset.get(source, f'{source} is not set')})")
+            raise ConfigError(
+                f"{name} is used in {where} but Parameters doesn't define it "
+                f"({unset.get(source, f'{source} is not set')})"
+            )
         if values.get(source) and (where or name in ("<Workdir>", "<scripts>", "<tasks>")):
             lines.append(f"- `{name}`: {values[source]}\n")
     rule = RULE + (client.approval() or ".")

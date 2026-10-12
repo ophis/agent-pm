@@ -2,6 +2,7 @@
 the real ClaudeAdapter runs new/tests/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
+
 from new.tests import SRC, fake_claude, live_tmux
 from new.tests.integration.driver import detach_integration_test as detach_live
 from new.tests.integration.driver import tui_integration_test as tui_live
@@ -22,9 +23,17 @@ from adapters.claude.tui import ClaudeTui
 from driver import api, registry, tmux_host
 from driver.modes import tui
 
-MANAGER, SID, IDLE, WAIT, Stream = tui_live.MANAGER, tui_live.SID, tui_live.IDLE, tui_live.WAIT, tui_live.Stream
-TABLE = {"implementation": "adapters.claude:ClaudeAdapter",
-         "flags": ["--permission-mode", "auto", "--strict-mcp-config"]}
+MANAGER, SID, IDLE, WAIT, Stream = (
+    tui_live.MANAGER,
+    tui_live.SID,
+    tui_live.IDLE,
+    tui_live.WAIT,
+    tui_live.Stream,
+)
+TABLE = {
+    "implementation": "adapters.claude:ClaudeAdapter",
+    "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
+}
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
 RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
@@ -47,11 +56,15 @@ class Live(tui_live.Live):
         super().setUp()
         self.scenario = os.path.join(self.dir, "claude.json")
         self.log = os.path.join(self.dir, "claude.log")
-        patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"),
-                                             fake_claude.ENV: self.scenario})
+        patch = mock.patch.dict(
+            os.environ,
+            {"CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"), fake_claude.ENV: self.scenario},
+        )
         patch.start()
         self.addCleanup(patch.stop)
-        patch = mock.patch.object(tmux_host, "_iterm", side_effect=AssertionError("the iTerm2 path"))
+        patch = mock.patch.object(
+            tmux_host, "_iterm", side_effect=AssertionError("the iTerm2 path")
+        )
         patch.start()
         self.addCleanup(patch.stop)
         self.configure()
@@ -63,8 +76,15 @@ class Live(tui_live.Live):
         """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file self.events."""
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **scenario}, f)
-        handle = api.start("claude", "tui", prompt, api.Spec(workdir=self.workdir), name=name, events=self.events,
-                           **kwargs)
+        handle = api.start(
+            "claude",
+            "tui",
+            prompt,
+            api.Spec(workdir=self.workdir),
+            name=name,
+            events=self.events,
+            **kwargs,
+        )
         self.addCleanup(handle.stop)
         return handle
 
@@ -87,49 +107,72 @@ class Live(tui_live.Live):
         return len(self.server.panes(f"={MANAGER}:"))
 
     def closed(self, handle: api.Handle) -> None:
-        self.assertEqual((handle.state(), api.sessions("w").state(handle.name)), ("absent", "absent"))
+        self.assertEqual(
+            (handle.state(), api.sessions("w").state(handle.name)), ("absent", "absent")
+        )
         self.assertFalse(os.path.lexists(tui.session_dir(handle.name)))
 
 
 class TurnsTest(Live):
     def test_turns_their_lines_state_and_reply_send_and_the_border_no_pane_opened(self):
-        handle = self.start("w1", scenario={"steps": ["Hi from w1."], "turns": [["Second."]], "background": 2},
-                            sid=SID, idle_timeout=IDLE)
+        handle = self.start(
+            "w1",
+            scenario={"steps": ["Hi from w1."], "turns": [["Second."]], "background": 2},
+            sid=SID,
+            idle_timeout=IDLE,
+        )
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))
         stream = self.stream(handle)
-        self.assertEqual([stream.next(idle=False) for _ in range(3)],
-                         [SessionBound(SID), Activity(""), TurnEnd("Hi from w1.", 2)])
+        self.assertEqual(
+            [stream.next(idle=False) for _ in range(3)],
+            [SessionBound(SID), Activity(""), TurnEnd("Hi from w1.", 2)],
+        )
         self.assertEqual(stream.next(), api.IdleTimeout(IDLE))
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
         hook = tui.hook_argv(tui.session_dir("w1"))
-        self.assertEqual({label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
-                         {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks})
+        self.assertEqual(
+            {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
+            {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},
+        )
         self.lines("w1 done")
-        self.assertEqual((self.server.option("w1", "@state"), handle.reply), ("done", "Hi from w1."))
+        self.assertEqual(
+            (self.server.option("w1", "@state"), handle.reply), ("done", "Hi from w1.")
+        )
 
         handle.send("more")
-        self.assertEqual([stream.next(idle=False) for _ in range(2)], [Activity(""), TurnEnd("Second.", 2)])
+        self.assertEqual(
+            [stream.next(idle=False) for _ in range(2)], [Activity(""), TurnEnd("Second.", 2)]
+        )
         self.lines("w1 done", "w1 done")
         self.assertEqual((self.server.option("w1", "@state"), handle.reply), ("done", "Second."))
         self.assertEqual(self.users(handle.info().transcript), ["hello", "more"])
         border = self.server.tmux("show-options", "-wqv", "-t", "=w1:", "pane-border-format").stdout
         self.assertEqual(border, tmux_host.BORDER + "\n")
-        self.assertEqual((handle.state(), api.sessions("w").state("w1"), self.panes()), ("live", "live", 1))
+        self.assertEqual(
+            (handle.state(), api.sessions("w").state("w1"), self.panes()), ("live", "live", 1)
+        )
 
 
 class BlockedTest(Live):
     def test_a_permission_request_is_blocked_holding_the_idle_timer_till_answered(self):
-        steps = [{"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"},
-                 {"kind": "dialog", "text": "Allow this edit? 1. Yes 2. No"}, "Edited."]
+        steps = [
+            {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"},
+            {"kind": "dialog", "text": "Allow this edit? 1. Yes 2. No"},
+            "Edited.",
+        ]
         handle = self.start("w1", scenario={"steps": steps}, idle_timeout=IDLE)
         stream = self.stream(handle)
-        self.assertEqual([stream.next(idle=False) for _ in range(3)],
-                         [SessionBound(handle.sid), Activity(""), Blocked("Edit")])
+        self.assertEqual(
+            [stream.next(idle=False) for _ in range(3)],
+            [SessionBound(handle.sid), Activity(""), Blocked("Edit")],
+        )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
-        live_tmux.wait(lambda: "Allow this edit?" in handle.screen(), what="the dialog on the screen")
+        live_tmux.wait(
+            lambda: "Allow this edit?" in handle.screen(), what="the dialog on the screen"
+        )
         stream.quiet(3 * IDLE)
         handle.send("1")
         self.assertEqual(stream.next(), TurnEnd("Edited.", 0))
@@ -137,10 +180,14 @@ class BlockedTest(Live):
         self.lines("w1 blocked", "w1 done")
 
     def test_the_trust_dialog_on_the_screen_is_blocked_and_marked(self):
-        handle = self.start("w1", scenario={"steps": [{"kind": "dialog", "text": TRUST}, "Trusted."]})
+        handle = self.start(
+            "w1", scenario={"steps": [{"kind": "dialog", "text": TRUST}, "Trusted."]}
+        )
         stream = self.stream(handle)
-        self.assertEqual([stream.next() for _ in range(3)],
-                         [SessionBound(handle.sid), Activity(""), Blocked("Quick safety check")])
+        self.assertEqual(
+            [stream.next() for _ in range(3)],
+            [SessionBound(handle.sid), Activity(""), Blocked("Quick safety check")],
+        )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
         tmux_host.keys("w1", "Enter")
@@ -150,12 +197,19 @@ class BlockedTest(Live):
 
 class LimitTest(Live):
     def test_the_usage_limit_screen_is_one_limit_hit_the_session_waiting(self):
-        handle = self.start("w1", scenario={"steps": [{"kind": "limit", "text": LIMIT}], "turns": [["Back."]]})
+        handle = self.start(
+            "w1", scenario={"steps": [{"kind": "limit", "text": LIMIT}], "turns": [["Back."]]}
+        )
         stream = self.stream(handle)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(handle.sid), Activity(""), LimitHit(RESETS)])
+        self.assertEqual(
+            [stream.next() for _ in range(3)],
+            [SessionBound(handle.sid), Activity(""), LimitHit(RESETS)],
+        )
         stream.quiet(1.0)
-        self.assertEqual((handle.state(), self.server.option("w1", "@state"), live_tmux.events(self.events)),
-                         ("live", "working", []))
+        self.assertEqual(
+            (handle.state(), self.server.option("w1", "@state"), live_tmux.events(self.events)),
+            ("live", "working", []),
+        )
         handle.send("go on")
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Back.", 0)])
         self.lines("w1 done")
@@ -167,8 +221,11 @@ class DeadTest(Live):
     def test_a_sigterm_ends_with_its_signal_and_a_dead_line_the_session_kept_till_close(self):
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         stream = self.stream(handle)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)])
-        self.lines("w1 done")   # the Stop hook ended: the pane's death would hang it up
+        self.assertEqual(
+            [stream.next() for _ in range(3)],
+            [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)],
+        )
+        self.lines("w1 done")  # the Stop hook ended: the pane's death would hang it up
         os.kill(self.calls()[0]["pid"], signal.SIGTERM)
         self.assertEqual(stream.next(poke=self.poke), Exited(-signal.SIGTERM))
         self.lines("w1 done", "w1 dead")
@@ -199,12 +256,16 @@ class ResumeTest(Live):
     def test_a_resume_continues_the_session_and_its_transcript(self):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)])
+        self.assertEqual(
+            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)]
+        )
         api.close("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         again = self.start("w1", "again", scenario={"steps": ["Two."]}, resume=SID)
         stream = self.stream(again)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("Two.", 0)])
+        self.assertEqual(
+            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("Two.", 0)]
+        )
         argv = self.calls()[1]["argv"]
         self.assertEqual((argv[argv.index("--resume") + 1], "--session-id" in argv), (SID, False))
         self.assertEqual(again.info().transcript, first.info().transcript)
@@ -215,11 +276,20 @@ class AttachTest(Live):
     def test_another_process_attaches_by_name_reads_the_reply_and_sends(self):
         handle = self.start("w1", scenario={"steps": ["One."], "turns": [["Two."]]}, sid=SID)
         stream = self.stream(handle)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)])
-        res = subprocess.run([sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(TABLE), "w1", "more"],
-                             capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=WAIT)
+        self.assertEqual(
+            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)]
+        )
+        res = subprocess.run(
+            [sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(TABLE), "w1", "more"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=WAIT,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(json.loads(res.stdout), [SID, "live", "One.", SID, repr(TurnEnd("Two.", 0)), "Two."])
+        self.assertEqual(
+            json.loads(res.stdout), [SID, "live", "One.", SID, repr(TurnEnd("Two.", 0)), "Two."]
+        )
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Two.", 0)])
         self.assertEqual(handle.reply, "Two.")
         self.lines("w1 done", "w1 done")
@@ -230,31 +300,53 @@ class ShowTest(Live):
         self.server.attach(MANAGER)
         go = os.path.join(self.dir, "go")
         self.addCleanup(lambda: open(go, "w").close())
-        api.detach("w1-drive", [sys.executable, "-I", "-c", detach_live.CHILD, os.path.join(self.dir, "d.json"), go],
-                   self.dir, self.server.env(), opener=MANAGER)
+        api.detach(
+            "w1-drive",
+            [sys.executable, "-I", "-c", detach_live.CHILD, os.path.join(self.dir, "d.json"), go],
+            self.dir,
+            self.server.env(),
+            opener=MANAGER,
+        )
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         self.assertEqual(self.panes(), 1)
         with mock.patch.dict(os.environ, self.server.inside(MANAGER)):
             self.assertIsNone(api.show("w1"))
-        live_tmux.wait(functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [["w1"]]),
-                       what="the grid [['w1']], the detached session in no cell")
-        self.assertEqual([self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER])
+        live_tmux.wait(
+            functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [["w1"]]),
+            what="the grid [['w1']], the detached session in no cell",
+        )
+        self.assertEqual(
+            [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER]
+        )
         api.close("w1")
 
         def alone() -> bool:
             self.poke()
             return self.panes() == 1
+
         live_tmux.wait(alone, what="the manager's window back to its own pane")
         self.closed(handle)
 
     def test_with_no_terminal_show_gives_the_attach_command_and_close_makes_it_absent(self):
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         stream = self.stream(handle)
-        self.assertEqual([stream.next() for _ in range(3)], [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)])
-        for where, env, why in (("outside tmux", {}, "not in tmux"),
-                                ("in a pane no terminal shows", self.server.inside(MANAGER),
-                                 f"no terminal shows tmux session {MANAGER}")):
-            with self.subTest(where), mock.patch.dict(os.environ, env), self.assertLogs("driver", "WARNING") as logs:
+        self.assertEqual(
+            [stream.next() for _ in range(3)],
+            [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)],
+        )
+        for where, env, why in (
+            ("outside tmux", {}, "not in tmux"),
+            (
+                "in a pane no terminal shows",
+                self.server.inside(MANAGER),
+                f"no terminal shows tmux session {MANAGER}",
+            ),
+        ):
+            with (
+                self.subTest(where),
+                mock.patch.dict(os.environ, env),
+                self.assertLogs("driver", "WARNING") as logs,
+            ):
                 self.assertEqual(api.show("w1"), tmux_host.attach_command("w1"))
             self.assertIn(why, logs.output[0])
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))

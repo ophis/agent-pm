@@ -4,6 +4,7 @@ the same name (record): crew.py start (a worker, under its name), drive.detach f
 router.py --tui (a pipeline), keyed by the driver session. `crew.py stop` removes one with its sessions (stop),
 `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled (0: none); gen: the
 generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen."""
+
 from __future__ import annotations
 
 import contextlib
@@ -33,9 +34,28 @@ SCRIPTS = ("crew.py", "drive.py", "router.py")
 # crew.py's old name, so an entry an older plugin version wrote still validates (recovery runs CREW)
 LEGACY = "workers.py"
 LEGACY_CLIENT = "claude"
-CREW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills", "tmux", "scripts", "crew.py")
+CREW = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "skills",
+    "tmux",
+    "scripts",
+    "crew.py",
+)
 TOP = ("version", "holder", "cursor", "gen", "entries")
-FIELDS = ("kind", "sid", "cwd", "resume", "note", "opener", "pane", "split", "split_from", "tui", "state", "started")
+FIELDS = (
+    "kind",
+    "sid",
+    "cwd",
+    "resume",
+    "note",
+    "opener",
+    "pane",
+    "split",
+    "split_from",
+    "tui",
+    "state",
+    "started",
+)
 NOTE_MAX = 500
 ROSTER_MAX = 1 << 20
 EVENTS_MAX = 1 << 20
@@ -84,7 +104,9 @@ def _checked(path: str, *, private: bool = False) -> None:
         raise RosterError(f"manager directory {path}: not a directory owned by you")
     if private and st.st_mode & 0o077:
         mode = stat.S_IMODE(st.st_mode)
-        raise RosterError(f"manager directory {path}: group or other permission bits set (mode {mode:04o})")
+        raise RosterError(
+            f"manager directory {path}: group or other permission bits set (mode {mode:04o})"
+        )
 
 
 def ensure(directory: str) -> None:
@@ -164,8 +186,14 @@ def _want(field: str, value, want) -> str:
 
 
 def _keys(value: dict, want: tuple) -> str | None:
-    missing, extra = sorted(set(want) - set(value), key=str), sorted(set(value) - set(want), key=str)
-    parts = [*([f"missing {missing!r}"] if missing else []), *([f"unexpected {extra!r}"] if extra else [])]
+    missing, extra = (
+        sorted(set(want) - set(value), key=str),
+        sorted(set(value) - set(want), key=str),
+    )
+    parts = [
+        *([f"missing {missing!r}"] if missing else []),
+        *([f"unexpected {extra!r}"] if extra else []),
+    ]
     return f"keys: {', '.join(parts)}" if parts else None
 
 
@@ -174,12 +202,18 @@ _CHECKS = {
     "kind": (lambda v: v in KINDS, _or(KINDS)),
     "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
     "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
-    "note": (lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
-             f"null or a printable string of at most {NOTE_MAX} characters"),
-    "opener": (lambda v: v is None or _match(tmux_host.OPENER, v),
-               "a tmux session name or an iTerm2 pane id, or null"),
-    "pane": (lambda v: v is None or _match(tmux_host.PANE, v) or _match(tmux_host.ITERM_ID, v),
-             "a tmux pane id or an iTerm2 session id, or null"),
+    "note": (
+        lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
+        f"null or a printable string of at most {NOTE_MAX} characters",
+    ),
+    "opener": (
+        lambda v: v is None or _match(tmux_host.OPENER, v),
+        "a tmux session name or an iTerm2 pane id, or null",
+    ),
+    "pane": (
+        lambda v: v is None or _match(tmux_host.PANE, v) or _match(tmux_host.ITERM_ID, v),
+        "a tmux pane id or an iTerm2 session id, or null",
+    ),
     "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
     "split_from": _NAME_OR_NULL,
     "tui": _NAME_OR_NULL,
@@ -267,7 +301,9 @@ def _open(path: str, flags: int) -> int | None:
             raise RosterError(f"{path}: {e.strerror}") from e
         return None
     except OSError as e:
-        raise RosterError(f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}") from e
+        raise RosterError(
+            f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}"
+        ) from e
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
@@ -347,8 +383,13 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
     with _locked(os.path.join(directory, "roster.lock")):
         data = _read(path)
         missing = data is None
-        r = _check({"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}} if missing else data,
-                   path, strict=False)
+        r = _check(
+            {"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
+            if missing
+            else data,
+            path,
+            strict=False,
+        )
         before = _dump(r)
         yield r
         if write:
@@ -360,8 +401,12 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
 
 def _live(session: str, proc) -> bool:
     try:
-        res = proc(["tmux", "has-session", "-t", f"={session}"], capture_output=True, text=True,
-                   stdin=subprocess.DEVNULL)
+        res = proc(
+            ["tmux", "has-session", "-t", f"={session}"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
     except OSError:
         return False
     return res.returncode == 0
@@ -374,8 +419,10 @@ def _holds(r: dict, directory: str, own: str | None, proc) -> bool:
     if holder["session"] == own:
         return True
     if _live(holder["session"], proc):
-        raise Held(f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
-                   "ask that manager to run crew.py release, or end that session")
+        raise Held(
+            f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
+            "ask that manager to run crew.py release, or end that session"
+        )
     return False
 
 
@@ -390,12 +437,35 @@ def check(r: dict, directory: str, own: str | None, *, proc=subprocess.run) -> N
         raise _not_attached(directory)
 
 
-def entry(kind: str, *, sid: str | None, cwd: str, resume: list[str], note: str | None = None,
-          opener: str | None = None, pane: str | None = None, split: str | None = None, split_from: str | None = None,
-          tui: str | None = None, state: str = "working", started: str | None = None) -> dict:
-    value = {"kind": kind, "sid": sid, "cwd": cwd, "resume": resume, "note": note, "opener": opener, "pane": pane,
-             "split": split, "split_from": split_from, "tui": tui, "state": state,
-             "started": now() if started is None else started}
+def entry(
+    kind: str,
+    *,
+    sid: str | None,
+    cwd: str,
+    resume: list[str],
+    note: str | None = None,
+    opener: str | None = None,
+    pane: str | None = None,
+    split: str | None = None,
+    split_from: str | None = None,
+    tui: str | None = None,
+    state: str = "working",
+    started: str | None = None,
+) -> dict:
+    value = {
+        "kind": kind,
+        "sid": sid,
+        "cwd": cwd,
+        "resume": resume,
+        "note": note,
+        "opener": opener,
+        "pane": pane,
+        "split": split,
+        "split_from": split_from,
+        "tui": tui,
+        "state": state,
+        "started": now() if started is None else started,
+    }
     if bad := _value_fault(value):
         raise RosterError(f"entry: {bad}")
     return value
@@ -410,7 +480,12 @@ def set_entry(r: dict, name: str, value: dict) -> None:
 def record(r: dict, name: str, value: dict) -> None:
     old = r["entries"].get(name)
     set_entry(r, name, value)
-    if value["note"] is None and old is not None and old["sid"] is not None and old["sid"] == value["sid"]:
+    if (
+        value["note"] is None
+        and old is not None
+        and old["sid"] is not None
+        and old["sid"] == value["sid"]
+    ):
         r["entries"][name] = {**value, "note": old["note"]}
 
 
@@ -432,7 +507,11 @@ def remove(r: dict, name: str) -> dict:
 
 def stop(r: dict, name: str, *, proc=subprocess.run) -> str:
     entries = r["entries"]
-    key = name if name in entries else next((k for k in sorted(entries) if entries[k]["tui"] == name), None)
+    key = (
+        name
+        if name in entries
+        else next((k for k in sorted(entries) if entries[k]["tui"] == name), None)
+    )
     if key is None:
         raise RosterError(f"{name} not in roster")
     for session in (key, entries[key]["tui"]):
@@ -450,7 +529,7 @@ def recovery(entry: dict) -> list[str] | None:
     resume = list(entry["resume"])
     if os.path.basename(resume[1]) == LEGACY:
         resume[1] = CREW
-    options = resume[:resume.index("--")] if "--" in resume else resume
+    options = resume[: resume.index("--")] if "--" in resume else resume
     if entry["kind"] == "worker" and len(resume) > 3 and "--client" not in options:
         resume[4:4] = ["--client", LEGACY_CLIENT]
     if entry["kind"] != "role":
@@ -487,7 +566,11 @@ def _offset(f, n: int) -> int:
 
 def lines(path: str) -> int:
     with _reading(path) as f:
-        return 0 if f is None else sum(block.count(b"\n") for block in iter(lambda: f.read(BLOCK), b""))
+        return (
+            0
+            if f is None
+            else sum(block.count(b"\n") for block in iter(lambda: f.read(BLOCK), b""))
+        )
 
 
 def offset(path: str, n: int) -> int:
@@ -547,7 +630,7 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
     except tmux_host.TuiError as e:
         raise RosterError(str(e)) from e
     with _writing(path, os.O_WRONLY | os.O_NONBLOCK) as fd:
-        os.fchmod(fd, 0o600)   # a writer's `>>` may have made it in between, with its umask
+        os.fchmod(fd, 0o600)  # a writer's `>>` may have made it in between, with its umask
     # lets in-flight appends land in `old` before its lines are copied
     sleep(SETTLE)
     data = following(old, cursor)
@@ -556,7 +639,7 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
     with _writing(path, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK) as fd:
         view = memoryview(data)
         while view:
-            view = view[os.write(fd, view):]
+            view = view[os.write(fd, view) :]
 
 
 def rotate(r: dict, directory: str, *, sleep=None) -> bool:

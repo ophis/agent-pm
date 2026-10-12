@@ -4,15 +4,19 @@ team (--list: the built-in one and the core config's team_dirs). --task unset: t
 Exits 0 on a valid outcome, even when the client exited non-zero; 1 on none, the client exiting 0; 2 on a config or
 usage error (nothing started, stdout empty); 3 when the client exited non-zero or failed to start without a valid
 outcome, or on a usage limit."""
+
 import argparse
 import json
 import os
 import sys
 from collections.abc import Sequence
 
-if __name__ == "__main__":   # as a script: src/ first, in place of this dir
+if __name__ == "__main__":  # as a script: src/ first, in place of this dir
     _HERE = os.path.dirname(os.path.realpath(__file__))
-    sys.path[:] = [os.path.dirname(_HERE), *(p for p in sys.path if os.path.realpath(p or os.curdir) != _HERE)]
+    sys.path[:] = [
+        os.path.dirname(_HERE),
+        *(p for p in sys.path if os.path.realpath(p or os.curdir) != _HERE),
+    ]
 
 import composer  # noqa: E402
 from composer import RunParams, Team  # noqa: E402
@@ -27,11 +31,16 @@ LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/ag
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="delegate")
-    ap.add_argument("--list", action="store_true",
-                    help="list each role, its destination type and tasks, with their sources")
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="list each role, its destination type and tasks, with their sources",
+    )
     ap.add_argument("--role")
     ap.add_argument("--task")
-    ap.add_argument("--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's")
+    ap.add_argument(
+        "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
+    )
     ap.add_argument("--out")
     ap.add_argument("--workdir")
     ap.add_argument("--repo")
@@ -56,8 +65,15 @@ def main(argv: list[str]) -> int:
             return 0
         config = composer.resolve(a.role, a.task, team=team)
         given = (config, a.task, sys.stdin.read() if a.input == "-" else a.input, a.workdir)
-        kw = {"runtime": a.runtime or config.runtime, "mode": a.mode, "sid": a.sid,
-              "resume": a.sid if a.resume else None, "out": a.out, "repo": a.repo, "team": team}
+        kw = {
+            "runtime": a.runtime or config.runtime,
+            "mode": a.mode,
+            "sid": a.sid,
+            "resume": a.sid if a.resume else None,
+            "out": a.out,
+            "repo": a.repo,
+            "team": team,
+        }
         if a.dry_run:
             print(json.dumps(_shown(plan(*given, **kw)), ensure_ascii=False, indent=1))
             return 0
@@ -80,8 +96,13 @@ def listing(team: Team) -> str:
     for role, tasks in composer.catalog(team).items():
         config = composer.resolve(role, team=team)
         composer.render(config, LIST_PARAMS, team=team)
-        lines.append(f"{role}  {config.output['type']}  {team.source(team.lookup('roles', role))}\n")
-        lines += [f"  {t}: {what}  [{team.source(team.lookup('tasks', t))}]\n" for t, what in tasks.items()]
+        lines.append(
+            f"{role}  {config.output['type']}  {team.source(team.lookup('roles', role))}\n"
+        )
+        lines += [
+            f"  {t}: {what}  [{team.source(team.lookup('tasks', t))}]\n"
+            for t, what in tasks.items()
+        ]
     return "".join(lines)
 
 
@@ -91,9 +112,19 @@ def _list_extra(argv: Sequence[str]) -> str | None:
 
 def _shown(p: Plan) -> dict:
     access = p.spec.access
-    return {"runtime": p.runtime, "mode": p.mode, "sid": p.sid, "resume": p.resume, "cwd": access.cwd,
-            "project": access.project, "dirs": access.dirs, "commands": access.commands, "tier": p.spec.tier,
-            "effort": p.spec.effort, "prompt": p.prompt}
+    return {
+        "runtime": p.runtime,
+        "mode": p.mode,
+        "sid": p.sid,
+        "resume": p.resume,
+        "cwd": access.cwd,
+        "project": access.project,
+        "dirs": access.dirs,
+        "commands": access.commands,
+        "tier": p.spec.tier,
+        "effort": p.spec.effort,
+        "prompt": p.prompt,
+    }
 
 
 def _begun(event) -> None:

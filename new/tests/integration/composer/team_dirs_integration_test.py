@@ -1,5 +1,6 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
 dir added; its catalog row; a read dir holding the team dir refused."""
+
 from new.tests import NEW
 from new.tests.integration.composer import child
 
@@ -18,11 +19,15 @@ TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(NEW, "core", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
-NOTE = (f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
-        "## Resume\n\nRedo step 2.\n")
-WRITER = ("# Writer\n\nYou write notes.\n\n## Tasks\n\n"
-          "Pick the task below that fits the input; unsure → `note` (`<tasks>/note.md`).\n\n"
-          "- `note` (`<tasks>/note.md`): a short note; always; light.\n")
+NOTE = (
+    f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
+    "## Resume\n\nRedo step 2.\n"
+)
+WRITER = (
+    "# Writer\n\nYou write notes.\n\n## Tasks\n\n"
+    "Pick the task below that fits the input; unsure → `note` (`<tasks>/note.md`).\n\n"
+    "- `note` (`<tasks>/note.md`): a short note; always; light.\n"
+)
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 CATALOG = """from utils.config_file import CONFIG, read_config
@@ -82,7 +87,9 @@ class TeamDirs(child.Case):
         rows = self.child(CATALOG, self.work)
         self.assertEqual(list(rows), ["researcher", "pm", "engineer", "dummy-tester", "writer"])
         note = ["a short note; always; light.", os.path.join(self.tasks, "note.md")]
-        self.assertEqual(rows["writer"], ["local", os.path.join(self.team, "roles", "writer.md"), {"note": note}])
+        self.assertEqual(
+            rows["writer"], ["local", os.path.join(self.team, "roles", "writer.md"), {"note": note}]
+        )
         self.assertEqual({row[1] for role, row in rows.items() if role != "writer"}, {"built-in"})
         self.assertEqual(os.listdir(self.work), [])
 
@@ -111,8 +118,13 @@ class TeamDirs(child.Case):
     def test_a_read_dir_holding_the_team_dir_is_refused(self):
         self.local(f"[roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
         got = self.compose("writer", "note")
-        self.assertEqual(got, {"error": f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
-                                        "run can write there"})
+        self.assertEqual(
+            got,
+            {
+                "error": f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
+                "run can write there"
+            },
+        )
 
 
 if __name__ == "__main__":

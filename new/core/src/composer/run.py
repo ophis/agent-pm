@@ -1,6 +1,7 @@
 """A role's run config (resolve: the core config, then the caller's overlays), one run's params and its runtime-neutral
 access intent (access). An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
 config as one."""
+
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -15,8 +16,22 @@ from composer.teams import Team, index, no_charter, role_tables, tasks_path, tea
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-RUN_KEYS = frozenset({"tier", "effort", "runtime", "read", "write", "commands", "templates", "output", "gate",
-                      "language", "show", "cwd"})
+RUN_KEYS = frozenset(
+    {
+        "tier",
+        "effort",
+        "runtime",
+        "read",
+        "write",
+        "commands",
+        "templates",
+        "output",
+        "gate",
+        "language",
+        "show",
+        "cwd",
+    }
+)
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
 
@@ -27,7 +42,7 @@ class RunConfig:
     task: str = ""
     tier: int
     effort: Effort
-    runtime: str = ""   # opaque: never compared with an Adapter's name
+    runtime: str = ""  # opaque: never compared with an Adapter's name
     output: dict
     read: list[str] = field(default_factory=list)
     write: list[str] = field(default_factory=list)
@@ -44,8 +59,14 @@ class RunConfig:
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort not in EFFORTS:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
-        if not isinstance(self.runtime, str) or not self.runtime.strip() or not self.runtime.isprintable():
-            raise ConfigError(f"runtime must be a non-empty one-line name, got {self.runtime!r:.80}")
+        if (
+            not isinstance(self.runtime, str)
+            or not self.runtime.strip()
+            or not self.runtime.isprintable()
+        ):
+            raise ConfigError(
+                f"runtime must be a non-empty one-line name, got {self.runtime!r:.80}"
+            )
         if "type" not in self.output:
             raise ConfigError("output.type is not set")
         if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:
@@ -54,8 +75,11 @@ class RunConfig:
             raise ConfigError("language must be one line of text")
         if self.show is not None and (not isinstance(self.show, str) or "\n" in self.show):
             raise ConfigError("show must be one line of shell command")
-        if self.cwd and (not isinstance(self.cwd, str) or not self.cwd.isprintable()
-                         or not os.path.isabs(os.path.expanduser(self.cwd))):
+        if self.cwd and (
+            not isinstance(self.cwd, str)
+            or not self.cwd.isprintable()
+            or not os.path.isabs(os.path.expanduser(self.cwd))
+        ):
             raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
 
 
@@ -93,13 +117,21 @@ def lookup(layer: Mapping, role: str, key: str):
 
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
     if old := sorted(OLD_KEYS & set(table)):
-        raise ConfigError(f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
-                          f"run keys in [{prefix}roles.{role}] (a run without a task picks one)")
+        raise ConfigError(
+            f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
+            f"run keys in [{prefix}roles.{role}] (a run without a task picks one)"
+        )
 
 
-def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] = (),
-            label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None,
-            config: str = CONFIG) -> RunConfig:
+def resolve(
+    role: str,
+    task: str | None = None,
+    *,
+    overlays: Sequence[Mapping] = (),
+    label: tuple[str, str] = ("run overlay", "overlay"),
+    team: Team | None = None,
+    config: str = CONFIG,
+) -> RunConfig:
     overlays, team = tuple(overlays), team_or_default(team)
     known = set(role_tables(config)) | {name for kind, name in team.files if kind == "roles"}
     if role not in known:
@@ -113,8 +145,14 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
     cfg = read_config(config, LOCAL)
     _check(cfg)
     values = _run_keys(cfg, role)
-    run = RunConfig(role=role, task=task or "", tier=values.pop("tier", None), effort=values.pop("effort", None),
-                    output=values.pop("output", {}), **values)
+    run = RunConfig(
+        role=role,
+        task=task or "",
+        tier=values.pop("tier", None),
+        effort=values.pop("effort", None),
+        output=values.pop("output", {}),
+        **values,
+    )
     for overlay in overlays:
         run = replace(run, **_run_keys(overlay, role))
     if not (charter := team.charter(role)):
@@ -122,7 +160,8 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
     tasks = index(role, team, config)
     if task and task not in tasks:
         raise team.misnamed_error("tasks", task) or ConfigError(
-            f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
+            f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
+        )
     return replace(run, role_title=title_of(*charter))
 
 
@@ -139,12 +178,21 @@ def bind(entry: str, repo_dir: str | None) -> str | None:
     return os.path.abspath(os.path.expanduser(entry))
 
 
-def access(run: RunConfig, workdir: str, *, cwd: str, project: bool, repo_dir: str | None = None,
-           team: Team | None = None) -> Intent:
+def access(
+    run: RunConfig,
+    workdir: str,
+    *,
+    cwd: str,
+    project: bool,
+    repo_dir: str | None = None,
+    team: Team | None = None,
+) -> Intent:
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
-    dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks_path(run.role, team)]
+    dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [
+        tasks_path(run.role, team)
+    ]
     methods, writes = os.path.join(team.root, "methods"), []
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
@@ -154,9 +202,14 @@ def access(run: RunConfig, workdir: str, *, cwd: str, project: bool, repo_dir: s
             if p and key == "write" and p not in writes:
                 writes.append(p)
     values = {"scripts": SRC, "workdir": workdir}
-    return Intent(dirs=tuple(dirs), writes=tuple(writes),
-                  commands=tuple(fill(c, values, "commands") for c in run.commands), gate=run.gate, cwd=cwd,
-                  project=project)
+    return Intent(
+        dirs=tuple(dirs),
+        writes=tuple(writes),
+        commands=tuple(fill(c, values, "commands") for c in run.commands),
+        gate=run.gate,
+        cwd=cwd,
+        project=project,
+    )
 
 
 def _check(cfg: Mapping) -> None:

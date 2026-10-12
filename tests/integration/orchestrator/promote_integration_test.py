@@ -38,7 +38,9 @@ class Tick(Flow):
         res = self.promote()
         self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
         self.assertEqual(self.requests()[-1].result, "503")
-        self.assertEqual(self.events(), [{"src": "promote", "kind": "linear-error", "op": op, "status": 503}])
+        self.assertEqual(
+            self.events(), [{"src": "promote", "kind": "linear-error", "op": op, "status": 503}]
+        )
 
     def assert_requests(self, writes, problems=()):
         self.assertEqual(self.problems(), list(problems))
@@ -50,15 +52,25 @@ class Tick(Flow):
 class Promote(Tick):
     def setUp(self):
         super().setUp()
-        now, researcher, human = datetime.now(UTC), self.ids[ACCOUNTS["researcher"]], self.ids[HUMAN]
-        self.fake.issue(TITLE, identifier=SOURCE, state="in_progress", assignee=researcher, project=PROJECT)
+        now, researcher, human = (
+            datetime.now(UTC),
+            self.ids[ACCOUNTS["researcher"]],
+            self.ids[HUMAN],
+        )
+        self.fake.issue(
+            TITLE, identifier=SOURCE, state="in_progress", assignee=researcher, project=PROJECT
+        )
         self.fake.move(SOURCE, "in_review", actor=researcher, at=now - timedelta(minutes=40))
         self.fake.comment(SOURCE, human, INSTRUCTIONS, at=now - timedelta(minutes=30))
         self.fake.move(SOURCE, "handoff", actor=human, at=now - timedelta(minutes=20))
         with self.fake.lock:
             source = self.fake.find(SOURCE)
             (said,), handoff = source["comments"], source["history"][-1]
-            self.source, self.url, name = source["id"], source["url"], self.fake.users[human]["name"]
+            self.source, self.url, name = (
+                source["id"],
+                source["url"],
+                self.fake.users[human]["name"],
+            )
             self.instructions = f"## Instructions\n{name}, {said['createdAt']}:\n{INSTRUCTIONS}"
             self.child = promote.child_id(source["id"], "pm", handoff["createdAt"])
 
@@ -67,23 +79,37 @@ class Promote(Tick):
             child = self.fake.find(self.child)
             self.assertIsNotNone(child, f"no issue {self.child}")
             child, relations = dict(child), list(self.fake.relations)
-        self.assertEqual((self.state(self.child), child["assignee"], child["project"], child["title"]),
-                         ("todo", self.ids[ACCOUNTS["pm"]], PROJECT, f"PRD: {TITLE}"))
-        self.assertEqual(child["description"].split("\n\n")[:2],
-                         [f"Handoff from {SOURCE}: {self.url}", self.instructions])
+        self.assertEqual(
+            (self.state(self.child), child["assignee"], child["project"], child["title"]),
+            ("todo", self.ids[ACCOUNTS["pm"]], PROJECT, f"PRD: {TITLE}"),
+        )
+        self.assertEqual(
+            child["description"].split("\n\n")[:2],
+            [f"Handoff from {SOURCE}: {self.url}", self.instructions],
+        )
         self.assertEqual(relations, [("related", self.source, self.child)])
         self.assertEqual(self.state(SOURCE), "done")
-        self.assertEqual(self.history(SOURCE), [("in_progress", "in_review", ACCOUNTS["researcher"]),
-                                                ("in_review", "handoff", HUMAN), ("handoff", "done", HARNESS_EMAIL)])
-        self.assertEqual(self.comments(SOURCE), [(HUMAN, INSTRUCTIONS),
-                                                 (HARNESS_EMAIL, f"Promoted to {child['identifier']}.")])
+        self.assertEqual(
+            self.history(SOURCE),
+            [
+                ("in_progress", "in_review", ACCOUNTS["researcher"]),
+                ("in_review", "handoff", HUMAN),
+                ("handoff", "done", HARNESS_EMAIL),
+            ],
+        )
+        self.assertEqual(
+            self.comments(SOURCE),
+            [(HUMAN, INSTRUCTIONS), (HARNESS_EMAIL, f"Promoted to {child['identifier']}.")],
+        )
         return child["identifier"]
 
     def test_handoff_to_a_child_issue(self):
         self.tick()
         child = self.assert_promoted()
         self.assert_requests(WRITES)
-        self.assertEqual(self.events(), [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
+        self.assertEqual(
+            self.events(), [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}]
+        )
 
     def assert_move_retried(self, failed):
         with self.fake.lock:
@@ -96,14 +122,19 @@ class Promote(Tick):
 
         self.tick()
         child = self.assert_promoted()
-        self.assertEqual(self.events(), [*before, {"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
+        self.assertEqual(
+            self.events(),
+            [*before, {"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}],
+        )
         self.assert_requests(WRITES[:3] + WRITES[2:], failed)
 
     def test_a_failed_move_is_retried_without_a_second_child(self):
         self.fake.fail("linear.M_STATE", "error", account=HARNESS_EMAIL)
         self.tick()
         [error] = self.events()
-        self.assertEqual((error["src"], error["kind"], error["issue"]), ("promote", "handoff-error", SOURCE))
+        self.assertEqual(
+            (error["src"], error["kind"], error["issue"]), ("promote", "handoff-error", SOURCE)
+        )
         self.assertIn("linear.M_STATE: injected error", error["error"])
         self.assert_move_retried([("linear.M_STATE", HARNESS_EMAIL, "error")])
 
@@ -120,22 +151,43 @@ class Promote(Tick):
 
         self.tick()
         child = self.assert_promoted()
-        self.assertEqual(self.events()[1:], [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}])
+        self.assertEqual(
+            self.events()[1:], [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}]
+        )
         self.assert_requests(WRITES, [("promote.Q_HANDOFF", HARNESS_EMAIL, "503")])
 
 
 class Prune(Tick):
     def git_init(self, path):
-        res = subprocess.run(["git", "init", "--quiet", path], env=self.env(), stdin=subprocess.DEVNULL,
-                             capture_output=True, text=True, timeout=TIMEOUT)
+        res = subprocess.run(
+            ["git", "init", "--quiet", path],
+            env=self.env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
 
     def test_prune_after_done(self):
         engineer = self.ids[ENGINEER]
-        done_id = self.fake.issue("ENG: Session registry", identifier=DONE, state="in_review", assignee=engineer,
-                                  project=PROJECT)["id"]
-        self.fake.move(DONE, "done", actor=self.ids[HUMAN], at=datetime.now(UTC) - timedelta(hours=25))
-        self.fake.issue("ENG: Session reaper", identifier=OPEN, state="in_progress", assignee=engineer, project=PROJECT)
+        done_id = self.fake.issue(
+            "ENG: Session registry",
+            identifier=DONE,
+            state="in_review",
+            assignee=engineer,
+            project=PROJECT,
+        )["id"]
+        self.fake.move(
+            DONE, "done", actor=self.ids[HUMAN], at=datetime.now(UTC) - timedelta(hours=25)
+        )
+        self.fake.issue(
+            "ENG: Session reaper",
+            identifier=OPEN,
+            state="in_progress",
+            assignee=engineer,
+            project=PROJECT,
+        )
         work = os.path.join(self.apm, "work")
         gone = [os.path.join(work, DONE, *p) for p in (CLONE, ("publish",), ("tmp",))]
         kept = os.path.join(work, OPEN, *CLONE)
@@ -157,10 +209,17 @@ class Prune(Tick):
         self.assertEqual(self.sent("prune.M_ARCHIVE"), [{"i": done_id}])
         self.assert_requests(["prune.M_ARCHIVE"])
         removed = (("src/acme/widgets", "clone"), ("publish", "clone"), ("tmp", "temp files"))
-        self.assertEqual(self.events(), [
-            {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": TUI},
-            *({"src": "prune", "kind": "prune-removed", "entry": f"{DONE}/{e}", "what": w} for e, w in removed),
-            {"src": "prune", "kind": "prune-archived", "issue": DONE}])
+        self.assertEqual(
+            self.events(),
+            [
+                {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": TUI},
+                *(
+                    {"src": "prune", "kind": "prune-removed", "entry": f"{DONE}/{e}", "what": w}
+                    for e, w in removed
+                ),
+                {"src": "prune", "kind": "prune-archived", "issue": DONE},
+            ],
+        )
 
 
 if __name__ == "__main__":

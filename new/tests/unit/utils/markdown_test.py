@@ -1,4 +1,5 @@
 """utils/markdown.py: unfenced lines and fenced blocks."""
+
 from new.tests import SRC  # noqa: F401
 
 import unittest
@@ -9,9 +10,13 @@ from utils.markdown import fenced, unfenced
 
 class Unfenced(unittest.TestCase):
     def test_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
-        for text, want in (("a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
-                            [(0, "a"), (12, "e")]),
-                           ("``\nx", [(0, "``"), (1, "x")])):
+        for text, want in (
+            (
+                "a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
+                [(0, "a"), (12, "e")],
+            ),
+            ("``\nx", [(0, "``"), (1, "x")]),
+        ):
             with self.subTest(text=text):
                 self.assertEqual(unfenced(text), want)
 
@@ -25,7 +30,9 @@ class Fenced(unittest.TestCase):
         self.assertEqual(fenced(text), [("agent-pm-outcome", "{}"), ("js", "x\ny"), ("", "")])
 
     def test_a_longer_closing_fence_closes(self):
-        self.assertEqual(fenced("```x\nbody\n`````\nafter\n```y\nz\n  ```  \n"), [("x", "body"), ("y", "z")])
+        self.assertEqual(
+            fenced("```x\nbody\n`````\nafter\n```y\nz\n  ```  \n"), [("x", "body"), ("y", "z")]
+        )
 
     def test_a_block_never_closed_runs_to_the_end(self):
         self.assertEqual(fenced("a\n````md\nx\n```\ny"), [("md", "x\n```\ny")])

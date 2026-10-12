@@ -1,4 +1,5 @@
 """The Composer's paths, its error and the text helpers its other modules share."""
+
 import os
 import re
 from collections.abc import Mapping
@@ -31,6 +32,7 @@ def fill(text: str, values: Mapping, where: str) -> str:
         if m.group(1) in values:
             return str(values[m.group(1)])
         return m.group(2) if m.group(2) is not None else m.group(0)
+
     out = PLACEHOLDER.sub(value, text)
     if m := PLACEHOLDER.search(out):
         raise ConfigError(f"unfilled placeholder {m.group(0)} in {where}")
@@ -53,7 +55,9 @@ def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
             section = explicit[1] if explicit else anchor(title)
             out.append((i, tuple(t for _, t in stack), section, True))
         elif m := BOLD_ITEM.match(line):
-            out.append((i, tuple(t for _, t in stack) + (re.sub(r"[:.]$", "", m[1]),), section, False))
+            out.append(
+                (i, tuple(t for _, t in stack) + (re.sub(r"[:.]$", "", m[1]),), section, False)
+            )
         last = (i, line)
     return out
 

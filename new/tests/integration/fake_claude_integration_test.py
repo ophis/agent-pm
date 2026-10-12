@@ -1,6 +1,7 @@
 """new/tests/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
 file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
 pipe, in a private tmux server's pane and under ClaudeTui's launch."""
+
 from new.tests import fake_claude, hermetic, live_tmux
 
 import glob
@@ -35,7 +36,9 @@ def said(content) -> str:
 
 
 def gone(pid: int) -> bool:
-    res = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=30)
+    res = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=30
+    )
     return res.stdout.strip() == "" or res.stdout.strip().startswith("Z")
 
 
@@ -46,10 +49,15 @@ class Case(unittest.TestCase):
         self.root = os.path.realpath(tmp.name)
         self.proj, self.config = os.path.join(self.root, "proj"), os.path.join(self.root, "config")
         os.mkdir(self.proj)
-        self.scenario, self.hooklog, self.log = (os.path.join(self.root, f) for f in ("scenario.json", "hooks.jsonl",
-                                                                                     "log.jsonl"))
-        self.env = {"PATH": "/usr/bin:/bin", "HOME": self.root, "CLAUDE_CONFIG_DIR": self.config,
-                    fake_claude.ENV: self.scenario}
+        self.scenario, self.hooklog, self.log = (
+            os.path.join(self.root, f) for f in ("scenario.json", "hooks.jsonl", "log.jsonl")
+        )
+        self.env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": self.root,
+            "CLAUDE_CONFIG_DIR": self.config,
+            fake_claude.ENV: self.scenario,
+        }
 
     def scene(self, **scenario) -> None:
         with open(self.scenario, "w", encoding="utf-8") as f:
@@ -67,12 +75,26 @@ class Case(unittest.TestCase):
         return self.run_argv((sys.executable, "-I", FAKE, *args), stdin)
 
     def run_argv(self, argv: tuple[str, ...], stdin: str = "") -> subprocess.CompletedProcess:
-        return subprocess.run(argv, cwd=self.proj, env=self.env, input=stdin, capture_output=True, text=True,
-                              timeout=60)
+        return subprocess.run(
+            argv,
+            cwd=self.proj,
+            env=self.env,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def popen(self, *args: str) -> subprocess.Popen:
-        proc = subprocess.Popen([sys.executable, "-I", FAKE, *args], cwd=self.proj, env=self.env,
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            [sys.executable, "-I", FAKE, *args],
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         self.addCleanup(self.reap, proc)
         return proc
 
@@ -112,19 +134,39 @@ class Case(unittest.TestCase):
 
 class BadScenario(Case):
     def test_a_bad_step_or_value_exits_1_before_the_session(self):
-        tui = [{"kind": "hook", "event": "Stop"}, {"kind": "dialog", "text": "x"}, {"kind": "limit", "text": "x"},
-               {"kind": "sleep", "seconds": 0}]
-        rows = [*({"steps": [step]} for step in tui),
-                {"steps": "x"}, {"steps": [1]}, {"steps": [{"kind": "nope"}]}, {"steps": [{"kind": "tool"}]},
-                {"steps": [{"kind": "tool", "name": 7}]}, {"steps": [{"kind": "tool", "name": "R", "x": 1}]},
-                {"steps": [{"kind": "limit"}]}, {"steps": [{"kind": "limit", "resets_at": "soon"}]},
-                {"steps": [{"kind": "limit", "resets_at": True}]}, {"steps": [{"kind": "write", "path": "a"}]},
-                {"steps": [{"kind": "write", "path": 1, "text": "x"}]},
-                {"steps": [{"kind": "write", "path": "", "text": "x"}]},
-                {"steps": [{"kind": "write", "path": "a", "text": None}]}, {"resume": "x"}, {"resume": [1]},
-                {"turns": "x"}, {"turns": ["x"]},
-                {"background": -1}, {"background": True}, {"rate_limit": []}, {"exit": "0"}, {"exit": True},
-                {"hang": 1}, {"log": 5}]
+        tui = [
+            {"kind": "hook", "event": "Stop"},
+            {"kind": "dialog", "text": "x"},
+            {"kind": "limit", "text": "x"},
+            {"kind": "sleep", "seconds": 0},
+        ]
+        rows = [
+            *({"steps": [step]} for step in tui),
+            {"steps": "x"},
+            {"steps": [1]},
+            {"steps": [{"kind": "nope"}]},
+            {"steps": [{"kind": "tool"}]},
+            {"steps": [{"kind": "tool", "name": 7}]},
+            {"steps": [{"kind": "tool", "name": "R", "x": 1}]},
+            {"steps": [{"kind": "limit"}]},
+            {"steps": [{"kind": "limit", "resets_at": "soon"}]},
+            {"steps": [{"kind": "limit", "resets_at": True}]},
+            {"steps": [{"kind": "write", "path": "a"}]},
+            {"steps": [{"kind": "write", "path": 1, "text": "x"}]},
+            {"steps": [{"kind": "write", "path": "", "text": "x"}]},
+            {"steps": [{"kind": "write", "path": "a", "text": None}]},
+            {"resume": "x"},
+            {"resume": [1]},
+            {"turns": "x"},
+            {"turns": ["x"]},
+            {"background": -1},
+            {"background": True},
+            {"rate_limit": []},
+            {"exit": "0"},
+            {"exit": True},
+            {"hang": 1},
+            {"log": 5},
+        ]
         for scenario in rows:
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
@@ -134,14 +176,23 @@ class BadScenario(Case):
                 self.assertFalse(os.path.exists(self.config))
 
     def test_a_bad_interactive_step_exits_1_before_the_session(self):
-        for scenario in ({"turns": [[1]]}, {"turns": [["ok"], [{"kind": "nope"}]]}, {"turns": [[{"kind": "hook"}]]},
-                         {"steps": [{"kind": "hook", "event": ""}]}, {"steps": [{"kind": "hook", "event": 7}]},
-                         {"steps": [{"kind": ["hook"], "event": "Stop"}]},
-                         {"steps": [{"kind": "limit", "resets_at": None}]}, {"steps": [{"kind": "limit", "text": 5}]},
-                         {"steps": [{"kind": "dialog"}]}, {"steps": [{"kind": "dialog", "text": "x", "y": 1}]},
-                         {"steps": [{"kind": "sleep", "seconds": -1}]}, {"steps": [{"kind": "sleep", "seconds": "1"}]},
-                         {"steps": [{"kind": "sleep", "seconds": True}]}, {"steps": [{"kind": "sleep"}]},
-                         {"steps": [{"kind": "write", "path": "a", "text": "x"}]}):
+        for scenario in (
+            {"turns": [[1]]},
+            {"turns": [["ok"], [{"kind": "nope"}]]},
+            {"turns": [[{"kind": "hook"}]]},
+            {"steps": [{"kind": "hook", "event": ""}]},
+            {"steps": [{"kind": "hook", "event": 7}]},
+            {"steps": [{"kind": ["hook"], "event": "Stop"}]},
+            {"steps": [{"kind": "limit", "resets_at": None}]},
+            {"steps": [{"kind": "limit", "text": 5}]},
+            {"steps": [{"kind": "dialog"}]},
+            {"steps": [{"kind": "dialog", "text": "x", "y": 1}]},
+            {"steps": [{"kind": "sleep", "seconds": -1}]},
+            {"steps": [{"kind": "sleep", "seconds": "1"}]},
+            {"steps": [{"kind": "sleep", "seconds": True}]},
+            {"steps": [{"kind": "sleep"}]},
+            {"steps": [{"kind": "write", "path": "a", "text": "x"}]},
+        ):
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
                 res = self.run_fake(*SESSION, "--", "hi")
@@ -152,21 +203,40 @@ class BadScenario(Case):
 
 class PrintMode(Case):
     def test_valid_steps(self):
-        self.scene(steps=["Hi.", {"kind": "tool", "name": "Read"}, {"kind": "limit", "resets_at": None},
-                          {"kind": "limit", "resets_at": 1.5}], turns=[[{"kind": "dialog", "text": "x"}]])
+        self.scene(
+            steps=[
+                "Hi.",
+                {"kind": "tool", "name": "Read"},
+                {"kind": "limit", "resets_at": None},
+                {"kind": "limit", "resets_at": 1.5},
+            ],
+            turns=[[{"kind": "dialog", "text": "x"}]],
+        )
         res = self.run_fake(*ARGS, "--settings", self.settings("UserPromptSubmit", "Stop"))
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual([json.loads(line)["type"] for line in res.stdout.splitlines()],
-                         ["system", "assistant", "assistant", "rate_limit_event", "assistant", "rate_limit_event",
-                          "assistant", "result"])
+        self.assertEqual(
+            [json.loads(line)["type"] for line in res.stdout.splitlines()],
+            [
+                "system",
+                "assistant",
+                "assistant",
+                "rate_limit_event",
+                "assistant",
+                "rate_limit_event",
+                "assistant",
+                "result",
+            ],
+        )
         self.assertEqual(self.fired(), [])
 
     def test_a_write_step_writes_its_file_under_the_cwd_then_the_next_step_runs(self):
         self.scene(steps=[{"kind": "write", "path": "sub/out.md", "text": "# Out\n"}, "After."])
         res = self.run_fake(*ARGS)
         self.assertEqual(self.result(res), "After.")
-        self.assertEqual([json.loads(line)["type"] for line in res.stdout.splitlines()],
-                         ["system", "assistant", "result"])
+        self.assertEqual(
+            [json.loads(line)["type"] for line in res.stdout.splitlines()],
+            ["system", "assistant", "result"],
+        )
         with open(os.path.join(self.proj, "sub", "out.md"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "# Out\n")
 
@@ -184,8 +254,16 @@ class Interactive(Case):
         res = self.run_fake(*SESSION, "--", "hello", stdin="line1\nline2\n")
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertEqual(res.stdout, "First.\nSecond.\n")
-        self.assertEqual(self.convo(), [("user", "hello"), ("assistant", "First."), ("user", "line1"),
-                                        ("assistant", "Second."), ("user", "line2")])
+        self.assertEqual(
+            self.convo(),
+            [
+                ("user", "hello"),
+                ("assistant", "First."),
+                ("user", "line1"),
+                ("assistant", "Second."),
+                ("user", "line2"),
+            ],
+        )
 
     def test_last_line_without_newline_is_a_line(self):
         self.scene()
@@ -201,8 +279,10 @@ class Interactive(Case):
         self.assertEqual(self.transcripts(), [])
         out, err = proc.communicate("go\nmore\n", timeout=30)
         self.assertEqual((proc.returncode, out), (2, "Hi.\nAgain.\n"), err)
-        self.assertEqual(self.convo(), [("user", "go"), ("assistant", "Hi."), ("user", "more"),
-                                        ("assistant", "Again.")])
+        self.assertEqual(
+            self.convo(),
+            [("user", "go"), ("assistant", "Hi."), ("user", "more"), ("assistant", "Again.")],
+        )
 
     def test_eof_before_any_turn(self):
         self.scene(exit=3)
@@ -237,9 +317,17 @@ class Interactive(Case):
     def test_orphaned_it_ends(self):
         self.scene()
         q = shlex.quote
-        parent = subprocess.Popen(["/bin/sh", "-c", f"exec 3<&0; {q(sys.executable)} -I {q(FAKE)} --session-id {SID} "
-                                                    "<&3 >/dev/null 2>&1 & wait"],
-                                  cwd=self.proj, env=self.env, stdin=subprocess.PIPE)
+        parent = subprocess.Popen(
+            [
+                "/bin/sh",
+                "-c",
+                f"exec 3<&0; {q(sys.executable)} -I {q(FAKE)} --session-id {SID} "
+                "<&3 >/dev/null 2>&1 & wait",
+            ],
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.PIPE,
+        )
         self.addCleanup(self.reap, parent)
         (line,) = live_tmux.wait(self.logged, what="the fake's log line")
         time.sleep(0.5)
@@ -251,38 +339,93 @@ class Interactive(Case):
 
 class Hooks(Case):
     def test_payloads_and_order(self):
-        self.scene(steps=[{"kind": "tool", "name": "Read"},
-                          {"kind": "hook", "event": "PermissionRequest", "tool_name": "Bash", "cwd": "/x", "n": [1]},
-                          "Done."],
-                   turns=[["Next."], []], background=2)
+        self.scene(
+            steps=[
+                {"kind": "tool", "name": "Read"},
+                {
+                    "kind": "hook",
+                    "event": "PermissionRequest",
+                    "tool_name": "Bash",
+                    "cwd": "/x",
+                    "n": [1],
+                },
+                "Done.",
+            ],
+            turns=[["Next."], []],
+            background=2,
+        )
         events = ("UserPromptSubmit", "PostToolUse", "PermissionRequest", "Stop")
-        res = self.run_fake(*SESSION, "--settings", self.settings(*events), "--", "hi", stdin="next\nlast\n")
+        res = self.run_fake(
+            *SESSION, "--settings", self.settings(*events), "--", "hi", stdin="next\nlast\n"
+        )
         self.assertEqual((res.returncode, res.stdout), (0, "Done.\nNext.\n"), res.stderr)
         (path,) = self.transcripts()
 
         def at(event: str, **fields) -> dict:
-            return {"session_id": SID, "transcript_path": path, "cwd": self.proj, "hook_event_name": event, **fields}
+            return {
+                "session_id": SID,
+                "transcript_path": path,
+                "cwd": self.proj,
+                "hook_event_name": event,
+                **fields,
+            }
 
         def stop(last: str) -> dict:
-            return at("Stop", stop_hook_active=False, last_assistant_message=last, background_tasks=[{}, {}])
+            return at(
+                "Stop",
+                stop_hook_active=False,
+                last_assistant_message=last,
+                background_tasks=[{}, {}],
+            )
 
         fired = self.fired()
-        self.assertEqual(fired, [at("UserPromptSubmit", prompt="hi"), at("PostToolUse", tool_name="Read"),
-                                 at("PermissionRequest", tool_name="Bash", cwd="/x", n=[1]), stop("Done."),
-                                 at("UserPromptSubmit", prompt="next"), stop("Next."),
-                                 at("UserPromptSubmit", prompt="last"), stop("")])
+        self.assertEqual(
+            fired,
+            [
+                at("UserPromptSubmit", prompt="hi"),
+                at("PostToolUse", tool_name="Read"),
+                at("PermissionRequest", tool_name="Bash", cwd="/x", n=[1]),
+                stop("Done."),
+                at("UserPromptSubmit", prompt="next"),
+                stop("Next."),
+                at("UserPromptSubmit", prompt="last"),
+                stop(""),
+            ],
+        )
         self.assertIs(fired[3]["stop_hook_active"], False)
-        self.assertEqual(self.convo(), [("user", "hi"), ("assistant", "tool_use Read"), ("assistant", "Done."),
-                                        ("user", "next"), ("assistant", "Next."), ("user", "last")])
+        self.assertEqual(
+            self.convo(),
+            [
+                ("user", "hi"),
+                ("assistant", "tool_use Read"),
+                ("assistant", "Done."),
+                ("user", "next"),
+                ("assistant", "Next."),
+                ("user", "last"),
+            ],
+        )
 
     def test_matchers_and_malformed_entries(self):
         tag = self.tag
-        entries = [{"matcher": "^x$", "hooks": [tag("skipped")]}, {"matcher": None, "hooks": [tag("null")]}, "text",
-                   {"matcher": "*"}, {"hooks": "no list"},
-                   {"hooks": ["text", {"type": "command"}, {**tag("http"), "type": "http"},
-                              {**tag("five"), "command": 5}]},
-                   {"matcher": "*", "hooks": [tag("star")]}, {"matcher": "", "hooks": [tag("empty")]},
-                   {"hooks": [tag("absent")]}, {"hooks": [tag("a"), tag("b")]}]
+        entries = [
+            {"matcher": "^x$", "hooks": [tag("skipped")]},
+            {"matcher": None, "hooks": [tag("null")]},
+            "text",
+            {"matcher": "*"},
+            {"hooks": "no list"},
+            {
+                "hooks": [
+                    "text",
+                    {"type": "command"},
+                    {**tag("http"), "type": "http"},
+                    {**tag("five"), "command": 5},
+                ]
+            },
+            {"matcher": "*", "hooks": [tag("star")]},
+            {"matcher": "", "hooks": [tag("empty")]},
+            {"hooks": [tag("absent")]},
+            {"hooks": [tag("a"), tag("b")]},
+        ]
         self.scene()
         settings = json.dumps({"hooks": {"Stop": entries, "UserPromptSubmit": "not a list"}})
         res = self.run_fake("hi", *SESSION, "--settings", settings)
@@ -293,22 +436,40 @@ class Hooks(Case):
         def entry(matcher: str, name: str) -> dict:
             return {"matcher": matcher, "hooks": [self.tag(name)]}
 
-        hooks = {"PostToolUse": [entry("^Rea", "rea"), entry("Edit|Write", "edit"), entry("(", "bad")],
-                 "Notification": [entry(ClaudeTui.MATCHER, "note")], "PermissionRequest": [entry("Bash", "ask")]}
-        self.scene(steps=[*({"kind": "tool", "name": n} for n in ("Read", "Write", "Grep", "Bread")),
-                          *({"kind": "hook", "event": "Notification", "notification_type": t}
-                            for t in ("idle_prompt", "permission_prompt", "idle_prompt_x")),
-                          {"kind": "hook", "event": "Notification"},
-                          *({"kind": "hook", "event": "PermissionRequest", "tool_name": n} for n in ("Read", "Bash"))])
+        hooks = {
+            "PostToolUse": [entry("^Rea", "rea"), entry("Edit|Write", "edit"), entry("(", "bad")],
+            "Notification": [entry(ClaudeTui.MATCHER, "note")],
+            "PermissionRequest": [entry("Bash", "ask")],
+        }
+        self.scene(
+            steps=[
+                *({"kind": "tool", "name": n} for n in ("Read", "Write", "Grep", "Bread")),
+                *(
+                    {"kind": "hook", "event": "Notification", "notification_type": t}
+                    for t in ("idle_prompt", "permission_prompt", "idle_prompt_x")
+                ),
+                {"kind": "hook", "event": "Notification"},
+                *(
+                    {"kind": "hook", "event": "PermissionRequest", "tool_name": n}
+                    for n in ("Read", "Bash")
+                ),
+            ]
+        )
         res = self.run_fake("hi", *SESSION, "--settings", json.dumps({"hooks": hooks}))
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(live_tmux.events(self.hooklog), ["rea", "edit", "note", "ask"])
 
     def test_failing_hooks_do_not_stop_the_fake(self):
         marker = shlex.quote(self.hooklog)
-        commands = ["exit 1", "cat >/dev/null; kill -9 $$", "no-such-command-anywhere", f"echo after >> {marker}"]
-        settings = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": c}
-                                                             for c in commands]}]}})
+        commands = [
+            "exit 1",
+            "cat >/dev/null; kill -9 $$",
+            "no-such-command-anywhere",
+            f"echo after >> {marker}",
+        ]
+        settings = json.dumps(
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": c} for c in commands]}]}}
+        )
         self.scene(steps=["Hi."])
         res = self.run_fake("hi", *SESSION, "--settings", settings, stdin="again\n")
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -316,11 +477,19 @@ class Hooks(Case):
         self.assertEqual(self.users(), ["hi", "again"])
 
     def test_cwd_env_stdout_and_stderr(self):
-        command = 'echo "$PWD $MARK" >> ' + shlex.quote(self.hooklog) + "; echo to-stdout; echo to-stderr >&2"
+        command = (
+            'echo "$PWD $MARK" >> '
+            + shlex.quote(self.hooklog)
+            + "; echo to-stdout; echo to-stderr >&2"
+        )
         self.env["MARK"] = "m"
         self.scene()
-        res = self.run_fake("hi", *SESSION, "--settings", json.dumps(
-            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}))
+        res = self.run_fake(
+            "hi",
+            *SESSION,
+            "--settings",
+            json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}),
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(live_tmux.events(self.hooklog), [f"{self.proj} m"])
         self.assertNotIn("to-stdout", res.stdout)
@@ -337,24 +506,34 @@ class Hooks(Case):
 class Steps(Case):
     def test_a_dialog_prints_and_waits_for_its_answer(self):
         self.scene(steps=[{"kind": "dialog", "text": TRUST}, "Hi."], turns=[["Again."]])
-        proc = self.popen(*SESSION, "--settings", self.settings("UserPromptSubmit", "Stop"), "--", "hello")
+        proc = self.popen(
+            *SESSION, "--settings", self.settings("UserPromptSubmit", "Stop"), "--", "hello"
+        )
         self.assertEqual(proc.stdout.readline(), TRUST + "\n")
         time.sleep(0.5)
         self.assertEqual(self.names(), ["UserPromptSubmit"])
         out, err = proc.communicate("yes\nmore\n", timeout=30)
         self.assertEqual((proc.returncode, out), (0, "Hi.\nAgain.\n"), err)
         self.assertEqual(self.names(), ["UserPromptSubmit", "Stop", "UserPromptSubmit", "Stop"])
-        self.assertEqual(self.convo(), [("user", "hello"), ("assistant", "Hi."), ("user", "more"),
-                                        ("assistant", "Again.")])
+        self.assertEqual(
+            self.convo(),
+            [("user", "hello"), ("assistant", "Hi."), ("user", "more"), ("assistant", "Again.")],
+        )
 
     def test_eof_at_a_dialog_exits_with_exit(self):
         self.scene(steps=[{"kind": "dialog", "text": TRUST}, "Hi."], exit=4)
         res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")
-        self.assertEqual((res.returncode, res.stdout, self.fired()), (4, TRUST + "\n", []), res.stderr)
+        self.assertEqual(
+            (res.returncode, res.stdout, self.fired()), (4, TRUST + "\n", []), res.stderr
+        )
 
     def test_a_limit_ends_the_turn_without_stop(self):
-        self.scene(steps=["Working.", {"kind": "limit", "text": LIMIT}, "Skipped."], turns=[["After."]])
-        proc = self.popen(*SESSION, "--settings", self.settings("UserPromptSubmit", "Stop"), "--", "hello")
+        self.scene(
+            steps=["Working.", {"kind": "limit", "text": LIMIT}, "Skipped."], turns=[["After."]]
+        )
+        proc = self.popen(
+            *SESSION, "--settings", self.settings("UserPromptSubmit", "Stop"), "--", "hello"
+        )
         self.assertEqual([proc.stdout.readline() for _ in range(2)], ["Working.\n", LIMIT + "\n"])
         time.sleep(0.5)
         self.assertIsNone(proc.poll())
@@ -362,8 +541,15 @@ class Steps(Case):
         out, err = proc.communicate("again\n", timeout=30)
         self.assertEqual((proc.returncode, out), (0, "After.\n"), err)
         self.assertEqual(self.names(), ["UserPromptSubmit", "UserPromptSubmit", "Stop"])
-        self.assertEqual(self.convo(), [("user", "hello"), ("assistant", "Working."), ("user", "again"),
-                                        ("assistant", "After.")])
+        self.assertEqual(
+            self.convo(),
+            [
+                ("user", "hello"),
+                ("assistant", "Working."),
+                ("user", "again"),
+                ("assistant", "After."),
+            ],
+        )
 
     def test_sleep(self):
         self.scene(steps=[{"kind": "sleep", "seconds": 0.5}, "Hi."])
@@ -378,12 +564,28 @@ class Pane(Case):
         server = live_tmux.Server(self, os.path.dirname(hermetic.home(self)))
         server.start("mgr")
         self.scene(steps=["Hi."], turns=[["Again."]])
-        hook = {"type": "command",
-                "command": f'printf "%s %s\\n" "$TMUX_PANE" "$(cat)" >> {shlex.quote(self.hooklog)}'}
-        res = server.tmux("new-session", "-d", "-s", "fake", "-c", self.proj,
-                          "-e", f"{fake_claude.ENV}={self.scenario}", "-e", f"CLAUDE_CONFIG_DIR={self.config}",
-                          "claude", *SESSION, "--settings", json.dumps({"hooks": {"Stop": [{"hooks": [hook]}]}}),
-                          "--", "hello")
+        hook = {
+            "type": "command",
+            "command": f'printf "%s %s\\n" "$TMUX_PANE" "$(cat)" >> {shlex.quote(self.hooklog)}',
+        }
+        res = server.tmux(
+            "new-session",
+            "-d",
+            "-s",
+            "fake",
+            "-c",
+            self.proj,
+            "-e",
+            f"{fake_claude.ENV}={self.scenario}",
+            "-e",
+            f"CLAUDE_CONFIG_DIR={self.config}",
+            "claude",
+            *SESSION,
+            "--settings",
+            json.dumps({"hooks": {"Stop": [{"hooks": [hook]}]}}),
+            "--",
+            "hello",
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         pane = server.inside("fake")["TMUX_PANE"]
 
@@ -396,7 +598,9 @@ class Pane(Case):
             self.assertEqual(server.tmux("send-keys", "-t", "=fake:", *keys).returncode, 0)
         (first, one), (second, two) = live_tmux.wait(lambda: stops(2), what="turn 2's Stop")
         self.assertEqual((first, second), (pane, pane))
-        self.assertEqual((one["last_assistant_message"], two["last_assistant_message"]), ("Hi.", "Again."))
+        self.assertEqual(
+            (one["last_assistant_message"], two["last_assistant_message"]), ("Hi.", "Again.")
+        )
         screen = server.tmux("capture-pane", "-p", "-t", "=fake:").stdout
         self.assertLess(screen.index("Hi."), screen.index("next"))
         self.assertLess(screen.index("next"), screen.index("Again."))
@@ -413,17 +617,40 @@ class ClaudeTuiLaunch(Case):
         patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config})
         patch.start()
         self.addCleanup(patch.stop)
-        tui = ClaudeAdapter({"flags": ["--permission-mode", "auto", "--strict-mcp-config"], "allow": ["Read"],
-                             "tiers": {"1": "m"}, "efforts": {"high": "h"}}).tui()
-        spec = Spec(workdir=self.proj, sid=SID, tier=1, effort="high",
-                    access=Access(dirs=(self.root,), commands=("git status",), project=True))
+        tui = ClaudeAdapter(
+            {
+                "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
+                "allow": ["Read"],
+                "tiers": {"1": "m"},
+                "efforts": {"high": "h"},
+            }
+        ).tui()
+        spec = Spec(
+            workdir=self.proj,
+            sid=SID,
+            tier=1,
+            effort="high",
+            access=Access(dirs=(self.root,), commands=("git status",), project=True),
+        )
         q = shlex.quote(self.hooklog)
         hook = ("/bin/sh", "-c", f'printf "%s " "$0" >> {q}; cat >> {q}; echo >> {q}')
-        self.scene(steps=[{"kind": "tool", "name": "Read"},
-                          {"kind": "hook", "event": "PermissionRequest", "tool_name": "Bash"},
-                          *({"kind": "hook", "event": "Notification", "notification_type": t, "message": "Needs you"}
-                            for t in ("idle_prompt", "permission_prompt")), "Done."],
-                   background=1)
+        self.scene(
+            steps=[
+                {"kind": "tool", "name": "Read"},
+                {"kind": "hook", "event": "PermissionRequest", "tool_name": "Bash"},
+                *(
+                    {
+                        "kind": "hook",
+                        "event": "Notification",
+                        "notification_type": t,
+                        "message": "Needs you",
+                    }
+                    for t in ("idle_prompt", "permission_prompt")
+                ),
+                "Done.",
+            ],
+            background=1,
+        )
         new, resume = tui.launch("do it", spec, False, hook), tui.launch("", spec, True, hook)
         self.assertEqual(new.argv[-2:], ("--", "do it"))
         res = self.run_argv(new.argv)
@@ -433,15 +660,33 @@ class ClaudeTuiLaunch(Case):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(self.users(), ["do it", "more"])
         labels = [line.split(" ", 1) for line in live_tmux.events(self.hooklog) if line]
-        self.assertEqual([label for label, _ in labels],
-                         ["UserPromptSubmit", "PostToolUse", "PermissionRequest", "Notification", "Stop",
-                          "UserPromptSubmit", "Stop"])
+        self.assertEqual(
+            [label for label, _ in labels],
+            [
+                "UserPromptSubmit",
+                "PostToolUse",
+                "PermissionRequest",
+                "Notification",
+                "Stop",
+                "UserPromptSubmit",
+                "Stop",
+            ],
+        )
         payloads = {label: json.loads(payload) for label, payload in labels[:5]}
         self.assertEqual(payloads["Notification"]["notification_type"], "permission_prompt")
-        self.assertEqual((tui.activity(payloads["PostToolUse"]), tui.blocked_reason(payloads["PermissionRequest"]),
-                          tui.blocked_reason(payloads["Notification"])), ("Read", "Bash", "Needs you"))
+        self.assertEqual(
+            (
+                tui.activity(payloads["PostToolUse"]),
+                tui.blocked_reason(payloads["PermissionRequest"]),
+                tui.blocked_reason(payloads["Notification"]),
+            ),
+            ("Read", "Bash", "Needs you"),
+        )
         stop = payloads["Stop"]
-        self.assertEqual((tui.reply(stop), tui.pending(stop), stop["transcript_path"]), ("Done.", 1, new.transcript))
+        self.assertEqual(
+            (tui.reply(stop), tui.pending(stop), stop["transcript_path"]),
+            ("Done.", 1, new.transcript),
+        )
 
 
 if __name__ == "__main__":

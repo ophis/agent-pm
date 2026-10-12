@@ -1,6 +1,7 @@
 """One role's run to its Result: the Driver session's events handled as they come; an invalid outcome gets one fix
 resume of the same session, a usage limit ends the run; the deliverable is saved to `out`. Records go to
 <workdir>/run.jsonl; `result` and `end` however the run ends. A Mode's policy (POLICIES) starts the session."""
+
 import os
 import sys
 from collections.abc import Callable
@@ -16,14 +17,17 @@ from delegate.outcome import read as read_outcome
 from delegate.plan import ConfigError, Plan, plan
 from delegate.reply import marks, outcome_block
 
-IDLE_TIMEOUT = 2 * 60 * 60   # seconds
-FIX = ("The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
-       f"{OUTCOME} block; change nothing else.")
+IDLE_TIMEOUT = 2 * 60 * 60  # seconds
+FIX = (
+    "The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
+    f"{OUTCOME} block; change nothing else."
+)
 
 
 @dataclass(frozen=True)
 class Limit:
     """resets_at: epoch seconds, None when not given."""
+
     resets_at: float | None
 
 
@@ -56,8 +60,15 @@ Event = Begun | Progress | Finished
 
 class Headless:
     def start(self, p: Plan) -> api.Handle:
-        return api.start(p.runtime, p.mode, p.prompt, p.spec, resume=p.sid if p.resume else None,
-                         sid=None if p.resume else p.sid, idle_timeout=IDLE_TIMEOUT)
+        return api.start(
+            p.runtime,
+            p.mode,
+            p.prompt,
+            p.spec,
+            resume=p.sid if p.resume else None,
+            sid=None if p.resume else p.sid,
+            idle_timeout=IDLE_TIMEOUT,
+        )
 
     def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
         return api.start(p.runtime, p.mode, text, p.spec, resume=p.sid, idle_timeout=IDLE_TIMEOUT)
@@ -75,27 +86,59 @@ def _say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
-def run(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime: str, mode: str,
-        sid: str | None = None, resume: str | None = None, name: str | None = None, events: str | None = None,
-        on_event: Callable[[Event], None] | None = None, out: str | None = None, repo: str | None = None,
-        cwd: str | None = None, team: Team | None = None) -> Result:
+def run(
+    run: RunConfig,
+    task: str | None,
+    input: str,
+    workdir: str,
+    *,
+    runtime: str,
+    mode: str,
+    sid: str | None = None,
+    resume: str | None = None,
+    name: str | None = None,
+    events: str | None = None,
+    on_event: Callable[[Event], None] | None = None,
+    out: str | None = None,
+    repo: str | None = None,
+    cwd: str | None = None,
+    team: Team | None = None,
+) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
     the session and propagates."""
-    p = plan(run, task, input, workdir, runtime=runtime, mode=mode, sid=sid, resume=resume, name=name, events=events,
-             out=out, repo=repo, cwd=cwd, team=team)
+    p = plan(
+        run,
+        task,
+        input,
+        workdir,
+        runtime=runtime,
+        mode=mode,
+        sid=sid,
+        resume=resume,
+        name=name,
+        events=events,
+        out=out,
+        repo=repo,
+        cwd=cwd,
+        team=team,
+    )
     attempts = _Attempts(p, on_event or (lambda event: None))
     try:
         result = attempts.result()
     except BaseException as e:
         if not attempts.refused:
             text = " ".join(str(e).split())
-            attempts.close({"error": f"stopped: {type(e).__name__}" + (f": {text}" if text else "")},
-                           e.code if isinstance(e, SystemExit) and isinstance(e.code, int) else 1)
+            attempts.close(
+                {"error": f"stopped: {type(e).__name__}" + (f": {text}" if text else "")},
+                e.code if isinstance(e, SystemExit) and isinstance(e.code, int) else 1,
+            )
         raise
     closing = {"error": result.error}
     if result.outcome is not None:
-        closing = {"outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"},
-                   **({"error": result.error} if result.error else {})}
+        closing = {
+            "outcome": {k: v for k, v in asdict(result.outcome).items() if k != "deliverable"},
+            **({"error": result.error} if result.error else {}),
+        }
     attempts.close(closing, result.returncode)
     return result
 
@@ -112,7 +155,7 @@ class _Attempts:
         self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.mode]()
         self.channel = api.records.path(p.spec.workdir)
         self.seen: set[str] = set()
-        self.refused = False   # the Driver refused the start: nothing to close
+        self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
         api.records.note(self.channel, kind, **fields)
@@ -172,7 +215,9 @@ class _Attempts:
     def drop_stale_out(self) -> str:
         """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
         p = self.plan
-        if p.out and not p.resume and not os.path.isdir(p.out):   # a resume keeps its session's draft
+        if (
+            p.out and not p.resume and not os.path.isdir(p.out)
+        ):  # a resume keeps its session's draft
             try:
                 Path(p.out).unlink(missing_ok=True)
             except OSError as e:
@@ -212,7 +257,9 @@ class _Attempts:
     def finish(self, outcome: Outcome, rc: int) -> Result:
         p, kind = self.plan, self.plan.run.output["type"]
         if kind in SAVES_DELIVERABLE and outcome.deliverable and p.out:
-            if not api.records.holds(p.out, outcome.deliverable):   # else the agent run wrote it there
+            if not api.records.holds(
+                p.out, outcome.deliverable
+            ):  # else the agent run wrote it there
                 save(p.out, outcome.deliverable)
             if kind == "local":
                 outcome = replace(outcome, url=p.out)

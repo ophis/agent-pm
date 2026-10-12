@@ -50,7 +50,9 @@ def get(name: str, root: str, *, module: ModuleType | None = None) -> Client:
         raise ConfigError(f"client {name!r} config: {e}") from e
 
 
-def definition(name: str, root: str, *, module: ModuleType | None = None) -> tuple[type[Client], dict]:
+def definition(
+    name: str, root: str, *, module: ModuleType | None = None
+) -> tuple[type[Client], dict]:
     module = module if module is not None else load_module(name)
     table = dict(load_config(name, root))
     class_name = table.pop("implementation", None)
@@ -89,8 +91,14 @@ def loaded(root: str) -> dict[str, type[Client]]:
 
 
 def caller(env: Mapping[str, str], classes: Mapping[str, type[Client]]) -> str | None:
-    found = [(name, cls.session_env) for name, cls in classes.items() if cls.session_env and cls.session_env in env]
+    found = [
+        (name, cls.session_env)
+        for name, cls in classes.items()
+        if cls.session_env and cls.session_env in env
+    ]
     if len(found) > 1:
-        raise ConfigError("the caller runs inside more than one client's session "
-                          f"({', '.join(f'{name}: {key}' for name, key in found)}): pass --client")
+        raise ConfigError(
+            "the caller runs inside more than one client's session "
+            f"({', '.join(f'{name}: {key}' for name, key in found)}): pass --client"
+        )
     return found[0][0] if found else None

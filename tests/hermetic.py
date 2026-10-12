@@ -12,7 +12,10 @@ import repo  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORE = os.path.realpath(os.path.join(HERE, "..", "core"))
-HIDDEN = {os.path.realpath(os.path.expanduser(p)) for p in (repo.LOCAL, "~/.agent-pm/orchestrator.local.toml")}
+HIDDEN = {
+    os.path.realpath(os.path.expanduser(p))
+    for p in (repo.LOCAL, "~/.agent-pm/orchestrator.local.toml")
+}
 FIXTURE = os.path.join(HERE, "core.local.fixture.toml")
 _isfile, _read = os.path.isfile, repo.read_config
 
@@ -36,5 +39,7 @@ def home(case) -> str:
     return path
 
 
-mock.patch("os.path.isfile", lambda path: _isfile(path) and os.path.realpath(path) not in HIDDEN).start()
+mock.patch(
+    "os.path.isfile", lambda path: _isfile(path) and os.path.realpath(path) not in HIDDEN
+).start()
 mock.patch.object(repo, "read_config", read_config).start()

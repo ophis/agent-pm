@@ -17,6 +17,7 @@ assigned to role accounts, then starts it through the outer; each step: CLAUDE.m
 
 Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none.
 """
+
 import argparse
 import contextlib
 import fcntl
@@ -80,13 +81,26 @@ KEEP = timedelta(days=7)
 SKEW = timedelta(minutes=5)
 MAX_5H = 0.9
 BRAKE_5H = 0.8
-PROBE = ["claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
-         "--setting-sources", "user", "--strict-mcp-config"]
+PROBE = [
+    "claude",
+    "-p",
+    "Reply with OK.",
+    "--model",
+    "haiku",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--setting-sources",
+    "user",
+    "--strict-mcp-config",
+]
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = ("usage: router.py [--now] [--dry-run] [--issue ID] "
-         "[--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]] | --brake")
+USAGE = (
+    "usage: router.py [--now] [--dry-run] [--issue ID] "
+    "[--tui [--split right|below] [--split-from SESSION] [--events FILE] [--manager NAME]] | --brake"
+)
 RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode")
 DONE = {"completed", "canceled", "duplicate"}
@@ -100,8 +114,16 @@ Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
 def parse_line(line):
     try:
         d = json.loads(line)
-        if d["kind"] in ("start", "resume") and all(isinstance(d[k], str) for k in ("issue", "sid", "role")):
-            return datetime.fromisoformat(d["ts"]).astimezone(UTC), d["kind"], d["issue"], d["sid"], d["role"]
+        if d["kind"] in ("start", "resume") and all(
+            isinstance(d[k], str) for k in ("issue", "sid", "role")
+        ):
+            return (
+                datetime.fromisoformat(d["ts"]).astimezone(UTC),
+                d["kind"],
+                d["issue"],
+                d["sid"],
+                d["role"],
+            )
     except (ValueError, TypeError, KeyError, OverflowError):
         pass
 
@@ -135,7 +157,9 @@ def sid_times(entries, sid):
 
 
 def first_line_time(entries, sid):
-    return next((e[0] for e in entries if e[3] == sid and e[1] == "start"), sid_times(entries, sid)[0])
+    return next(
+        (e[0] for e in entries if e[3] == sid and e[1] == "start"), sid_times(entries, sid)[0]
+    )
 
 
 def attempt_count(entries, issue, since=None):
@@ -185,8 +209,11 @@ def rank(issue):
 
 def blockers(issue):
     nodes = [n for n in issue["inverseRelations"]["nodes"] if n["type"] == "blocks"]
-    return [n["issue"]["identifier"] if n.get("issue") else UNREADABLE for n in nodes
-            if not n.get("issue") or n["issue"]["state"]["type"] not in DONE]
+    return [
+        n["issue"]["identifier"] if n.get("issue") else UNREADABLE
+        for n in nodes
+        if not n.get("issue") or n["issue"]["state"]["type"] not in DONE
+    ]
 
 
 def task_for(labels, group, role, role_tasks, label_tasks):
@@ -194,14 +221,22 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     if not found:
         return None, None
     if len(found) > 1:
-        return None, f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+        return (
+            None,
+            f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo.",
+        )
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
-        return None, f'Task label "{name}" is not in {LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+        return (
+            None,
+            f'Task label "{name}" is not in {LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.',
+        )
     if task not in role_tasks:
-        return None, (f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
-                      "Fix the label or the assignee, then move the issue back to Todo.")
+        return None, (
+            f'Task label "{name}" is not one of {role}\'s tasks ({", ".join(role_tasks)}). '
+            "Fix the label or the assignee, then move the issue back to Todo."
+        )
     return task, None
 
 
@@ -218,11 +253,22 @@ def gate(lines, max_5h=MAX_5H):
         return False, "no rate_limit_event"
     windows = info.get("unifiedWindows") or {}
     five = (windows.get("five_hour") or {}).get("utilization")
-    week = {k: v.get("utilization") for k, v in windows.items() if k.startswith("seven_day") and isinstance(v, dict)}
-    summary = " ".join([f"status={info.get('status')}", f"five_hour={five}"] + [f"{k}={v}" for k, v in sorted(week.items())])
+    week = {
+        k: v.get("utilization")
+        for k, v in windows.items()
+        if k.startswith("seven_day") and isinstance(v, dict)
+    }
+    summary = " ".join(
+        [f"status={info.get('status')}", f"five_hour={five}"]
+        + [f"{k}={v}" for k, v in sorted(week.items())]
+    )
     if five is None:
         return False, summary
-    ok = info.get("status") != "rejected" and five < max_5h and all(v is None or v < 1 for v in week.values())
+    ok = (
+        info.get("status") != "rejected"
+        and five < max_5h
+        and all(v is None or v < 1 for v in week.values())
+    )
     return ok, summary
 
 
@@ -233,8 +279,10 @@ def probe(sh, max_5h=MAX_5H):
 
 
 def q_issues(fields=""):
-    return ("query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-            "updatedAt project { id name } assignee { id email } " + fields + " } } }")
+    return (
+        "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+        "updatedAt project { id name } assignee { id email } " + fields + " } } }"
+    )
 
 
 class Board:
@@ -244,7 +292,10 @@ class Board:
         self.hist, self.ready, self.blocked, self.live = {}, None, {}, set()
         self.runs = runnable(cfg, root)
         self.stage = stage_order(cfg)
-        self.group, self.label_tasks = cfg["task_label_group"], {i: task for task, i in cfg["task_labels"].items()}
+        self.group, self.label_tasks = (
+            cfg["task_label_group"],
+            {i: task for task, i in cfg["task_labels"].items()},
+        )
         t = team(gql, cfg)
         task_group(gql, cfg)
         self.team, self.states = t.id, t.states
@@ -253,8 +304,12 @@ class Board:
         self.roles = role_ids(gql, self.runs)
 
     def issues(self, state, fields=""):
-        flt = {"team": {"id": {"eq": self.team}}, "project": {"null": False},
-               "assignee": {"id": {"in": list(self.roles)}}, "state": {"id": {"eq": self.states[state]}}}
+        flt = {
+            "team": {"id": {"eq": self.team}},
+            "project": {"null": False},
+            "assignee": {"id": {"in": list(self.roles)}},
+            "state": {"id": {"eq": self.states[state]}},
+        }
         return self.gql(q_issues(fields), f=flt)["issues"]["nodes"]
 
     def todo(self):
@@ -291,11 +346,19 @@ class Board:
     def last_move(self, issue, state, by_user=False):
         if issue["id"] not in self.hist:
             self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
-        return linear.last_move(self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None)
+        return linear.last_move(
+            self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
+        )
 
     def attempts(self, issue):
         n = attempt_count(self.entries, issue["identifier"])
-        return n if n < CAP else attempt_count(self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True))
+        return (
+            n
+            if n < CAP
+            else attempt_count(
+                self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True)
+            )
+        )
 
     def current_sid(self, issue):
         sid = latest_sid(self.entries, issue["identifier"])
@@ -307,33 +370,61 @@ class Board:
     def comment_and_move(self, issue, body, state, frm, step):
         if self.dry:
             return
-        left = linear.comment_and_move(self.gql, issue["id"], body, self.states[state], self.states[frm],
-                                       self.emails if state == "in_review" else ())
+        left = linear.comment_and_move(
+            self.gql,
+            issue["id"],
+            body,
+            self.states[state],
+            self.states[frm],
+            self.emails if state == "in_review" else (),
+        )
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
 
     def recover(self, live_ids=()):
         self.live = set(live_ids)
-        mine = [(i, self.current_sid(i)) for i in self.issues("in_progress") if i["identifier"] not in self.live]
-        mine.sort(key=lambda p: (p[1] is None, rank(p[0]), self.later(p[0]),
-                                 first_line_time(self.entries, p[1]) if p[1] else self.now))
+        mine = [
+            (i, self.current_sid(i))
+            for i in self.issues("in_progress")
+            if i["identifier"] not in self.live
+        ]
+        mine.sort(
+            key=lambda p: (
+                p[1] is None,
+                rank(p[0]),
+                self.later(p[0]),
+                first_line_time(self.entries, p[1]) if p[1] else self.now,
+            )
+        )
         return [(issue, sid) for issue, sid in mine if self.settle(issue, sid)]
 
     def settle(self, issue, sid, wait=True):
         ident = issue["identifier"]
-        if wait and (latest := latest_sid(self.entries, ident)) and is_live(self.tdir, ident, latest, self.now):
+        if (
+            wait
+            and (latest := latest_sid(self.entries, ident))
+            and is_live(self.tdir, ident, latest, self.now)
+        ):
             return False
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
             self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover")
         elif sid and has_transcript(self.tdir, ident, sid):
-            role, logged = self.role(issue), next(e[4] for e in reversed(self.entries) if e[3] == sid)
+            role, logged = (
+                self.role(issue),
+                next(e[4] for e in reversed(self.entries) if e[3] == sid),
+            )
             if logged == role:
                 return True
             why = f"role ({logged}) is not the assignee's ({role})"
             self.say("recover", ident, to="in_review", reason=why)
-            self.comment_and_move(issue, f"The interrupted agent run's {why}; needs a look.",
-                                  "in_review", "in_progress", "recover")
+            self.comment_and_move(
+                issue,
+                f"The interrupted agent run's {why}; needs a look.",
+                "in_review",
+                "in_progress",
+                "recover",
+            )
         elif sid:
             if not wait or sid_times(self.entries, sid)[-1] < self.now - LIVE:
                 self.say("recover", ident, to="todo", reason="no transcript", sid=sid)
@@ -344,7 +435,10 @@ class Board:
         return False
 
     def queue(self, full=()):
-        return sorted((i for i in self.todo() if self.available(i, full)), key=lambda i: (rank(i), self.later(i), i["createdAt"]))
+        return sorted(
+            (i for i in self.todo() if self.available(i, full)),
+            key=lambda i: (rank(i), self.later(i), i["createdAt"]),
+        )
 
     def next_run(self, cands, full=()):
         cand = next((c for c in cands if self.available(c[0], full)), None)
@@ -379,19 +473,30 @@ class Board:
                 self.say("claim-skip", ident, reason="no longer Todo")
                 continue
             role = self.role(issue)
-            task, comment = task_for(current["labels"]["nodes"], self.group, role, self.runs[role].tasks,
-                                     self.label_tasks)
+            task, comment = task_for(
+                current["labels"]["nodes"],
+                self.group,
+                role,
+                self.runs[role].tasks,
+                self.label_tasks,
+            )
             if comment:
                 self.say("claim-skip", ident, to="in_review", reason="bad task label")
                 self.comment_and_move(issue, comment, "in_review", "todo", "claim")
                 continue
             self.say("claim", ident, role=role, task=task)
-            linear.call(self.gql, linear.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
+            linear.call(
+                self.gql, linear.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"]
+            )
             return issue, task
         if queue:
             self.say("pick-none", reason="nothing claimable")
         else:
-            self.say("pick-none", only, reason="not a Todo issue assigned to a role account" if only else "queue empty")
+            self.say(
+                "pick-none",
+                only,
+                reason="not a Todo issue assigned to a role account" if only else "queue empty",
+            )
         return None
 
 
@@ -406,9 +511,20 @@ def _humans(cfg):
 
 def context(a, cfg, name, role, gql, issue_id, repo):
     return writeback.Context(
-        ident=a.issue, issue_id=issue_id, role=name, sid=a.sid, resume=a.mode == "resume", project=a.project,
-        workdir=run_dir(a.issue), gql=functools.partial(gql, service=role.key), humans=_humans(cfg),
-        states=cfg["states"], repos=cfg["project_repos"], team=cfg["team"], target=repo)
+        ident=a.issue,
+        issue_id=issue_id,
+        role=name,
+        sid=a.sid,
+        resume=a.mode == "resume",
+        project=a.project,
+        workdir=run_dir(a.issue),
+        gql=functools.partial(gql, service=role.key),
+        humans=_humans(cfg),
+        states=cfg["states"],
+        repos=cfg["project_repos"],
+        team=cfg["team"],
+        target=repo,
+    )
 
 
 class Setup(Exception):
@@ -437,7 +553,7 @@ def setup(a, root):
 
 
 def pipeline(a, driver, tui, layout, rd, sh):
-    if a.events is None:   # home would say None, after an own_session tmux call
+    if a.events is None:  # home would say None, after an own_session tmux call
         return None
     try:
         d = roster.home(a.manager, a.events, proc=sh)
@@ -446,10 +562,27 @@ def pipeline(a, driver, tui, layout, rd, sh):
         return None
     if d is None:
         return None
-    return d, {"kind": "pipeline", "sid": a.sid, "cwd": rd, "note": a.issue, "tui": tui, "opener": layout.opener,
-               "split": layout.split, "split_from": layout.split_from,
-               "resume": [sys.executable, os.path.abspath(__file__), "--issue", a.issue, "--tui", "--events",
-                          os.path.join(d, "events"), "--manager", os.path.basename(d)]}
+    return d, {
+        "kind": "pipeline",
+        "sid": a.sid,
+        "cwd": rd,
+        "note": a.issue,
+        "tui": tui,
+        "opener": layout.opener,
+        "split": layout.split,
+        "split_from": layout.split_from,
+        "resume": [
+            sys.executable,
+            os.path.abspath(__file__),
+            "--issue",
+            a.issue,
+            "--tui",
+            "--events",
+            os.path.join(d, "events"),
+            "--manager",
+            os.path.basename(d),
+        ],
+    }
 
 
 def outer(a, *, sh, gql, run, projects, keychain, root):
@@ -490,11 +623,17 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
             repo = target.check(issue, repos, run=run, work=config.RUNS_DIR)
         except Exception as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
-        if isinstance(repo, target.Transient) or isinstance(repo, target.Invalid) and a.mode == "resume":
+        if (
+            isinstance(repo, target.Transient)
+            or isinstance(repo, target.Invalid)
+            and a.mode == "resume"
+        ):
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, target.Invalid):
             try:
-                writeback.bounce(context(a, cfg, name, role, gql, issue.id, None), issue, repo.reason)
+                writeback.bounce(
+                    context(a, cfg, name, role, gql, issue.id, None), issue, repo.reason
+                )
             except (Exception, SystemExit) as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
@@ -511,25 +650,51 @@ def outer(a, *, sh, gql, run, projects, keychain, root):
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
-        text = inputs.render(issue, name, sources, humans=_humans(cfg), target=repo, docs=docs).replace("\0", "")
-        text = text.encode("utf-8", "replace").decode()   # a lone surrogate would fail execve in the pane
+        text = inputs.render(
+            issue, name, sources, humans=_humans(cfg), target=repo, docs=docs
+        ).replace("\0", "")
+        text = text.encode(
+            "utf-8", "replace"
+        ).decode()  # a lone surrogate would fail execve in the pane
     except Exception as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     attended_argv, iterm, roster_entry = [], "", None
     if layout:
         iterm = os.environ.get("ITERM_SESSION_ID", "")  # tmux's own may be stale
-        given = (("split", layout.split), ("split-from", layout.split_from), ("opener", layout.opener), ("events", events))
+        given = (
+            ("split", layout.split),
+            ("split-from", layout.split_from),
+            ("opener", layout.opener),
+            ("events", events),
+        )
         attended_argv = ["--runner=tui", *(f"--{k}={v}" for k, v in given if v is not None)]
-        print(f"router.py: driver: {tmux_host.attach_command(session(name, a.issue))}", file=sys.stderr)
+        print(
+            f"router.py: driver: {tmux_host.attach_command(session(name, a.issue))}",
+            file=sys.stderr,
+        )
         print(f"router.py: tui: {tmux_host.attach_command(tui)}", file=sys.stderr)
         roster_entry = pipeline(a, session(name, a.issue), tui, layout, rd, sh)
     try:  # the input goes through the handover file: tmux rejects a command over about 16 KB
-        drive.detach(session(name, a.issue), [
-            sys.executable, RUN, "--uuid", issue.id,
-            *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
-            *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None), *attended_argv, f"--input={text}"],
-            cwd=rd, env=os.environ, iterm=iterm, proc=sh, roster_entry=roster_entry, opener=layout and layout.opener)
+        drive.detach(
+            session(name, a.issue),
+            [
+                sys.executable,
+                RUN,
+                "--uuid",
+                issue.id,
+                *(["--target", f"{repo.owner}/{repo.name}"] if kind == "build" else []),
+                *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
+                *attended_argv,
+                f"--input={text}",
+            ],
+            cwd=rd,
+            env=os.environ,
+            iterm=iterm,
+            proc=sh,
+            roster_entry=roster_entry,
+            opener=layout and layout.opener,
+        )
     except drive.RunnerError as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
@@ -540,9 +705,19 @@ def begin(mode, issue, sid, role, task, opts, runs):
     ident = issue["identifier"]
     os.makedirs(os.path.dirname(runs), exist_ok=True)
     drive.note(runs, "resume" if mode == "resume" else "start", issue=ident, sid=sid, role=role)
-    return argparse.Namespace(issue=ident, project=issue["project"]["id"], assignee=issue["assignee"]["email"], sid=sid,
-                              task=task, mode=mode, runner="tui" if opts["tui"] else "headless", split=opts["split"],
-                              split_from=opts["split_from"], events=opts["events"], manager=opts["manager"])
+    return argparse.Namespace(
+        issue=ident,
+        project=issue["project"]["id"],
+        assignee=issue["assignee"]["email"],
+        sid=sid,
+        task=task,
+        mode=mode,
+        runner="tui" if opts["tui"] else "headless",
+        split=opts["split"],
+        split_from=opts["split_from"],
+        events=opts["events"],
+        manager=opts["manager"],
+    )
 
 
 @contextlib.contextmanager
@@ -551,7 +726,9 @@ def lock(runs, dry):
         yield True
         return
     os.makedirs(os.path.dirname(runs), exist_ok=True)
-    with open(os.path.join(os.path.dirname(runs), "router.lock"), "a") as f:  # not inherited by children (PEP 446)
+    with open(
+        os.path.join(os.path.dirname(runs), "router.lock"), "a"
+    ) as f:  # not inherited by children (PEP 446)
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
             free = True
@@ -574,7 +751,9 @@ def tick(opts, gql, now, cfg, tdir, runs, sh, hour, root, start):
         roles = runnable(cfg, root)
         live = live_sessions(roles, sh)
         full = full_roles(roles, live)
-        counts = {r: f"{len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids} or None
+        counts = {
+            r: f"{len(ids)}/{roles[r].max_runs}" for r, ids in sorted(live.items()) if ids
+        } or None
         if len(full) == len(roles):
             if dry:
                 say("skip", reason="all roles full", live=counts)
@@ -630,10 +809,15 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
             return stop
         live = live_sessions(runnable(cfg, root), sh)
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            print(f"router.py: {ident} has a live agent run: {tmux_host.attach_command(session(role, ident))}", file=sys.stderr)
+            print(
+                f"router.py: {ident} has a live agent run: {tmux_host.attach_command(session(role, ident))}",
+                file=sys.stderr,
+            )
             return stop
         board = Board(gql, parse_log(runs), tdir, now, dry, cfg, root=root)
-        if issue := next((i for i in board.issues("in_progress") if i["identifier"] == ident), None):
+        if issue := next(
+            (i for i in board.issues("in_progress") if i["identifier"] == ident), None
+        ):
             sid = board.current_sid(issue)
             if not board.settle(issue, sid, wait=False):
                 return stop
@@ -647,20 +831,42 @@ def run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start):
 
 
 def options(argv):
-    opts = {"dry": False, "now": False, "tui": False, "issue": None, "split": None, "split_from": None, "events": None,
-            "manager": None}
+    opts = {
+        "dry": False,
+        "now": False,
+        "tui": False,
+        "issue": None,
+        "split": None,
+        "split_from": None,
+        "events": None,
+        "manager": None,
+    }
     flags = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
-    valued = {"--issue": "issue", "--split": "split", "--split-from": "split_from", "--events": "events",
-              "--manager": "manager"}
+    valued = {
+        "--issue": "issue",
+        "--split": "split",
+        "--split-from": "split_from",
+        "--events": "events",
+        "--manager": "manager",
+    }
     i = 0
     while i < len(argv):
         a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
         name, eq, inline = a.partition("=")
         if a in flags:
             opts[flags[a]] = True
-        elif eq and name in ("--split", "--split-from", "--events", "--manager") and opts[valued[name]] is None:
+        elif (
+            eq
+            and name in ("--split", "--split-from", "--events", "--manager")
+            and opts[valued[name]] is None
+        ):
             opts[valued[name]] = inline
-        elif a in valued and opts[valued[a]] is None and value is not None and value not in flags | valued:
+        elif (
+            a in valued
+            and opts[valued[a]] is None
+            and value is not None
+            and value not in flags | valued
+        ):
             opts[valued[a]] = value
             i += 1
         else:
@@ -668,13 +874,27 @@ def options(argv):
         i += 1
     if opts["issue"] is not None and opts["now"]:
         return None
-    if not opts["tui"] and any(opts[k] is not None for k in ("split", "split_from", "events", "manager")):
+    if not opts["tui"] and any(
+        opts[k] is not None for k in ("split", "split_from", "events", "manager")
+    ):
         return None
     return opts
 
 
-def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_LOG, sh=subprocess.run, hour=None,
-         root=ROOT, run=sh_run, keychain=linear.has_key, start=None):
+def main(
+    argv,
+    gql=linear_gql,
+    now=None,
+    tdir=PROJECTS,
+    config=None,
+    runs=RUNS_LOG,
+    sh=subprocess.run,
+    hour=None,
+    root=ROOT,
+    run=sh_run,
+    keychain=linear.has_key,
+    start=None,
+):
     if "--brake" in argv:
         if argv != ["--brake"]:
             print(USAGE, file=sys.stderr)
@@ -704,17 +924,33 @@ def main(argv, gql=linear_gql, now=None, tdir=PROJECTS, config=None, runs=RUNS_L
             elif (directory := roster.directory(opts["manager"], proc=sh)) is not None:
                 opts["events"] = roster.events(directory, create=not opts["dry"])
             else:
-                print("router.py: no manager directory (not in tmux): this run writes no events; "
-                      "give --manager <name>", file=sys.stderr)
+                print(
+                    "router.py: no manager directory (not in tmux): this run writes no events; "
+                    "give --manager <name>",
+                    file=sys.stderr,
+                )
         except (attended.Bad, tmux_host.TuiError, roster.RosterError) as e:
             print(f"router.py: {e}", file=sys.stderr)
             return 2
     now = now or datetime.now(UTC)
-    start = start or functools.partial(outer, sh=sh, gql=gql, run=run, projects=tdir, keychain=keychain, root=root)
+    start = start or functools.partial(
+        outer, sh=sh, gql=gql, run=run, projects=tdir, keychain=keychain, root=root
+    )
     try:
         if opts["issue"]:
             return run_issue(opts, gql, now, cfg, tdir, runs, sh, root, start)
-        return tick(opts, gql, now, cfg, tdir, runs, sh, datetime.now().hour if hour is None else hour, root, start)
+        return tick(
+            opts,
+            gql,
+            now,
+            cfg,
+            tdir,
+            runs,
+            sh,
+            datetime.now().hour if hour is None else hour,
+            root,
+            start,
+        )
     except linear.Unavailable as e:
         return linear.linear_error("router", e, opts["dry"])
 

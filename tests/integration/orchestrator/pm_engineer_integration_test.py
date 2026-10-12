@@ -61,13 +61,24 @@ class PmToEngineer(Segment):
             events = len(self.logged())
             res = self.promote_now()
             self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
-            self.assertEqual([{k: v for k, v in e.items() if k != "ts"} for e in self.logged()[events:]],
-                             [{"src": "promote", "kind": "linear-error", "op": "issueRelationCreate", "status": 503}])
+            self.assertEqual(
+                [{k: v for k, v in e.items() if k != "ts"} for e in self.logged()[events:]],
+                [
+                    {
+                        "src": "promote",
+                        "kind": "linear-error",
+                        "op": "issueRelationCreate",
+                        "status": 503,
+                    }
+                ],
+            )
             last = self.requests()[-1]
             self.assertEqual((last.op, last.result), ("promote.M_RELATE", "503"))
             with self.fake.lock:
                 src = self.fake.find(ident)
-                moves = [(fake_linear.NAMES[h["toStateId"]], h["createdAt"]) for h in src["history"]]
+                moves = [
+                    (fake_linear.NAMES[h["toStateId"]], h["createdAt"]) for h in src["history"]
+                ]
                 cutoff = max(at for to, at in moves if to == "in_review")
                 first = min(at for to, at in moves if to == "handoff" and at > cutoff)
                 key = promote.child_id(src["id"], "engineer", first)
@@ -89,8 +100,10 @@ class PmToEngineer(Segment):
         self.agent_run()
         self.handoff(ident, BUILD)
         self.promote(ident, "pm", "engineer")
-        self.assertEqual([e["issue"] for e in self.logged() if (e["src"], e["kind"]) == ("run", "no-outcome")],
-                         [ident])
+        self.assertEqual(
+            [e["issue"] for e in self.logged() if (e["src"], e["kind"]) == ("run", "no-outcome")],
+            [ident],
+        )
 
     def test_b6_an_attended_run_that_gives_up_is_resumed_headless(self):
         ident = self.pm_ready()
@@ -108,11 +121,26 @@ class PmToEngineer(Segment):
         with self.step("drop transcript"):
             os.remove(self.transcript_path(ident, sid))
         with self.step("router: interrupted"):
-            self.assertEqual([(e["src"], e["kind"], e.get("issue"), e.get("to"), e.get("reason"), e.get("sid"))
-                              for e in self.refused(ident)],
-                             [("router", "recover", ident, "todo", "no transcript", sid)])
-            self.expect(ident, state="todo", history=[("in_progress", "todo", HARNESS_EMAIL)],
-                        comments=[(HARNESS_EMAIL, "interrupted")])
+            self.assertEqual(
+                [
+                    (
+                        e["src"],
+                        e["kind"],
+                        e.get("issue"),
+                        e.get("to"),
+                        e.get("reason"),
+                        e.get("sid"),
+                    )
+                    for e in self.refused(ident)
+                ],
+                [("router", "recover", ident, "todo", "no transcript", sid)],
+            )
+            self.expect(
+                ident,
+                state="todo",
+                history=[("in_progress", "todo", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, "interrupted")],
+            )
         self.pm_done(ident)
 
     def test_b8_a_managed_attended_run_is_recovered_from_the_roster(self):
@@ -120,10 +148,27 @@ class PmToEngineer(Segment):
         sid = self.claim(ident, "pm", self.script("pm", "give_up", ident), tui=True, managed=True)
         driver, tui = self.driver("pm", ident), self.pending.tui
         events = os.path.join(self.apm, "managers", MANAGER, "events")
-        entry = {"kind": "pipeline", "sid": sid, "cwd": os.path.realpath(self.workdir(ident)), "note": ident,
-                 "tui": tui, "pane": None, "split": None, "state": "working",
-                 "resume": [sys.executable, ROUTER, "--issue", ident, "--tui", "--events", events,
-                            "--manager", MANAGER]}
+        entry = {
+            "kind": "pipeline",
+            "sid": sid,
+            "cwd": os.path.realpath(self.workdir(ident)),
+            "note": ident,
+            "tui": tui,
+            "pane": None,
+            "split": None,
+            "state": "working",
+            "resume": [
+                sys.executable,
+                ROUTER,
+                "--issue",
+                ident,
+                "--tui",
+                "--events",
+                events,
+                "--manager",
+                MANAGER,
+            ],
+        }
         self.assertEqual(self.roster(), {driver: {**entry, "opener": None, "split_from": MANAGER}})
         self.agent_run()
         self.kill_tui(ident)

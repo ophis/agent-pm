@@ -1,5 +1,6 @@
 """A new runtime is a config value to the Composer: a local `runtime` and its [adapters.<name>] table, with no package
 for it, resolve, compose and list the catalog in a child process (child.Case); no runtime text in the prompt."""
+
 from new.tests import SRC
 from new.tests.integration.composer import child
 
@@ -9,8 +10,10 @@ import unittest
 from composer.prompt import RETURN
 
 BANNER = "Extension handover."
-LOCAL = ('runtime = "extension"\n\n[adapters.extension]\nimplementation = "adapters.extension:ExtensionAdapter"\n'
-         f'tier = 4\nbanner = "{BANNER}"\n')
+LOCAL = (
+    'runtime = "extension"\n\n[adapters.extension]\nimplementation = "adapters.extension:ExtensionAdapter"\n'
+    f'tier = 4\nbanner = "{BANNER}"\n'
+)
 
 
 class ExtensionRuntime(child.Case):
@@ -20,7 +23,10 @@ class ExtensionRuntime(child.Case):
         self.assertFalse(got["repo_imported"])
         for path in got["files"]:
             self.assertTrue(path.startswith(SRC + os.sep), path)
-        self.assertEqual((got["run"]["runtime"], got["run"]["tier"], got["run"]["effort"]), ("extension", 3, "low"))
+        self.assertEqual(
+            (got["run"]["runtime"], got["run"]["tier"], got["run"]["effort"]),
+            ("extension", 3, "low"),
+        )
         self.assertNotIn(BANNER, got["prompt"])
         self.assertIn(f"\n{RETURN}\n", got["prompt"])
         self.assertIn("# Input\n\nHello.", got["prompt"])

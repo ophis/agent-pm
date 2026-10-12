@@ -1,4 +1,5 @@
 """One bounded native account probe; direct execution prints the raw result or null."""
+
 import json
 import os
 import selectors
@@ -13,8 +14,14 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
     process = None
     try:
         deadline, pending, read_bytes = time.monotonic() + timeout, bytearray(), 0
-        process = subprocess.Popen(("codex", "app-server"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, env=env, bufsize=0)
+        process = subprocess.Popen(
+            ("codex", "app-server"),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            bufsize=0,
+        )
         os.set_blocking(process.stdout.fileno(), False)
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
@@ -29,10 +36,17 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
                         line, _, rest = pending.partition(b"\n")
                         pending[:] = rest
                         record = json.loads(line)
-                        if (isinstance(record, dict) and type(record.get("id")) is int
-                                and record["id"] == identifier):
+                        if (
+                            isinstance(record, dict)
+                            and type(record.get("id")) is int
+                            and record["id"] == identifier
+                        ):
                             result = record.get("result")
-                            return result if isinstance(result, dict) and "error" not in record else None
+                            return (
+                                result
+                                if isinstance(result, dict) and "error" not in record
+                                else None
+                            )
                     left = deadline - time.monotonic()
                     if left <= 0 or not selector.select(left):
                         return None
@@ -44,8 +58,13 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
                         return None
                     pending.extend(chunk)
 
-            send({"id": 1, "method": "initialize", "params": {
-                "clientInfo": {"name": "agent_pm", "version": "0.1.0"}}})
+            send(
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"clientInfo": {"name": "agent_pm", "version": "0.1.0"}},
+                }
+            )
             if response(1) is None:
                 return None
             send({"method": "initialized"})
@@ -73,7 +92,9 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
 def main():
     argv = sys.argv[1:]
     try:
-        timeout = 10 if not argv else float(argv[1]) if len(argv) == 2 and argv[0] == "--timeout" else 0
+        timeout = (
+            10 if not argv else float(argv[1]) if len(argv) == 2 and argv[0] == "--timeout" else 0
+        )
         output = json.dumps(probe(dict(os.environ), timeout), allow_nan=False)
     except (ValueError, RecursionError):
         output = "null"

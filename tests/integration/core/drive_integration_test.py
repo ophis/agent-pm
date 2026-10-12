@@ -26,18 +26,42 @@ class Integration(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        self.proj, self.work, bin_dir = (os.path.join(self.root, d) for d in ("proj", "work", "bin"))
+        self.proj, self.work, bin_dir = (
+            os.path.join(self.root, d) for d in ("proj", "work", "bin")
+        )
         for d in (self.proj, self.work, bin_dir):
             os.mkdir(d)
         self.out = os.path.join(self.work, "out.md")
-        self.scenario, self.log = os.path.join(self.root, "scenario.json"), os.path.join(self.root, "log.jsonl")
-        self.env = {"PATH": fake_claude.install(bin_dir), "HOME": home, "PYTHONUTF8": "1",
-                    fake_claude.ENV: self.scenario}
-        self.transcript = claude_client.transcript(self.proj, SID, projects=os.path.join(home, ".claude", "projects"))
+        self.scenario, self.log = (
+            os.path.join(self.root, "scenario.json"),
+            os.path.join(self.root, "log.jsonl"),
+        )
+        self.env = {
+            "PATH": fake_claude.install(bin_dir),
+            "HOME": home,
+            "PYTHONUTF8": "1",
+            fake_claude.ENV: self.scenario,
+        }
+        self.transcript = claude_client.transcript(
+            self.proj, SID, projects=os.path.join(home, ".claude", "projects")
+        )
 
     def argv(self, *extra) -> list[str]:
-        return [sys.executable, DRIVE, "--role", self.ROLE, "--input", "Hello.", "--out", self.out, "--workdir",
-                self.work, "--sid", SID, *extra]
+        return [
+            sys.executable,
+            DRIVE,
+            "--role",
+            self.ROLE,
+            "--input",
+            "Hello.",
+            "--out",
+            self.out,
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            *extra,
+        ]
 
     def scene(self, steps, **scenario) -> None:
         with open(self.scenario, "w") as f:
@@ -45,14 +69,29 @@ class Integration(unittest.TestCase):
 
     def drive(self, steps, *extra, cwd=None, **scenario) -> subprocess.CompletedProcess:
         self.scene(steps, **scenario)
-        return subprocess.run(self.argv(*extra), cwd=cwd or self.proj, env=self.env, stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            self.argv(*extra),
+            cwd=cwd or self.proj,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def popen(self, *extra) -> subprocess.Popen:
         # A suite started in the background inherits SIGINT ignored; drive.py installs no handler of its own.
-        proc = subprocess.Popen(self.argv(*extra), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        proc = subprocess.Popen(
+            self.argv(*extra),
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+        )
         self.addCleanup(self.reap, proc)
         return proc
 
@@ -105,21 +144,43 @@ class NewRun(Integration):
         with open(self.out) as f:
             self.assertEqual(f.read(), "Hello.\n")
         events = [{k: v for k, v in e.items() if k != "ts"} for e in self.events()]
-        self.assertEqual(events, [
-            {"kind": "input", "text": "Hello."},
-            {"kind": "session", "sid": SID, "cwd": self.proj, "project": False, "transcript": self.transcript,
-             "resume": f"cd {self.proj} && claude --resume {SID} --add-dir {self.work}"},
-            progress("start", "echoing"), outcome(DONE),
-            {"kind": "result", "outcome": {"status": "done", "title": "echo", "summary": "Hello.", "questions": [],
-                                           "url": self.out, "files": []}},
-            {"kind": "end", "sid": SID, "rc": 0}])
+        self.assertEqual(
+            events,
+            [
+                {"kind": "input", "text": "Hello."},
+                {
+                    "kind": "session",
+                    "sid": SID,
+                    "cwd": self.proj,
+                    "project": False,
+                    "transcript": self.transcript,
+                    "resume": f"cd {self.proj} && claude --resume {SID} --add-dir {self.work}",
+                },
+                progress("start", "echoing"),
+                outcome(DONE),
+                {
+                    "kind": "result",
+                    "outcome": {
+                        "status": "done",
+                        "title": "echo",
+                        "summary": "Hello.",
+                        "questions": [],
+                        "url": self.out,
+                        "files": [],
+                    },
+                },
+                {"kind": "end", "sid": SID, "rc": 0},
+            ],
+        )
         self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         argv = call["argv"]
         self.assertIn("-p", argv)
-        self.assertEqual((argv[argv.index("--session-id") + 1], argv[argv.index("--output-format") + 1]),
-                         (SID, "stream-json"))
+        self.assertEqual(
+            (argv[argv.index("--session-id") + 1], argv[argv.index("--output-format") + 1]),
+            (SID, "stream-json"),
+        )
 
 
 def prompt(call: dict) -> str:
@@ -128,7 +189,12 @@ def prompt(call: dict) -> str:
 
 class Outcomes(Integration):
     def test_needs_input(self):
-        asking = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which?"]}
+        asking = {
+            "status": "needs_input",
+            "title": "echo",
+            "summary": "Asking.",
+            "questions": ["Which?"],
+        }
         res = self.drive([outcome(asking)])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("status needs_input", res.stderr)
@@ -146,7 +212,10 @@ class Outcomes(Integration):
     def test_invalid_outcome_then_fixed(self):
         res = self.drive([outcome({k: v for k, v in DONE.items() if k != "deliverable"})])
         self.assertEqual(res.returncode, 1, res.stderr)
-        self.assertIn("drive.py: invalid outcome: done with a local destination must carry the deliverable", res.stderr)
+        self.assertIn(
+            "drive.py: invalid outcome: done with a local destination must carry the deliverable",
+            res.stderr,
+        )
         self.assertIn("must carry the deliverable", self.last("result")["error"])
         self.assertFalse(os.path.exists(self.out))
         res = self.drive([outcome(DONE)], "--resume")
@@ -162,8 +231,15 @@ class Outcomes(Integration):
         with open(self.out) as f:
             self.assertEqual(f.read(), DONE["deliverable"])
         saved = self.last("result")
-        self.assertEqual((saved["outcome"]["status"], saved["outcome"]["url"], saved["error"],
-                          self.last("end")["rc"]), ("done", self.out, "the client exited 7", 7))
+        self.assertEqual(
+            (
+                saved["outcome"]["status"],
+                saved["outcome"]["url"],
+                saved["error"],
+                self.last("end")["rc"],
+            ),
+            ("done", self.out, "the client exited 7", 7),
+        )
         self.assertEqual(len(self.calls()), 1)
         self.assertEqual([e["kind"] for e in self.events()][-2:], ["result", "end"])
 
@@ -173,8 +249,10 @@ class Outcomes(Integration):
                 res = self.drive(steps, exit=7)
                 self.assertEqual(res.returncode, 3, res.stderr)
                 self.assertIn("drive.py: the client exited 7", res.stderr)
-                self.assertEqual((self.last("result")["error"], self.last("end")["rc"]),
-                                 ("the client exited 7", 7))
+                self.assertEqual(
+                    (self.last("result")["error"], self.last("end")["rc"]),
+                    ("the client exited 7", 7),
+                )
                 self.assertNotIn("outcome", self.last("result"))
                 self.assertFalse(os.path.exists(self.out))
 
@@ -191,14 +269,22 @@ class Stderr(Integration):
         stderr = [e for e in self.events() if e["kind"] == "stderr"]
         self.assertEqual([e["text"] for e in stderr], [said])
         self.assertEqual([e["kind"] for e in self.events()][-3:], ["stderr", "result", "end"])
-        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
+        self.assertEqual(
+            (self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1)
+        )
 
 
 class Resume(Integration):
     def test_resume_reuses_the_recorded_cwd_and_session(self):
         res = self.drive([progress("start", "first")])
         self.assertEqual(res.returncode, 1, res.stderr)
-        res = self.drive([progress("round", "second"), outcome(DONE)], "--resume", "--input", "Use B.", cwd=self.root)
+        res = self.drive(
+            [progress("round", "second"), outcome(DONE)],
+            "--resume",
+            "--input",
+            "Use B.",
+            cwd=self.root,
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
         self.assertEqual(second["cwd"], self.proj)
@@ -209,10 +295,26 @@ class Resume(Integration):
         self.assertEqual([u["message"]["content"] for u in users], [prompt(first), prompt(second)])
         self.assertTrue(prompt(second).endswith("\n# Input\n\nUse B.\n"))
         events = self.events()
-        self.assertEqual([e["kind"] for e in events], ["input", "session", "progress", "result", "end",
-                                                       "input", "session", "progress", "outcome", "result", "end"])
+        self.assertEqual(
+            [e["kind"] for e in events],
+            [
+                "input",
+                "session",
+                "progress",
+                "result",
+                "end",
+                "input",
+                "session",
+                "progress",
+                "outcome",
+                "result",
+                "end",
+            ],
+        )
         self.assertEqual([e["text"] for e in events if e["kind"] == "input"], ["Hello.", "Use B."])
-        self.assertEqual([e["cwd"] for e in events if e["kind"] == "session"], [self.proj, self.proj])
+        self.assertEqual(
+            [e["cwd"] for e in events if e["kind"] == "session"], [self.proj, self.proj]
+        )
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
 
@@ -236,7 +338,9 @@ class Interrupt(Integration):
         out, err = proc.communicate()
         self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)
         result, end = self.events()[-2:]
-        self.assertEqual((result["kind"], result["error"]), ("result", "stopped: KeyboardInterrupt"))
+        self.assertEqual(
+            (result["kind"], result["error"]), ("result", "stopped: KeyboardInterrupt")
+        )
         self.assertEqual((end["kind"], end["sid"], end["rc"]), ("end", SID, 1))
 
 

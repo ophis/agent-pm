@@ -12,8 +12,10 @@ Rule = namedtuple("Rule", "name pattern limit")
 SOURCE = Rule("source", re.compile(""), 15)
 TESTS = Rule("tests", re.compile(r"(^|/)tests/|_test\.py$"), 10)
 ALLOWANCE = 500
-PURPOSE = ("The comment budget keeps comments short: meet it by cutting comments or docstrings, "
-           "never by adding code to lower the ratio.")
+PURPOSE = (
+    "The comment budget keeps comments short: meet it by cutting comments or docstrings, "
+    "never by adding code to lower the ratio."
+)
 
 
 def chars(text):
@@ -21,14 +23,24 @@ def chars(text):
 
 
 def bare_string(node):
-    return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
 
 
 def measure(text):
     tree = ast.parse(text)
-    docstring = sum(chars(ast.get_source_segment(text, node)) for node in ast.walk(tree) if bare_string(node))
-    comment = sum(chars(token.string) for token in tokenize.generate_tokens(io.StringIO(text).readline)
-                  if token.type == tokenize.COMMENT and not (token.start[0] == 1 and token.string.startswith("#!")))
+    docstring = sum(
+        chars(ast.get_source_segment(text, node)) for node in ast.walk(tree) if bare_string(node)
+    )
+    comment = sum(
+        chars(token.string)
+        for token in tokenize.generate_tokens(io.StringIO(text).readline)
+        if token.type == tokenize.COMMENT
+        and not (token.start[0] == 1 and token.string.startswith("#!"))
+    )
     return comment, docstring, chars(text) - comment - docstring
 
 
@@ -37,7 +49,9 @@ def rule(path):
 
 
 def tracked(root):
-    listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.py"], capture_output=True, text=True)
+    listed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--", "*.py"], capture_output=True, text=True
+    )
     if listed.returncode:
         raise ValueError(f"git ls-files failed: {listed.stderr.strip()}")
     return sorted(path for path in listed.stdout.split("\0") if path and (root / path).is_file())
@@ -66,8 +80,11 @@ def main(root=ROOT):
     failed = False
     for each in (SOURCE, TESTS):
         name = f"{each.name} ({each.limit}% of code + {ALLOWANCE} characters per directory)"
-        over = [(folder, n, code) for folder, (n, code) in sorted(groups[each].items())
-                if n * 100 > each.limit * code + ALLOWANCE * 100]
+        over = [
+            (folder, n, code)
+            for folder, (n, code) in sorted(groups[each].items())
+            if n * 100 > each.limit * code + ALLOWANCE * 100
+        ]
         if not over:
             print(f"ok {name}: {len(groups[each])} checked")
             continue
@@ -75,8 +92,10 @@ def main(root=ROOT):
         print(f"FAIL {name}: {len(over)} of {len(groups[each])} over budget")
         for folder, n, code in over:
             allowed = each.limit * code // 100 + ALLOWANCE
-            print(f"  {folder}: {percent(n, code)} ({n} comment+docstring / {code} code characters; "
-                  f"{allowed} allowed, {n - allowed} over)")
+            print(
+                f"  {folder}: {percent(n, code)} ({n} comment+docstring / {code} code characters; "
+                f"{allowed} allowed, {n - allowed} over)"
+            )
     if failed:
         print(PURPOSE)
     return 1 if failed else 0

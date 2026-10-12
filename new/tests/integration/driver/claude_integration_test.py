@@ -2,6 +2,7 @@
 registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
+
 from new.tests import SRC, fake_claude, hermetic
 
 import json
@@ -32,16 +33,29 @@ from adapters.base import (
 )
 from driver import api, registry
 
-WAIT = 20    # upper bound on any wait, in seconds
-IDLE = 0.5   # idle_timeout, in seconds
-SETTLE = 0.5   # seconds a caller gets to wait in events() again after printing an event
+WAIT = 20  # upper bound on any wait, in seconds
+IDLE = 0.5  # idle_timeout, in seconds
+SETTLE = 0.5  # seconds a caller gets to wait in events() again after printing an event
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 RESETS = 1760000000
-TABLE = {"implementation": "adapters.claude:ClaudeAdapter",
-         "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
-         "tiers": {"4": "haiku"}, "efforts": {"low": "low"}}
-PROBE = ["-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
-         "--setting-sources", "user", "--strict-mcp-config"]
+TABLE = {
+    "implementation": "adapters.claude:ClaudeAdapter",
+    "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
+    "tiers": {"4": "haiku"},
+    "efforts": {"low": "low"},
+}
+PROBE = [
+    "-p",
+    "Reply with OK.",
+    "--model",
+    "haiku",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--setting-sources",
+    "user",
+    "--strict-mcp-config",
+]
 # A caller: argv[1] goes first on sys.path, argv[2] is the claude table, argv[3] the workdir. It prints each event's
 # name; on a KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
@@ -86,9 +100,14 @@ class Base(unittest.TestCase):
         self.log = os.path.join(self.dir, "claude.log")
         bin_dir = os.path.join(self.dir, "bin")
         os.mkdir(bin_dir)
-        patch = mock.patch.dict(os.environ, {"PATH": fake_claude.install(bin_dir),
-                                             "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"),
-                                             fake_claude.ENV: self.file})
+        patch = mock.patch.dict(
+            os.environ,
+            {
+                "PATH": fake_claude.install(bin_dir),
+                "CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"),
+                fake_claude.ENV: self.file,
+            },
+        )
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure({"adapters": {"claude": TABLE}})
@@ -100,7 +119,9 @@ class Base(unittest.TestCase):
             json.dump({"log": self.log, **fields}, f)
 
     def start(self, prompt="hello", spec=None, **kwargs) -> api.Handle:
-        handle = api.start("claude", "headless", prompt, spec or api.Spec(workdir=self.workdir), **kwargs)
+        handle = api.start(
+            "claude", "headless", prompt, spec or api.Spec(workdir=self.workdir), **kwargs
+        )
         self.addCleanup(handle.stop)
         return handle
 
@@ -116,6 +137,7 @@ class Base(unittest.TestCase):
                     on(event)
             except BaseException as e:
                 errors.append(e)
+
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         thread.join(WAIT)
@@ -131,7 +153,10 @@ class Base(unittest.TestCase):
             return [json.loads(line) for line in f]
 
     def written(self) -> list[dict]:
-        return [{k: v for k, v in e.items() if k != "ts"} for e in api.records.read(api.records.path(self.workdir))]
+        return [
+            {k: v for k, v in e.items() if k != "ts"}
+            for e in api.records.read(api.records.path(self.workdir))
+        ]
 
     def resume_command(self, sid: str) -> str:
         return f"cd {shlex.quote(self.workdir)} && claude --resume {sid}"
@@ -139,25 +164,49 @@ class Base(unittest.TestCase):
 
 class RunTest(Base):
     def test_a_run_streams_its_messages_to_exited_and_records_the_session(self):
-        self.scenario(steps=["one", {"kind": "tool", "name": "Read"}, "two", "three"],
-                      rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.1}}})
+        self.scenario(
+            steps=["one", {"kind": "tool", "name": "Read"}, "two", "three"],
+            rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.1}}},
+        )
         handle = self.start(spec=api.Spec(workdir=self.workdir, tier=4, effort="low"))
         sid = handle.sid
-        self.assertEqual(self.drain(handle), [SessionBound(sid), Reply("one"), Activity("Read"), Reply("two"),
-                                              Reply("three"), TurnEnd("three", 0), Exited(0)])
+        self.assertEqual(
+            self.drain(handle),
+            [
+                SessionBound(sid),
+                Reply("one"),
+                Activity("Read"),
+                Reply("two"),
+                Reply("three"),
+                TurnEnd("three", 0),
+                Exited(0),
+            ],
+        )
         self.assertEqual(handle.reply, "three")
         self.assertEqual(handle.info().native_id, sid)
         (entry,) = self.logged()
         self.assertEqual(entry["cwd"], self.workdir)
-        self.assertEqual(entry["argv"][:6], ["-p", "--session-id", sid, "--model", "haiku", "--effort"])
+        self.assertEqual(
+            entry["argv"][:6], ["-p", "--session-id", sid, "--model", "haiku", "--effort"]
+        )
         self.assertEqual(entry["argv"][-2:], ["--", "hello"])
 
         transcript = handle.info().transcript
         self.assertTrue(os.path.isfile(transcript))
-        session = {"kind": "session", "sid": sid, "cwd": self.workdir, "project": False, "transcript": transcript,
-                   "resume": self.resume_command(sid)}
-        self.assertEqual(self.written(), [session, {"kind": "client_session", "sid": sid, "client_id": sid}])
-        self.assertEqual({k: v for k, v in api.session(self.workdir, sid).items() if k != "ts"}, session)
+        session = {
+            "kind": "session",
+            "sid": sid,
+            "cwd": self.workdir,
+            "project": False,
+            "transcript": transcript,
+            "resume": self.resume_command(sid),
+        }
+        self.assertEqual(
+            self.written(), [session, {"kind": "client_session", "sid": sid, "client_id": sid}]
+        )
+        self.assertEqual(
+            {k: v for k, v in api.session(self.workdir, sid).items() if k != "ts"}, session
+        )
 
     def test_resume_continues_the_transcript(self):
         self.scenario(steps=["first"])
@@ -166,15 +215,24 @@ class RunTest(Base):
         self.scenario(steps=["second"])
         again = self.start("more", resume=first.sid)
         self.assertEqual(again.sid, first.sid)
-        self.assertEqual(self.drain(again), [SessionBound(first.sid), Reply("second"), TurnEnd("second", 0),
-                                             Exited(0)])
+        self.assertEqual(
+            self.drain(again),
+            [SessionBound(first.sid), Reply("second"), TurnEnd("second", 0), Exited(0)],
+        )
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", first.sid])
         self.assertNotIn("--session-id", self.logged()[1]["argv"])
         self.assertEqual(again.info().transcript, first.info().transcript)
         with open(again.info().transcript, encoding="utf-8") as f:
             turns = [(r["type"], r["message"]["content"]) for r in map(json.loads, f)]
-        self.assertEqual(turns, [("user", "hello"), ("assistant", [{"type": "text", "text": "first"}]),
-                                 ("user", "more"), ("assistant", [{"type": "text", "text": "second"}])])
+        self.assertEqual(
+            turns,
+            [
+                ("user", "hello"),
+                ("assistant", [{"type": "text", "text": "first"}]),
+                ("user", "more"),
+                ("assistant", [{"type": "text", "text": "second"}]),
+            ],
+        )
         self.assertEqual([e["kind"] for e in self.written()], ["session", "client_session"] * 2)
 
     def test_a_run_in_its_own_cwd_is_recorded_there_and_resumes_there(self):
@@ -185,14 +243,27 @@ class RunTest(Base):
         self.assertEqual(self.drain(first)[-1], Exited(0))
         self.assertTrue(os.path.isfile(transcript))
         self.assertEqual(os.listdir(self.workdir), ["run.jsonl"])
-        resume = f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
+        resume = (
+            f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
+        )
         recorded = api.session(self.workdir, sid)
-        self.assertEqual({k: v for k, v in recorded.items() if k != "ts"},
-                         {"kind": "session", "sid": sid, "cwd": proj, "project": False, "transcript": transcript,
-                          "resume": resume})
+        self.assertEqual(
+            {k: v for k, v in recorded.items() if k != "ts"},
+            {
+                "kind": "session",
+                "sid": sid,
+                "cwd": proj,
+                "project": False,
+                "transcript": transcript,
+                "resume": resume,
+            },
+        )
 
-        again = self.start("more", api.Spec(workdir=self.workdir, access=api.Access(cwd=recorded["cwd"])),
-                           resume=sid)
+        again = self.start(
+            "more",
+            api.Spec(workdir=self.workdir, access=api.Access(cwd=recorded["cwd"])),
+            resume=sid,
+        )
         self.assertEqual(self.drain(again)[-1], Exited(0))
         calls = self.logged()
         self.assertEqual([call["cwd"] for call in calls], [proj, proj])
@@ -211,11 +282,16 @@ class RunTest(Base):
         def on(event):
             if isinstance(event, Reply):
                 os.kill(self.logged()[0]["pid"], signal.SIGKILL)
-        self.assertEqual(self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)])
+
+        self.assertEqual(
+            self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)]
+        )
         self.assertEqual(api.session_info("claude", sid, self.workdir).resumable, "yes")
         self.scenario(steps=["second"])
         again = self.start("more", resume=sid)
-        self.assertEqual(self.drain(again), [SessionBound(sid), Reply("second"), TurnEnd("second", 0), Exited(0)])
+        self.assertEqual(
+            self.drain(again), [SessionBound(sid), Reply("second"), TurnEnd("second", 0), Exited(0)]
+        )
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", sid])
 
     def test_a_caller_sid_names_the_session(self):
@@ -237,13 +313,25 @@ class RunTest(Base):
             with self.subTest(resets_at=resets_at):
                 self.scenario(steps=["working", {"kind": "limit", "resets_at": resets_at}], exit=1)
                 handle = self.start()
-                self.assertEqual(self.drain(handle), [SessionBound(handle.sid), Reply("working"), want,
-                                                      Reply(fake_claude.LIMIT), TurnEnd("", 0), Exited(1)])
+                self.assertEqual(
+                    self.drain(handle),
+                    [
+                        SessionBound(handle.sid),
+                        Reply("working"),
+                        want,
+                        Reply(fake_claude.LIMIT),
+                        TurnEnd("", 0),
+                        Exited(1),
+                    ],
+                )
 
     def test_a_non_zero_exit(self):
         self.scenario(steps=["partial"], exit=3)
         handle = self.start()
-        self.assertEqual(self.drain(handle), [SessionBound(handle.sid), Reply("partial"), TurnEnd("", 0), Exited(3)])
+        self.assertEqual(
+            self.drain(handle),
+            [SessionBound(handle.sid), Reply("partial"), TurnEnd("", 0), Exited(3)],
+        )
 
     def test_resuming_a_session_without_a_transcript_exits_1_and_its_stderr_is_recorded(self):
         said = f"No conversation found with session ID: {SID}"
@@ -261,9 +349,12 @@ class RunTest(Base):
                 replied.append(event)
             elif isinstance(event, api.IdleTimeout) and replied:
                 handle.stop()
+
         found = self.drain(handle, on)
-        self.assertEqual([e for e in found if not isinstance(e, api.IdleTimeout)],
-                         [SessionBound(handle.sid), Reply("working"), Exited(-signal.SIGKILL)])
+        self.assertEqual(
+            [e for e in found if not isinstance(e, api.IdleTimeout)],
+            [SessionBound(handle.sid), Reply("working"), Exited(-signal.SIGKILL)],
+        )
         self.assertEqual(found[-2], api.IdleTimeout(IDLE))
 
 
@@ -284,9 +375,13 @@ class InterruptTest(Base):
         self.scenario(steps=["working"], hang=True)
         self.out = os.path.join(self.dir, "caller.out")
         with open(self.out, "w", encoding="utf-8") as f:
-            caller = subprocess.Popen([sys.executable, "-I", "-c", CALLER, SRC, json.dumps(TABLE), self.workdir],
-                                      env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=f,
-                                      stderr=subprocess.STDOUT)
+            caller = subprocess.Popen(
+                [sys.executable, "-I", "-c", CALLER, SRC, json.dumps(TABLE), self.workdir],
+                env=dict(os.environ),
+                stdin=subprocess.DEVNULL,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+            )
         self.addCleanup(caller.wait)
         self.addCleanup(caller.kill)
         self.until(caller, lambda: "Reply" in self.printed(), "printed the Reply")
@@ -295,17 +390,28 @@ class InterruptTest(Base):
         # SIGINT must land while events() waits, not in the loop body, where it would only close the iterator.
         time.sleep(SETTLE)
         caller.send_signal(signal.SIGINT)
-        self.until(caller, lambda: "KeyboardInterrupt" in self.printed(), "caught the KeyboardInterrupt")
+        self.until(
+            caller, lambda: "KeyboardInterrupt" in self.printed(), "caught the KeyboardInterrupt"
+        )
         self.assertEqual(self.printed(), ["SessionBound", "Reply", "KeyboardInterrupt"])
         self.assertFalse(running(entry["pid"]))
 
 
 class UsageTest(Base):
     def test_the_probes_rate_limit_info_is_the_usage(self):
-        self.scenario(rate_limit={"status": "allowed", "resetsAt": RESETS,
-                                  "unifiedWindows": {"five_hour": {"utilization": 0.25, "resetsAt": RESETS},
-                                                     "seven_day": {"utilization": 1.0, "resetsAt": RESETS + 1}}})
-        self.assertEqual(api.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1)))
+        self.scenario(
+            rate_limit={
+                "status": "allowed",
+                "resetsAt": RESETS,
+                "unifiedWindows": {
+                    "five_hour": {"utilization": 0.25, "resetsAt": RESETS},
+                    "seven_day": {"utilization": 1.0, "resetsAt": RESETS + 1},
+                },
+            }
+        )
+        self.assertEqual(
+            api.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
+        )
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], PROBE)
         probe = os.path.join(self.agent_pm, "probe")
@@ -318,8 +424,10 @@ class UsageTest(Base):
         self.assertEqual(api.usage("claude"), Usage(None, None))
 
     def test_unknown_is_none(self):
-        for name, fields in (("no event", {}),
-                             ("no claude", {"rate_limit": {"unifiedWindows": {"five_hour": {"utilization": 0.25}}}})):
+        for name, fields in (
+            ("no event", {}),
+            ("no claude", {"rate_limit": {"unifiedWindows": {"five_hour": {"utilization": 0.25}}}}),
+        ):
             with self.subTest(name), mock.patch.dict(os.environ):
                 self.scenario(**fields)
                 if name == "no claude":
@@ -331,11 +439,17 @@ class SessionInfoTest(Base):
     def test_a_run_session_is_resumable_another_is_not(self):
         handle = self.start(sid=SID)
         self.assertEqual(self.drain(handle)[-1], Exited(0))
-        self.assertEqual(api.session_info("claude", SID, self.workdir),
-                         SessionStatus("yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)))
+        self.assertEqual(
+            api.session_info("claude", SID, self.workdir),
+            SessionStatus(
+                "yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)
+            ),
+        )
         other = str(uuid.uuid4())
-        self.assertEqual(api.session_info("claude", other, self.workdir),
-                         SessionStatus("no", None, self.resume_command(other)))
+        self.assertEqual(
+            api.session_info("claude", other, self.workdir),
+            SessionStatus("no", None, self.resume_command(other)),
+        )
 
 
 if __name__ == "__main__":

@@ -66,9 +66,11 @@ class ManagerTest(unittest.TestCase):
         return path
 
     def test_directory_is_the_manager_else_the_own_tmux_session_and_touches_nothing(self):
-        cases = [("--manager beats tmux", "m1", INSIDE, self.dir, 0),
-                 ("the own tmux session", None, INSIDE, os.path.join(self.managers, "own"), 1),
-                 ("outside tmux, no name: none", None, {}, None, 0)]
+        cases = [
+            ("--manager beats tmux", "m1", INSIDE, self.dir, 0),
+            ("the own tmux session", None, INSIDE, os.path.join(self.managers, "own"), 1),
+            ("outside tmux, no name: none", None, {}, None, 0),
+        ]
         for label, name, env, want, calls in cases:
             with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
                 proc = tmux("own\n")
@@ -83,27 +85,53 @@ class ManagerTest(unittest.TestCase):
 
     def test_bad_manager_names(self):
         for name in ("a/b", "..", "", "a b", "a;", "a\n"):
-            for call, resolve in (("directory", roster.directory), ("home", lambda n: roster.home(n, None))):
-                with self.subTest(name=name, call=call), self.assertRaises(roster.RosterError) as cm:
+            for call, resolve in (
+                ("directory", roster.directory),
+                ("home", lambda n: roster.home(n, None)),
+            ):
+                with (
+                    self.subTest(name=name, call=call),
+                    self.assertRaises(roster.RosterError) as cm,
+                ):
                     resolve(name)
                 self.assertEqual(str(cm.exception), f"manager {name!r}: want [A-Za-z0-9_-]+")
 
     def test_bad_own_session_names_the_manager_option(self):
-        cases = [("bad session name", {}, "a;\n",
-                  r"^own tmux session 'a;': want \[A-Za-z0-9_-\]\+; give --manager <name>$", 1),
-                 ("bad TMUX_PANE", {"TMUX_PANE": "%3;"}, "own\n", r"TMUX_PANE.*; give --manager <name>$", 0)]
+        cases = [
+            (
+                "bad session name",
+                {},
+                "a;\n",
+                r"^own tmux session 'a;': want \[A-Za-z0-9_-\]\+; give --manager <name>$",
+                1,
+            ),
+            (
+                "bad TMUX_PANE",
+                {"TMUX_PANE": "%3;"},
+                "own\n",
+                r"TMUX_PANE.*; give --manager <name>$",
+                0,
+            ),
+        ]
         for label, env, out, pattern, calls in cases:
             for call in ("directory", "home"):
-                with self.subTest(label, call=call), unittest.mock.patch.dict(os.environ, {**INSIDE, **env}):
+                with (
+                    self.subTest(label, call=call),
+                    unittest.mock.patch.dict(os.environ, {**INSIDE, **env}),
+                ):
                     proc = tmux(out)
                     with self.assertRaisesRegex(roster.RosterError, pattern):
-                        roster.directory(proc=proc) if call == "directory" else roster.home(None, None, proc=proc)
+                        roster.directory(proc=proc) if call == "directory" else roster.home(
+                            None, None, proc=proc
+                        )
                     self.assertEqual(len(proc.calls), calls)
 
     def test_home_is_the_directory_whose_events_file_is_given(self):
         own = os.path.join(self.managers, "own")
-        for label, name, d, env, calls in (("--manager", "m1", self.dir, {}, 0),
-                                           ("the own tmux session", None, own, INSIDE, 1)):
+        for label, name, d, env, calls in (
+            ("--manager", "m1", self.dir, {}, 0),
+            ("the own tmux session", None, own, INSIDE, 1),
+        ):
             with self.subTest(label), unittest.mock.patch.dict(os.environ, env):
                 roster.ensure(d)
                 proc = tmux("own\n")
@@ -114,11 +142,13 @@ class ManagerTest(unittest.TestCase):
     def test_home_is_none_without_the_directory_or_its_events_file(self):
         roster.ensure(self.dir)
         events = os.path.join(self.dir, "events")
-        cases = {"events another file": ("m1", os.path.join(self.outside("x"), "events")),
-                 "events a sibling file": ("m1", os.path.join(self.dir, "roster.json")),
-                 "events None": ("m1", None),
-                 "directory missing": ("m2", os.path.join(self.managers, "m2", "events")),
-                 "outside tmux, no name": (None, events)}
+        cases = {
+            "events another file": ("m1", os.path.join(self.outside("x"), "events")),
+            "events a sibling file": ("m1", os.path.join(self.dir, "roster.json")),
+            "events None": ("m1", None),
+            "directory missing": ("m2", os.path.join(self.managers, "m2", "events")),
+            "outside tmux, no name": (None, events),
+        }
         for why, (name, given) in cases.items():
             with self.subTest(why):
                 self.assertIsNone(roster.home(name, given, proc=tmux()))
@@ -132,8 +162,10 @@ class ManagerTest(unittest.TestCase):
         self.assertEqual(roster.home("m1", os.path.join(base, "link", "events")), self.dir)
         os.symlink(base, os.path.join(base, "alias"))
         os.environ["HOME"] = os.path.join(base, "alias")
-        self.assertEqual(roster.home("m1", os.path.join(self.dir, "events")),
-                         os.path.join(base, "alias", ".agent-pm", "managers", "m1"))
+        self.assertEqual(
+            roster.home("m1", os.path.join(self.dir, "events")),
+            os.path.join(base, "alias", ".agent-pm", "managers", "m1"),
+        )
 
     def test_events_path_without_create_touches_nothing(self):
         self.assertEqual(roster.events(self.dir, create=False), os.path.join(self.dir, "events"))
@@ -176,8 +208,12 @@ class ManagerTest(unittest.TestCase):
         for bits in (0o750, 0o705, 0o770, 0o777, 0o701):
             os.chmod(self.dir, bits)
             for call in (roster.ensure, roster.events):
-                with self.subTest(bits=oct(bits), call=call.__name__), self.assertRaisesRegex(
-                        roster.RosterError, f"^manager directory {self.dir}: .*group or other"):
+                with (
+                    self.subTest(bits=oct(bits), call=call.__name__),
+                    self.assertRaisesRegex(
+                        roster.RosterError, f"^manager directory {self.dir}: .*group or other"
+                    ),
+                ):
                     call(self.dir)
             self.assertEqual(mode(self.dir), bits)
             self.assertEqual(os.listdir(self.dir), [])
@@ -185,7 +221,9 @@ class ManagerTest(unittest.TestCase):
     def refused(self, path):
         with self.assertRaises(roster.RosterError) as cm:
             roster.events(self.dir)
-        self.assertEqual(str(cm.exception), f"manager directory {path}: not a directory owned by you")
+        self.assertEqual(
+            str(cm.exception), f"manager directory {path}: not a directory owned by you"
+        )
 
     def test_managers_symlink_refused_and_its_target_untouched(self):
         target = self.outside("target")
@@ -256,8 +294,20 @@ except roster.Held as e:
 
 
 def good(**over):
-    value = dict(kind="worker", sid=SID, cwd="/w", resume=["/usr/bin/python3", "/x/crew.py"], note=None, opener=None,
-                 pane=None, split=None, split_from=None, tui=None, state="working", started=WHEN)
+    value = dict(
+        kind="worker",
+        sid=SID,
+        cwd="/w",
+        resume=["/usr/bin/python3", "/x/crew.py"],
+        note=None,
+        opener=None,
+        pane=None,
+        split=None,
+        split_from=None,
+        tui=None,
+        state="working",
+        started=WHEN,
+    )
     return {**value, **over}
 
 
@@ -266,8 +316,12 @@ VALID = {
     "kind": ["worker", "role", "pipeline"],
     "sid": [SID, None],
     "cwd": ["/w", "/w with space/é日", "/w ​"],
-    "resume": [["/usr/bin/python3", "/x/crew.py", "; rm -rf ~"], ["/p", "/x/drive.py"], ["/p", "/x/router.py", "a", "b"],
-               ["/p", "/x/workers.py", "start"]],
+    "resume": [
+        ["/usr/bin/python3", "/x/crew.py", "; rm -rf ~"],
+        ["/p", "/x/drive.py"],
+        ["/p", "/x/router.py", "a", "b"],
+        ["/p", "/x/workers.py", "start"],
+    ],
     "note": [None, "", "x" * 500, "né ​"],
     "opener": [None, "mgr", "w0t0p0:5E1B-C0FFEE"],
     "pane": [None, "%3", "5E1B-C0FFEE"],
@@ -282,14 +336,23 @@ RESUME_1 = "an absolute path named crew.py, drive.py or router.py"
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 INVALID = [
-    ("kind", "boss", KIND), ("kind", None, KIND), ("kind", ["worker"], KIND),
-    ("sid", "; rm -rf ~", "sid: {!r}: want a session id or null"), ("sid", SID.upper(), "sid: {!r}: want a session id or null"),
-    ("sid", SID + "\n", "sid: {!r}: want a session id or null"), ("sid", 7, "sid: {!r}: want a session id or null"),
-    ("cwd", "rel/w", f"cwd: {{!r}}: want {CWD}"), ("cwd", "/w\nx", f"cwd: {{!r}}: want {CWD}"),
-    ("cwd", "/w\x85", f"cwd: {{!r}}: want {CWD}"), ("cwd", "/w x", f"cwd: {{!r}}: want {CWD}"),
-    ("cwd", "/w ", f"cwd: {{!r}}: want {CWD}"), ("cwd", "/w\x00", f"cwd: {{!r}}: want {CWD}"),
-    ("cwd", "/w\x7f", f"cwd: {{!r}}: want {CWD}"), ("cwd", None, f"cwd: {{!r}}: want {CWD}"),
-    ("resume", ["/usr/bin/python3"], f"resume: {{!r}}: want {RESUME_LIST}"), ("resume", "x", f"resume: {{!r}}: want {RESUME_LIST}"),
+    ("kind", "boss", KIND),
+    ("kind", None, KIND),
+    ("kind", ["worker"], KIND),
+    ("sid", "; rm -rf ~", "sid: {!r}: want a session id or null"),
+    ("sid", SID.upper(), "sid: {!r}: want a session id or null"),
+    ("sid", SID + "\n", "sid: {!r}: want a session id or null"),
+    ("sid", 7, "sid: {!r}: want a session id or null"),
+    ("cwd", "rel/w", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w\nx", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w\x85", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w x", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w ", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w\x00", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", "/w\x7f", f"cwd: {{!r}}: want {CWD}"),
+    ("cwd", None, f"cwd: {{!r}}: want {CWD}"),
+    ("resume", ["/usr/bin/python3"], f"resume: {{!r}}: want {RESUME_LIST}"),
+    ("resume", "x", f"resume: {{!r}}: want {RESUME_LIST}"),
     ("resume", ["/p", "/x/crew.py", "a\nb"], f"resume: {{!r}}: want {RESUME_LIST}"),
     ("resume", ["/p", "/x/crew.py", "a "], f"resume: {{!r}}: want {RESUME_LIST}"),
     ("resume", ["/p", "/x/crew.py", 3], f"resume: {{!r}}: want {RESUME_LIST}"),
@@ -298,8 +361,10 @@ INVALID = [
     ("resume", ["/p", "/x/other.py"], f"resume[1]: '/x/other.py': want {RESUME_1}"),
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
     ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
-    ("note", "a\nb", f"note: {{!r}}: want {NOTE}"), ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
-    ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"), ("note", "a b", f"note: {{!r}}: want {NOTE}"),
+    ("note", "a\nb", f"note: {{!r}}: want {NOTE}"),
+    ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
+    ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"),
+    ("note", "a b", f"note: {{!r}}: want {NOTE}"),
     ("note", 5, f"note: {{!r}}: want {NOTE}"),
     ("opener", "a b", "opener: {!r}: want a tmux session name or an iTerm2 pane id, or null"),
     ("opener", "w0t0p0:", "opener: {!r}: want a tmux session name or an iTerm2 pane id, or null"),
@@ -308,7 +373,8 @@ INVALID = [
     ("pane", "%x", "pane: {!r}: want a tmux pane id or an iTerm2 session id, or null"),
     ("pane", "%3 ", "pane: {!r}: want a tmux pane id or an iTerm2 session id, or null"),
     ("pane", "", "pane: {!r}: want a tmux pane id or an iTerm2 session id, or null"),
-    ("split", "left", "split: {!r}: want right, below or null"), ("split", "", "split: {!r}: want right, below or null"),
+    ("split", "left", "split: {!r}: want right, below or null"),
+    ("split", "", "split: {!r}: want right, below or null"),
     ("split_from", "a b", "split_from: {!r}: want a session name or null"),
     ("split_from", "", "split_from: {!r}: want a session name or null"),
     ("tui", "a;", "tui: {!r}: want a session name or null"),
@@ -334,10 +400,21 @@ TOP = [
     ("version 1.0", {"version": 1.0}, "version: 1.0: want 1"),
     ("holder a string", {"holder": "s"}, "holder: want null or an object with session and since"),
     ("holder without since", {"holder": {"session": "s"}}, "holder: keys: missing ['since']"),
-    ("holder with an extra key", {"holder": {"session": "s", "since": WHEN, "x": 1}}, "holder: keys: unexpected ['x']"),
-    ("holder session", {"holder": {"session": "a b", "since": WHEN}}, "holder.session: 'a b': want a session name"),
-    ("holder since naive", {"holder": {"session": "s", "since": "2026-01-01T00:00:00"}},
-     "holder.since: '2026-01-01T00:00:00': want an ISO 8601 time with a UTC offset"),
+    (
+        "holder with an extra key",
+        {"holder": {"session": "s", "since": WHEN, "x": 1}},
+        "holder: keys: unexpected ['x']",
+    ),
+    (
+        "holder session",
+        {"holder": {"session": "a b", "since": WHEN}},
+        "holder.session: 'a b': want a session name",
+    ),
+    (
+        "holder since naive",
+        {"holder": {"session": "s", "since": "2026-01-01T00:00:00"}},
+        "holder.since: '2026-01-01T00:00:00': want an ISO 8601 time with a UTC offset",
+    ),
     ("cursor negative", {"cursor": -1}, "cursor: -1: want a non-negative integer"),
     ("cursor true", {"cursor": True}, "cursor: True: want a non-negative integer"),
     ("cursor float", {"cursor": 1.0}, "cursor: 1.0: want a non-negative integer"),
@@ -360,7 +437,13 @@ class RosterTest(unittest.TestCase):
         return {"version": 1, "holder": None, "cursor": 0, "gen": 0, "entries": {}, **top}
 
     def store(self, data):
-        raw = data if isinstance(data, bytes) else data.encode() if isinstance(data, str) else json.dumps(data).encode()
+        raw = (
+            data
+            if isinstance(data, bytes)
+            else data.encode()
+            if isinstance(data, str)
+            else json.dumps(data).encode()
+        )
         with open(self.path, "wb") as f:
             f.write(raw)
         os.chmod(self.path, 0o600)
@@ -375,7 +458,10 @@ class RosterTest(unittest.TestCase):
 
     def load(self, **kw):
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), roster.locked(self.dir, **{"write": False, **kw}) as r:
+        with (
+            contextlib.redirect_stderr(err),
+            roster.locked(self.dir, **{"write": False, **kw}) as r,
+        ):
             pass
         return r, err.getvalue()
 
@@ -396,7 +482,9 @@ class RosterTest(unittest.TestCase):
             st = real(fd)
             if st.st_ino != ino:
                 return st
-            return types.SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1, st_size=st.st_size)
+            return types.SimpleNamespace(
+                st_mode=st.st_mode, st_uid=st.st_uid + 1, st_size=st.st_size
+            )
 
         return unittest.mock.patch("os.fstat", fstat)
 
@@ -416,7 +504,9 @@ class RosterTest(unittest.TestCase):
             r.update(holder=holder, cursor=4, gen=2)
             r["entries"]["w1"] = good(note="n")
         r, err = self.load()
-        self.assertEqual(r, self.doc(holder=holder, cursor=4, gen=2, entries={"w1": good(note="n")}))
+        self.assertEqual(
+            r, self.doc(holder=holder, cursor=4, gen=2, entries={"w1": good(note="n")})
+        )
         self.assertEqual(err, "")
         self.assertEqual(sorted(os.listdir(self.dir)), ["roster.json", "roster.lock"])
 
@@ -426,7 +516,9 @@ class RosterTest(unittest.TestCase):
             pass
         self.assertEqual(self.bytes(), raw)
 
-    def test_write_false_or_an_exception_in_the_block_writes_nothing_even_when_the_file_is_missing(self):
+    def test_write_false_or_an_exception_in_the_block_writes_nothing_even_when_the_file_is_missing(
+        self,
+    ):
         def write_false():
             with roster.locked(self.dir, write=False) as r:
                 r["cursor"] = 9
@@ -458,11 +550,22 @@ class RosterTest(unittest.TestCase):
         bad = [
             (lambda r: r.update(cursor=-1), "cursor: -1: want a non-negative integer"),
             (lambda r: r.update(x=1), "keys: unexpected ['x']"),
-            (lambda r: r["entries"].update(w2=good(kind="boss")), "entry 'w2': " + KIND.format("boss")),
-            (lambda r: r["entries"].update({"a b": good()}), "entry 'a b': name: want [A-Za-z0-9_-]+"),
-            (lambda r: r["entries"].update(w2=good(resume=("/p", "/x/crew.py"))),
-             f"entry 'w2': resume: ('/p', '/x/crew.py'): want {RESUME_LIST}"),
-            (lambda r: r["entries"].update(w2={}), "entry 'w2': keys: missing " + str(sorted(good()))),
+            (
+                lambda r: r["entries"].update(w2=good(kind="boss")),
+                "entry 'w2': " + KIND.format("boss"),
+            ),
+            (
+                lambda r: r["entries"].update({"a b": good()}),
+                "entry 'a b': name: want [A-Za-z0-9_-]+",
+            ),
+            (
+                lambda r: r["entries"].update(w2=good(resume=("/p", "/x/crew.py"))),
+                f"entry 'w2': resume: ('/p', '/x/crew.py'): want {RESUME_LIST}",
+            ),
+            (
+                lambda r: r["entries"].update(w2={}),
+                "entry 'w2': keys: missing " + str(sorted(good())),
+            ),
         ]
         for change, why in bad:
             with self.subTest(why=why), self.assertRaises(roster.RosterError) as cm:
@@ -501,15 +604,24 @@ class RosterTest(unittest.TestCase):
 
     def test_entry_of_other_keys_than_the_twelve_or_a_bad_name_is_skipped(self):
         missing = {k: v for k, v in good().items() if k != "note"}
-        cases = [("bad", {**good(), "x": 1}, "keys: unexpected ['x']"), ("bad", missing, "keys: missing ['note']"),
-                 ("bad", {**missing, "y": 1}, "keys: missing ['note'], unexpected ['y']"),
-                 ("bad", [], "value: []: want an object"), ("bad", "w", "value: 'w': want an object"),
-                 *((name, good(), "name: want [A-Za-z0-9_-]+") for name in ("a b", "", "a;", "a\nb", "w/1"))]
+        cases = [
+            ("bad", {**good(), "x": 1}, "keys: unexpected ['x']"),
+            ("bad", missing, "keys: missing ['note']"),
+            ("bad", {**missing, "y": 1}, "keys: missing ['note'], unexpected ['y']"),
+            ("bad", [], "value: []: want an object"),
+            ("bad", "w", "value: 'w': want an object"),
+            *(
+                (name, good(), "name: want [A-Za-z0-9_-]+")
+                for name in ("a b", "", "a;", "a\nb", "w/1")
+            ),
+        ]
         for name, value, why in cases:
             with self.subTest(name=name, why=why):
                 self.store(self.doc(entries={name: value}))
                 r, err = self.load()
-                self.assertEqual((r["entries"], err), ({}, f"manager: roster.json: entry {name!r}: {why}\n"))
+                self.assertEqual(
+                    (r["entries"], err), ({}, f"manager: roster.json: entry {name!r}: {why}\n")
+                )
 
     def test_stderr_line_shows_values_by_repr(self):
         self.store(self.doc(entries={"bad": good(cwd="/w\n\x1b[31mforged ")}))
@@ -527,8 +639,12 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(err.getvalue().count("\n"), 1)
 
     def test_top_level_valid_forms(self):
-        for top in ({}, {"holder": {"session": "s1", "since": WHEN}}, {"cursor": 7, "gen": 3},
-                    {"holder": {"session": "s1", "since": "2026-01-01T00:00:00Z"}}):
+        for top in (
+            {},
+            {"holder": {"session": "s1", "since": WHEN}},
+            {"cursor": 7, "gen": 3},
+            {"holder": {"session": "s1", "since": "2026-01-01T00:00:00Z"}},
+        ):
             with self.subTest(top=top):
                 self.store(self.doc(**top))
                 self.assertEqual(self.load()[0], self.doc(**top))
@@ -536,12 +652,18 @@ class RosterTest(unittest.TestCase):
     def test_top_level_faults_refuse_and_leave_the_bytes(self):
         for label, data, why in TOP:
             with self.subTest(label):
-                top = data if isinstance(data, bytes) else {k: v for k, v in self.doc(**data).items() if v is not DROP}
+                top = (
+                    data
+                    if isinstance(data, bytes)
+                    else {k: v for k, v in self.doc(**data).items() if v is not DROP}
+                )
                 raw = self.store(top)
                 for kw in ({}, {"write": False}):
                     with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir, **kw):
                         self.fail("entered")
-                    self.assertTrue(str(cm.exception).startswith(f"{self.path}: {why}"), str(cm.exception))
+                    self.assertTrue(
+                        str(cm.exception).startswith(f"{self.path}: {why}"), str(cm.exception)
+                    )
                     self.assertEqual(self.bytes(), raw)
                 self.assertEqual(sorted(os.listdir(self.dir)), ["roster.json", "roster.lock"])
 
@@ -612,8 +734,14 @@ class RosterTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path))
 
     def test_two_processes_put_concurrently_and_both_entries_land(self):
-        procs = [subprocess.Popen([sys.executable, "-I", "-c", CHILD, SRC, self.dir, tag], stderr=subprocess.PIPE, text=True)
-                 for tag in "ab"]
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-I", "-c", CHILD, SRC, self.dir, tag],
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for tag in "ab"
+        ]
         for p in procs:
             _, err = p.communicate(timeout=60)
             self.assertEqual(p.returncode, 0, err)
@@ -631,8 +759,12 @@ class RosterTest(unittest.TestCase):
 
     def test_directory_open_to_group_or_other_refused_not_chmodded_and_nothing_created(self):
         os.chmod(self.dir, 0o750)
-        with self.assertRaisesRegex(roster.RosterError, f"^manager directory {self.dir}: .*group or other"), \
-                roster.locked(self.dir):
+        with (
+            self.assertRaisesRegex(
+                roster.RosterError, f"^manager directory {self.dir}: .*group or other"
+            ),
+            roster.locked(self.dir),
+        ):
             pass
         self.assertEqual(mode(self.dir), 0o750)
         self.assertEqual(os.listdir(self.dir), [])
@@ -643,7 +775,11 @@ class RosterTest(unittest.TestCase):
 
         def lstat(path, *args, **kw):
             st = real(path, *args, **kw)
-            return types.SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1) if path == self.dir else st
+            return (
+                types.SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1)
+                if path == self.dir
+                else st
+            )
 
         with unittest.mock.patch("os.lstat", lstat):
             self.refused(refused)
@@ -673,10 +809,35 @@ class RosterTest(unittest.TestCase):
         self.assertEqual({**e, "started": WHEN}, good())
         self.assertEqual(e["state"], "working")
         self.assertIsNotNone(datetime.datetime.fromisoformat(e["started"]).tzinfo)
-        full = roster.entry("role", sid=None, cwd="/w", resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
-                             split="right", split_from="a", tui="t", state="done", started=WHEN)
-        self.assertEqual(full, good(kind="role", sid=None, resume=["/p", "/x/drive.py"], note="n", opener="mgr", pane="%3",
-                                    split="right", split_from="a", tui="t", state="done"))
+        full = roster.entry(
+            "role",
+            sid=None,
+            cwd="/w",
+            resume=["/p", "/x/drive.py"],
+            note="n",
+            opener="mgr",
+            pane="%3",
+            split="right",
+            split_from="a",
+            tui="t",
+            state="done",
+            started=WHEN,
+        )
+        self.assertEqual(
+            full,
+            good(
+                kind="role",
+                sid=None,
+                resume=["/p", "/x/drive.py"],
+                note="n",
+                opener="mgr",
+                pane="%3",
+                split="right",
+                split_from="a",
+                tui="t",
+                state="done",
+            ),
+        )
         with self.assertRaises(roster.RosterError) as cm:
             roster.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
         self.assertEqual(str(cm.exception), "entry: " + KIND.format("boss"))
@@ -692,7 +853,9 @@ class RosterTest(unittest.TestCase):
                     setter(r, "w1", good(note="n"))
                     with self.assertRaises(roster.RosterError) as cm:
                         setter(r, "w2", good(sid="x"))
-                    self.assertEqual(str(cm.exception), "entry 'w2': sid: 'x': want a session id or null")
+                    self.assertEqual(
+                        str(cm.exception), "entry 'w2': sid: 'x': want a session id or null"
+                    )
                     with self.assertRaisesRegex(roster.RosterError, "^entry 'w1': sid: 'x': want"):
                         setter(r, "w1", good(sid="x"))
                     with self.assertRaisesRegex(roster.RosterError, "^entry 'a b': name: want"):
@@ -703,17 +866,25 @@ class RosterTest(unittest.TestCase):
         roster.put(self.dir, "w1", good(note="n"))
         roster.put(self.dir, "w2", good(state="done"))
         roster.put(self.dir, "w1", good(state="done"))
-        self.assertEqual(self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")})
+        self.assertEqual(
+            self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")}
+        )
         with self.assertRaises(roster.RosterError):
             roster.put(self.dir, "w3", good(kind="boss"))
         self.assertEqual(sorted(self.entries()), ["w1", "w2"])
 
     def test_record_keeps_the_note_of_a_replaced_entry_of_the_same_sid(self):
-        cases = {"same sid, note None": (good(note="n"), good(state="done"), good(state="done", note="n")),
-                 "new sid": (good(note="n"), good(sid=SID2), good(sid=SID2)),
-                 "both sids null": (good(sid=None, note="n"), good(sid=None), good(sid=None)),
-                 "a given note wins": (good(note="n"), good(note="m"), good(note="m")),
-                 "no old entry": (None, good(), good())}
+        cases = {
+            "same sid, note None": (
+                good(note="n"),
+                good(state="done"),
+                good(state="done", note="n"),
+            ),
+            "new sid": (good(note="n"), good(sid=SID2), good(sid=SID2)),
+            "both sids null": (good(sid=None, note="n"), good(sid=None), good(sid=None)),
+            "a given note wins": (good(note="n"), good(note="m"), good(note="m")),
+            "no old entry": (None, good(), good()),
+        }
         for why, (old, value, want) in cases.items():
             with self.subTest(why):
                 given = dict(value)
@@ -742,9 +913,17 @@ class RosterTest(unittest.TestCase):
 
     def test_recovery_forms_each_a_copy(self):
         resume = ["/usr/bin/python3", "/x/crew.py", "start"]
-        cases = [("worker", SID, resume), ("pipeline", SID, resume), ("worker", None, resume),
-                 ("role", SID, [*resume, "--sid", SID, "--resume", "--input", "Continue the unfinished task."]),
-                 ("role", None, None)]
+        cases = [
+            ("worker", SID, resume),
+            ("pipeline", SID, resume),
+            ("worker", None, resume),
+            (
+                "role",
+                SID,
+                [*resume, "--sid", SID, "--resume", "--input", "Continue the unfinished task."],
+            ),
+            ("role", None, None),
+        ]
         for kind, sid, want in cases:
             with self.subTest(kind=kind, sid=sid):
                 e = good(kind=kind, sid=sid, resume=list(resume))
@@ -755,8 +934,13 @@ class RosterTest(unittest.TestCase):
                     self.assertEqual(e["resume"], resume)
 
     def test_recovery_runs_this_crew_py_for_a_legacy_workers_py_entry(self):
-        crew = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(roster.__file__))),
-                            "skills", "tmux", "scripts", "crew.py")
+        crew = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(roster.__file__))),
+            "skills",
+            "tmux",
+            "scripts",
+            "crew.py",
+        )
         self.assertTrue(os.path.isfile(crew))
         resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
         for kind in ("worker", "pipeline", "role"):
@@ -770,12 +954,25 @@ class RosterTest(unittest.TestCase):
         head = ["/usr/bin/python3", "/x/crew.py", "start", "w1"]
         rest = ["--manager", "m", "--resume", SID, "--cwd", "/w"]
         legacy = [*head, "--client", roster.LEGACY_CLIENT, *rest]
-        cases = [("worker", [*head, *rest], legacy),
-                 ("worker", [*head, *rest, "--", "--client", "x"], [*legacy, "--", "--client", "x"]),
-                 ("worker", [*head, "--client", "other", *rest], [*head, "--client", "other", *rest]),
-                 ("pipeline", [*head, *rest], [*head, *rest]),
-                 ("role", [*head, *rest], [*head, *rest, "--sid", SID, "--resume", "--input",
-                                           "Continue the unfinished task."])]
+        cases = [
+            ("worker", [*head, *rest], legacy),
+            ("worker", [*head, *rest, "--", "--client", "x"], [*legacy, "--", "--client", "x"]),
+            ("worker", [*head, "--client", "other", *rest], [*head, "--client", "other", *rest]),
+            ("pipeline", [*head, *rest], [*head, *rest]),
+            (
+                "role",
+                [*head, *rest],
+                [
+                    *head,
+                    *rest,
+                    "--sid",
+                    SID,
+                    "--resume",
+                    "--input",
+                    "Continue the unfinished task.",
+                ],
+            ),
+        ]
         self.assertEqual(roster.LEGACY_CLIENT, "claude")
         for kind, resume, want in cases:
             with self.subTest(kind=kind, resume=resume):
@@ -787,7 +984,20 @@ class RosterTest(unittest.TestCase):
         for text in ("", "plain text", "café 日本", " ", "​", "a b", "~"):
             with self.subTest(text=text):
                 self.assertIs(roster.printable(text), True)
-        for text in ("\n", "\r", "\t", "\x00", "\x1b", "\x7f", "\x80", "\x85", "\x9f", " ", " ", "a\nb"):
+        for text in (
+            "\n",
+            "\r",
+            "\t",
+            "\x00",
+            "\x1b",
+            "\x7f",
+            "\x80",
+            "\x85",
+            "\x9f",
+            " ",
+            " ",
+            "a\nb",
+        ):
             with self.subTest(text=text):
                 self.assertIs(roster.printable(text), False)
 
@@ -798,10 +1008,21 @@ class RosterTest(unittest.TestCase):
                 self.assertIsNone(roster.SID.fullmatch(text))
 
     def test_constants(self):
-        self.assertEqual((roster.VERSION, roster.NOTE_MAX, roster.LOCK_TIMEOUT, roster.ROSTER_MAX,
-                          roster.EVENTS_MAX, roster.SETTLE), (1, 500, 30, 1 << 20, 1 << 20, 1))
+        self.assertEqual(
+            (
+                roster.VERSION,
+                roster.NOTE_MAX,
+                roster.LOCK_TIMEOUT,
+                roster.ROSTER_MAX,
+                roster.EVENTS_MAX,
+                roster.SETTLE,
+            ),
+            (1, 500, 30, 1 << 20, 1 << 20, 1),
+        )
         self.assertEqual(roster.KINDS, ("worker", "role", "pipeline"))
-        self.assertEqual(roster.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished"))
+        self.assertEqual(
+            roster.STATES, ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
+        )
         for error in (roster.Held, roster.Stale):
             self.assertTrue(issubclass(error, roster.RosterError), error)
 
@@ -816,7 +1037,9 @@ def sessions(*live):
         proc.calls.append(argv)
         if argv[:3] != ["tmux", "has-session", "-t"]:
             raise AssertionError(argv)
-        return subprocess.CompletedProcess(argv, 0 if argv[3] in [f"={s}" for s in live] else 1, "", "")
+        return subprocess.CompletedProcess(
+            argv, 0 if argv[3] in [f"={s}" for s in live] else 1, "", ""
+        )
 
     proc.calls = []
     return proc
@@ -840,8 +1063,10 @@ class LeaseTest(unittest.TestCase):
         return {"session": session, "since": since}
 
     def message(self, session="other", since=WHEN):
-        return (f"manager directory {self.dir}: held by tmux session {session} since {since}; "
-                "ask that manager to run crew.py release, or end that session")
+        return (
+            f"manager directory {self.dir}: held by tmux session {session} since {since}; "
+            "ask that manager to run crew.py release, or end that session"
+        )
 
     def refused(self, call, r, message, kind=roster.RosterError):
         before = json.dumps(r)
@@ -858,7 +1083,10 @@ class LeaseTest(unittest.TestCase):
     def test_take_and_check_by_holder_own_and_live_sessions(self):
         since = "2026-01-02T03:04:05+00:00"
         other, me, me_now = self.held("other", since), self.held("me"), self.held("me", NOW)
-        held, attach = (roster.Held, self.message("other", since)), (roster.RosterError, ATTACH.format(self.dir))
+        held, attach = (
+            (roster.Held, self.message("other", since)),
+            (roster.RosterError, ATTACH.format(self.dir)),
+        )
         cases = [
             ("free", None, "me", (), me_now, attach, []),
             ("own the holder: since kept", me, "me", ("me",), KEPT, KEPT, []),
@@ -874,15 +1102,20 @@ class LeaseTest(unittest.TestCase):
             for call, want in (("take", take), ("check", check)):
                 with self.subTest(label, call=call):
                     proc, r = no_tmux if live is None else sessions(*live), self.doc(holder)
-                    run = ((lambda: self.take(r, own, proc)) if call == "take"
-                           else (lambda: roster.check(r, self.dir, own, proc=proc)))
+                    run = (
+                        (lambda: self.take(r, own, proc))
+                        if call == "take"
+                        else (lambda: roster.check(r, self.dir, own, proc=proc))
+                    )
                     if isinstance(want, tuple):
                         self.refused(run, r, want[1], want[0])
                     else:
                         run()
                         self.assertEqual(r, self.doc(holder if want is KEPT else want))
                     if asked is not None:
-                        self.assertEqual(proc.calls, [["tmux", "has-session", "-t", f"={s}"] for s in asked])
+                        self.assertEqual(
+                            proc.calls, [["tmux", "has-session", "-t", f"={s}"] for s in asked]
+                        )
 
     def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
         with roster.locked(self.dir) as r:
@@ -905,11 +1138,19 @@ class LeaseTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path))
 
     def test_two_processes_take_concurrently_and_exactly_one_holds(self):
-        procs = [subprocess.Popen([sys.executable, "-I", "-c", LEASE_CHILD, SRC, self.dir, own], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for own in ("a", "b")]
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-I", "-c", LEASE_CHILD, SRC, self.dir, own],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for own in ("a", "b")
+        ]
         for p in procs:
             p.stdin.write("\n")
-            p.stdin.flush()   # communicate closes it: on 3.11 it flushes stdin first, so a closed one raises
+            p.stdin.flush()  # communicate closes it: on 3.11 it flushes stdin first, so a closed one raises
         out = {}
         for own, p in zip("ab", procs, strict=False):
             out[own] = p.communicate(timeout=60)
@@ -934,14 +1175,18 @@ def tmux_sessions(*live, stuck=()):
         rc = 0 if session in alive else 1
         if cmd == "kill-session" and session not in stuck:
             alive.discard(session)
-        return subprocess.CompletedProcess(argv, rc, "", "" if rc == 0 else f"can't find session: {session}\n")
+        return subprocess.CompletedProcess(
+            argv, rc, "", "" if rc == 0 else f"can't find session: {session}\n"
+        )
 
     proc.calls = []
     return proc
 
 
 def kills(*sessions):
-    return [["tmux", cmd, "-t", f"={s}"] for s in sessions for cmd in ("kill-session", "has-session")]
+    return [
+        ["tmux", cmd, "-t", f"={s}"] for s in sessions for cmd in ("kill-session", "has-session")
+    ]
 
 
 class StopTest(unittest.TestCase):
@@ -949,8 +1194,13 @@ class StopTest(unittest.TestCase):
         self.agent_pm = hermetic.home(self)
         self.dir = os.path.join(self.agent_pm, "managers", "m1")
         roster.ensure(self.dir)
-        self.entries = {"w1": good(), "w2": good(sid=SID2), "d1": good(kind="role", tui="t1"),
-                        "d2": good(kind="pipeline", tui="t2"), "d3": good(kind="role", tui=None)}
+        self.entries = {
+            "w1": good(),
+            "w2": good(sid=SID2),
+            "d1": good(kind="role", tui="t1"),
+            "d2": good(kind="pipeline", tui="t2"),
+            "d3": good(kind="role", tui=None),
+        }
 
     def stop(self, name, proc):
         with roster.locked(self.dir) as r:
@@ -984,7 +1234,10 @@ class StopTest(unittest.TestCase):
         for label, name, live, key, killed in cases:
             with self.subTest(label):
                 proc = no_tmux if live is None else tmux_sessions(*live)
-                self.assertEqual(self.stop(name, proc), (key, {n: e for n, e in self.entries.items() if n != key}))
+                self.assertEqual(
+                    self.stop(name, proc),
+                    (key, {n: e for n, e in self.entries.items() if n != key}),
+                )
                 if killed is not None:
                     self.assertEqual(proc.calls, kills(*killed))
 
@@ -995,9 +1248,16 @@ class StopTest(unittest.TestCase):
         self.assertEqual(proc.calls, kills("t1"))
 
     def test_not_in_roster_or_a_session_still_live_keeps_every_entry(self):
-        cases = [("not in roster: nothing killed", "w9", tmux_sessions("w9"), "w9 not in roster", ()),
-                 ("a session still live", "d1", tmux_sessions("d1", "t1", stuck=("t1",)),
-                  "d1: session t1 still live after tmux kill-session", ("d1", "t1"))]
+        cases = [
+            ("not in roster: nothing killed", "w9", tmux_sessions("w9"), "w9 not in roster", ()),
+            (
+                "a session still live",
+                "d1",
+                tmux_sessions("d1", "t1", stuck=("t1",)),
+                "d1: session t1 still live after tmux kill-session",
+                ("d1", "t1"),
+            ),
+        ]
         for label, name, proc, message, killed in cases:
             with self.subTest(label):
                 self.refused(name, proc, message)
@@ -1011,8 +1271,10 @@ NOT_REGULAR = "{}: not a regular file owned by you"
 
 
 def numbered(count, *, start=1, first=WIDTH):
-    return b"".join(f"line {i}".ljust((first if i == start else WIDTH) - 1, ".").encode() + b"\n"
-                    for i in range(start, start + count))
+    return b"".join(
+        f"line {i}".ljust((first if i == start else WIDTH) - 1, ".").encode() + b"\n"
+        for i in range(start, start + count)
+    )
 
 
 class CursorTest(unittest.TestCase):
@@ -1073,14 +1335,19 @@ class CursorTest(unittest.TestCase):
         self.write(b"a\nbb\nccc")
         self.assertEqual(roster.lines(self.events), 2)
         self.assertEqual([roster.offset(self.events, n) for n in range(5)], [0, 2, 5, 8, 8])
-        self.assertEqual([roster.following(self.events, n) for n in range(4)], [b"a\nbb\nccc", b"bb\nccc", b"ccc", b""])
+        self.assertEqual(
+            [roster.following(self.events, n) for n in range(4)],
+            [b"a\nbb\nccc", b"bb\nccc", b"ccc", b""],
+        )
 
     def test_lines_offset_and_following_across_blocks(self):
         data = self.write(numbered(3 * SPAN // 2))
         self.assertEqual(roster.lines(self.events), 3 * SPAN // 2)
         self.assertEqual(roster.offset(self.events, 12345), 12345 * WIDTH)
-        self.assertEqual(roster.following(self.events, 12345), data[12345 * WIDTH:])
-        self.assertEqual(roster.following(self.events, 3 * SPAN // 2 - 2), numbered(2, start=3 * SPAN // 2 - 1))
+        self.assertEqual(roster.following(self.events, 12345), data[12345 * WIDTH :])
+        self.assertEqual(
+            roster.following(self.events, 3 * SPAN // 2 - 2), numbered(2, start=3 * SPAN // 2 - 1)
+        )
 
     def test_symlink_and_fifo_refused_without_blocking(self):
         target = os.path.join(os.path.dirname(self.agent_pm), "target")
@@ -1103,7 +1370,13 @@ class CursorTest(unittest.TestCase):
         half = roster.EVENTS_MAX // 2
         cases = [
             ("exactly EVENTS_MAX, all handled", numbered(SPAN), SPAN, roster.EVENTS_MAX, False),
-            ("over, handled one byte short", numbered(SPAN + 1, first=WIDTH - 1), SPAN // 2, half - 1, False),
+            (
+                "over, handled one byte short",
+                numbered(SPAN + 1, first=WIDTH - 1),
+                SPAN // 2,
+                half - 1,
+                False,
+            ),
             ("over, handled exactly half", numbered(SPAN + 1), SPAN // 2, half, True),
             ("over, cursor 0", numbered(2 * SPAN), 0, 0, False),
         ]
@@ -1123,7 +1396,9 @@ class CursorTest(unittest.TestCase):
         for after in (3, 9, None):
             with self.subTest(after=after), self.assertRaises(roster.Stale) as cm:
                 roster.advance(r, self.dir, after, 0)
-            self.assertEqual(str(cm.exception), "stale line numbers (gen 0, now 1): run crew.py attach")
+            self.assertEqual(
+                str(cm.exception), "stale line numbers (gen 0, now 1): run crew.py attach"
+            )
         self.assertEqual(r, self.doc(2, 1))
 
     def test_advance_past_the_end_is_stale(self):
@@ -1131,7 +1406,10 @@ class CursorTest(unittest.TestCase):
         r = self.doc(2, 1)
         with self.assertRaises(roster.Stale) as cm:
             roster.advance(r, self.dir, 6, 1)
-        self.assertEqual(str(cm.exception), f"line 6 is past the end of {self.events} (5 lines): run crew.py attach")
+        self.assertEqual(
+            str(cm.exception),
+            f"line 6 is past the end of {self.events} (5 lines): run crew.py attach",
+        )
         self.assertEqual(r, self.doc(2, 1))
         os.unlink(self.events)
         with self.assertRaisesRegex(roster.Stale, r"^line 1 is past the end of .* \(0 lines\)"):
@@ -1139,7 +1417,15 @@ class CursorTest(unittest.TestCase):
 
     def test_advance_moves_the_cursor_forward_only_and_returns_the_line(self):
         self.write(numbered(5) + b"line 6")
-        cases = [(0, 3, 3, 3), (3, 1, 3, 1), (3, 4, 4, 4), (3, 5, 5, 5), (0, None, 5, 5), (5, None, 5, 5), (0, 0, 0, 0)]
+        cases = [
+            (0, 3, 3, 3),
+            (3, 1, 3, 1),
+            (3, 4, 4, 4),
+            (3, 5, 5, 5),
+            (0, None, 5, 5),
+            (5, None, 5, 5),
+            (0, 0, 0, 0),
+        ]
         for cursor, after, moved, resolved in cases:
             with self.subTest(cursor=cursor, after=after):
                 r = self.doc(cursor, 2)
@@ -1152,8 +1438,11 @@ class CursorTest(unittest.TestCase):
         self.assertEqual(r, self.doc())
 
     def test_rotate_not_due_touches_nothing(self):
-        for label, data, cursor in (("exactly EVENTS_MAX", numbered(SPAN), SPAN), ("cursor 0", numbered(2 * SPAN), 0),
-                                    ("missing", None, 0)):
+        for label, data, cursor in (
+            ("exactly EVENTS_MAX", numbered(SPAN), SPAN),
+            ("cursor 0", numbered(2 * SPAN), 0),
+            ("missing", None, 0),
+        ):
             with self.subTest(label):
                 if data is None:
                     os.unlink(self.events)
@@ -1168,9 +1457,11 @@ class CursorTest(unittest.TestCase):
 
     def test_rotate_keeps_the_lines_after_the_cursor_in_a_fresh_0600_events(self):
         self.addCleanup(os.umask, os.umask(0o022))
-        cases = [("plain", b"", False, b""),
-                 ("a trailing fragment gets its newline", b"12:00:01 w9 do", False, b"12:00:01 w9 do\n"),
-                 ("an old events.1 replaced", b"", True, b"")]
+        cases = [
+            ("plain", b"", False, b""),
+            ("a trailing fragment gets its newline", b"12:00:01 w9 do", False, b"12:00:01 w9 do\n"),
+            ("an old events.1 replaced", b"", True, b""),
+        ]
         for label, tail, old, ended in cases:
             with self.subTest(label):
                 with contextlib.suppress(FileNotFoundError):
@@ -1231,10 +1522,17 @@ class CursorTest(unittest.TestCase):
             return real(path, flags, *args, **kw)
 
         err = io.StringIO()
-        with unittest.mock.patch("os.open", open_), contextlib.redirect_stderr(err), roster.locked(self.dir) as r:
+        with (
+            unittest.mock.patch("os.open", open_),
+            contextlib.redirect_stderr(err),
+            roster.locked(self.dir) as r,
+        ):
             self.assertIs(roster.rotate(r, self.dir, sleep=lambda seconds: None), True)
-        self.assertEqual(err.getvalue(), f"manager: rotate: {self.events}: Input/output error: lines after {cursor} of "
-                                         f"{self.old} not copied\n")
+        self.assertEqual(
+            err.getvalue(),
+            f"manager: rotate: {self.events}: Input/output error: lines after {cursor} of "
+            f"{self.old} not copied\n",
+        )
         with roster.locked(self.dir, write=False) as r:
             self.assertEqual((r["cursor"], r["gen"]), (0, 3))
         self.assertEqual((self.read(self.old), self.read()), (original, b""))
@@ -1244,8 +1542,10 @@ class CursorTest(unittest.TestCase):
         cursor = self.due_file()
         original = self.read()
         r = self.doc(cursor, 2)
-        with unittest.mock.patch("os.replace", side_effect=OSError(errno.EIO, "Input/output error")), \
-                self.assertRaises(roster.RosterError) as cm:
+        with (
+            unittest.mock.patch("os.replace", side_effect=OSError(errno.EIO, "Input/output error")),
+            self.assertRaises(roster.RosterError) as cm,
+        ):
             self.rotate(r)
         self.assertEqual(str(cm.exception), f"{self.events}: Input/output error")
         self.assertEqual(r, self.doc(cursor, 2))
@@ -1255,15 +1555,21 @@ class CursorTest(unittest.TestCase):
         target = os.path.join(os.path.dirname(self.agent_pm), "target")
 
         def foreign(path, st):
-            return types.SimpleNamespace(st_mode=st.st_mode, st_uid=st.st_uid + 1, st_size=st.st_size)
+            return types.SimpleNamespace(
+                st_mode=st.st_mode, st_uid=st.st_uid + 1, st_size=st.st_size
+            )
 
         cases = [
             ("events.1 a symlink", self.old, lambda: os.symlink(target, self.old), None),
             ("events.1 a fifo", self.old, lambda: os.mkfifo(self.old), None),
             ("events.1 foreign", self.old, lambda: self.write(b"old\n", self.old), foreign),
             ("events foreign", self.events, lambda: None, foreign),
-            ("events a symlink, lstat seeing its target", self.events,
-             lambda: (os.rename(self.events, target), os.symlink(target, self.events)), lambda path, st: os.stat(path)),
+            (
+                "events a symlink, lstat seeing its target",
+                self.events,
+                lambda: (os.rename(self.events, target), os.symlink(target, self.events)),
+                lambda path, st: os.stat(path),
+            ),
         ]
         for label, path, make, change in cases:
             with self.subTest(label):
@@ -1272,15 +1578,26 @@ class CursorTest(unittest.TestCase):
                         os.unlink(p)
                 cursor = self.due_file()
                 make()
-                inodes = {name: os.lstat(os.path.join(self.dir, name)).st_ino for name in os.listdir(self.dir)}
+                inodes = {
+                    name: os.lstat(os.path.join(self.dir, name)).st_ino
+                    for name in os.listdir(self.dir)
+                }
                 r = self.doc(cursor, 2)
-                with self.lstat_as(path, change) if change else contextlib.nullcontext(), within(), \
-                        self.assertRaises(roster.RosterError) as cm:
+                with (
+                    self.lstat_as(path, change) if change else contextlib.nullcontext(),
+                    within(),
+                    self.assertRaises(roster.RosterError) as cm,
+                ):
                     self.rotate(r)
                 self.assertEqual(str(cm.exception), NOT_REGULAR.format(path))
                 self.assertEqual(r, self.doc(cursor, 2))
-                self.assertEqual({name: os.lstat(os.path.join(self.dir, name)).st_ino for name in os.listdir(self.dir)},
-                                 inodes)
+                self.assertEqual(
+                    {
+                        name: os.lstat(os.path.join(self.dir, name)).st_ino
+                        for name in os.listdir(self.dir)
+                    },
+                    inodes,
+                )
 
     def test_a_refusal_inside_roster_leaves_roster_json_unchanged(self):
         cursor = self.due_file()

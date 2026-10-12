@@ -33,13 +33,19 @@ def work_dir(cfg, root=ROOT, clones=None):
     v = cfg.get("work_dir", "~/.agent-pm")
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
-        raise SystemExit(f"orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}")
+        raise SystemExit(
+            f"orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}"
+        )
     path = os.path.realpath(path)
     if _overlap(path, real):
-        raise SystemExit(f"orchestrator/config.toml: work_dir must neither lie in nor contain the repo {real}: {v!r}")
+        raise SystemExit(
+            f"orchestrator/config.toml: work_dir must neither lie in nor contain the repo {real}: {v!r}"
+        )
     for k, clone in (clones or {}).items():
         if _overlap(path, clone):
-            raise SystemExit(f"orchestrator/config.toml: work_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: work_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}"
+            )
     return path
 
 
@@ -53,8 +59,14 @@ def session(role, issue):
 
 
 def sh_run(argv, timeout):
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
-                          env={**os.environ, "PATH": PATH})
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        stdin=subprocess.DEVNULL,
+        env={**os.environ, "PATH": PATH},
+    )
 
 
 def run_dir(issue):
@@ -81,10 +93,27 @@ def transcript(issue, sid, projects=PROJECTS):
     return claude_client.transcript(entry["cwd"] if entry else rd, sid, projects)
 
 
-TOP_KEYS = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "roles", "project_repos", "local_clones", "core",
-            "work_dir"}
-STATES = {"todo": "Todo", "in_progress": "In Progress", "in_review": "In Review",
-          "handoff": "Handoff", "done": "Done", "canceled": "Canceled"}
+TOP_KEYS = {
+    "team",
+    "states",
+    "human_members",
+    "harness_key",
+    "task_label_group",
+    "task_labels",
+    "roles",
+    "project_repos",
+    "local_clones",
+    "core",
+    "work_dir",
+}
+STATES = {
+    "todo": "Todo",
+    "in_progress": "In Progress",
+    "in_review": "In Review",
+    "handoff": "Handoff",
+    "done": "Done",
+    "canceled": "Canceled",
+}
 ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 
 
@@ -106,9 +135,16 @@ class Task:
 REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
 TASKS = {
     "researcher": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
-    "pm":         Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
-    "engineer":   Task("build", prefix="ENG", start="Build started:", done="Build ready:", question="Question:",
-                       failed="Build failed:", files=True),
+    "pm": Task("design", prefix="PRD", start="PRD started:", retitle=True, approve=True),
+    "engineer": Task(
+        "build",
+        prefix="ENG",
+        start="Build started:",
+        done="Build ready:",
+        question="Question:",
+        failed="Build failed:",
+        files=True,
+    ),
 }
 
 
@@ -138,15 +174,21 @@ def _uuid(v):
 
 def _check_ids(cfg):
     if not _uuid(cfg.get("team")):
-        raise SystemExit(f"orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}")
+        raise SystemExit(
+            f"orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}"
+        )
     states = cfg["states"]
     if extra := sorted(set(states) - set(STATES)):
         raise SystemExit(f"orchestrator/config.toml: [states] has unknown keys: {', '.join(extra)}")
     for k in STATES:
         if not _uuid(states[k]):
-            raise SystemExit(f"orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}"
+            )
     if not _uuid(cfg.get("task_label_group")):
-        raise SystemExit(f"orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}")
+        raise SystemExit(
+            f"orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}"
+        )
 
 
 def _missing(cfg):
@@ -155,65 +197,100 @@ def _missing(cfg):
     missing += [f"states.{k}" for k in STATES if not isinstance(states, dict) or k not in states]
     roles = cfg.get("roles")
     for name, p in roles.items() if isinstance(roles, dict) else ():
-        missing += [f"roles.{name}.{k}" for k in ("account", "key") if isinstance(p, dict) and k not in p]
+        missing += [
+            f"roles.{name}.{k}" for k in ("account", "key") if isinstance(p, dict) and k not in p
+        ]
     return missing
 
 
 def load_config(path=CONFIG):
     cfg = repo.read_config(path, LOCAL)
     if missing := _missing(cfg):
-        raise SystemExit(f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {LOCAL} "
-                         "(orchestrator/config.toml's `# local:` lines)")
+        raise SystemExit(
+            f"orchestrator/config.toml: missing {', '.join(missing)}: set them in {LOCAL} "
+            "(orchestrator/config.toml's `# local:` lines)"
+        )
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
-        raise SystemExit(f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}")
+        raise SystemExit(
+            f"orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}"
+        )
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise SystemExit(f"orchestrator/config.toml: unknown keys: {', '.join(extra)}")
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
-            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}")
+            raise SystemExit(
+                f"orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}"
+            )
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
-                raise SystemExit(f"orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}")
+                raise SystemExit(
+                    f"orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}"
+                )
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}"
+            )
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
             if nxt in seen:
-                raise SystemExit(f"orchestrator/config.toml: the next chain from {name!r} has a cycle")
+                raise SystemExit(
+                    f"orchestrator/config.toml: the next chain from {name!r} has a cycle"
+                )
             seen.add(nxt)
             nxt = roles.get(nxt, {}).get("next")
     repos = cfg.setdefault("project_repos", {})
     if not isinstance(repos, dict):
-        raise SystemExit('orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"')
+        raise SystemExit(
+            'orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'
+        )
     for k, v in repos.items():
         if not _uuid(k) or not repo_slug(v):
-            raise SystemExit(f"orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
+            )
     clones = cfg.setdefault("local_clones", {})
     if not isinstance(clones, dict):
-        raise SystemExit('orchestrator/config.toml: local_clones must be a table of "<owner>/<name>" = "<path>"')
+        raise SystemExit(
+            'orchestrator/config.toml: local_clones must be a table of "<owner>/<name>" = "<path>"'
+        )
     seen = {}
     for k, v in clones.items():
-        if not repo_slug(k) or not isinstance(v, str) or not v.startswith(("/", "~")) or not v.isprintable():
-            raise SystemExit(f"orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}")
+        if (
+            not repo_slug(k)
+            or not isinstance(v, str)
+            or not v.startswith(("/", "~"))
+            or not v.isprintable()
+        ):
+            raise SystemExit(
+                f"orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}"
+            )
         if k.lower() in seen:
-            raise SystemExit(f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo")
+            raise SystemExit(
+                f"orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo"
+            )
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
     work_dir(cfg, clones=clones)
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
-        raise SystemExit('orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"')
+        raise SystemExit(
+            'orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"'
+        )
     seen = {}
     for k, v in labels.items():
         if not _uuid(v):
-            raise SystemExit(f"orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}"
+            )
         if v in seen:
-            raise SystemExit(f"orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}")
+            raise SystemExit(
+                f"orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
+            )
         seen[v] = k
     return cfg
 
@@ -229,7 +306,10 @@ def _fill_root(value, root):
 
 
 def overlay(root=ROOT):
-    return _fill_root(repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}), root)
+    return _fill_root(
+        repo.read_config(os.path.join(root, "orchestrator", "config.toml"), LOCAL).get("core", {}),
+        root,
+    )
 
 
 def layers(root=ROOT):
@@ -242,8 +322,15 @@ def role_tasks(role, root=ROOT):
 
 def run_config(role, task=None, root=ROOT):
     core = os.path.join(root, "core")
-    return compose.resolve(core, clients.get("claude", core), role, task, overlays=layers(root), trusted=True,
-                           label=("orchestrator/config.toml", "core"))
+    return compose.resolve(
+        core,
+        clients.get("claude", core),
+        role,
+        task,
+        overlays=layers(root),
+        trusted=True,
+        label=("orchestrator/config.toml", "core"),
+    )
 
 
 def writable(work=RUNS_DIR):
@@ -256,10 +343,16 @@ def clone_error(path, slug, *, run=sh_run):
     if not os.path.exists(path):
         return f"{path} does not exist"
     try:
-        found, _ = repo.resolve(path, run=lambda argv, timeout: run(["git", *repo.GUARD, *argv[1:]], timeout))
+        found, _ = repo.resolve(
+            path, run=lambda argv, timeout: run(["git", *repo.GUARD, *argv[1:]], timeout)
+        )
     except repo.Invalid as e:
         return str(e)
-    except (OSError, ValueError, subprocess.TimeoutExpired) as e:   # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
+    except (
+        OSError,
+        ValueError,
+        subprocess.TimeoutExpired,
+    ) as e:  # UnicodeDecodeError, from non-UTF-8 git output, is a ValueError
         return f"git: {e}"
     if found.host != "github.com" or f"{found.owner}/{found.name}".lower() != slug.lower():
         return f"origin is {found.slug}, not github.com/{slug}"
@@ -280,7 +373,9 @@ def runnable(cfg, root=ROOT):
         if name not in core_roles:
             raise SystemExit(f"orchestrator/config.toml: role {name!r} is not in core/config.toml")
         if name not in TASKS:
-            raise SystemExit(f"orchestrator/config.toml: role {name!r} has no entry in config.TASKS")
+            raise SystemExit(
+                f"orchestrator/config.toml: role {name!r} has no entry in config.TASKS"
+            )
         try:
             run_config(name, root=root)
             out[name] = Role(p["account"], p["key"], role_tasks(name, root), p.get("max_runs", 1))
@@ -289,22 +384,32 @@ def runnable(cfg, root=ROOT):
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
-            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key")
+            raise SystemExit(
+                f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key"
+            )
         if r.key in owner:
-            raise SystemExit(f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s")
+            raise SystemExit(
+                f"orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s"
+            )
         owner[r.key] = name
     for name, p in cfg["roles"].items():
         nxt = p.get("next")
         if not nxt:
             continue
         if nxt not in out:
-            raise SystemExit(f"orchestrator/config.toml: next of {name!r} names undefined role {nxt!r}")
+            raise SystemExit(
+                f"orchestrator/config.toml: next of {name!r} names undefined role {nxt!r}"
+            )
         if not TASKS[nxt].prefix:
-            raise SystemExit(f"orchestrator/config.toml: next of {name!r} is role {nxt!r}, whose config.TASKS entry has no prefix")
+            raise SystemExit(
+                f"orchestrator/config.toml: next of {name!r} is role {nxt!r}, whose config.TASKS entry has no prefix"
+            )
     tasks = {t for r in out.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
-            raise SystemExit(f"orchestrator/config.toml: task_labels.{task} is not a task of a role in orchestrator/config.toml")
+            raise SystemExit(
+                f"orchestrator/config.toml: task_labels.{task} is not a task of a role in orchestrator/config.toml"
+            )
     for key, path in cfg["local_clones"].items():
         if reason := clone_error(path, key):
             raise SystemExit(f"orchestrator/config.toml: local_clones.{key}: {reason}")
@@ -317,12 +422,16 @@ def docs(roles, root=ROOT):
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise SystemExit(f"core: document roles must publish to one github.com repo and branch (their [output] in {repo.LOCAL})")
+        raise SystemExit(
+            f"core: document roles must publish to one github.com repo and branch (their [output] in {repo.LOCAL})"
+        )
     return Docs(name, branch, {r: o["dir"] for r, o in outs.items()})
 
 
 def role_for(runs, email):
-    return next((r for r, run in runs.items() if email and run.account.lower() == email.lower()), None)
+    return next(
+        (r for r, run in runs.items() if email and run.account.lower() == email.lower()), None
+    )
 
 
 def stage_order(cfg):

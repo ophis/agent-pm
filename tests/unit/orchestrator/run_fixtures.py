@@ -23,14 +23,32 @@ PROJECT = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 URL = f"https://linear.app/t/issue/{ID}"
 ENGINEER, RESEARCHER, PM = "engineer@agents.test", "researcher@agents.test", "pm@agents.test"
 KEY = "linear-api-key-engineer"
-CONFIG = (HEADER + 'human_members = ["Me@X.com"]\n' + role("researcher") + role("pm") + role("engineer")
-          + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
-          + '[core.roles.researcher]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n')
+CONFIG = (
+    HEADER
+    + 'human_members = ["Me@X.com"]\n'
+    + role("researcher")
+    + role("pm")
+    + role("engineer")
+    + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
+    + '[core.roles.researcher]\ngate = "python3 {{root}}/orchestrator/src/router.py --brake"\n'
+)
 LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
-USER_NOTE = {"body": "Use SQLite.", "createdAt": "2026-09-02T00:00:00.000Z",
-             "user": {"email": "ME@x.com", "name": "Me", "isMe": False}}
-LS_REMOTE = ("git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "ls-remote", "--heads",
-             "https://github.com/Ophis/Agent-PM.git", "TASK-7-*")
+USER_NOTE = {
+    "body": "Use SQLite.",
+    "createdAt": "2026-09-02T00:00:00.000Z",
+    "user": {"email": "ME@x.com", "name": "Me", "isMe": False},
+}
+LS_REMOTE = (
+    "git",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+    "ls-remote",
+    "--heads",
+    "https://github.com/Ophis/Agent-PM.git",
+    "TASK-7-*",
+)
 LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Research?ref=main")
 DESIGN_LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Product%20Design?ref=main")
 INPUT = f"""Reference: TASK-7
@@ -60,18 +78,26 @@ None linked."""
 
 def logged(logs=None):
     try:
-        with open(os.path.join(logs or config.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
+        with open(
+            os.path.join(logs or config.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8"
+        ) as f:
             lines = [json.loads(line) for line in f]
     except FileNotFoundError:
         return []
     for d in lines:
-        assert list(d)[:3] == ["ts", "src", "kind"] and datetime.fromisoformat(d["ts"]).utcoffset() is not None, d
+        assert (
+            list(d)[:3] == ["ts", "src", "kind"]
+            and datetime.fromisoformat(d["ts"]).utcoffset() is not None
+        ), d
     return lines
 
 
 def show(event):
-    fields = [f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}" for k, v in event.items()
-              if k not in ("ts", "src", "kind", "issue")]
+    fields = [
+        f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}"
+        for k, v in event.items()
+        if k not in ("ts", "src", "kind", "issue")
+    ]
     return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 
 
@@ -79,22 +105,50 @@ def res(stdout="", code=0, stderr=""):
     return subprocess.CompletedProcess([], code, stdout, stderr)
 
 
-API = res(json.dumps({"full_name": "Ophis/Agent-PM", "default_branch": "main", "permissions": {"push": True}}))
+API = res(
+    json.dumps(
+        {"full_name": "Ophis/Agent-PM", "default_branch": "main", "permissions": {"push": True}}
+    )
+)
 ENG_RUN = [(("gh", "api", "repos/ophis/agent-pm"), API), (LS_REMOTE[:3], res())]
 
 
 def node(title="ENG: Session registry", description="Add a session registry.", comments=()):
-    return {"id": UUID, "identifier": ID, "url": URL, "title": title, "description": description,
-            "createdAt": "2026-09-01T00:00:00.000Z", "state": {"id": STATES["in_progress"]}, "project": {"id": PROJECT},
-            "comments": {"nodes": list(comments)}, "attachments": {"nodes": []}, "relations": {"nodes": []},
-            "inverseRelations": {"nodes": []}}
+    return {
+        "id": UUID,
+        "identifier": ID,
+        "url": URL,
+        "title": title,
+        "description": description,
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "state": {"id": STATES["in_progress"]},
+        "project": {"id": PROJECT},
+        "comments": {"nodes": list(comments)},
+        "attachments": {"nodes": []},
+        "relations": {"nodes": []},
+        "inverseRelations": {"nodes": []},
+    }
 
 
-NAMES = {issues.Q_ISSUE: "issue", sessions.Q_FIND: "find", linear.M_COMMENT: "comment", sessions.M_UPDATE: "update",
-         writeback.Q_ATTACHED: "read", linear.Q_ISSUE_STATE: "reread", linear.M_STATE: "state",
-         linear.M_SUBSCRIBE: "subscribe", writeback.M_ATTACH: "attach", writeback.Q_ID: "id"}
-FIELDS = {"comment": "commentCreate", "update": "commentUpdate", "state": "issueUpdate", "subscribe": "issueSubscribe",
-          "attach": "attachmentLinkURL"}
+NAMES = {
+    issues.Q_ISSUE: "issue",
+    sessions.Q_FIND: "find",
+    linear.M_COMMENT: "comment",
+    sessions.M_UPDATE: "update",
+    writeback.Q_ATTACHED: "read",
+    linear.Q_ISSUE_STATE: "reread",
+    linear.M_STATE: "state",
+    linear.M_SUBSCRIBE: "subscribe",
+    writeback.M_ATTACH: "attach",
+    writeback.Q_ID: "id",
+}
+FIELDS = {
+    "comment": "commentCreate",
+    "update": "commentUpdate",
+    "state": "issueUpdate",
+    "subscribe": "issueSubscribe",
+    "attach": "attachmentLinkURL",
+}
 
 
 class Gql:
@@ -127,7 +181,7 @@ class Run:
     def __call__(self, argv, timeout):
         self.calls.append((tuple(argv), timeout))
         for prefix, r in self.table:
-            if tuple(argv[:len(prefix)]) == prefix:
+            if tuple(argv[: len(prefix)]) == prefix:
                 if isinstance(r, BaseException):
                     raise r
                 return r
@@ -135,8 +189,14 @@ class Run:
 
 
 def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID):
-    return [f"--issue={ID}", f"--project={PROJECT}", f"--assignee={assignee}", f"--sid={sid}",
-            *([f"--task={task}"] if task else []), f"--mode={mode}"]
+    return [
+        f"--issue={ID}",
+        f"--project={PROJECT}",
+        f"--assignee={assignee}",
+        f"--sid={sid}",
+        *([f"--task={task}"] if task else []),
+        f"--mode={mode}",
+    ]
 
 
 class Base(unittest.TestCase):
@@ -150,9 +210,12 @@ class Base(unittest.TestCase):
         self.config = os.path.join(self.root, "orchestrator", "config.toml")
         self.write(self.config, CONFIG)
         self.runs = os.path.join(self.root, "logs", "runs.jsonl")
-        for p in (mock.patch.object(config, "RUNS_DIR", os.path.join(self.root, "work")),
-                  mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")),
-                  mock.patch.object(config, "RUNS_LOG", self.runs), mock.patch.dict(os.environ)):
+        for p in (
+            mock.patch.object(config, "RUNS_DIR", os.path.join(self.root, "work")),
+            mock.patch.object(config, "LOGS_DIR", os.path.join(self.root, "logs")),
+            mock.patch.object(config, "RUNS_LOG", self.runs),
+            mock.patch.dict(os.environ),
+        ):
             p.start()
             self.addCleanup(p.stop)
         os.environ.pop("TUI_ATTACH_PREFIX", None)
@@ -179,7 +242,9 @@ class Base(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, "", "")
         self.sh_calls.append((argv, kw))
         if argv == LIST:
-            return subprocess.CompletedProcess(argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), "")
+            return subprocess.CompletedProcess(
+                argv, 0, "".join(f"{n}\n" for n in self.tmux_sessions), ""
+            )
         if argv[:2] == ["tmux", "new-session"]:
             if self.tmux_error:
                 return subprocess.CompletedProcess(argv, 1, "", self.tmux_error)
@@ -193,7 +258,9 @@ class Base(unittest.TestCase):
         return service not in self.missing
 
     def said(self, src=None):
-        return [show(e) if src else f"{e['src']} {show(e)}" for e in logged() if src in (None, e["src"])]
+        return [
+            show(e) if src else f"{e['src']} {show(e)}" for e in logged() if src in (None, e["src"])
+        ]
 
     def transcript(self):
         self.write(config.transcript(ID, SID, self.projects), "")

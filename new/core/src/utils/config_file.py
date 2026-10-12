@@ -1,8 +1,11 @@
 """Pure TOML file loading and table merging."""
+
 import os
 import tomllib
 
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.toml")
+CONFIG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.toml"
+)
 LOCAL = "~/.agent-pm/core-new.local.toml"
 
 

@@ -1,6 +1,7 @@
 """delegate.run in process over new/tests/fake_claude.py (on PATH as `claude`, the core config's Adapter table), HOME
 and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the fix resume (FR-21), a usage limit
 (FR-58)."""
+
 from new.tests import fake_claude, hermetic
 from new.tests.integration.delegate.cli_integration_test import (
     DONE,
@@ -31,6 +32,7 @@ from driver import registry
 
 class Base(unittest.TestCase):
     """dummy-tester's echo over the fake `claude` in workdir `work`, the cwd the workdir."""
+
     def setUp(self):
         hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
@@ -39,10 +41,20 @@ class Base(unittest.TestCase):
         self.work, bin_dir = os.path.join(root, "work"), os.path.join(root, "bin")
         os.mkdir(bin_dir)
         self.out = os.path.join(self.work, "out.md")
-        self.scenario, self.log = os.path.join(root, "scenario.json"), os.path.join(root, "log.jsonl")
-        self.enterContext(mock.patch.dict(os.environ, {"PATH": fake_claude.install(bin_dir),
-                                                       "CLAUDE_CONFIG_DIR": os.path.join(root, "config"),
-                                                       fake_claude.ENV: self.scenario}))
+        self.scenario, self.log = (
+            os.path.join(root, "scenario.json"),
+            os.path.join(root, "log.jsonl"),
+        )
+        self.enterContext(
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PATH": fake_claude.install(bin_dir),
+                    "CLAUDE_CONFIG_DIR": os.path.join(root, "config"),
+                    fake_claude.ENV: self.scenario,
+                },
+            )
+        )
         registry.reset()
         self.addCleanup(registry.reset)
 
@@ -52,8 +64,18 @@ class Base(unittest.TestCase):
             json.dump({"steps": steps, **scenario, "log": self.log}, f)
         self.events = []
         with redirect_stderr(io.StringIO()):
-            return run(composer.resolve("dummy-tester"), "echo", "Hello.", self.work, runtime="claude",
-                       mode="headless", sid=SID, out=self.out, cwd=self.work, on_event=self.events.append)
+            return run(
+                composer.resolve("dummy-tester"),
+                "echo",
+                "Hello.",
+                self.work,
+                runtime="claude",
+                mode="headless",
+                sid=SID,
+                out=self.out,
+                cwd=self.work,
+                on_event=self.events.append,
+            )
 
     def calls(self) -> list[dict]:
         with open(self.log) as f:
@@ -66,10 +88,19 @@ class Base(unittest.TestCase):
 
 class Callbacks(Base):
     def test_begun_then_a_progress_per_mark_then_finished_over_a_real_process(self):
-        result = self.go([mark("start", "echoing"), "Echoing.", mark("draft", "half  way"), block(DONE)])
+        result = self.go(
+            [mark("start", "echoing"), "Echoing.", mark("draft", "half  way"), block(DONE)]
+        )
         self.assertEqual((result.returncode, result.outcome.status, result.error), (0, "done", ""))
-        self.assertEqual(self.events, [Begun(SID), Progress("start", "echoing"), Progress("draft", "half way"),
-                                       Finished(result)])
+        self.assertEqual(
+            self.events,
+            [
+                Begun(SID),
+                Progress("start", "echoing"),
+                Progress("draft", "half way"),
+                Finished(result),
+            ],
+        )
         with open(self.out) as f:
             self.assertEqual(f.read(), DONE["deliverable"])
 
@@ -82,19 +113,35 @@ class Fix(Base):
         first, second = self.calls()
         self.assertEqual((option(first, "--session-id"), option(second, "--resume")), (SID, SID))
         self.assertEqual(prompt(second), FIX.format(error=UNSAVED_ERROR))
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "invalid", "session",
-                                        "client_session", "result", "end"])
+        self.assertEqual(
+            self.kinds(),
+            [
+                "session",
+                "input",
+                "client_session",
+                "progress",
+                "invalid",
+                "session",
+                "client_session",
+                "result",
+                "end",
+            ],
+        )
 
 
 class UsageLimit(Base):
     def test_a_limit_stops_the_session_and_ends_the_run(self):
-        result = self.go(["Working.", {"kind": "limit", "resets_at": RESETS}, block(DONE)], hang=True)
+        result = self.go(
+            ["Working.", {"kind": "limit", "resets_at": RESETS}, block(DONE)], hang=True
+        )
         self.assertEqual((result.outcome, result.limit), (None, Limit(RESETS)))
         self.assertTrue(result.error.startswith("usage limit; resets at "), result.error)
         self.assertEqual(self.events, [Begun(SID)])
         (call,) = self.calls()
         self.assertFalse(running(call["pid"]))
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "limit", "result", "end"])
+        self.assertEqual(
+            self.kinds(), ["session", "input", "client_session", "limit", "result", "end"]
+        )
         self.assertFalse(os.path.exists(self.out))
 
 

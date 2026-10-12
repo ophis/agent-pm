@@ -90,14 +90,24 @@ class Live(unittest.TestCase):
         return os.path.join(self.agent_pm, "managers", manager, "events")
 
     def ok(self, res: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
-        self.assertEqual(res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertEqual(
+            res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}"
+        )
         return res
 
-    def call(self, *argv: str, inside: str | None = MANAGER, cwd: str | None = None,
-             **extra: str) -> subprocess.CompletedProcess:
+    def call(
+        self, *argv: str, inside: str | None = MANAGER, cwd: str | None = None, **extra: str
+    ) -> subprocess.CompletedProcess:
         env = self.server.env(**(self.server.inside(inside) if inside else {}), **extra)
-        return subprocess.run(list(argv), env=env, cwd=cwd or self.cwd, capture_output=True, text=True,
-                              stdin=subprocess.DEVNULL, timeout=TIMEOUT)
+        return subprocess.run(
+            list(argv),
+            env=env,
+            cwd=cwd or self.cwd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=TIMEOUT,
+        )
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call(sys.executable, CREW, *args, **kw)
@@ -114,13 +124,34 @@ class Live(unittest.TestCase):
     def scenario(self, name: str) -> str:
         return os.path.join(self.server.root, f"{name}.scenario.json")
 
-    def start(self, name: str, *args: str, steps: list | None = None, turns: list | tuple = (),
-              inside: str | None = MANAGER) -> subprocess.CompletedProcess:
+    def start(
+        self,
+        name: str,
+        *args: str,
+        steps: list | None = None,
+        turns: list | tuple = (),
+        inside: str | None = MANAGER,
+    ) -> subprocess.CompletedProcess:
         with open(self.scenario(name), "w") as f:
-            json.dump({"steps": [f"Hi from {name}."] if steps is None else steps, "turns": list(turns),
-                       "log": self.log}, f)
-        return self.workers("start", name, "--cwd", self.cwd, "--prompt", "hi", *args, inside=inside,
-                            **{fake_claude.ENV: self.scenario(name)})
+            json.dump(
+                {
+                    "steps": [f"Hi from {name}."] if steps is None else steps,
+                    "turns": list(turns),
+                    "log": self.log,
+                },
+                f,
+            )
+        return self.workers(
+            "start",
+            name,
+            "--cwd",
+            self.cwd,
+            "--prompt",
+            "hi",
+            *args,
+            inside=inside,
+            **{fake_claude.ENV: self.scenario(name)},
+        )
 
     def started(self, name: str, *args: str, **kw) -> str:
         res = self.ok(self.start(name, *args, **kw))
@@ -132,13 +163,16 @@ class Live(unittest.TestCase):
         return self.workers("restart", name, **kw, **{fake_claude.ENV: self.scenario(name)})
 
     def next_event(self, after: int, *args: str, gen: int = 0, **kw) -> tuple[int, str, str]:
-        out = self.ok(self.workers("next-event", *args, "--after", str(after), "--gen", str(gen), **kw)).stdout
+        out = self.ok(
+            self.workers("next-event", *args, "--after", str(after), "--gen", str(gen), **kw)
+        ).stdout
         head, _, content = out.partition("\n")
         n, _, event = head.partition(" ")
         return int(n), event, content.removesuffix("\n")
 
-    def wait_event(self, name: str, kind: str, count: int = 1, timeout: float = live_tmux.TIMEOUT,
-                   poke=None) -> list[str]:
+    def wait_event(
+        self, name: str, kind: str, count: int = 1, timeout: float = live_tmux.TIMEOUT, poke=None
+    ) -> list[str]:
         def check():
             if poke:
                 poke()
@@ -146,22 +180,37 @@ class Live(unittest.TestCase):
             return lines if sum(is_event(line, name, kind) for line in lines) >= count else None
 
         try:
-            return live_tmux.wait(check, timeout, what=f"{count} `{name} {kind}` events in {self.events}")
+            return live_tmux.wait(
+                check, timeout, what=f"{count} `{name} {kind}` events in {self.events}"
+            )
         except AssertionError as e:
             raise AssertionError(f"{e}\n{self.diagnose(name)}") from None
 
     def diagnose(self, name: str) -> str:
-        pane = self.server.tmux("display-message", "-p", "-t", f"={name}:",
-                                "pid #{pane_pid} dead #{pane_dead} status #{pane_dead_status} "
-                                "signal #{pane_dead_signal} @state #{@state}")
+        pane = self.server.tmux(
+            "display-message",
+            "-p",
+            "-t",
+            f"={name}:",
+            "pid #{pane_pid} dead #{pane_dead} status #{pane_dead_status} "
+            "signal #{pane_dead_signal} @state #{@state}",
+        )
         hooks = self.server.tmux("show-hooks", "-p", "-t", f"={name}:")
         server = self.server.tmux("display-message", "-p", "#{pid}").stdout.strip()
         pids = [server, *(str(e["pid"]) for e in self.calls(name))]
-        ps = subprocess.run(["ps", "-o", "pid,ppid,stat,comm", "-p", ",".join(pids)], capture_output=True, text=True)
-        return "\n".join([f"pane: {pane.stdout.strip()}{pane.stderr.strip()}",
-                          f"hooks: {hooks.stdout.strip()}{hooks.stderr.strip()}",
-                          f"server {server}, fakes {pids[1:]}:", ps.stdout.strip(),
-                          "events:", *live_tmux.events(self.events)])
+        ps = subprocess.run(
+            ["ps", "-o", "pid,ppid,stat,comm", "-p", ",".join(pids)], capture_output=True, text=True
+        )
+        return "\n".join(
+            [
+                f"pane: {pane.stdout.strip()}{pane.stderr.strip()}",
+                f"hooks: {hooks.stdout.strip()}{hooks.stderr.strip()}",
+                f"server {server}, fakes {pids[1:]}:",
+                ps.stdout.strip(),
+                "events:",
+                *live_tmux.events(self.events),
+            ]
+        )
 
     def calls(self, name: str) -> list[dict]:
         try:
@@ -172,21 +221,31 @@ class Live(unittest.TestCase):
         return [e for e in entries if has_pair(e["argv"], "--name", name)]
 
     def display(self, name: str, fmt: str) -> str:
-        return self.ok(self.server.tmux("display-message", "-p", "-t", f"={name}:", fmt)).stdout.removesuffix("\n")
+        return self.ok(
+            self.server.tmux("display-message", "-p", "-t", f"={name}:", fmt)
+        ).stdout.removesuffix("\n")
 
     def pane_text(self, name: str, lines: int) -> str:
-        text = self.ok(self.server.tmux("capture-pane", "-p", "-J", "-t", f"={name}:", "-S", f"-{lines}")).stdout
+        text = self.ok(
+            self.server.tmux("capture-pane", "-p", "-J", "-t", f"={name}:", "-S", f"-{lines}")
+        ).stdout
         rows = text.splitlines()
         while rows and not rows[-1].strip():
             rows.pop()
         return "\n".join(rows[-lines:])
 
     def window_option(self, name: str, key: str) -> str:
-        return self.ok(self.server.tmux("show-options", "-wqv", "-t", f"={name}:", key)).stdout.removesuffix("\n")
+        return self.ok(
+            self.server.tmux("show-options", "-wqv", "-t", f"={name}:", key)
+        ).stdout.removesuffix("\n")
 
     def grid(self, columns: list, manager_width: int | None = None) -> None:
-        check = functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, columns, manager_width)
-        with contextlib.suppress(AssertionError):   # on timeout, check's own message below rather than wait's repr
+        check = functools.partial(
+            live_tmux.assert_grid, self, self.server, MANAGER, columns, manager_width
+        )
+        with contextlib.suppress(
+            AssertionError
+        ):  # on timeout, check's own message below rather than wait's repr
             live_tmux.wait(check)
         check()
 
@@ -216,7 +275,9 @@ class Live(unittest.TestCase):
             self.assertIn(" tile --no-wait --if-panes-changed @", line)
 
     def pane_set(self, name: str) -> str:
-        panes = self.ok(self.server.tmux("list-panes", "-t", self.window_of(name), "-F", "#{pane_id}")).stdout.split()
+        panes = self.ok(
+            self.server.tmux("list-panes", "-t", self.window_of(name), "-F", "#{pane_id}")
+        ).stdout.split()
         return " ".join(sorted(panes, key=lambda p: int(p[1:])))
 
     def holds(self, read, value, what: str):
@@ -232,14 +293,22 @@ def is_event(line: str, name: str, kind: str) -> bool:
 
 
 def has_pair(argv: list[str], flag: str, value: str) -> bool:
-    return any(argv[i:i + 2] == [flag, value] for i in range(len(argv)))
+    return any(argv[i : i + 2] == [flag, value] for i in range(len(argv)))
 
 
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
-    me, events, name = shlex.quote(CREW), shlex.quote(os.path.join(directory, "events")), os.path.basename(directory)
-    lines = [*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
-             f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
-             f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}"]
+    me, events, name = (
+        shlex.quote(CREW),
+        shlex.quote(os.path.join(directory, "events")),
+        os.path.basename(directory),
+    )
+    lines = [
+        *backlog,
+        f"N={n} GEN={gen}",
+        f"monitor: tail -n +{n + 1} -F {events}",
+        f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
+        f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}",
+    ]
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -257,13 +326,26 @@ class Lifecycle(Live):
         sid = self.started("w1", steps=["Hi from w1."], turns=[["Second."]])
         self.ok(self.server.tmux("has-session", "-t", "=w1"))
         claude = os.path.join(self.server.root, "bin", "claude")
-        self.assertEqual({k: self.server.option("w1", f"@{k}")
-                          for k in ("sid", "cwd", "client", "exe", "flags", "env", "events")},
-                         {"sid": sid, "cwd": self.cwd, "client": "claude", "exe": claude, "flags": "[]", "env": "{}",
-                          "events": self.events})
+        self.assertEqual(
+            {
+                k: self.server.option("w1", f"@{k}")
+                for k in ("sid", "cwd", "client", "exe", "flags", "env", "events")
+            },
+            {
+                "sid": sid,
+                "cwd": self.cwd,
+                "client": "claude",
+                "exe": claude,
+                "flags": "[]",
+                "env": "{}",
+                "events": self.events,
+            },
+        )
         (call,) = self.calls("w1")
         argv = call["argv"]
-        self.assertEqual(argv[:1] + argv[2:], ["--settings", "--session-id", sid, "--name", "w1", "--", "hi"])
+        self.assertEqual(
+            argv[:1] + argv[2:], ["--settings", "--session-id", sid, "--name", "w1", "--", "hi"]
+        )
         self.assertEqual(json.loads(argv[1]), json.loads(crew.tmux_host.hooks(self.events)))
         (done,) = self.wait_event("w1", "done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
@@ -278,9 +360,13 @@ class Lifecycle(Live):
 
     def test_blocked(self):
         # the dialog's text: a hook step prints nothing, so the pane, next-event's content, would be blank
-        self.started("w1", steps=["Allow this edit?", {"kind": "hook", "event": "PermissionRequest"}])
+        self.started(
+            "w1", steps=["Allow this edit?", {"kind": "hook", "event": "PermissionRequest"}]
+        )
         lines = self.wait_event("w1", "done")
-        self.assertEqual([line.split(" ")[1:] for line in lines], [["w1", "blocked"], ["w1", "done"]])
+        self.assertEqual(
+            [line.split(" ")[1:] for line in lines], [["w1", "blocked"], ["w1", "done"]]
+        )
         n, event, content = self.next_event(0)
         self.assertEqual((n, event), (1, lines[0]))
         self.assertTrue(content)
@@ -295,7 +381,9 @@ class Lifecycle(Live):
         live_tmux.wait(lambda: self.display("w1", "#{pane_dead}") == "1", what="w1's pane dead")
         # tmux on Linux (CI: 3.4) can leave the dead pane's process unreaped, so no pane-died, until another child of
         # the server exits: a no-op job is one.
-        _, dead = self.wait_event("w1", "dead", poke=lambda: self.server.tmux("run-shell", "-b", "true"))
+        _, dead = self.wait_event(
+            "w1", "dead", poke=lambda: self.server.tmux("run-shell", "-b", "true")
+        )
         self.assertTrue(is_event(dead, "w1", "dead"), dead)
         self.assertEqual(self.server.option("w1", "@state"), "dead")
         state, sig = self.display("w1", "#{pane_dead} #{pane_dead_signal}").split(" ")
@@ -322,7 +410,7 @@ class Lifecycle(Live):
         self.assertIn(head, lines, res.stderr)
         at = lines.index(head)
         self.assertTrue(at > 0 and all(line.startswith("tui: ") for line in lines[:at]), res.stderr)
-        self.assertIn("claude: error: unrecognized arguments: --bogus", lines[at + 1:])
+        self.assertIn("claude: error: unrecognized arguments: --bogus", lines[at + 1 :])
         self.ok(self.server.tmux("has-session", "-t", "=w2"))
         self.assertEqual(self.display("w2", "#{pane_dead}"), "1")
 
@@ -350,10 +438,14 @@ class Grid(Live):
     def test_name_order(self):
         self.per_column(2)
         for name, columns in (
-                ("pm-TASK-10", [["pm-TASK-10"]]),
-                ("engineer-TASK-2", [["engineer-TASK-2", "pm-TASK-10"]]),
-                ("pm-TASK-9", [["engineer-TASK-2", "pm-TASK-9"], ["pm-TASK-10"]]),
-                ("engineer-TASK-11", [["engineer-TASK-2", "engineer-TASK-11"], ["pm-TASK-9", "pm-TASK-10"]])):
+            ("pm-TASK-10", [["pm-TASK-10"]]),
+            ("engineer-TASK-2", [["engineer-TASK-2", "pm-TASK-10"]]),
+            ("pm-TASK-9", [["engineer-TASK-2", "pm-TASK-9"], ["pm-TASK-10"]]),
+            (
+                "engineer-TASK-11",
+                [["engineer-TASK-2", "engineer-TASK-11"], ["pm-TASK-9", "pm-TASK-10"]],
+            ),
+        ):
             self.started(name)
             self.grid(columns)
 
@@ -381,17 +473,35 @@ class Settle(Live):
         self.retile("all")
         self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
         self.window = self.display(MANAGER, "#{window_id}")
-        w1 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE)
+        w1 = self.tmux(
+            "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE
+        )
         w2 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", w1, *live_tmux.IDLE)
         for name, opener, pane in (("w1", "old1", w1), ("w2", "old2", w2)):
             self.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
-            self.tmux("set-option", "-t", f"={name}:", "@opener", opener, ";", "set-option", "-t", f"={name}:",
-                      "@pane", pane)
+            self.tmux(
+                "set-option",
+                "-t",
+                f"={name}:",
+                "@opener",
+                opener,
+                ";",
+                "set-option",
+                "-t",
+                f"={name}:",
+                "@pane",
+                pane,
+            )
         self.tmux("swap-pane", "-d", "-s", self.manager, "-t", w2)
-        self.assertEqual(self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
-                         [w2, w1, self.manager])
-        old = tmux_host._render_layout(tmux_host._parse_layout(
-            f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"))
+        self.assertEqual(
+            self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
+            [w2, w1, self.manager],
+        )
+        old = tmux_host._render_layout(
+            tmux_host._parse_layout(
+                f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
+            )
+        )
         self.tmux("select-layout", "-t", self.window, old)
         self.assertEqual(self.layout(), old)
 
@@ -402,8 +512,10 @@ class Settle(Live):
         return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
 
     def grid_up(self) -> None:
-        code = (f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tmux_host; "
-                f"sys.exit(tmux_host._grid_up({self.window!r}, {self.manager!r}, 1, 'all', subprocess.run))")
+        code = (
+            f"import sys; sys.path.insert(0, {os.path.dirname(TUI)!r}); import subprocess, tmux_host; "
+            f"sys.exit(tmux_host._grid_up({self.window!r}, {self.manager!r}, 1, 'all', subprocess.run))"
+        )
         self.ok(self.call(sys.executable, "-I", "-c", code))
 
     def settled(self) -> str:
@@ -419,7 +531,9 @@ class Settle(Live):
         end = time.monotonic() + RETILE_WAIT
         state = f"#{{{tmux_host.GRID_MANAGER}}}\t#{{{tmux_host.GRID_BUSY}}}\t#{{{tmux_host.GRID_TILES}}}"
         while True:
-            manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split("\t")
+            manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split(
+                "\t"
+            )
             if not manager or now != tiles and not busy or time.monotonic() > end:
                 return manager, now
             time.sleep(PACE)
@@ -429,14 +543,39 @@ class Settle(Live):
         self.settled()
 
     def test_concurrent_tiles_settle(self):
-        self.tmux("set-option", "-w", "-t", self.window, tmux_host.GRID_MANAGER, self.manager, ";",
-                  "set-option", "-w", "-t", self.window, tmux_host.GRID_PER_COLUMN, "1")
+        self.tmux(
+            "set-option",
+            "-w",
+            "-t",
+            self.window,
+            tmux_host.GRID_MANAGER,
+            self.manager,
+            ";",
+            "set-option",
+            "-w",
+            "-t",
+            self.window,
+            tmux_host.GRID_PER_COLUMN,
+            "1",
+        )
         env = self.server.env(**self.server.inside(MANAGER))
-        tiles = [subprocess.Popen([sys.executable, TUI, "tile", *flag, self.window], env=env, cwd=self.cwd,
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                 for flag in (["--no-wait"], []) for _ in range(8)]
+        tiles = [
+            subprocess.Popen(
+                [sys.executable, TUI, "tile", *flag, self.window],
+                env=env,
+                cwd=self.cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for flag in (["--no-wait"], [])
+            for _ in range(8)
+        ]
         for p in tiles:
-            self.addCleanup(p.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
+            self.addCleanup(
+                p.communicate
+            )  # cleanups run last first: after the kill, reaps it, closes its pipes
             self.addCleanup(p.kill)
         for p in tiles:
             _, err = p.communicate(timeout=TIMEOUT)
@@ -464,13 +603,21 @@ class Settle(Live):
                 break
             seen, most, tiles = seen + (now != tiles), max(most, len(now.split())), now
             elapsed = time.monotonic() - start
-            self.assertLess(elapsed, BREAKER_TIMEOUT,
-                            f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
-                            f"trips past {tmux_host.TILE_LIMIT} in {tmux_host.TILE_WINDOW} s")
+            self.assertLess(
+                elapsed,
+                BREAKER_TIMEOUT,
+                f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
+                f"trips past {tmux_host.TILE_LIMIT} in {tmux_host.TILE_WINDOW} s",
+            )
         # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
         self.assertGreaterEqual(most, tmux_host.TILE_LIMIT - 1)
-        options = (tmux_host.GRID_MANAGER, tmux_host.GRID_PER_COLUMN, tmux_host.GRID_TILES, tmux_host.GRID_BUSY,
-                   tmux_host.GRID_PANES_SET)
+        options = (
+            tmux_host.GRID_MANAGER,
+            tmux_host.GRID_PER_COLUMN,
+            tmux_host.GRID_TILES,
+            tmux_host.GRID_BUSY,
+            tmux_host.GRID_PANES_SET,
+        )
         self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
         hooks = self.tmux("show-hooks", "-w", "-t", self.window)
         self.assertEqual([h for h in tmux_host.GRID_HOOKS if h in hooks], [], hooks)
@@ -498,8 +645,15 @@ class Retile(Live):
 
     def drag(self, name: str, rows: int) -> str:
         before = self.layout()
-        self.ok(self.server.tmux("resize-pane", "-t", self.server.pane_of(name), "-D" if rows > 0 else "-U",
-                                 str(abs(rows))))
+        self.ok(
+            self.server.tmux(
+                "resize-pane",
+                "-t",
+                self.server.pane_of(name),
+                "-D" if rows > 0 else "-U",
+                str(abs(rows)),
+            )
+        )
         after = self.layout()
         self.assertNotEqual(after, before)
         return after
@@ -507,7 +661,10 @@ class Retile(Live):
     def split_of(self, before: dict, name: str, target: str, side: str) -> None:
         after, new = self.panes(), self.server.pane_of(name)
         self.assertEqual(set(after), {*before, new})
-        self.assertEqual({p: after[p] for p in before if p != target}, {p: before[p] for p in before if p != target})
+        self.assertEqual(
+            {p: after[p] for p in before if p != target},
+            {p: before[p] for p in before if p != target},
+        )
         (x, y, w, h), kept, added = before[target], after[target], after[new]
         if side == "right":
             want = (x, y, kept[2], h), (x + kept[2] + 1, y, w - kept[2] - 1, h)
@@ -522,16 +679,25 @@ class Retile(Live):
         self.started("w2")
         self.grid([["w1", "w2"]], width)
         self.open_close_hooks(MANAGER)
-        self.assertEqual(self.window_option(MANAGER, tmux_host.GRID_PANES_SET), self.pane_set(MANAGER))
+        self.assertEqual(
+            self.window_option(MANAGER, tmux_host.GRID_PANES_SET), self.pane_set(MANAGER)
+        )
         dragged = self.drag("w1", 5)
         self.holds(self.layout, dragged, "the layout after a drag")
         tiles = self.tiles()
-        self.ok(self.server.tmux("resize-window", "-t", self.window_of(MANAGER), "-x", "160", "-y", "40"))
+        self.ok(
+            self.server.tmux(
+                "resize-window", "-t", self.window_of(MANAGER), "-x", "160", "-y", "40"
+            )
+        )
         self.assertEqual(self.display(MANAGER, "#{window_width}x#{window_height}"), "160x40")
         heights = [self.panes()[self.server.pane_of(n)][3] for n in ("w1", "w2")]
         self.assertGreater(heights[0] - heights[1], 1)
-        self.holds(lambda: (self.layout(), self.tiles()), (self.layout(), tiles),
-                   "the layout and @grid-tiles after a window resize")
+        self.holds(
+            lambda: (self.layout(), self.tiles()),
+            (self.layout(), tiles),
+            "the layout and @grid-tiles after a window resize",
+        )
         width = self.panes()[self.manager][2]
         self.started("w3")
         self.grid([["w1", "w2", "w3"]], width)
@@ -551,8 +717,10 @@ class Retile(Live):
         self.open_close_hooks(MANAGER)
         self.assertEqual(self.ok(self.workers("stop", "w3")).stdout, "")
         self.grid([["w1"]], width)
-        live_tmux.wait(lambda: self.window_option(MANAGER, tmux_host.GRID_PANES_SET) == self.pane_set(MANAGER),
-                       what="@grid-panes the window's pane set")
+        live_tmux.wait(
+            lambda: self.window_option(MANAGER, tmux_host.GRID_PANES_SET) == self.pane_set(MANAGER),
+            what="@grid-panes the window's pane set",
+        )
 
     def test_off_places_only_till_tile(self):
         self.retile("off")
@@ -565,7 +733,10 @@ class Retile(Live):
         self.split_of(before, "w2", w1, "below")
         self.drag("w1", -10)
         before = self.panes()
-        largest = max((p for p in before if p != self.manager), key=lambda p: (before[p][2] * before[p][3], int(p[1:])))
+        largest = max(
+            (p for p in before if p != self.manager),
+            key=lambda p: (before[p][2] * before[p][3], int(p[1:])),
+        )
         self.assertEqual(largest, self.server.pane_of("w2"))
         self.attach(inside="w1")
         self.started("z1", inside="w1")
@@ -573,7 +744,10 @@ class Retile(Live):
         self.holds(self.panes, self.panes(), "the panes as placed")
         self.assertEqual(self.hooks(MANAGER), [])
         options = (tmux_host.GRID_MANAGER, tmux_host.GRID_PER_COLUMN)
-        self.assertEqual([self.window_option(MANAGER, k) for k in options], [self.manager, str(tmux_host.PER_COLUMN)])
+        self.assertEqual(
+            [self.window_option(MANAGER, k) for k in options],
+            [self.manager, str(tmux_host.PER_COLUMN)],
+        )
         self.ok(self.tui("tile", self.window_of(MANAGER)))
         self.grid([[("w1", ["z1"]), "w2"]], self.server.size[0] // 2)
 
@@ -593,7 +767,7 @@ class Retile(Live):
         self.started("w1")
         self.started("w2")
         self.grid([["w1", "w2"]])
-        self.wait_event("w1", "done")   # its transcript, which --resume needs
+        self.wait_event("w1", "done")  # its transcript, which --resume needs
         dragged = self.drag("w1", 5)
         self.ok(self.restart("w1"))
         self.assertEqual(len(self.calls("w1")), 2)
@@ -620,7 +794,9 @@ class Managers(Live):
         inner = self.events_of("w1")
         self.assertEqual(self.server.option("w2", "@events"), inner)
         self.assertEqual([x.split(" ")[1:] for x in self.done_lines(inner, "w2")], [["w2", "done"]])
-        self.assertEqual([x.split(" ")[1:] for x in live_tmux.events(self.events)], [["w1", "done"]])
+        self.assertEqual(
+            [x.split(" ")[1:] for x in live_tmux.events(self.events)], [["w1", "done"]]
+        )
 
     def test_manager_flag(self):
         self.attach("--manager", "other")
@@ -633,8 +809,10 @@ class Managers(Live):
 
     def test_no_pane_needs_a_manager(self):
         res = self.start("w1", inside=None)
-        self.assertEqual((res.returncode, res.stderr),
-                         (1, "workers: no manager directory: run inside tmux or give --manager <name>\n"))
+        self.assertEqual(
+            (res.returncode, res.stderr),
+            (1, "workers: no manager directory: run inside tmux or give --manager <name>\n"),
+        )
         self.assertFalse(os.path.exists(os.path.dirname(os.path.dirname(self.events))))
         self.assertEqual(self.server.tmux("has-session", "-t", "=w1").returncode, 1)
 
@@ -644,15 +822,22 @@ class Splits(Live):
 
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
-        self.attach("--manager", MANAGER, inside=None)   # outside tmux: no lease, so start from there may run
-        self.started("w1", "--manager", MANAGER, "--split-from", MANAGER, "--split", "below", inside=None)
+        self.attach(
+            "--manager", MANAGER, inside=None
+        )  # outside tmux: no lease, so start from there may run
+        self.started(
+            "w1", "--manager", MANAGER, "--split-from", MANAGER, "--split", "below", inside=None
+        )
         pane = self.server.pane_of("w1")
         panes = self.server.panes(f"={MANAGER}:")
         self.assertIn(pane, panes)
         (mx, my, _, _), (x, y, _, _) = panes[manager], panes[pane]
         self.assertEqual(x, mx)
         self.assertGreater(y, my)
-        self.assertEqual([self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")], ["", ""])
+        self.assertEqual(
+            [self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")],
+            ["", ""],
+        )
 
 
 class Roster(Live):
@@ -673,8 +858,10 @@ class Roster(Live):
     def held(self, holder: str) -> str:
         h = self.roster()["holder"]
         self.assertEqual(h["session"], holder)
-        return (f"workers: manager directory {self.directory}: held by tmux session {holder} since {h['since']}; ask "
-                "that manager to run crew.py release, or end that session\n")
+        return (
+            f"workers: manager directory {self.directory}: held by tmux session {holder} since {h['since']}; ask "
+            "that manager to run crew.py release, or end that session\n"
+        )
 
     def refused(self) -> None:
         before = self.roster()
@@ -692,7 +879,9 @@ class Roster(Live):
         return self.call(*roster.recovery(e), cwd=e["cwd"], **extra)
 
     def after_w1(self, out: str, rest: str) -> None:
-        self.assertRegex(out, rf"\A{re.escape(crew.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z")
+        self.assertRegex(
+            out, rf"\A{re.escape(crew.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z"
+        )
 
     def live(self, *names: str) -> bool:
         return all(self.server.tmux("has-session", "-t", f"={n}").returncode == 0 for n in names)
@@ -704,7 +893,9 @@ class Roster(Live):
         self.attach()
         self.second()
         self.refused()
-        self.assertEqual(self.ok(self.workers("release")).stdout, f"workers: released {self.directory}\n")
+        self.assertEqual(
+            self.ok(self.workers("release")).stdout, f"workers: released {self.directory}\n"
+        )
         self.assertIsNone(self.roster()["holder"])
         self.taken_over()
 
@@ -717,13 +908,22 @@ class Roster(Live):
 
     def test_concurrent_attaches_one_holds(self):
         self.second()
-        procs = {s: subprocess.Popen([sys.executable, CREW, "attach", "--manager", MANAGER],
-                                     env=self.server.env(**self.server.inside(s)), cwd=self.cwd,
-                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True)
-                 for s in (MANAGER, SECOND)}
+        procs = {
+            s: subprocess.Popen(
+                [sys.executable, CREW, "attach", "--manager", MANAGER],
+                env=self.server.env(**self.server.inside(s)),
+                cwd=self.cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for s in (MANAGER, SECOND)
+        }
         for p in procs.values():
-            self.addCleanup(p.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
+            self.addCleanup(
+                p.communicate
+            )  # cleanups run last first: after the kill, reaps it, closes its pipes
             self.addCleanup(p.kill)
         out = {s: p.communicate(timeout=TIMEOUT) for s, p in procs.items()}
         winners = [s for s, p in procs.items() if p.returncode == 0]
@@ -737,38 +937,89 @@ class Roster(Live):
         self.attach()
         sid = self.started("w1")
         pane = self.server.pane_of("w1")
-        resume = [sys.executable, CREW, "start", "w1", "--manager", MANAGER, "--client", "claude", "--resume", sid,
-                  "--cwd", self.cwd]
+        resume = [
+            sys.executable,
+            CREW,
+            "start",
+            "w1",
+            "--manager",
+            MANAGER,
+            "--client",
+            "claude",
+            "--resume",
+            sid,
+            "--cwd",
+            self.cwd,
+        ]
         e = self.roster()["entries"]["w1"]
-        self.assertEqual({k: e[k] for k in ("kind", "sid", "cwd", "resume", "pane", "opener", "state")},
-                         {"kind": "worker", "sid": sid, "cwd": self.cwd, "resume": resume, "pane": pane,
-                          "opener": MANAGER, "state": "working"})
-        (done,) = self.wait_event("w1", "done")   # its transcript, which --resume needs
+        self.assertEqual(
+            {k: e[k] for k in ("kind", "sid", "cwd", "resume", "pane", "opener", "state")},
+            {
+                "kind": "worker",
+                "sid": sid,
+                "cwd": self.cwd,
+                "resume": resume,
+                "pane": pane,
+                "opener": MANAGER,
+                "state": "working",
+            },
+        )
+        (done,) = self.wait_event("w1", "done")  # its transcript, which --resume needs
         self.ok(self.kill("w1"))
-        self.assertEqual(self.attach().stdout, f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
-                                               f"resume w1: {shlex.join(resume)}\n"
-                                               f"{tail(self.directory, 0, 0, f'1 {done}')}")
+        self.assertEqual(
+            self.attach().stdout,
+            f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
+            f"resume w1: {shlex.join(resume)}\n"
+            f"{tail(self.directory, 0, 0, f'1 {done}')}",
+        )
         self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")
         res = self.ok(self.recover("w1", **{fake_claude.ENV: self.scenario("w1")}))
         self.assertEqual(res.stdout, f"w1 {sid}\n")
-        self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sid), self.calls("w1")[-1]["argv"])
+        self.assertTrue(
+            has_pair(self.calls("w1")[-1]["argv"], "--resume", sid), self.calls("w1")[-1]["argv"]
+        )
         self.grid([["w1"]])
         pane = self.server.pane_of("w1")
         table = f"{crew.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
         out = self.attach().stdout
-        self.assertEqual(out[:len(table)], table, out)
+        self.assertEqual(out[: len(table)], table, out)
         self.assertEqual(list(self.roster()["entries"]), ["w1"])
 
     def echoing(self, name: str) -> dict[str, str]:
         with open(self.scenario(name), "w") as f:
-            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."}], "log": self.log}, f)
+            json.dump(
+                {
+                    "steps": [{"kind": "progress", "name": "start", "text": "Echoing."}],
+                    "log": self.log,
+                },
+                f,
+            )
         return {fake_claude.ENV: self.scenario(name)}
 
     def role_run(self) -> str:
         work = os.path.join(self.server.root, "role-work")
         os.mkdir(work)
-        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--input", "Hello.", "--out", "out.md", "--workdir",
-                          ".", "--runner", "tui", "--detach", "--sid", ROLE_SID, cwd=work, **self.echoing(ROLE)))
+        self.ok(
+            self.call(
+                sys.executable,
+                DRIVE,
+                "--role",
+                ROLE,
+                "--input",
+                "Hello.",
+                "--out",
+                "out.md",
+                "--workdir",
+                ".",
+                "--runner",
+                "tui",
+                "--detach",
+                "--sid",
+                ROLE_SID,
+                cwd=work,
+                **self.echoing(ROLE),
+            )
+        )
         self.wait_event(ROLE_TUI, "done")
         return work
 
@@ -788,8 +1039,10 @@ class Roster(Live):
         self.second()
         self.attach(inside=SECOND)
         self.started("o1", inside=SECOND)
-        self.assertEqual((self.server.option(ROLE_DRIVER, "@opener"), self.server.option(ROLE_DRIVER, "@pane")),
-                         (MANAGER, ""))
+        self.assertEqual(
+            (self.server.option(ROLE_DRIVER, "@opener"), self.server.option(ROLE_DRIVER, "@pane")),
+            (MANAGER, ""),
+        )
         self.grid([[ROLE_TUI, ("w1", ["w3"]), "w2"]])
         mine = ["w3", ROLE_TUI, ROLE_DRIVER, "w1", "w2"]
         res = self.ok(self.workers("stop-all", "--dry-run"))
@@ -800,7 +1053,9 @@ class Roster(Live):
         self.assertTrue(self.gone(*mine))
         self.assertTrue(self.live(MANAGER, SECOND, "o1"))
         self.assertEqual(self.roster()["entries"], {})
-        self.assertEqual(self.ok(self.workers("stop-all")).stdout, "workers: stop-all: nothing to stop\n")
+        self.assertEqual(
+            self.ok(self.workers("stop-all")).stdout, "workers: stop-all: nothing to stop\n"
+        )
 
     def test_killed_role_run_gone_then_recovered(self):
         self.attach()
@@ -808,41 +1063,96 @@ class Roster(Live):
         os.mkdir(work)
         out = os.path.join(work, "out.md")
         scenario = self.echoing(ROLE)
-        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--runner", "tui", "--detach", "--input", "Hello.",
-                          "--out", out, "--workdir", work, "--sid", ROLE_SID, **scenario))
-        resume = [sys.executable, DRIVE, f"--role={ROLE}", f"--out={out}", f"--workdir={work}", "--runner=tui",
-                  "--detach", f"--manager={MANAGER}"]
+        self.ok(
+            self.call(
+                sys.executable,
+                DRIVE,
+                "--role",
+                ROLE,
+                "--runner",
+                "tui",
+                "--detach",
+                "--input",
+                "Hello.",
+                "--out",
+                out,
+                "--workdir",
+                work,
+                "--sid",
+                ROLE_SID,
+                **scenario,
+            )
+        )
+        resume = [
+            sys.executable,
+            DRIVE,
+            f"--role={ROLE}",
+            f"--out={out}",
+            f"--workdir={work}",
+            "--runner=tui",
+            "--detach",
+            f"--manager={MANAGER}",
+        ]
         [(name, e)] = self.roster()["entries"].items()
-        self.assertEqual((name, {k: e[k] for k in ("kind", "sid", "cwd", "tui", "opener", "resume", "state")}),
-                         (ROLE_DRIVER, {"kind": "role", "sid": ROLE_SID, "cwd": self.cwd, "tui": ROLE_TUI,
-                                        "opener": MANAGER, "resume": resume, "state": "working"}))
-        self.wait_event(ROLE_TUI, "done")   # turn 1's end: its transcript, which --resume needs
+        self.assertEqual(
+            (name, {k: e[k] for k in ("kind", "sid", "cwd", "tui", "opener", "resume", "state")}),
+            (
+                ROLE_DRIVER,
+                {
+                    "kind": "role",
+                    "sid": ROLE_SID,
+                    "cwd": self.cwd,
+                    "tui": ROLE_TUI,
+                    "opener": MANAGER,
+                    "resume": resume,
+                    "state": "working",
+                },
+            ),
+        )
+        self.wait_event(ROLE_TUI, "done")  # turn 1's end: its transcript, which --resume needs
         self.ok(self.kill(ROLE_DRIVER))
-        self.kill(ROLE_TUI)   # the driver, stopping, may kill it first
+        self.kill(ROLE_TUI)  # the driver, stopping, may kill it first
         # the old driver's last act is its outcome line, after it kills the TUI session: none of it may hit the new run
-        live_tmux.wait(lambda: self.gone(ROLE_DRIVER, ROLE_TUI) and any(
-            line.split(" ")[1:3] == [ROLE_DRIVER, "outcome"] for line in live_tmux.events(self.events)),
-                       what=f"{ROLE_DRIVER} and {ROLE_TUI} gone, the driver's outcome line")
+        live_tmux.wait(
+            lambda: (
+                self.gone(ROLE_DRIVER, ROLE_TUI)
+                and any(
+                    line.split(" ")[1:3] == [ROLE_DRIVER, "outcome"]
+                    for line in live_tmux.events(self.events)
+                )
+            ),
+            what=f"{ROLE_DRIVER} and {ROLE_TUI} gone, the driver's outcome line",
+        )
         res = self.attach()
         e = self.roster()["entries"][ROLE_DRIVER]
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
-        self.assertEqual(res.stdout, f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
-                                     f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
-                                     f"{shlex.join(roster.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}")
+        self.assertEqual(
+            res.stdout,
+            f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\tgone\t-\t{self.cwd}\t-\n"
+            f"resume {ROLE_DRIVER}: cd {shlex.quote(self.cwd)} && "
+            f"{shlex.join(roster.recovery(e))}\n{tail(self.directory, 0, 0, *backlog)}",
+        )
         self.assertIn("--input 'Continue the unfinished task.'", res.stdout)
         self.ok(self.recover(ROLE_DRIVER, **scenario))
-        live_tmux.wait(lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back")
+        live_tmux.wait(
+            lambda: self.live(ROLE_DRIVER, ROLE_TUI), what=f"{ROLE_DRIVER} and {ROLE_TUI} back"
+        )
         self.grid([[ROLE_TUI]])
-        live_tmux.wait(lambda: self.resumed(ROLE_TUI, ROLE_SID), what=f"{ROLE_TUI}'s claude --resume {ROLE_SID}")
+        live_tmux.wait(
+            lambda: self.resumed(ROLE_TUI, ROLE_SID),
+            what=f"{ROLE_TUI}'s claude --resume {ROLE_SID}",
+        )
         again = self.roster()["entries"]
         self.assertEqual(list(again), [ROLE_DRIVER])
-        self.assertEqual({**again[ROLE_DRIVER], "started": None}, {**e, "state": "working", "started": None})
+        self.assertEqual(
+            {**again[ROLE_DRIVER], "started": None}, {**e, "state": "working", "started": None}
+        )
 
     def test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one(self):
         self.attach()
         sids = {name: self.started(name) for name in ("w1", "w2")}
         for name in sids:
-            self.wait_event(name, "done")   # its transcript, which --resume needs
+            self.wait_event(name, "done")  # its transcript, which --resume needs
         self.ok(self.kill("w1"))
         self.assertEqual(self.ok(self.workers("stop", "w2")).stdout, "")
         self.assertTrue(self.gone("w1", "w2"))
@@ -854,10 +1164,15 @@ class Roster(Live):
         out = self.attach("--resume", **{fake_claude.ENV: self.scenario("w1")}).stdout
         self.assertRegex(out, rf"\nnext-event: [^\n]+\nresumed w1: exit 0: w1 {sids['w1']}\n\Z")
         self.assertTrue(self.live("w1") and self.gone("w2"))
-        self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sids["w1"]), self.calls("w1")[-1]["argv"])
+        self.assertTrue(
+            has_pair(self.calls("w1")[-1]["argv"], "--resume", sids["w1"]),
+            self.calls("w1")[-1]["argv"],
+        )
         self.grid([["w1"]])
         self.attach()
-        self.assertEqual({n: e["state"] for n, e in self.roster()["entries"].items()}, {"w1": "working"})
+        self.assertEqual(
+            {n: e["state"] for n, e in self.roster()["entries"].items()}, {"w1": "working"}
+        )
 
     def test_stop_a_role_run_by_its_tui_session(self):
         self.attach()
@@ -871,23 +1186,63 @@ class Roster(Live):
         self.attach()
         work = os.path.join(self.server.root, "role-work")
         os.mkdir(work)
-        asking = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which greeting?"]}
+        asking = {
+            "status": "needs_input",
+            "title": "echo",
+            "summary": "Asking.",
+            "questions": ["Which greeting?"],
+        }
         with open(self.scenario(ROLE), "w") as f:
-            json.dump({"steps": [{"kind": "progress", "name": "start", "text": "Echoing."},
-                                 {"kind": "outcome", "outcome": asking}], "log": self.log}, f)
-        self.ok(self.call(sys.executable, DRIVE, "--role", ROLE, "--input", "Hello.", "--out", "out.md", "--workdir",
-                          ".", "--runner", "headless", "--detach", "--sid", ROLE_SID, cwd=work,
-                          **{fake_claude.ENV: self.scenario(ROLE)}))
-        live_tmux.wait(lambda: self.gone(ROLE_DRIVER) and any(
-            line.split(" ")[1:] == [ROLE_DRIVER, "outcome", "needs_input"] for line in live_tmux.events(self.events)),
-                       what=f"{ROLE_DRIVER} gone after its outcome needs_input")
+            json.dump(
+                {
+                    "steps": [
+                        {"kind": "progress", "name": "start", "text": "Echoing."},
+                        {"kind": "outcome", "outcome": asking},
+                    ],
+                    "log": self.log,
+                },
+                f,
+            )
+        self.ok(
+            self.call(
+                sys.executable,
+                DRIVE,
+                "--role",
+                ROLE,
+                "--input",
+                "Hello.",
+                "--out",
+                "out.md",
+                "--workdir",
+                ".",
+                "--runner",
+                "headless",
+                "--detach",
+                "--sid",
+                ROLE_SID,
+                cwd=work,
+                **{fake_claude.ENV: self.scenario(ROLE)},
+            )
+        )
+        live_tmux.wait(
+            lambda: (
+                self.gone(ROLE_DRIVER)
+                and any(
+                    line.split(" ")[1:] == [ROLE_DRIVER, "outcome", "needs_input"]
+                    for line in live_tmux.events(self.events)
+                )
+            ),
+            what=f"{ROLE_DRIVER} gone after its outcome needs_input",
+        )
         backlog = [f"{i} {line}" for i, line in enumerate(live_tmux.events(self.events), 1)]
         table = f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
         self.assertEqual(self.attach().stdout, table + tail(self.directory, 0, 0, *backlog))
         with open(self.log) as f:
             calls = f.readlines()
         self.assertEqual(len(calls), 1)
-        self.assertEqual(self.attach("--resume").stdout, table + tail(self.directory, 0, 0, *backlog))
+        self.assertEqual(
+            self.attach("--resume").stdout, table + tail(self.directory, 0, 0, *backlog)
+        )
         self.assertTrue(self.gone(ROLE_DRIVER))
         with open(self.log) as f:
             self.assertEqual(f.readlines(), calls)
@@ -904,10 +1259,27 @@ class Roster(Live):
         for d in (os.path.dirname(router), run):
             os.mkdir(d)
         with open(router, "w") as f:
-            f.write(STAND_IN.format(src=os.path.join(crew.CORE, "src"), role=ROLE, sid=PIPE_SID, drive=DRIVE))
+            f.write(
+                STAND_IN.format(
+                    src=os.path.join(crew.CORE, "src"), role=ROLE, sid=PIPE_SID, drive=DRIVE
+                )
+            )
         scenario = self.echoing("pipeline")
-        self.ok(self.call(sys.executable, router, "--issue", PIPE_ISSUE, "--tui", "--events", self.events, "--manager",
-                          MANAGER, cwd=run, **scenario))
+        self.ok(
+            self.call(
+                sys.executable,
+                router,
+                "--issue",
+                PIPE_ISSUE,
+                "--tui",
+                "--events",
+                self.events,
+                "--manager",
+                MANAGER,
+                cwd=run,
+                **scenario,
+            )
+        )
         self.wait_event(PIPE_TUI, "done")
         self.ok(self.workers("stop", "w2"))
         self.assertEqual(sorted(self.roster()["entries"]), [PIPE_DRIVER, ROLE_DRIVER, "w1"])
@@ -915,11 +1287,20 @@ class Roster(Live):
         self.server.start(MANAGER)
         self.server.attach(MANAGER)
         out = self.attach("--resume", **scenario).stdout
-        self.assertRegex(out, rf"\nresumed {PIPE_DRIVER}: exit 0\nresumed {ROLE_DRIVER}: exit 0: [^\n]+\n"
-                              rf"resumed w1: exit 0: w1 {sids['w1']}\n\Z")
-        live_tmux.wait(lambda: self.live("w1", ROLE_DRIVER, ROLE_TUI, PIPE_DRIVER, PIPE_TUI), what="all three back")
+        self.assertRegex(
+            out,
+            rf"\nresumed {PIPE_DRIVER}: exit 0\nresumed {ROLE_DRIVER}: exit 0: [^\n]+\n"
+            rf"resumed w1: exit 0: w1 {sids['w1']}\n\Z",
+        )
+        live_tmux.wait(
+            lambda: self.live("w1", ROLE_DRIVER, ROLE_TUI, PIPE_DRIVER, PIPE_TUI),
+            what="all three back",
+        )
         for session, sid in (("w1", sids["w1"]), (ROLE_TUI, ROLE_SID), (PIPE_TUI, PIPE_SID)):
-            live_tmux.wait(lambda s=session, i=sid: self.resumed(s, i), what=f"{session}'s claude --resume {sid}")
+            live_tmux.wait(
+                lambda s=session, i=sid: self.resumed(s, i),
+                what=f"{session}'s claude --resume {sid}",
+            )
         self.assertTrue(self.gone("w2"))
         self.attach()
         entries = self.roster()["entries"]
@@ -933,15 +1314,20 @@ class Roster(Live):
         self.grid([["w1"]])
         closed = self.server.pane_of("w1")
         self.ok(self.server.tmux("kill-pane", "-t", closed))
-        live_tmux.wait(lambda: not self.ok(self.server.tmux("list-clients", "-t", "=w1")).stdout,
-                       what="w1 shown by no client")
+        live_tmux.wait(
+            lambda: not self.ok(self.server.tmux("list-clients", "-t", "=w1")).stdout,
+            what="w1 shown by no client",
+        )
         res = self.attach()
         pane = self.server.pane_of("w1")
         self.assertNotEqual(pane, closed)
         self.grid([["w1"]])
         self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
-        self.assertEqual(res.stdout, f"{crew.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
-                                     f"{tail(self.directory, 0, 0, f'1 {done}')}")
+        self.assertEqual(
+            res.stdout,
+            f"{crew.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
+            f"{tail(self.directory, 0, 0, f'1 {done}')}",
+        )
         self.assertEqual(res.stderr, "tui: session w1: tmux attach -t '=w1'\n")
         e = self.roster()["entries"]["w1"]
         self.assertEqual((e["pane"], e["opener"]), (pane, MANAGER))
@@ -956,17 +1342,37 @@ class Roster(Live):
         self.assertEqual((n, content), (2, "Two."))
         self.ok(self.tui("send", "w1", "more"))
         *_, three = self.wait_event("w1", "done", 3)
-        resumed = tail(self.directory, 2, 0, f'3 {three}')
+        resumed = tail(self.directory, 2, 0, f"3 {three}")
         self.after_w1(self.attach("--after", "2", "--gen", "0").stdout, resumed)
         self.ok(self.server.tmux("kill-session", "-t", f"={MANAGER}"))
         self.second()
         self.after_w1(self.attach("--manager", MANAGER, inside=SECOND).stdout, resumed)
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
-        self.assertEqual(self.next_event(2, "--manager", MANAGER, inside=SECOND), (3, three, "Three."))
-        waiting = subprocess.Popen([sys.executable, CREW, "next-event", "--manager", MANAGER, "--after", "3",
-                                    "--gen", "0"], env=self.server.env(**self.server.inside(SECOND)), cwd=self.cwd,
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.addCleanup(waiting.communicate)   # cleanups run last first: after the kill, reaps it, closes its pipes
+        self.assertEqual(
+            self.next_event(2, "--manager", MANAGER, inside=SECOND), (3, three, "Three.")
+        )
+        waiting = subprocess.Popen(
+            [
+                sys.executable,
+                CREW,
+                "next-event",
+                "--manager",
+                MANAGER,
+                "--after",
+                "3",
+                "--gen",
+                "0",
+            ],
+            env=self.server.env(**self.server.inside(SECOND)),
+            cwd=self.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(
+            waiting.communicate
+        )  # cleanups run last first: after the kill, reaps it, closes its pipes
         self.addCleanup(waiting.kill)
         live_tmux.wait(lambda: self.roster()["cursor"] == 3, what="next-event's cursor 3")
         self.ok(self.tui("send", "w1", "more", inside=SECOND))
@@ -982,7 +1388,9 @@ class Roster(Live):
         self.wait_event("w1", "done")
         kept = filler("k", 3)
         with open(self.events, "a") as f:
-            f.write("".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept))
+            f.write(
+                "".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept)
+            )
         total = len(live_tmux.events(self.events))
         old, original, ino = f"{self.events}.1", raw(self.events), os.lstat(self.events).st_ino
         backlog = [f"{i} {line}" for i, line in enumerate(kept, 1)]
@@ -994,8 +1402,10 @@ class Roster(Live):
         before = self.roster()
         self.assertEqual((before["cursor"], before["gen"]), (0, 1))
         res = self.workers("next-event", "--after", str(total - 3), "--gen", "0")
-        self.assertEqual((res.returncode, res.stdout, res.stderr),
-                         (1, "workers: stale line numbers (gen 0, now 1): run crew.py attach\n", ""))
+        self.assertEqual(
+            (res.returncode, res.stdout, res.stderr),
+            (1, "workers: stale line numbers (gen 0, now 1): run crew.py attach\n", ""),
+        )
         self.assertEqual(self.roster(), before)
         self.ok(self.tui("send", "w1", "more"))
         n, event, content = self.next_event(3, gen=1)

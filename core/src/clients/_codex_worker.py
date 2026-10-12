@@ -1,6 +1,7 @@
 """CodexClient's worker capability: a crew.py worker is an interactive `codex` whose hooks run _codex_hook.py. Its
 hooks are trusted for that invocation only, as one `codex app-server` hooks/list call lists them (hooks.state); its
 worker record binds crew's session id to the Codex native ID the first hook reports."""
+
 import fcntl
 import hashlib
 import json
@@ -20,17 +21,30 @@ from compose import ConfigError
 from . import _codex_hook, codex  # codex imports this module: use its names at call time
 from .base import WorkerCommand, WorkerSpec
 
-HOOKS = (("SessionStart", "sessionStart", "session"), ("UserPromptSubmit", "userPromptSubmit", "working"),
-         ("PermissionRequest", "permissionRequest", "blocked"), ("Stop", "stop", "done"),
-         ("Interrupt", "interrupt", "interrupt"))
+HOOKS = (
+    ("SessionStart", "sessionStart", "session"),
+    ("UserPromptSubmit", "userPromptSubmit", "working"),
+    ("PermissionRequest", "permissionRequest", "blocked"),
+    ("Stop", "stop", "done"),
+    ("Interrupt", "interrupt", "interrupt"),
+)
 # the first -c, so a user's own after it wins
 NOTIFY = 'tui.notification_method="bel"'
 HOOK = os.path.abspath(_codex_hook.__file__)
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK_TIMEOUT = 10
-INTERRUPT_TIMEOUT = 3   # Codex clamps an Interrupt hook's to 1-3 s
-VALUED = {"-c": "-c", "--config": "-c", "-C": "-C", "--cd": "-C", "-p": "-p", "--profile": "-p",
-          "--enable": "--enable", "--disable": "--disable", "--add-dir": "--add-dir"}
+INTERRUPT_TIMEOUT = 3  # Codex clamps an Interrupt hook's to 1-3 s
+VALUED = {
+    "-c": "-c",
+    "--config": "-c",
+    "-C": "-C",
+    "--cd": "-C",
+    "-p": "-p",
+    "--profile": "-p",
+    "--enable": "--enable",
+    "--disable": "--disable",
+    "--add-dir": "--add-dir",
+}
 RESERVED = ("-C", "-p", "resume", "fork", "--last", "--dangerously-bypass-hook-trust")
 RESERVED_KEYS = ("hooks", "sandbox_workspace_write")
 PASSED = ("-c", "--enable", "--disable")
@@ -62,19 +76,50 @@ def worker(spec: WorkerSpec) -> WorkerCommand:
         home = record["codex_home"]
         head = [exe, "resume", record["native"], "-C", spec.cwd, "--no-daemon"]
     else:
-        home = os.path.realpath(codex._codex_home(spec.cwd, spec.env.get("CODEX_HOME") or "~/.codex"))
+        home = os.path.realpath(
+            codex._codex_home(spec.cwd, spec.env.get("CODEX_HOME") or "~/.codex")
+        )
         path = os.path.join(_workers(create=True), f"{spec.sid}.json")
-        _create(path, {"version": _codex_hook.VERSION, "sid": spec.sid, "cwd": os.path.realpath(spec.cwd),
-                       "codex_home": home, "native": None})
+        _create(
+            path,
+            {
+                "version": _codex_hook.VERSION,
+                "sid": spec.sid,
+                "cwd": os.path.realpath(spec.cwd),
+                "codex_home": home,
+                "native": None,
+            },
+        )
         head = [exe, "--no-daemon", "-C", spec.cwd]
-    commands = [shlex.join([python, "-I", hook, word, spec.events, path, tmux]) for _, _, word in HOOKS]
-    hooks = [w for (event, _, _), command in zip(HOOKS, commands, strict=False) for w in (
-        "-c", f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
-              f'timeout={INTERRUPT_TIMEOUT if event == "Interrupt" else HOOK_TIMEOUT}}}]}}]')]
+    commands = [
+        shlex.join([python, "-I", hook, word, spec.events, path, tmux]) for _, _, word in HOOKS
+    ]
+    hooks = [
+        w
+        for (event, _, _), command in zip(HOOKS, commands, strict=False)
+        for w in (
+            "-c",
+            f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
+            f"timeout={INTERRUPT_TIMEOUT if event == 'Interrupt' else HOOK_TIMEOUT}}}]}}]",
+        )
+    ]
     passed = [w for name, value, _ in _options(spec.flags) if name in PASSED for w in (name, value)]
-    state = _hook_trust(exe, [*hooks, *passed], spec.cwd, {**spec.env, "CODEX_HOME": home}, commands)
-    return WorkerCommand([*head, "-c", NOTIFY, *hooks, "-c", state, *spec.flags,
-                          *(["--", spec.prompt] if spec.prompt else [])], {"CODEX_HOME": home})
+    state = _hook_trust(
+        exe, [*hooks, *passed], spec.cwd, {**spec.env, "CODEX_HOME": home}, commands
+    )
+    return WorkerCommand(
+        [
+            *head,
+            "-c",
+            NOTIFY,
+            *hooks,
+            "-c",
+            state,
+            *spec.flags,
+            *(["--", spec.prompt] if spec.prompt else []),
+        ],
+        {"CODEX_HOME": home},
+    )
 
 
 def reply(sid: str) -> str:
@@ -119,20 +164,43 @@ def _which(name: str, env) -> str:
 
 
 def _protect(spec: WorkerSpec, exe: str, tmux: str) -> None:
-    roots = [os.path.realpath(spec.cwd), *(os.path.realpath(os.path.join(spec.cwd, value))
-                                           for name, value, _ in _options(spec.flags) if name == "--add-dir")]
-    paths = [os.path.realpath(p) for p in (SRC, sys.prefix, sys.base_prefix, sys.executable, tmux, exe,
-                                           os.path.join(codex._store_root(), "workers"), spec.events)]
+    roots = [
+        os.path.realpath(spec.cwd),
+        *(
+            os.path.realpath(os.path.join(spec.cwd, value))
+            for name, value, _ in _options(spec.flags)
+            if name == "--add-dir"
+        ),
+    ]
+    paths = [
+        os.path.realpath(p)
+        for p in (
+            SRC,
+            sys.prefix,
+            sys.base_prefix,
+            sys.executable,
+            tmux,
+            exe,
+            os.path.join(codex._store_root(), "workers"),
+            spec.events,
+        )
+    ]
     for root in roots:
         for path in paths:
             if codex._inside(path, root) or codex._inside(root, path):
-                raise ConfigError(f"Codex worker {root} could rewrite {path}, which its hooks run unsandboxed: use "
-                                  "another --cwd")
+                raise ConfigError(
+                    f"Codex worker {root} could rewrite {path}, which its hooks run unsandboxed: use "
+                    "another --cwd"
+                )
 
 
 def _workers(*, create: bool) -> str | None:
     root = codex._store_root()
-    for path, parent in ((os.path.dirname(root), True), (root, False), (os.path.join(root, "workers"), False)):
+    for path, parent in (
+        (os.path.dirname(root), True),
+        (root, False),
+        (os.path.join(root, "workers"), False),
+    ):
         try:
             if not codex._private_dir(path, create=create, config_parent=parent):
                 return None
@@ -172,7 +240,9 @@ def _record(sid: str) -> tuple[str, dict]:
     if record is None:
         raise ConfigError(f"malformed Codex worker record {path}")
     if record["native"] is None:
-        raise ConfigError(f"Codex worker {sid} has no native session: it never took a prompt; start a new worker")
+        raise ConfigError(
+            f"Codex worker {sid} has no native session: it never took a prompt; start a new worker"
+        )
     return path, record
 
 
@@ -192,9 +262,14 @@ def _read(path: str, limit: int, what: str, *, shared: bool = False) -> bytes | 
         return f.read(limit + 1)
 
 
-def _hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], commands: list[str]) -> str:
-    lock = os.path.join(codex._store_root(), "workers",
-                        hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest()[:16] + ".lock")
+def _hook_trust(
+    exe: str, args: list[str], cwd: str, env: dict[str, str], commands: list[str]
+) -> str:
+    lock = os.path.join(
+        codex._store_root(),
+        "workers",
+        hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest()[:16] + ".lock",
+    )
     try:
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     except OSError as e:
@@ -207,8 +282,10 @@ def _hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], comman
                 break
             except BlockingIOError:
                 if time.monotonic() > deadline:
-                    raise ConfigError(f"codex hooks/list: another Codex worker's start held {lock} for "
-                                      f"{LOCK_WAIT} s") from None
+                    raise ConfigError(
+                        f"codex hooks/list: another Codex worker's start held {lock} for "
+                        f"{LOCK_WAIT} s"
+                    ) from None
                 time.sleep(POLL)
         try:
             result = _hooks_list(exe, args, cwd, env)
@@ -224,16 +301,31 @@ def _hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], comman
 
 def _hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str]):
     try:
-        proc = subprocess.Popen([exe, "app-server", *args], cwd=cwd, env=env, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        proc = subprocess.Popen(
+            [exe, "app-server", *args],
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     except OSError as e:
         raise ConfigError(f"codex hooks/list: {exe}: {e.strerror}") from e
     lines = _Lines(proc.stdout.fileno(), time.monotonic() + ANSWER_WAIT)
     exited = False
     try:
-        _send(proc, {"id": 1, "method": "initialize",
-                     "params": {"clientInfo": {"name": "agent-pm", "version": "0"},
-                                "capabilities": {"experimentalApi": True}}})
+        _send(
+            proc,
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "agent-pm", "version": "0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+        )
         _answer(lines, 1, "initialize")
         _send(proc, {"method": "initialized"})
         _send(proc, {"id": 2, "method": "hooks/list", "params": {"cwds": [cwd]}})
@@ -274,7 +366,7 @@ class _Lines:
                 raise ConfigError(f"codex hooks/list: an answer over {ANSWER_MAX} bytes")
             self.buf += chunk
         line = bytes(self.buf[:end])
-        del self.buf[:end + 1]
+        del self.buf[: end + 1]
         self.seen = 0
         return line
 
@@ -285,14 +377,20 @@ def _answer(lines: _Lines, ident: int, method: str):
             message = json.loads(next(lines))
         except (ValueError, RecursionError):
             continue
-        if not isinstance(message, dict) or "method" in message or type(message.get("id")) is not int \
-                or message["id"] != ident:
+        if (
+            not isinstance(message, dict)
+            or "method" in message
+            or type(message.get("id")) is not int
+            or message["id"] != ident
+        ):
             continue
         if "result" in message:
             return message["result"]
         error = message.get("error")
-        raise ConfigError(f"codex hooks/list: {method} failed: "
-                          f"{error.get('message') if isinstance(error, dict) else error}")
+        raise ConfigError(
+            f"codex hooks/list: {method} failed: "
+            f"{error.get('message') if isinstance(error, dict) else error}"
+        )
 
 
 def _close(proc) -> None:
@@ -325,26 +423,38 @@ def _trusted(result, cwd: str, commands: list[str]) -> str:
         raise ConfigError(f"codex hooks/list: want one answer for {cwd}, got {len(data)}")
     entry = data[0] if isinstance(data[0], dict) else {}
     if entry.get("errors"):
-        raise ConfigError(f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}")
+        raise ConfigError(
+            f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}"
+        )
     hooks = entry.get("hooks")
     if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
         raise ConfigError(f"codex hooks/list: malformed hooks for {cwd}")
     # hooks off: turning them on would run the user's other hooks too
     if not hooks:
-        raise ConfigError("codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them")
+        raise ConfigError(
+            "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
+        )
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
     trusted = []
     for (_, name, _), command in zip(HOOKS, commands, strict=False):
         rows = [h for h in ours if h.get("eventName") == name]
         if len(rows) != 1:
-            raise ConfigError(f"codex hooks/list: {len(rows) or 'no'} session-flags {name} hook"
-                              f"{'s' if len(rows) > 1 else ''}")
+            raise ConfigError(
+                f"codex hooks/list: {len(rows) or 'no'} session-flags {name} hook"
+                f"{'s' if len(rows) > 1 else ''}"
+            )
         h = rows[0]
-        why = ("is disabled" if h.get("enabled") is not True else
-               "is not our command" if h.get("handlerType") != "command" or h.get("command") != command else
-               "has no key" if not isinstance(h.get("key"), str) else
-               "has no sha256 hash" if not isinstance(h.get("currentHash"), str) or not HASH.fullmatch(
-                   h["currentHash"]) else "")
+        why = (
+            "is disabled"
+            if h.get("enabled") is not True
+            else "is not our command"
+            if h.get("handlerType") != "command" or h.get("command") != command
+            else "has no key"
+            if not isinstance(h.get("key"), str)
+            else "has no sha256 hash"
+            if not isinstance(h.get("currentHash"), str) or not HASH.fullmatch(h["currentHash"])
+            else ""
+        )
         if why:
             raise ConfigError(f"codex hooks/list: the session-flags {name} hook {why}")
         trusted.append(h)
@@ -353,9 +463,22 @@ def _trusted(result, cwd: str, commands: list[str]) -> str:
             raise ConfigError(f"codex hooks/list: a session-flags hook not ours: {h.get('key')}")
     # an untrusted or modified hook's review dialog would invite a write to the user's Codex config
     for h in hooks:
-        if (h.get("source") != "sessionFlags" and h.get("enabled") is not False and h.get("isManaged") is not True
-                and h.get("trustStatus") in ("untrusted", "modified")):
-            raise ConfigError(f"codex hooks/list: your hook {h.get('key')} is {h['trustStatus']}: review it in your "
-                              "own Codex session (/hooks) first")
-    return "hooks.state={" + ",".join(f"{json.dumps(h['key'], ensure_ascii=False)}="
-                                      f"{{trusted_hash={json.dumps(h['currentHash'])}}}" for h in trusted) + "}"
+        if (
+            h.get("source") != "sessionFlags"
+            and h.get("enabled") is not False
+            and h.get("isManaged") is not True
+            and h.get("trustStatus") in ("untrusted", "modified")
+        ):
+            raise ConfigError(
+                f"codex hooks/list: your hook {h.get('key')} is {h['trustStatus']}: review it in your "
+                "own Codex session (/hooks) first"
+            )
+    return (
+        "hooks.state={"
+        + ",".join(
+            f"{json.dumps(h['key'], ensure_ascii=False)}="
+            f"{{trusted_hash={json.dumps(h['currentHash'])}}}"
+            for h in trusted
+        )
+        + "}"
+    )

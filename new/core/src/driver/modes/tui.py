@@ -1,5 +1,6 @@
 """The Driver's tui Mode: a Tui's command in a tmux session; events from the hook records tui_hook.py appends to its
 session dir, and from its pane."""
+
 import contextlib
 import fcntl
 import json
@@ -115,7 +116,11 @@ def _records(data: bytes) -> Iterator[tuple[str, dict]]:
             record = json.loads(line)
         except (ValueError, RecursionError):
             continue
-        label, payload = (record.get("label"), record.get("payload")) if isinstance(record, dict) else (None, None)
+        label, payload = (
+            (record.get("label"), record.get("payload"))
+            if isinstance(record, dict)
+            else (None, None)
+        )
         if isinstance(label, str) and isinstance(payload, dict):
             yield label, payload
 
@@ -136,12 +141,28 @@ class TuiMode:
         self._made, self._live, self._pane, self._gone = None, False, None, False
 
     @classmethod
-    def prepare(cls, name: str, run: Tui, info: SessionInfo, events: str | None, *, runtime: str,
-                workdir: str) -> "TuiMode":
+    def prepare(
+        cls,
+        name: str,
+        run: Tui,
+        info: SessionInfo,
+        events: str | None,
+        *,
+        runtime: str,
+        workdir: str,
+    ) -> "TuiMode":
         """A fresh session dir with session.json, unless the session runs or is unknown."""
-        state = {"runtime": runtime, "sid": info.sid, "workdir": workdir, "cwd": info.cwd, "project": info.project,
-                 "transcript": info.transcript, "resume": info.resume, "events": events,
-                 "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS}}
+        state = {
+            "runtime": runtime,
+            "sid": info.sid,
+            "workdir": workdir,
+            "cwd": info.cwd,
+            "project": info.project,
+            "transcript": info.transcript,
+            "resume": info.resume,
+            "events": events,
+            "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
+        }
         for field, check in tui_hook.SESSION_STATE.items():
             if not check(state[field]):
                 raise DriverError(f"tui session {name}: bad {field} {state[field]!r:.80}")
@@ -173,18 +194,27 @@ class TuiMode:
             raise DriverError(f"{mode.dir}: {e.strerror or e}") from None
         return mode
 
-    def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], status_line: bool = False) -> None:
+    def begin(
+        self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], status_line: bool = False
+    ) -> None:
         """Starts argv tagged with the sid, then takes its pane; failing, ends it and removes the dir prepare made."""
         try:
-            tmux_host.start(self.name, list(argv), cwd=cwd, env=dict(env), events=self.events,
-                            status_line=status_line, tags={"@sid": self.sid})
+            tmux_host.start(
+                self.name,
+                list(argv),
+                cwd=cwd,
+                env=dict(env),
+                events=self.events,
+                status_line=status_line,
+                tags={"@sid": self.sid},
+            )
         except tmux_host.TuiError as e:
             self._unmake()
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         try:
             self._pane = tmux_host.pane(self.name)
         except tmux_host.TuiError as e:
-            _close(self.name)   # start() holds the name's lock
+            _close(self.name)  # start() holds the name's lock
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         self._live = True
 
@@ -206,7 +236,7 @@ class TuiMode:
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1
         turn = None
-        for label, payload in _records(data[:mode._offset]):
+        for label, payload in _records(data[: mode._offset]):
             mode.bound = run.session_id(payload) or mode.bound
             if run.hooks.get(label) == TURN_END:
                 turn = payload
@@ -220,7 +250,7 @@ class TuiMode:
         found = self._read()
         if not found and not self._gone:
             status = tmux_host.status(self.name)
-            try:   # before _own: a screen read before its pane is confirmed is its own
+            try:  # before _own: a screen read before its pane is confirmed is its own
                 screen = tmux_host.read(self.name) if status == tmux_host.RUNNING else None
             except tmux_host.TuiError:
                 screen = None
@@ -250,7 +280,13 @@ class TuiMode:
         if status is None or status == tmux_host.UNKNOWN:
             return status
         holder = self._holder()
-        return holder if holder == tmux_host.UNKNOWN else status if holder and holder == self._pane else None
+        return (
+            holder
+            if holder == tmux_host.UNKNOWN
+            else status
+            if holder and holder == self._pane
+            else None
+        )
 
     def _end(self) -> None:
         self._gone = True
@@ -260,7 +296,7 @@ class TuiMode:
         data = b"" if self._gone else read_regular(self.hooks, offset=self._offset) or b""
         end = data.rfind(b"\n") + 1
         if end:
-            self._holder()   # lines under another pane are its session's
+            self._holder()  # lines under another pane are its session's
         if self._gone:
             return []
         self._offset += end
@@ -276,7 +312,9 @@ class TuiMode:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit per appearance."""
         screen = " ".join(screen.split())
         shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
-        found = [Activity("")] if self._dialogs - shown else []   # first: a later Blocked keeps the idle pause
+        found = (
+            [Activity("")] if self._dialogs - shown else []
+        )  # first: a later Blocked keeps the idle pause
         found += [Blocked(d) for d in self.run.dialogs if d in shown - self._dialogs]
         limit = self.run.limit(screen)
         if limit is not None and self._limit is None:

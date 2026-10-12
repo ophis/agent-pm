@@ -1,4 +1,5 @@
 """utils/args.py: Once."""
+
 from new.tests import SRC  # noqa: F401
 
 import argparse

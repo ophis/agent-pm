@@ -42,8 +42,14 @@ class CommonTest(Base):
         saved = self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        other = CodexAdapter({"tiers": {"1": "changed"}, "efforts": {"low": "high"}, "shell_network": True,
-                              "env": {"CODEX_HOME": str(self.root / "elsewhere")}})
+        other = CodexAdapter(
+            {
+                "tiers": {"1": "changed"},
+                "efforts": {"low": "high"},
+                "shell_network": True,
+                "env": {"CODEX_HOME": str(self.root / "elsewhere")},
+            }
+        )
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
         resumed = other.common.prepare(spec, True)
         self.assertEqual(resumed.snapshot, saved.snapshot)
@@ -95,7 +101,10 @@ class CommonTest(Base):
         with self.assertRaisesRegex(ConfigError, "mode|owner"):
             self.common.load(str(self.work), self.spec.sid)
         path.chmod(0o600)
-        with mock.patch("os.getuid", return_value=os.getuid() + 1), self.assertRaisesRegex(ConfigError, "owner"):
+        with (
+            mock.patch("os.getuid", return_value=os.getuid() + 1),
+            self.assertRaisesRegex(ConfigError, "owner"),
+        ):
             self.common.load(str(self.work), self.spec.sid)
         path.unlink()
         path.symlink_to(self.root / "absent")
@@ -105,10 +114,14 @@ class CommonTest(Base):
     def test_record_identity_snapshot_and_grants_are_revalidated(self):
         state = self.prepare()
         original = self.record().read_text()
-        cases = ({"sid": "forged"}, {"snapshot": {**state.snapshot, "network": "yes"}},
-                 {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
-                 {"writable_roots": [str(self.extra)]}, {"writable_roots": [str(self.home)]},
-                 {"native_id": "not-a-uuid"})
+        cases = (
+            {"sid": "forged"},
+            {"snapshot": {**state.snapshot, "network": "yes"}},
+            {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
+            {"writable_roots": [str(self.extra)]},
+            {"writable_roots": [str(self.home)]},
+            {"native_id": "not-a-uuid"},
+        )
         for fields in cases:
             with self.subTest(fields=fields):
                 self.record().write_text(original)
@@ -119,7 +132,9 @@ class CommonTest(Base):
     def test_store_outside_explicit_and_implicit_writable_roots(self):
         for grant in (self.home, self.home / ".agent-pm", self.root):
             with self.subTest(grant=grant), self.assertRaisesRegex(ConfigError, "writable"):
-                self.common.prepare(dataclasses.replace(self.spec, access=Access(dirs=(str(grant),))), False)
+                self.common.prepare(
+                    dataclasses.replace(self.spec, access=Access(dirs=(str(grant),))), False
+                )
         with mock.patch.dict(os.environ, {"HOME": "/tmp/agent-pm-untrusted-home"}):
             with self.assertRaisesRegex(ConfigError, "writable"):
                 self.common.load(str(self.work), self.spec.sid)
@@ -163,14 +178,25 @@ class CommonTest(Base):
             self.prepare()
         settings.rmdir()
         with self.assertRaisesRegex(ConfigError, "outside"):
-            self.common.prepare(dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), False)
+            self.common.prepare(
+                dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), False
+            )
 
     def test_config_validation_and_environment_isolation(self):
-        for cfg in ({"shell_network": "yes"}, {"tiers": {"1": "\n"}}, {"efforts": []}, {"env": {"A": 1}}):
+        for cfg in (
+            {"shell_network": "yes"},
+            {"tiers": {"1": "\n"}},
+            {"efforts": []},
+            {"env": {"A": 1}},
+        ):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
                 CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False, **cfg})
-        adapter = CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False, "env": {"PROBE": "1"}})
-        launch = adapter.headless().launch("hi", dataclasses.replace(self.spec, tier=None, effort=None), False)
+        adapter = CodexAdapter(
+            {"tiers": {}, "efforts": {}, "shell_network": False, "env": {"PROBE": "1"}}
+        )
+        launch = adapter.headless().launch(
+            "hi", dataclasses.replace(self.spec, tier=None, effort=None), False
+        )
         self.assertEqual(launch.env["PROBE"], "1")
         self.assertEqual(launch.env["NO_COLOR"], "1")
         self.assertIn("CODEX_THREAD_ID", launch.unset)
@@ -181,7 +207,8 @@ class CommonTest(Base):
     def test_missing_mapping_is_configuration_error(self):
         with self.assertRaisesRegex(ConfigError, "model|tier"):
             CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False}).headless().launch(
-                "hi", self.spec, False)
+                "hi", self.spec, False
+            )
 
 
 class InspectionTest(Base):
@@ -194,8 +221,10 @@ class InspectionTest(Base):
         self.bound()
         path = self.rollout()
         info = self.common.inspect(self.spec.sid, str(self.cwd))
-        self.assertEqual((info.resumable, info.native_id, info.transcript, info.last_active),
-                         ("yes", NATIVE, str(path), 100))
+        self.assertEqual(
+            (info.resumable, info.native_id, info.transcript, info.last_active),
+            ("yes", NATIVE, str(path), 100),
+        )
         command = shlex.split(info.resume)
         self.assertIn(NATIVE, command)
         self.assertIn(str(self.cwd), command)
@@ -271,6 +300,10 @@ class InspectionTest(Base):
         self.rollout()
         other = self.root / "other"
         other.mkdir()
-        self.common.prepare(dataclasses.replace(self.spec, workdir=str(other), access=Access(cwd=str(self.cwd),
-                                                                                          project=True)), False)
+        self.common.prepare(
+            dataclasses.replace(
+                self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
+            ),
+            False,
+        )
         self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")

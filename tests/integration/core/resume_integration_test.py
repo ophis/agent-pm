@@ -9,7 +9,12 @@ import unittest
 
 import compose
 
-ASKING = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which greeting?"]}
+ASKING = {
+    "status": "needs_input",
+    "title": "echo",
+    "summary": "Asking.",
+    "questions": ["Which greeting?"],
+}
 ANSWER = "Say hello."
 DRAFT = "Draft.\n"
 
@@ -47,21 +52,63 @@ class NeedsInput(Integration):
             res = self.drive([outcome(DONE)], "--resume", "--input", ANSWER)
             self.assertEqual(res.returncode, 0, res.stderr)
             events = self.events()
-            self.assertEqual([e["kind"] for e in events], ["input", "session", "progress", "outcome", "result", "end",
-                                                           "input", "session", "outcome", "result", "end"])
-            self.assertEqual([e["text"] for e in events if e["kind"] == "input"], ["Hello.", ANSWER])
-            self.assertEqual([(e["sid"], e["cwd"]) for e in events if e["kind"] == "session"], [(SID, self.proj)] * 2)
+            self.assertEqual(
+                [e["kind"] for e in events],
+                [
+                    "input",
+                    "session",
+                    "progress",
+                    "outcome",
+                    "result",
+                    "end",
+                    "input",
+                    "session",
+                    "outcome",
+                    "result",
+                    "end",
+                ],
+            )
+            self.assertEqual(
+                [e["text"] for e in events if e["kind"] == "input"], ["Hello.", ANSWER]
+            )
+            self.assertEqual(
+                [(e["sid"], e["cwd"]) for e in events if e["kind"] == "session"],
+                [(SID, self.proj)] * 2,
+            )
             first, second = self.calls()
-            self.assertEqual((option(first, "--session-id"), option(second, "--resume"),
-                              option(second, "--session-id")), (SID, SID, None))
+            self.assertEqual(
+                (
+                    option(first, "--session-id"),
+                    option(second, "--resume"),
+                    option(second, "--session-id"),
+                ),
+                (SID, SID, None),
+            )
             self.assertTrue(prompt(second).startswith(compose.RESUME), "the resume prompt")
-            self.assertTrue(prompt(second).endswith(f"\n# Input\n\n{ANSWER}\n"), "the answer as the input")
-            users = [line["message"]["content"] for line in self.transcribed() if line["type"] == "user"]
+            self.assertTrue(
+                prompt(second).endswith(f"\n# Input\n\n{ANSWER}\n"), "the answer as the input"
+            )
+            users = [
+                line["message"]["content"] for line in self.transcribed() if line["type"] == "user"
+            ]
             self.assertEqual(users, [prompt(first), prompt(second)], "one session's transcript")
-            self.assertEqual(bare(events[-2:]), [
-                {"kind": "result", "outcome": {"status": "done", "title": "echo", "summary": "Hello.", "questions": [],
-                                               "url": self.out, "files": []}},
-                {"kind": "end", "sid": SID, "rc": 0}])
+            self.assertEqual(
+                bare(events[-2:]),
+                [
+                    {
+                        "kind": "result",
+                        "outcome": {
+                            "status": "done",
+                            "title": "echo",
+                            "summary": "Hello.",
+                            "questions": [],
+                            "url": self.out,
+                            "files": [],
+                        },
+                    },
+                    {"kind": "end", "sid": SID, "rc": 0},
+                ],
+            )
             with open(self.out) as f:
                 self.assertEqual(f.read(), DONE["deliverable"])
 
@@ -69,7 +116,12 @@ class NeedsInput(Integration):
 class RolePicks(Integration):
     ROLE = "researcher"
     PICK = progress("start", "light-research: a quick, good-enough answer will do")
-    REPORT = {"status": "done", "title": "Greetings", "summary": "web", "deliverable": "# Greetings\n"}
+    REPORT = {
+        "status": "done",
+        "title": "Greetings",
+        "summary": "web",
+        "deliverable": "# Greetings\n",
+    }
 
     def setUp(self):
         super().setUp()
@@ -96,13 +148,17 @@ class RolePicks(Integration):
                             self.assertNotIn(line.strip(), text, f"a line of {t}'s steps")
             self.picks(text)
             self.assertIn(f"Progress (start): {self.PICK['text']}", res.stderr)
-            self.assertEqual(bare([e for e in self.events() if e["kind"] == "progress"]), [self.PICK])
+            self.assertEqual(
+                bare([e for e in self.events() if e["kind"] == "progress"]), [self.PICK]
+            )
         with step(2, "resume"):
             res = self.drive([outcome(self.REPORT)], "--resume")
             self.assertEqual(res.returncode, 0, res.stderr)
             self.assertNotIn("missing progress mark", res.stderr)
             first, second = self.calls()
-            self.assertEqual((option(second, "--resume"), option(second, "--session-id")), (SID, None))
+            self.assertEqual(
+                (option(second, "--resume"), option(second, "--session-id")), (SID, None)
+            )
             self.assertTrue(prompt(second).startswith(compose.RESUME), "the resume prompt")
             self.picks(prompt(second))
             events = self.events()
@@ -123,7 +179,10 @@ class Draft(Integration):
 
     def test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it(self):
         with step(1, "draft, hang"):
-            self.scene([progress("start", "echoing"), {"kind": "write", "path": self.out, "text": DRAFT}], hang=True)
+            self.scene(
+                [progress("start", "echoing"), {"kind": "write", "path": self.out, "text": DRAFT}],
+                hang=True,
+            )
             proc = self.popen()
             self.until(proc, self.drafted, "saw the draft at --out")
         with step(2, "kill"):
@@ -138,7 +197,7 @@ class Draft(Integration):
             self.assertEqual(res.returncode, 0, res.stderr)
             lines = self.transcribed()
             resumed = max(i for i, line in enumerate(lines) if line["type"] == "user")
-            said = [line["message"]["content"][0]["text"] for line in lines[resumed + 1:]]
+            said = [line["message"]["content"][0]["text"] for line in lines[resumed + 1 :]]
             self.assertEqual(said, [DRAFT], "--out as the resumed run read it first")
             self.assertEqual(self.last("result")["outcome"]["status"], "done")
             with open(self.out) as f:

@@ -2,6 +2,7 @@
 (sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a Tui).
 Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
 record to Exited(99), which the Driver drops."""
+
 import os
 import shlex
 import sys
@@ -38,15 +39,28 @@ class FakeAdapter(Adapter):
 
 
 def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
-    return (sys.executable, RUNTIME, "--scenario", adapter.config["scenario"], "--log", adapter.config["log"],
-            "--sid", spec.sid, *(["--resume"] if resume else []), "--", prompt)
+    return (
+        sys.executable,
+        RUNTIME,
+        "--scenario",
+        adapter.config["scenario"],
+        "--log",
+        adapter.config["log"],
+        "--sid",
+        spec.sid,
+        *(["--resume"] if resume else []),
+        "--",
+        prompt,
+    )
 
 
 class FakeHeadless(Headless):
     def launch(self, prompt, spec, resume):
-        return Launch(_argv(self.adapter, prompt, spec, resume),
-                      transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
-                      resume=f"fake --resume {shlex.quote(spec.sid)}")
+        return Launch(
+            _argv(self.adapter, prompt, spec, resume),
+            transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
+            resume=f"fake --resume {shlex.quote(spec.sid)}",
+        )
 
     def parse(self, record):
         kind = record.get("type")

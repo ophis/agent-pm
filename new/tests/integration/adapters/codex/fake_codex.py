@@ -8,8 +8,15 @@ import uuid
 from pathlib import Path
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
-MARKERS = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-           "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CLAUDECODE")
+MARKERS = (
+    "CODEX_THREAD_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_VERSION",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_PERMISSION_PROFILE",
+    "CLAUDECODE",
+)
 DEFAULTS = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
 
 
@@ -39,7 +46,14 @@ def parse(args):
 
 
 def session_path(native):
-    return Path(os.environ["CODEX_HOME"]) / "sessions" / "2026" / "10" / "11" / f"rollout-fake-{native}.jsonl"
+    return (
+        Path(os.environ["CODEX_HOME"])
+        / "sessions"
+        / "2026"
+        / "10"
+        / "11"
+        / f"rollout-fake-{native}.jsonl"
+    )
 
 
 def message(text):
@@ -53,7 +67,9 @@ def main():
     stdin_eof = bool(ready) and os.read(sys.stdin.fileno(), 1) == b""
     if not stdin_eof:
         raise RuntimeError("stdin was not closed")
-    records = list((Path(os.environ["HOME"]) / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
+    records = list(
+        (Path(os.environ["HOME"]) / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")
+    )
     if len(records) != 1:
         raise RuntimeError("expected one durable launch snapshot")
     state = json.loads(records[0].read_text())
@@ -64,18 +80,39 @@ def main():
     path = session_path(native)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text(json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": os.getcwd()}}) + "\n")
+        path.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": os.getcwd()}})
+            + "\n"
+        )
     with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as stream:
-        stream.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "stdin_eof": stdin_eof,
-                                 "pid": os.getpid(), "snapshot": state, "resume_id": resume,
-                                 "env": {key: os.environ.get(key) for key in (*MARKERS, *DEFAULTS, "CODEX_HOME", "PWD", "TMPDIR")}})
-                     + "\n")
+        stream.write(
+            json.dumps(
+                {
+                    "argv": args,
+                    "cwd": os.getcwd(),
+                    "prompt": prompt,
+                    "stdin_eof": stdin_eof,
+                    "pid": os.getpid(),
+                    "snapshot": state,
+                    "resume_id": resume,
+                    "env": {
+                        key: os.environ.get(key)
+                        for key in (*MARKERS, *DEFAULTS, "CODEX_HOME", "PWD", "TMPDIR")
+                    },
+                }
+            )
+            + "\n"
+        )
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"type": "user", "text": prompt}) + "\n")
     print(json.dumps({"type": "thread.started", "thread_id": native}), flush=True)
-    steps = scenario.get("resume" if resume and "resume" in scenario else "steps",
-                         [*(message(text) for text in ("one\n\nnext line\n", "two", "three")),
-                          {"out": {"type": "turn.completed", "usage": {"input_tokens": 10}}}])
+    steps = scenario.get(
+        "resume" if resume and "resume" in scenario else "steps",
+        [
+            *(message(text) for text in ("one\n\nnext line\n", "two", "three")),
+            {"out": {"type": "turn.completed", "usage": {"input_tokens": 10}}},
+        ],
+    )
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
