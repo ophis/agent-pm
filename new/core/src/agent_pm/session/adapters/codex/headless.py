@@ -14,6 +14,7 @@ from agent_pm.session.adapters.base import (
 )
 
 from .common import LIMIT_PREFIXES, flags, native_id, reset_at
+from .sessions import split_flags
 
 
 class CodexHeadless(Headless):
@@ -29,8 +30,9 @@ class CodexHeadless(Headless):
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]
         if resume:
-            argv.extend(("resume", self.state.native_id))
-        argv.extend(("--", prompt))
+            argv.extend(self.adapter.select_session(self.state.native_id, True))
+        _, literal = split_flags(snapshot["flags"])
+        argv.extend((*literal, prompt) if literal else ("--", prompt))
         return Launch(
             tuple(argv),
             env=self.adapter.common.environment(snapshot),

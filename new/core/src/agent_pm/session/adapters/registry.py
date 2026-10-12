@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from agent_pm.config import CONFIG, LOCAL
 from agent_pm.session.adapters.base import Adapter, ConfigError
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.selection import configure as configure_selection
 from agent_pm.utils.config_file import read_config
 
 PACKAGE = __package__.rpartition(".")[0]
@@ -122,4 +123,4 @@ def adapter(name: str) -> Adapter:
         or inspect.isabstract(cls)
     ):
         raise ConfigError(f"{package}:{found['cls']} must be a concrete Adapter subclass")
-    return cls(config)
+    return configure_selection(cls(config))

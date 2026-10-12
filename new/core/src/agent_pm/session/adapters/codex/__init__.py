@@ -8,17 +8,31 @@ from .tui import CodexTui
 
 
 class CodexAdapter(Adapter):
-    keys = frozenset({"tiers", "efforts", "shell_network", "sandbox", "env"})
-    runtime_note = (
-        "Run each shell call separately. Command approvals follow Codex automatic review."
+    selection = ((), ("resume",))
+    valued_flags = (
+        "-c",
+        "--config",
+        "-C",
+        "--cd",
+        "-p",
+        "--profile",
+        "--enable",
+        "--disable",
+        "--add-dir",
+        "-m",
+        "--model",
+        "-s",
     )
+    forbidden_selection = ("resume", "fork", "--last")
+    keys = frozenset({"tiers", "efforts", "env"})
+    runtime_note = "Run each shell call separately."
     session_env = "CODEX_THREAD_ID"
     identity_env = tuple(key for key in CodexCommon.UNSET if key != "CLAUDECODE")
     child_defaults = CodexCommon.DEFAULTS
 
     def __init__(self, config):
         super().__init__(config)
-        self.common = CodexCommon(self.config)
+        self.common = CodexCommon(self.config, selector=self.select_session)
 
     def headless(self):
         return CodexHeadless(self)

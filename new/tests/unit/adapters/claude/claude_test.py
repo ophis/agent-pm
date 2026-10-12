@@ -1,5 +1,5 @@
 """adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadless's launch and parse; ClaudeTui's launch (role run, plain session, session flags), hook payloads and
+ClaudeHeadless's launch and parse; ClaudeTui's launch with session flags, hook payloads and
 usage-limit screen; ClaudeAdapter's hooks and writable dirs; the committed [adapters.claude] table. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime
+from functools import partial
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -28,20 +29,37 @@ from agent_pm.session.adapters.base import (
     Reply,
     SessionBound,
     SessionStatus,
-    Spec,
     TurnEnd,
     Usage,
     Window,
 )
+from agent_pm.session.adapters.base import (
+    Spec as BaseSpec,
+)
 from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.selection import select
 
 from new.tests.case import Case
+from new.tests.selection import configured
+
+
+class ClaudeCommon(UnconfiguredCommon):
+    def __init__(self, config):
+        super().__init__(
+            config,
+            selector=lambda native, resume: select(
+                native, resume, ClaudeAdapter.selection, uuid=True
+            ),
+        )
+
+
+Spec = BaseSpec
+
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
-SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
 CEILING = {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"}
 UNSET = (
     "CLAUDE_CODE_CHILD_SESSION",
@@ -114,17 +132,27 @@ class Base(Case):
 
     def launch(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless().launch(prompt, spec, resume)
+        return configured(ClaudeAdapter, config).headless().launch(prompt, spec, resume)
 
 
 class ConfigTest(Base):
     def test_every_key_is_optional_and_each_is_accepted(self):
-        self.assertEqual(ClaudeAdapter({}).config, {})
-        self.assertEqual(ClaudeAdapter(CONFIG).config, CONFIG)
+        self.assertEqual(configured(ClaudeAdapter, {}).config, {})
+        self.assertEqual(configured(ClaudeAdapter, CONFIG).config, CONFIG)
+
+    def test_an_adapter_the_driver_never_configured_starts_and_resumes_nothing(self):
+        adapter, spec = ClaudeAdapter({}), Spec(workdir=self.work, sid=SID)
+        for launch in (
+            lambda: adapter.headless().launch("hi", spec, False),
+            lambda: adapter.tui().launch("hi", spec, True, HOOK),
+            lambda: adapter.common.resume(self.work, SID),
+        ):
+            self.refused(launch, "session selector is not configured by Driver")
 
     def test_an_unknown_key_is_refused(self):
         self.refused(
-            lambda: ClaudeAdapter({"model": "m"}), "unknown key 'model' in ClaudeAdapter's config"
+            lambda: configured(ClaudeAdapter, {"model": "m"}),
+            "unknown key 'model' in ClaudeAdapter's config",
         )
 
     def test_a_wrong_type_names_the_key_never_the_value(self):
@@ -153,7 +181,7 @@ class ConfigTest(Base):
         for key, value in rows:
             with self.subTest(key=key, value=value):
                 self.refused(
-                    lambda: ClaudeAdapter({key: value}),
+                    lambda: configured(ClaudeAdapter, {key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
 
@@ -168,7 +196,7 @@ class ConfigTest(Base):
         ):
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    ClaudeAdapter({"env": {key: value}})
+                    configured(ClaudeAdapter, {"env": {key: value}})
                 self.assertIn("[adapters.claude].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -180,12 +208,12 @@ class ConfigTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: ClaudeAdapter({"flags": flags}),
+                    lambda: configured(ClaudeAdapter, {"flags": flags}),
                     "--setting-sources is the Driver's: remove it from [adapters.claude].flags",
                 )
 
     def test_the_env_attributes(self):
-        adapter = ClaudeAdapter({})
+        adapter = configured(ClaudeAdapter, {})
         self.assertEqual(
             (adapter.session_env, adapter.identity_env, adapter.child_defaults),
             ("CLAUDECODE", UNSET, {}),
@@ -238,8 +266,6 @@ class ArgvTest(Base):
                 "--output-format",
                 "stream-json",
                 "--verbose",
-                "--settings",
-                SETTINGS,
                 "--add-dir",
                 "/d1",
                 "--add-dir",
@@ -274,8 +300,6 @@ class ArgvTest(Base):
                 "--output-format",
                 "stream-json",
                 "--verbose",
-                "--settings",
-                SETTINGS,
                 "--",
                 "hi",
             ),
@@ -302,7 +326,9 @@ class ArgvTest(Base):
         for parent in (cwd, self.work):
             with open(os.path.join(parent, ".mcp.json"), "w", encoding="utf-8") as f:
                 f.write("{}")
-        argv = self.launch(config={}, access=Access(cwd=cwd, project=True)).argv
+        strict = ("--strict-mcp-config",)
+        self.assertNotIn("--mcp-config", self.launch(access=Access(cwd=cwd, project=True)).argv)
+        argv = self.launch(config={}, access=Access(cwd=cwd, project=True), flags=strict).argv
         self.assertEqual(
             argv[4:9],
             (
@@ -314,14 +340,21 @@ class ArgvTest(Base):
             ),
         )
         self.assertEqual(
-            self.launch(config={}, access=Access(project=True)).argv[6:8],
+            self.launch(config={}, access=Access(project=True), flags=strict).argv[6:8],
             ("--mcp-config", os.path.join(self.work, ".mcp.json")),
         )
-        self.assertNotIn("--mcp-config", self.launch(config={}, access=Access(cwd=cwd)).argv)
+        self.assertNotIn(
+            "--mcp-config", self.launch(config={}, access=Access(cwd=cwd), flags=strict).argv
+        )
 
     def test_an_mcp_path_that_is_no_file_is_skipped(self):
         os.mkdir(os.path.join(self.work, ".mcp.json"))
-        self.assertNotIn("--mcp-config", self.launch(config={}, access=Access(project=True)).argv)
+        self.assertNotIn(
+            "--mcp-config",
+            self.launch(
+                config={}, access=Access(project=True), flags=("--strict-mcp-config",)
+            ).argv,
+        )
 
     def test_a_sid_that_is_no_canonical_uuid_is_refused(self):
         for bad in (
@@ -333,9 +366,7 @@ class ArgvTest(Base):
             " " + SID,
         ):
             with self.subTest(bad=bad):
-                self.refused(
-                    lambda: self.launch(sid=bad), f"claude session ids are UUIDs, got {bad!r}"
-                )
+                self.refused(lambda: self.launch(sid=bad), f"session ids are UUIDs, got {bad!r}")
         self.refused(
             lambda: ClaudeCommon.uuid(SID + "\n"),
             f"claude session ids are UUIDs, got {SID + chr(10)!r}",
@@ -347,7 +378,7 @@ class ArgvTest(Base):
 class ReadRulesTest(Base):
     def modes(self, resume=False, config=None, **access):
         spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
-        adapter = ClaudeAdapter({} if config is None else config)
+        adapter = configured(ClaudeAdapter, {} if config is None else config)
         return (
             lambda: adapter.headless().launch("hi", spec, resume),
             lambda: adapter.tui().launch("hi", spec, resume, HOOK),
@@ -419,12 +450,12 @@ class ReadRulesTest(Base):
 
 
 class EnvTest(Base):
-    def test_defaults_overlaid_by_the_config_env(self):
-        self.assertEqual(ClaudeCommon({}).env(), CEILING)
-        self.assertEqual(
-            ClaudeCommon({"env": {"K": "v", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1"}}).env(),
-            {"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1", "K": "v"},
-        )
+    def test_headless_defaults_overlaid_by_the_config_env_tui_only_the_config_env(self):
+        self.assertEqual(ClaudeCommon({}).env(), {})
+        config = {"env": {"K": "v", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1"}}
+        self.assertEqual(dict(self.launch(config=config).env), config["env"])
+        self.assertEqual(dict(self.launch(config={}).env), CEILING)
+        self.assertEqual(dict(tui_launch(self.work, config={}).env), {})
 
     def test_the_launch_env_unset_and_cwd(self):
         launch = self.launch()
@@ -433,18 +464,28 @@ class EnvTest(Base):
         self.assertEqual(ClaudeCommon.UNSET, UNSET)
         self.assertEqual(launch.cwd, "")
 
+    def test_headless_uses_session_flags_and_env(self):
+        flags = ("--permission-mode", "auto")
+        launch = self.launch(flags=flags, env={"K": "session", "CUSTOM": "value"})
+        self.assertEqual(launch.argv[-4:], (*flags, "--", "hi"))
+        self.assertEqual(dict(launch.env), {**CEILING, "K": "session", "CUSTOM": "value"})
+        self.assertIn("K=session CUSTOM=value claude", launch.resume)
+
     def test_the_session_env_wins_over_the_config_env(self):
         config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
         access = Access(env={"PYTHONPATH": "/root", "S": "s"})
         self.env({"PYTHONPATH": "/parent"})
-        for launch in (
-            self.launch(config=config, access=access),
-            ClaudeAdapter(config)
-            .tui()
-            .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+        for launch, defaults in (
+            (self.launch(config=config, access=access), CEILING),
+            (
+                configured(ClaudeAdapter, config)
+                .tui()
+                .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+                {},
+            ),
         ):
             self.assertEqual(
-                dict(launch.env), {**CEILING, "K": "v", "PYTHONPATH": "/root", "S": "s"}
+                dict(launch.env), {**defaults, "K": "v", "PYTHONPATH": "/root", "S": "s"}
             )
 
 
@@ -490,26 +531,25 @@ class ResumeTest(Base):
             ClaudeCommon({}).resume("/w d", SID), f"cd '/w d' && claude --resume {SID}"
         )
 
-    def test_a_workdir_other_than_cwd_is_added(self):
-        common = ClaudeCommon({})
+    def test_each_granted_dir_is_added(self):
         self.assertEqual(
-            common.resume("/w", SID, "/o x"), f"cd /w && claude --resume {SID} --add-dir '/o x'"
-        )
-        link = os.path.join(self.tmp, "link")
-        os.symlink(self.work, link)
-        self.assertEqual(
-            common.resume(self.work, SID, link),
-            f"cd {shlex.quote(self.work)} && claude --resume {SID}",
+            ClaudeCommon({}).resume("/w", SID, ("/o x", "/p")),
+            f"cd /w && claude --resume {SID} --add-dir '/o x' --add-dir /p",
         )
 
-    def test_the_launch_resume(self):
+    def test_the_launch_resume_adds_the_granted_dirs_never_the_workdir(self):
         cwd = os.path.join(self.tmp, "cwd")
         q = shlex.quote
         self.assertEqual(self.launch().resume, f"cd {q(self.work)} && claude --resume {SID}")
-        self.assertEqual(
-            self.launch(access=Access(cwd=cwd)).resume,
-            f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)}",
-        )
+        for launch in (self.launch, partial(tui_launch, self.work)):
+            with self.subTest(launch=launch):
+                self.assertEqual(
+                    launch(access=Access(cwd=cwd)).resume, f"cd {q(cwd)} && claude --resume {SID}"
+                )
+                self.assertEqual(
+                    launch(access=Access(cwd=cwd, dirs=(self.work, "/d"))).resume,
+                    f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)} --add-dir /d",
+                )
 
     def test_the_launch_resume_assigns_the_session_env_quoted(self):
         env = {"PYTHONPATH": "/a b;c", "S": "s"}
@@ -547,7 +587,7 @@ INIT = {"type": "system", "subtype": "init", "session_id": SID}
 class ParseTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).headless()
+        self.run = configured(ClaudeAdapter, {}).headless()
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -616,17 +656,20 @@ class ParseTest(Base):
         )
         for record, events in rows:
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), events)
+                self.assertEqual(
+                    list(configured(ClaudeAdapter, {}).headless().parse(record)), events
+                )
 
     def test_a_rejected_rate_limit_event_is_a_limit_hit(self):
         self.assertEqual(self.parse(rejected(1700000000)), [LimitHit(1700000000.0)])
         for record in (rejected(status="allowed"), rejected(status="allowed_warning")):
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), [])
+                self.assertEqual(list(configured(ClaudeAdapter, {}).headless().parse(record)), [])
         for resets in (None, True, "1700000000", 1e999):
             with self.subTest(resets=resets):
                 self.assertEqual(
-                    list(ClaudeAdapter({}).headless().parse(rejected(resets))), [LimitHit(None)]
+                    list(configured(ClaudeAdapter, {}).headless().parse(rejected(resets))),
+                    [LimitHit(None)],
                 )
 
     def test_an_assistant_rate_limit_error_is_one_limit_hit_with_the_remembered_reset(self):
@@ -634,7 +677,7 @@ class ParseTest(Base):
             self.parse(rejected(5), assistant(text("limit"), error="rate_limit"), rejected(6)),
             [LimitHit(5.0), Reply("limit")],
         )
-        run = ClaudeAdapter({}).headless()
+        run = configured(ClaudeAdapter, {}).headless()
         self.assertEqual(
             [
                 e
@@ -647,10 +690,12 @@ class ParseTest(Base):
             ],
             [LimitHit(None), Reply("limit")],
         )
-        self.assertEqual(list(ClaudeAdapter({}).headless().parse(assistant(error="other"))), [])
+        self.assertEqual(
+            list(configured(ClaudeAdapter, {}).headless().parse(assistant(error="other"))), []
+        )
 
     def test_each_run_sends_its_own(self):
-        adapter = ClaudeAdapter({})
+        adapter = configured(ClaudeAdapter, {})
         first, second = adapter.headless(), adapter.headless()
         self.assertIsNot(first, second)
         self.assertEqual(list(first.parse(rejected(1))), [LimitHit(1.0)])
@@ -1001,28 +1046,24 @@ TUI_HOOKS = {
     "PostToolUse": [entry("PostToolUse")],
     "UserPromptSubmit": [entry("UserPromptSubmit")],
 }
-TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": TUI_HOOKS})
-PLAIN_SETTINGS = json.dumps({"hooks": TUI_HOOKS})
+TUI_SETTINGS = json.dumps({"hooks": TUI_HOOKS})
 NAME = "w-1"
-REFUSED = (
-    "--resume",
-    "-r",
-    "--session-id",
-    "--continue",
-    "-c",
-    "--fork-session",
-    "--from-pr",
-    "--teleport",
-)
 WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 
 def tui_launch(work, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, **spec})
-    return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+    return configured(ClaudeAdapter, config).tui().launch(prompt, spec, resume, HOOK)
 
 
 class TuiArgvTest(Base):
+    def test_named_session_keeps_its_name_fresh_and_resumed(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                argv = self.tui(name="worker-name", resume=resume).argv
+                start = argv.index("--name")
+                self.assertEqual(argv[start : start + 2], ("--name", "worker-name"))
+
     def tui(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         return tui_launch(self.work, prompt, config, resume, **spec)
 
@@ -1103,7 +1144,11 @@ class TuiArgvTest(Base):
         with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
             f.write("{}")
         access = Access(cwd=cwd, project=True)
-        tui, headless = self.tui(access=access), self.launch(access=access)
+        strict = ("--strict-mcp-config",)
+        tui, headless = (
+            self.tui(access=access, flags=strict),
+            self.launch(access=access, flags=strict),
+        )
         self.assertEqual(
             tui.argv[3:9],
             (
@@ -1115,22 +1160,22 @@ class TuiArgvTest(Base):
                 os.path.join(cwd, ".mcp.json"),
             ),
         )
-        self.assertEqual(dict(tui.env), {**CEILING, "K": "v"})
+        self.assertEqual((dict(tui.env), dict(headless.env)), ({"K": "v"}, {**CEILING, "K": "v"}))
         self.assertEqual(
-            (tui.env, tui.unset, tui.cwd, tui.transcript, tui.resume),
-            (headless.env, headless.unset, headless.cwd, headless.transcript, headless.resume),
+            (tui.unset, tui.cwd, tui.transcript, tui.resume),
+            (headless.unset, headless.cwd, headless.transcript, headless.resume),
         )
 
     def test_a_bad_sid_or_tier_is_refused(self):
-        self.refused(lambda: self.tui(sid="abc"), "claude session ids are UUIDs, got 'abc'")
+        self.refused(lambda: self.tui(sid="abc"), "session ids are UUIDs, got 'abc'")
         self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
 
     def test_the_flags_go_before_the_prompt_the_rest_unchanged(self):
         access = Access(dirs=("/d1",), commands=("ls",))
-        flags = ("--verbose", "--settings", "{}", "--add-dir", "/x")
+        flags = ("--verbose", "--add-dir", "/x")
         for prompt in ("do it", ""):
             with self.subTest(prompt=prompt):
-                base = self.tui(prompt, access=access).argv
+                base = self.tui(prompt, access=access, name=NAME).argv
                 cut = len(base) - 2 if prompt else len(base)
                 self.assertEqual(
                     self.tui(prompt, access=access, flags=flags, name=NAME).argv,
@@ -1138,28 +1183,60 @@ class TuiArgvTest(Base):
                 )
 
 
-class PlainTuiTest(Base):
-    def plain(self, prompt="hi", flags=(), config=CONFIG, resume=False, **spec) -> Launch:
+class SessionTuiTest(Base):
+    def session(self, prompt="hi", flags=(), config=None, resume=False, **spec) -> Launch:
         return tui_launch(
-            self.work, prompt, config, resume, role_policy=False, name=NAME, flags=flags, **spec
+            self.work,
+            prompt,
+            {} if config is None else config,
+            resume,
+            name=NAME,
+            flags=flags,
+            **spec,
         )
 
     def settings(self, flags) -> tuple[dict, tuple[str, ...]]:
-        argv = self.plain(flags=flags).argv
-        self.assertEqual(argv[:6], ("claude", "--session-id", SID, "--name", NAME, "--settings"))
-        return json.loads(argv[6]), argv[7:]
+        argv = self.session(flags=flags).argv
+        self.assertEqual(
+            argv[:8],
+            (
+                "claude",
+                "--session-id",
+                SID,
+                "--name",
+                NAME,
+                "--setting-sources",
+                "user",
+                "--settings",
+            ),
+        )
+        return json.loads(argv[8]), argv[9:]
 
-    def test_new_and_resumed_only_the_wiring_then_the_flags(self):
+    def test_new_and_resumed_share_config_access_flags_and_env(self):
         cwd = os.path.join(self.tmp, "cwd")
         os.mkdir(cwd)
         with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
             f.write("{}")
-        access = Access(dirs=("/d1",), commands=("ls",), reads=("/r1",), cwd=cwd, project=True)
-        flags = ("--permission-mode", "plan", "--add-dir", "/x")
+        access = Access(
+            dirs=("/d1",),
+            commands=("ls",),
+            reads=("/r1",),
+            cwd=cwd,
+            project=True,
+            env={"K": "access", "S": "s"},
+        )
+        flags = ("--permission-mode", "plan", "--strict-mcp-config", "--add-dir", "/x")
         for resume, word in ((False, "--session-id"), (True, "--resume")):
             with self.subTest(resume=resume):
-                launch = self.plain(
-                    "do it", flags, resume=resume, tier=4, effort="low", access=access
+                launch = self.session(
+                    "do it",
+                    flags,
+                    config=CONFIG,
+                    resume=resume,
+                    tier=4,
+                    effort="low",
+                    access=access,
+                    env={"K": "spec"},
                 )
                 self.assertEqual(
                     launch.argv,
@@ -1173,8 +1250,21 @@ class PlainTuiTest(Base):
                         "lo",
                         "--name",
                         NAME,
+                        "--permission-mode",
+                        "auto",
+                        "--setting-sources",
+                        "user,project,local",
+                        "--mcp-config",
+                        os.path.join(cwd, ".mcp.json"),
                         "--settings",
-                        PLAIN_SETTINGS,
+                        TUI_SETTINGS,
+                        "--add-dir",
+                        "/d1",
+                        "--allowedTools",
+                        "Bash(ls)",
+                        "Read(//r1/**)",
+                        "Read",
+                        "Edit(/x)",
                         *flags,
                         "--",
                         "do it",
@@ -1183,31 +1273,35 @@ class PlainTuiTest(Base):
                 self.assertEqual(
                     (dict(launch.env), launch.unset, launch.cwd, launch.transcript, launch.resume),
                     (
-                        {"K": "v"},
+                        {"K": "spec", "S": "s"},
                         UNSET,
                         "",
                         ClaudeCommon({}).transcript(cwd, SID),
-                        f"cd {shlex.quote(cwd)} && claude --resume {SID}",
+                        f"cd {shlex.quote(cwd)} && K=spec S=s claude --resume {SID} --add-dir /d1",
                     ),
                 )
 
     def test_none_of_the_optional_parts(self):
-        launch = self.plain("", config={})
+        launch = self.session("")
         self.assertEqual(
             launch.argv,
-            ("claude", "--session-id", SID, "--name", NAME, "--settings", PLAIN_SETTINGS),
+            (
+                "claude",
+                "--session-id",
+                SID,
+                "--name",
+                NAME,
+                "--setting-sources",
+                "user",
+                "--settings",
+                TUI_SETTINGS,
+            ),
         )
         self.assertEqual(
             (dict(launch.env), launch.resume),
             ({}, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
         )
-        self.assertEqual(self.plain("-p --help").argv[-2:], ("--", "-p --help"))
-
-    def test_an_access_env_is_refused(self):
-        self.refused(
-            lambda: self.plain(access=Access(env={"S": "s t"})),
-            "access env: not for a plain session; use env",
-        )
+        self.assertEqual(self.session("-p --help").argv[-2:], ("--", "-p --help"))
 
     def test_the_hooks_merge_into_the_users_settings_which_move_before_the_rest(self):
         mine = {"type": "command", "command": "mine"}
@@ -1225,13 +1319,19 @@ class PlainTuiTest(Base):
             ("--verbose", "--settings=" + json.dumps(own), "--x"),
         ):
             with self.subTest(flags=flags):
-                self.assertEqual(self.settings(flags), (merged, ("--verbose", "--x", "--", "hi")))
+                self.assertEqual(
+                    self.settings(flags),
+                    (merged, ("--verbose", "--x", "--", "hi")),
+                )
         self.assertEqual(
             self.settings(("--settings", '{"model": "x"}')),
             ({"model": "x", "hooks": TUI_HOOKS}, ("--", "hi")),
         )
         after = ("--", "--settings", "[]")
-        self.assertEqual(self.settings(after), ({"hooks": TUI_HOOKS}, (*after, "--", "hi")))
+        self.assertEqual(
+            self.settings(after),
+            ({"hooks": TUI_HOOKS}, (*after, "--", "hi")),
+        )
 
     def test_a_malformed_settings_flag_is_refused(self):
         long = "x" * 100
@@ -1247,29 +1347,8 @@ class PlainTuiTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: self.plain(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
+                    lambda: self.session(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
                 )
-
-
-class SessionFlagTest(Base):
-    def test_each_is_refused_in_a_role_run_and_a_plain_session(self):
-        given = (*REFUSED, *(f"{word}=x" for word in REFUSED if word.startswith("--")))
-        for flag in given:
-            for role_policy in (True, False):
-                with self.subTest(flag=flag, role_policy=role_policy):
-                    self.refused(
-                        lambda: tui_launch(
-                            self.work, flags=("--verbose", flag, SID), role_policy=role_policy
-                        ),
-                        f"{flag.partition('=')[0]}: picks the session; use crew.py start --resume <sid>",
-                    )
-
-    def test_scanning_stops_at_the_separator_and_other_words_pass(self):
-        for role_policy in (True, False):
-            for flags in (("--", *REFUSED), ("--resumes", "--continued", "--teleport-x")):
-                with self.subTest(flags=flags, role_policy=role_policy):
-                    argv = tui_launch(self.work, flags=flags, role_policy=role_policy).argv
-                    self.assertEqual(argv[-len(flags) - 2 :], (*flags, "--", "hi"))
 
 
 def said(mid, *blocks) -> dict:
@@ -1283,7 +1362,7 @@ def said(mid, *blocks) -> dict:
 class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).tui()
+        self.run = configured(ClaudeAdapter, {}).tui()
         self.path = os.path.join(self.tmp, "t.jsonl")
 
     def transcript(self, *records):
@@ -1427,7 +1506,7 @@ NOW = epoch("2026-10-11 10:00")  # a Sunday
 class LimitTest(Case):
     def limit(self, screen, now=NOW):
         with mock.patch("time.time", return_value=now):
-            return ClaudeAdapter({}).tui().limit(screen)
+            return configured(ClaudeAdapter, {}).tui().limit(screen)
 
     def check(self, rows):
         for screen, resets in rows:
@@ -1566,12 +1645,12 @@ class LimitTest(Case):
 
 class AdapterTest(Base):
     def test_its_parts(self):
-        adapter = ClaudeAdapter(CONFIG)
+        adapter = configured(ClaudeAdapter, CONFIG)
         self.assertEqual(
             ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"})
         )
         self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
-        self.assertIsInstance(adapter.common, ClaudeCommon)
+        self.assertIsInstance(adapter.common, UnconfiguredCommon)
         for mode, kind in ((adapter.headless, ClaudeHeadless), (adapter.tui, ClaudeTui)):
             with self.subTest(kind=kind):
                 self.assertIs(type(mode()), kind)
@@ -1581,19 +1660,22 @@ class AdapterTest(Base):
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
         self.assertEqual(
-            ClaudeAdapter(CONFIG).usage_probe(),
+            configured(ClaudeAdapter, CONFIG).usage_probe(),
             Launch(PROBE, env={**CEILING, "K": "v"}, unset=UNSET),
         )
-        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
-        self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
+        self.assertEqual(
+            configured(ClaudeAdapter, {}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None)
+        )
+        self.assertIsNone(configured(ClaudeAdapter, {}).usage("garbage"))
 
     def test_session_status(self):
         self.assertEqual(
-            ClaudeAdapter({}).session_status(SID, self.work),
+            configured(ClaudeAdapter, {}).session_status(SID, self.work),
             SessionStatus("no", None, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
         )
         self.assertEqual(
-            ClaudeAdapter({}).session_status("x", self.work), SessionStatus("no", None, "")
+            configured(ClaudeAdapter, {}).session_status("x", self.work),
+            SessionStatus("no", None, ""),
         )
 
 
@@ -1608,7 +1690,7 @@ class WritableDirsTest(Base):
 
     def dirs(self, resume=False, workdir=None, **access) -> tuple[str, ...]:
         spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
-        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume)
+        return configured(ClaudeAdapter, CONFIG).writable_dirs(spec, resume)
 
     def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
@@ -1644,7 +1726,7 @@ class WritableDirsTest(Base):
                     (self.work, self.added),
                 )
 
-    def test_a_plain_session_its_cwd_then_each_added_dir_in_its_flags(self):
+    def test_access_and_flag_dirs_are_combined_for_every_session(self):
         os.mkdir(os.path.join(self.cwd, "sub"))
         flags = (
             "--verbose",
@@ -1659,9 +1741,9 @@ class WritableDirsTest(Base):
         )
         for resume in (False, True):
             for cwd, given, dirs in (
-                ("", (), (self.work,)),
-                (self.cwd, (), (self.cwd,)),
-                (self.cwd, flags, (self.cwd, os.path.join(self.cwd, "sub"), self.added)),
+                ("", (), (self.work, self.tmp)),
+                (self.cwd, (), (self.cwd, self.tmp)),
+                (self.cwd, flags, (self.cwd, self.tmp, os.path.join(self.cwd, "sub"), self.added)),
             ):
                 with self.subTest(resume=resume, cwd=cwd, flags=given):
                     spec = Spec(
@@ -1669,9 +1751,10 @@ class WritableDirsTest(Base):
                         sid=SID,
                         access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
                         flags=given,
-                        role_policy=False,
                     )
-                    self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec, resume), dirs)
+                    self.assertEqual(
+                        configured(ClaudeAdapter, CONFIG).writable_dirs(spec, resume), dirs
+                    )
 
 
 class CommittedConfigTest(Base):
@@ -1681,7 +1764,6 @@ class CommittedConfigTest(Base):
             tables["claude"],
             {
                 "implementation": "adapters.claude:ClaudeAdapter",
-                "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },
@@ -1695,17 +1777,8 @@ class CommittedConfigTest(Base):
             .argv
         )
         self.assertEqual(
-            argv[4:12],
-            (
-                "--model",
-                "haiku",
-                "--effort",
-                "low",
-                "--permission-mode",
-                "auto",
-                "--strict-mcp-config",
-                "--setting-sources",
-            ),
+            argv[4:10],
+            ("--model", "haiku", "--effort", "low", "--setting-sources", "user"),
         )
 
 

@@ -128,7 +128,6 @@ class Live(Case):
             "adapters": {
                 "codex": {
                     "implementation": "adapters.codex:CodexAdapter",
-                    "shell_network": False,
                     "tiers": {"1": "gpt-test"},
                     "efforts": {"low": "low"},
                     "env": {
@@ -143,6 +142,14 @@ class Live(Case):
         self.addCleanup(registry.reset)
         self.common = registry.adapter("codex").common
         self.spec = Spec(
+            flags=(
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ),
             workdir=str(self.work),
             tier=1,
             effort="low",
@@ -267,7 +274,7 @@ class TuiIntegrationTest(Live):
                 'approvals_reviewer="auto_review"',
             ],
         )
-        self.assertNotIn("--add-dir", call["argv"])
+        self.assertIn("--add-dir", call["argv"])
         self.assertFalse(any(word.startswith("sandbox_workspace_write.") for word in call["argv"]))
         self.assertEqual(
             call["argv"][-2:],
@@ -359,6 +366,11 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.attach(), [self.sid, "live", "", self.bound().native_id])
         handle.send("silent")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
+        live_tmux.wait(
+            lambda: any(row["hook"] == "Stop" for row in self.hooks()),
+            WAIT,
+            what="null-reply Stop hook logged",
+        )
         self.assertIsNone(self.hooks()[-1]["payload"]["last_assistant_message"])
         self.assertEqual(self.lines(2), ["w1 done"] * 2)
 
@@ -402,13 +414,27 @@ class TuiIntegrationTest(Live):
         stream.quiet()
 
     def test_workspace_write_flags_and_saved_policy_through_driver(self):
-        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        self.spec = dataclasses.replace(
+            self.spec,
+            flags=(
+                "-s",
+                "workspace-write",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+            ),
+        )
         registry.configure(self.config)
         handle = self.start()
         Stream(self, handle).until(TurnEnd)
         native = self.bound().native_id
         handle.stop()
-        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
         registry.configure(self.config)
         resumed = self.start(resume=self.sid)
         Stream(self, resumed).until(TurnEnd)
@@ -433,7 +459,7 @@ class TuiIntegrationTest(Live):
         ]
         self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
         self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
-        self.assertEqual(self.bound().snapshot["sandbox"], "workspace-write")
+        self.assertEqual(self.bound().snapshot["flags"][1], "workspace-write")
 
     def test_resume_keeps_native_id_cwd_home_model_effort_dirs_network_and_commands(self):
         handle = self.start()
@@ -447,8 +473,6 @@ class TuiIntegrationTest(Live):
         cfg.update(
             tiers={"1": "changed"},
             efforts={"low": "high"},
-            shell_network=True,
-            sandbox="workspace-write",
         )
         cfg["env"]["CODEX_HOME"] = str(changed)
         registry.configure(self.config)
@@ -586,7 +610,21 @@ class TuiIntegrationTest(Live):
         self.assertFalse((self.work / "run.jsonl").exists())
 
     def test_parent_markers_and_injected_defaults_are_removed_fresh_resumed_and_nested(self):
-        inherited = {key: "inherited" for key in (*fake_codex.MARKERS, *fake_codex.DEFAULTS)}
+        inherited = {**dict.fromkeys(fake_codex.MARKERS, "inherited"), **fake_codex.DEFAULTS}
+        self.assert_nested_environment(inherited, dict.fromkeys(inherited))
+
+    def test_external_environment_is_inherited_fresh_resumed_and_nested(self):
+        markers = dict.fromkeys(fake_codex.MARKERS, "inherited")
+        external = {
+            **dict.fromkeys(fake_codex.DEFAULTS, "less"),
+            "NO_COLOR": "0",
+            "CODEX_CI": "operator",
+        }
+        self.assert_nested_environment(
+            {**markers, **external}, {**dict.fromkeys(markers), **external}
+        )
+
+    def assert_nested_environment(self, inherited, expected):
         with mock.patch.dict(os.environ, inherited):
             first = self.start()
             self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
@@ -597,7 +635,7 @@ class TuiIntegrationTest(Live):
                 nested = self.start("z1", sid="nested", events=str(self.root / "nested.events"))
                 self.assertEqual(Stream(self, nested).until(TurnEnd)[-1], TurnEnd("first"))
         for call in self.calls():
-            self.assertTrue(all(call["env"][key] is None for key in inherited), call["env"])
+            self.assertEqual({key: call["env"][key] for key in inherited}, expected)
             self.assertEqual(call["env"]["CODEX_HOME"], str(self.codex_home))
         self.assertNotEqual(self.bound().native_id, self.bound("nested").native_id)
         screen = self.server.tmux("capture-pane", "-p", "-e", "-t", "=z1:").stdout
@@ -739,7 +777,7 @@ class TuiIntegrationTest(Live):
                 )
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 2)
 
-    def test_writable_dirs_api_queries_tui_saved_roots_and_current_temp_environment(self):
+    def test_writable_dirs_api_queries_tui_saved_roots_and_environment(self):
         first_tmp, next_tmp, ignored_home = (
             self.root / n for n in ("first-tmp", "next-tmp", "ignored-home")
         )
@@ -748,9 +786,7 @@ class TuiIntegrationTest(Live):
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(first_tmp)
         registry.configure(self.config)
         fresh = api.writable_dirs("codex", self.spec)
-        self.assertEqual(
-            list(fresh[:4]), [str(p) for p in (self.work, self.cwd, self.codex_home, self.extra)]
-        )
+        self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
         self.assertFalse((self.home / ".agent-pm" / "core-new-sessions").exists())
         self.assertEqual(self.logged(), [])
@@ -768,12 +804,12 @@ class TuiIntegrationTest(Live):
         before = self.record().read_bytes()
         resumed = api.writable_dirs("codex", changed_spec, resume=self.sid)
         self.assertEqual(list(resumed[: len(saved)]), saved)
-        self.assertIn(str(next_tmp), resumed)
+        self.assertNotIn(str(next_tmp), resumed)
         self.assertNotIn(str(ignored_home), resumed)
         self.assertEqual(self.record().read_bytes(), before)
         second = self.start(resume=self.sid)
         self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("first"))
-        self.assertEqual(self.calls()[-1]["env"]["TMPDIR"], str(next_tmp))
+        self.assertEqual(self.calls()[-1]["env"]["TMPDIR"], str(first_tmp))
         self.assertEqual(self.calls()[-1]["env"]["CODEX_HOME"], str(self.codex_home))
 
 

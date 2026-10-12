@@ -39,6 +39,7 @@ SESSION_TYPES = "session.types"
 MODES = "session.modes"
 RECORDS = "session.records"
 HOSTS = "session.hosts"
+SELECTION = "session.selection"
 LAYERS = (
     "session.adapters",
     SESSION_API,
@@ -46,6 +47,7 @@ LAYERS = (
     MODES,
     RECORDS,
     HOSTS,
+    SELECTION,
     "role.composer",
     "role.delegate",
 )
@@ -55,9 +57,14 @@ ALLOWED = {
     ("role.delegate", "role.composer"),
     ("role.delegate", SESSION),
     ("role.delegate", SESSION_API),
-    *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
+    *(
+        (SESSION_API, unit)
+        for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS, SELECTION)
+    ),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     (SESSION_TYPES, "session.adapters"),
+    (SELECTION, "session.adapters"),
+    ("session.adapters.registry", SELECTION),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
@@ -83,7 +90,7 @@ BARE = (
 )
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
-TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
 )

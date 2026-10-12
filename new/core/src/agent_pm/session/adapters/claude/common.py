@@ -1,7 +1,4 @@
-"""Claude Code configuration, launch metadata, usage and session inspection shared by both Modes. A launch's env and
-resume command carry a role run's Access.env. plain is a plain session's (adapters.base): the session id, tier, effort
-and --name, then --settings, `hooks` merged into the first --settings in spec.flags, then the rest of spec.flags; the
-config's env without ENV. refuse: a session flag before "--"."""
+"""Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
 
 import json
 import math
@@ -27,27 +24,10 @@ TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 NOT_LITERAL = "*?[]{}()\\,"
-REFUSED = (
-    "--resume",
-    "-r",
-    "--session-id",
-    "--continue",
-    "-c",
-    "--fork-session",
-    "--from-pr",
-    "--teleport",
-)
 
 
 def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
     return flags[: flags.index("--")] if "--" in flags else flags
-
-
-def refuse(flags: tuple[str, ...]) -> None:
-    for flag in _before_end(flags):
-        word = flag.partition("=")[0] if flag.startswith("--") else flag
-        if word in REFUSED:
-            raise ConfigError(f"{word}: picks the session; use crew.py start --resume <sid>")
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -170,8 +150,6 @@ class ClaudeCommon:
     )
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
-    # This core's own plugin (<plugin>@<marketplace>): a session loads the user's plugins, never it.
-    PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
     NOTE = (
         "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
         "on a permission prompt."
@@ -190,7 +168,8 @@ class ClaudeCommon:
         "--strict-mcp-config",
     )
 
-    def __init__(self, config: Mapping):
+    def __init__(self, config: Mapping, *, selector):
+        self.selector = selector
         for key, ok, what in CHECKS:
             if key in config and not ok(config[key]):
                 raise ConfigError(f"{TABLE}.{key} must be {what}")
@@ -200,8 +179,7 @@ class ClaudeCommon:
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
-        self.config_env = dict(config.get("env", {}))
-        self._env = {**self.ENV, **self.config_env}
+        self._env = dict(config.get("env", {}))
 
     def model(self, tier: int | None) -> str | None:
         if tier is None:
@@ -231,19 +209,18 @@ class ClaudeCommon:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.config_dir(), "projects", project, f"{sid}.jsonl")
 
-    @staticmethod
     def resume(
+        self,
         cwd: str,
         sid: str,
-        workdir: str | None = None,
+        dirs: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> str:
-        q = shlex.quote
-        assign = "".join(f"{name}={q(value)} " for name, value in env.items())
-        command = f"cd {q(cwd)} && {assign}claude --resume {q(sid)}"
-        if workdir is not None and os.path.realpath(workdir) != os.path.realpath(cwd):
-            command += f" --add-dir {q(workdir)}"
-        return command
+        """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
+        assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
+        added = (arg for d in dirs for arg in ("--add-dir", d))
+        argv = ("claude", *self.selector(sid, True), *added)
+        return f"cd {shlex.quote(cwd)} && {assign}{shlex.join(argv)}"
 
     @staticmethod
     def uuid(sid) -> str:
@@ -255,13 +232,15 @@ class ClaudeCommon:
         self,
         spec: Spec,
         resume: bool,
-        settings: Mapping,
+        settings: Mapping | None,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
+        env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments."""
-        sid = self.uuid(spec.sid)
+        """Build a Claude command with configured settings, access grants and output arguments; `env` under the
+        config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in spec.flags would drop."""
+        sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd or spec.workdir
@@ -271,59 +250,36 @@ class ClaudeCommon:
             *_read_rules(access.reads),
             *self.allow,
         )
+        strict = "--strict-mcp-config" in _before_end(spec.flags)
         argv = (
             "claude",
             *head,
-            "--resume" if resume else "--session-id",
-            sid,
+            *self.selector(sid, resume),
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
+            *(("--name", spec.name) if spec.name is not None else ()),
             *self.flags,
             "--setting-sources",
             "user,project,local" if access.project else "user",
-            *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
+            *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
             *output,
-            "--settings",
-            json.dumps(settings),
+            *(("--settings", json.dumps(settings)) if settings is not None else ()),
             *(arg for d in access.dirs for arg in ("--add-dir", d)),
             *(("--allowedTools", *allow) if allow else ()),
             *tail,
         )
         return Launch(
             argv,
-            env={**self.env(), **access.env},
+            env={**env, **self.env(), **access.env, **spec.env},
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid, spec.workdir, access.env),
+            resume=self.resume(cwd, sid, access.dirs, {**access.env, **spec.env}),
         )
 
-    def plain(self, spec: Spec, resume: bool, hooks: Mapping, tail: tuple[str, ...] = ()) -> Launch:
-        sid = self.uuid(spec.sid)
-        model, effort = self.model(spec.tier), self.effort(spec.effort)
-        settings, flags = _merged(spec.flags, hooks)
-        cwd = spec.access.cwd or spec.workdir
-        argv = (
-            "claude",
-            "--resume" if resume else "--session-id",
-            sid,
-            *(("--model", model) if model is not None else ()),
-            *(("--effort", effort) if effort is not None else ()),
-            *(("--name", spec.name) if spec.name is not None else ()),
-            "--settings",
-            json.dumps(settings),
-            *flags,
-            *tail,
-        )
-        return Launch(
-            argv,
-            env=dict(self.config_env),
-            unset=self.UNSET,
-            transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid),
-        )
+    merged = staticmethod(_merged)
 
     def probe(self) -> Launch:
-        return Launch(self.PROBE, env=self.env(), unset=self.UNSET)
+        return Launch(self.PROBE, env={**self.ENV, **self.env()}, unset=self.UNSET)
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:

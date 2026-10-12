@@ -3,8 +3,7 @@ starts it in its Mode (headless, tui or in_process) and returns its Handle. Hand
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
 `stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record;
 writable_dirs() the dirs a runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
-tui session by name; detach() runs a command in a tmux session of its own. A plain session's env allow-list and
-Spec.role_policy are temporary (TASK-356)."""
+tui session by name; detach() runs a command in a tmux session of its own."""
 
 import contextlib
 import logging
@@ -51,6 +50,7 @@ from agent_pm.session.adapters.base import (
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.session.records import session
+from agent_pm.session.selection import check as check_selection
 from agent_pm.session.types import DriverError, IdleTimeout, SessionRow
 from agent_pm.utils.paths import printable_abs
 
@@ -253,20 +253,14 @@ class Handle:
         return usage(self.runtime)
 
 
-def _child_env(
-    launch: Launch, cwd: str, drop: Collection[str] = (), extra: Mapping[str, str] | None = None
-) -> dict[str, str]:
+def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
-    return {**env, **launch.env, **(extra or {}), "PWD": cwd}
+    return {**env, **launch.env, "PWD": cwd}
 
 
-def _plain_drop(env: Mapping[str, str]) -> frozenset[str]:
+def _identity_drop() -> frozenset[str]:
     """Each Adapter's identity_env, and its child_defaults at their value inside it."""
     adapters = [registry.adapter(name) for name in registry.configured()]
-    allowed = sorted({key for a in adapters for key in a.child_defaults})
-    for key in sorted(env):
-        if key not in allowed:
-            raise ConfigError(f"env {key}: want one of {', '.join(allowed)}")
     drop = {key for a in adapters for key in a.identity_env}
     for a in adapters:
         if a.session_env and a.session_env in os.environ:
@@ -307,6 +301,7 @@ def start(
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
     sid = resume or sid or str(uuid.uuid4())
     steps = kind(run, runtime, sid, name, events)
+    check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
     spec = steps.specced(replace(spec, sid=sid))
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
@@ -343,8 +338,8 @@ def _no_tui_keys(name, events) -> None:
 
 
 def _no_tui_fields(spec: Spec) -> Spec:
-    if spec.flags or spec.protect or not spec.role_policy:
-        raise ConfigError("flags, env, protect and role_policy=False: tui mode only")
+    if spec.protect:
+        raise ConfigError("protect: tui mode only")
     return spec
 
 
@@ -368,7 +363,10 @@ class _LaunchSteps:
 
 class _HeadlessSteps(_LaunchSteps):
     name = None
-    specced = staticmethod(_no_tui_fields)
+
+    def specced(self, spec: Spec) -> Spec:
+        self.drop = _identity_drop()
+        return _no_tui_fields(spec)
 
     @staticmethod
     def run_of(adapter: Adapter) -> Headless | None:
@@ -389,7 +387,7 @@ class _HeadlessSteps(_LaunchSteps):
     def begin(self, host: headless.HeadlessMode) -> None:
         launch = self.command
         try:
-            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd))
+            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd, self.drop))
         except (OSError, ValueError) as e:
             raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
 
@@ -408,8 +406,7 @@ class _TuiSteps(_LaunchSteps):
             raise DriverError("tmux not found")
 
     def specced(self, spec: Spec) -> Spec:
-        self.drop = () if spec.role_policy else _plain_drop(spec.env)
-        self.extra = spec.env
+        self.drop = _identity_drop()
         hooks = (
             self.tmux,
             *([self.events] if self.events else []),
@@ -438,7 +435,7 @@ class _TuiSteps(_LaunchSteps):
         host.begin(
             launch.argv,
             cwd=self.cwd,
-            env=_child_env(launch, self.cwd, self.drop, self.extra),
+            env=_child_env(launch, self.cwd, self.drop),
             status_line=self.settings.status_line,
         )
 

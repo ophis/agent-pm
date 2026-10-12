@@ -393,7 +393,6 @@ class ProtectTest(Base):
             spec = dataclasses.replace(
                 self.spec,
                 sid=f"recheck-{index}",
-                role_policy=role_policy,
                 flags=flags,
                 protect=(str(link),),
             )
@@ -427,40 +426,31 @@ class ProtectTest(Base):
                     tui_start.main([json.dumps({k: v for k, v in data.items() if k != key})])
         proc.assert_not_called()
 
-    def test_the_recheck_covers_a_resumes_added_dirs(self):
-        self.launch(dataclasses.replace(self.spec, role_policy=False))
+    def test_the_recheck_covers_saved_flags_on_resume(self):
+        link = self.root / "protected-link"
+        target = self.root / "guarded" / "events"
+        flags = ("--add-dir", "../../guarded")
+        self.launch(dataclasses.replace(self.spec, flags=flags))
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        link = self.root / "protected-link"
-        cases = (
-            (("--add-dir", "../../guarded"), self.root / "guarded" / "events"),
-            (("--add-dir=../../other/sub",), self.root / "other"),
-            ((f"--add-dir={self.root / 'third'}",), self.root / "third" / "events"),
-        )
-        for flags, target in cases:
-            link.unlink(missing_ok=True)
-            link.symlink_to("/protected/events")
-            spec = dataclasses.replace(
-                self.spec, role_policy=False, flags=flags, protect=(str(link),)
-            )
-            data = self.launch(spec, resume=True)
-            link.unlink()
-            link.symlink_to(target)
-            with (
-                self.subTest(flags=flags),
-                mock.patch("subprocess.Popen") as proc,
-                mock.patch("os.execve") as execute,
-                self.assertRaisesRegex(
-                    tui_start.sessions.RecoveryError, f"could rewrite hook dependency {target}$"
-                ),
-            ):
-                tui_start.main([data])
-            proc.assert_not_called()
-            execute.assert_not_called()
+        link.symlink_to("/protected/events")
+        data = self.launch(dataclasses.replace(self.spec, protect=(str(link),)), resume=True)
+        link.unlink()
+        link.symlink_to(target)
+        with (
+            mock.patch("subprocess.Popen") as proc,
+            mock.patch("os.execve") as execute,
+            self.assertRaisesRegex(
+                tui_start.sessions.RecoveryError, "could rewrite hook dependency"
+            ),
+        ):
+            tui_start.main([data])
+        proc.assert_not_called()
+        execute.assert_not_called()
 
     def test_a_plain_start_lists_hooks_with_the_users_config_and_execs_the_flags(self):
         flags = ("-c", 'model_verbosity="low"', "--disable", "web", "-m", "o3")
-        spec = dataclasses.replace(self.spec, role_policy=False, flags=flags)
+        spec = dataclasses.replace(self.spec, flags=flags)
         data = self.launch(spec)
         with (
             mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
@@ -469,8 +459,9 @@ class ProtectTest(Base):
         ):
             tui_start.main([data])
         argv = execute.call_args.args[1]
-        self.assertEqual(argv[-10:], [*flags, "-c", "hooks.state={exact}", "--", "prompt"])
-        hook_flags = argv[10:22]
+        start = argv.index("-c", 6)
+        self.assertEqual(argv[start : start + len(flags)], list(flags))
+        hook_flags = [word for word in json.loads(data)["hook_flags"]][:-4]
         self.assertEqual(
             trust.call_args.args[1],
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],

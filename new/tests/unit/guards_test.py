@@ -464,6 +464,12 @@ class RuntimeNames(Sample):
             guards.runtime_names(root), [f"{PKG}/role/delegate/x.py:1: runtime name print_prompt"]
         )
 
+    def test_policy_runtime_tables_are_exempt(self):
+        root = self.tree(
+            {"config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}
+        )
+        self.assertEqual(guards.runtime_names(root), [])
+
     def test_adapters_subpackage_is_exempt(self):
         root = self.tree({f"{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'})
         self.assertEqual(guards.runtime_names(root), [])

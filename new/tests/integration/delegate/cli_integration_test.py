@@ -238,6 +238,25 @@ class NewRun(Integration):
         )
         self.assertIsNone(option(call, "--resume"))
 
+    def test_the_default_policy_reaches_the_argv_as_before_its_move(self):
+        res = self.drive([block(DONE)])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        (call,) = self.calls()
+        argv = call["argv"]
+        start = argv.index("--permission-mode")
+        self.assertEqual(
+            argv[start : start + 5],
+            [
+                "--permission-mode",
+                "auto",
+                "--strict-mcp-config",
+                "--settings",
+                '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
+            ],
+        )
+        for flag in ("--permission-mode", "--strict-mcp-config", "--settings"):
+            self.assertEqual(argv.count(flag), 1, flag)
+
     def test_a_deliverable_file_the_agent_wrote_is_saved_to_out(self):
         report = os.path.join(self.work, "report.md")
         res = self.drive(

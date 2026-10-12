@@ -10,6 +10,27 @@ from agent_pm.session.adapters.claude.tui import ClaudeTui
 
 
 class ClaudeAdapter(Adapter):
+    selection = (("--session-id",), ("--resume",))
+    selection_uuid = True
+    valued_flags = (
+        "--model",
+        "--effort",
+        "--name",
+        "--settings",
+        "--add-dir",
+        "--setting-sources",
+        "--mcp-config",
+    )
+    forbidden_selection = (
+        "--resume",
+        "-r",
+        "--session-id",
+        "--continue",
+        "-c",
+        "--fork-session",
+        "--from-pr",
+        "--teleport",
+    )
     keys = frozenset({"flags", "allow", "tiers", "efforts", "env"})
     runtime_note = ClaudeCommon.NOTE
     session_env = "CLAUDECODE"
@@ -17,7 +38,7 @@ class ClaudeAdapter(Adapter):
 
     def __init__(self, config):
         super().__init__(config)
-        self.common = ClaudeCommon(self.config)
+        self.common = ClaudeCommon(self.config, selector=self.select_session)
 
     def headless(self):
         return ClaudeHeadless(self)
@@ -36,8 +57,5 @@ class ClaudeAdapter(Adapter):
 
     def writable_dirs(self, spec, resume):
         cwd = spec.access.cwd or spec.workdir
-        if spec.role_policy:
-            dirs = (cwd, *spec.access.dirs)
-        else:
-            dirs = (cwd, *(os.path.join(cwd, d) for d in added_dirs(spec.flags)))
+        dirs = (cwd, *spec.access.dirs, *(os.path.join(cwd, d) for d in added_dirs(spec.flags)))
         return tuple(dict.fromkeys(map(os.path.realpath, dirs)))

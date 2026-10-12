@@ -49,6 +49,7 @@ class UtilsImportsTest(Case):
                 f"{PKG}/session/hosts/x.py: session.hosts imports {tools}.repo",
                 f"{PKG}/session/modes/x.py: session.modes imports {tools}.repo",
                 f"{PKG}/session/records/x.py: session.records imports {tools}.repo",
+                f"{PKG}/session/selection/x.py: session.selection imports {tools}.repo",
                 f"{PKG}/session/types/x.py: session.types imports {tools}.repo",
                 f"{PKG}/utils/y.py: bare import agent_tools.repo",
                 f"{PKG}/utils/z.py: outside the layers imports {tools}.repo",

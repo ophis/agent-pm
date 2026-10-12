@@ -24,7 +24,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.session import api, records
+from agent_pm.session import api, records, selection
 from agent_pm.session.adapters import base, registry
 from agent_pm.session.adapters.base import Access, Launch
 from agent_pm.session.hosts.tmux import tmux_host
@@ -75,6 +75,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
     """check: refuses tier 4, else logs its arguments and whether run.jsonl exists."""
 
     def check(self, prompt, spec, resume):
+        LAUNCHED.append(spec)
         if spec.tier == 4:
             raise base.ConfigError("tier 4 is unmapped")
         with open(self.adapter.config["log"], "a", encoding="utf-8") as f:
@@ -112,7 +113,7 @@ LAUNCHED: list[api.Spec] = []
 
 class InnerAdapter(fake_adapter.FakeAdapter):
     """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its spec in LAUNCHED,
-    unsets LAUNCH_DROP and sets LAUNCH_SET."""
+    unsets LAUNCH_DROP and sets spec.env, then LAUNCH_SET."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -126,7 +127,8 @@ class InnerTui(fake_adapter.FakeTui):
     def launch(self, prompt, spec, resume, hook):
         LAUNCHED.append(spec)
         launch = super().launch(prompt, spec, resume, hook)
-        return dataclasses.replace(launch, env={"LAUNCH_SET": "1"}, unset=("LAUNCH_DROP",))
+        env = {**spec.env, "LAUNCH_SET": "1"}
+        return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
 
 class OtherAdapter(fake_adapter.FakeAdapter):
@@ -136,7 +138,7 @@ class OtherAdapter(fake_adapter.FakeAdapter):
 
 
 class EnvAdapter(ProbeAdapter):
-    """The probe adapter whose session launches carry spec.access.env, as claude's and codex's do."""
+    """The probe adapter whose session launches carry spec.access.env and spec.env, as claude's and codex's do."""
 
     def headless(self):
         return EnvRun(self)
@@ -147,12 +149,15 @@ class EnvAdapter(ProbeAdapter):
 
 class EnvRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
-        return dataclasses.replace(super().launch(prompt, spec, resume), env=spec.access.env)
+        LAUNCHED.append(spec)
+        launch = super().launch(prompt, spec, resume)
+        return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 class EnvTui(fake_adapter.FakeTui):
     def launch(self, prompt, spec, resume, hook):
-        return dataclasses.replace(super().launch(prompt, spec, resume, hook), env=spec.access.env)
+        launch = super().launch(prompt, spec, resume, hook)
+        return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 def package(name, cls) -> types.ModuleType:
@@ -339,20 +344,85 @@ class ChecksTest(Base):
                     lambda: self.start(runtime, mode, spec=self.spec(name="w1")),
                 )
 
-    def test_flags_env_protect_and_a_plain_session_are_tui_only(self):
+    def test_protect_is_tui_only(self):
         for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
-            for fields in (
-                {"flags": ("--x",)},
-                {"env": {"PAGER": "cat"}, "role_policy": False},
-                {"protect": ("/p",)},
-                {"role_policy": False},
-            ):
-                with self.subTest(mode=mode, fields=fields):
+            with self.subTest(mode=mode):
+                self.refused(
+                    api.ConfigError,
+                    "protect: tui mode only",
+                    lambda: self.start(runtime, mode, spec=self.spec(protect=("/p",))),
+                )
+
+    def test_headless_flags_and_env_reach_the_adapter_and_child(self):
+        LAUNCHED.clear()
+        spec = self.spec(flags=("--custom", "value"), env={"FAKE_ENV": "spec"})
+        handle, _ = self.run_once(runtime="env", spec=spec)
+        self.assertEqual(
+            (LAUNCHED[0].flags, dict(LAUNCHED[0].env), LAUNCHED[0].sid),
+            (spec.flags, dict(spec.env), handle.sid),
+        )
+        with open(self.log, encoding="utf-8") as f:
+            self.assertEqual(json.loads(f.readline())["env"]["FAKE_ENV"], "spec")
+
+    def test_session_selection_flags_are_refused_before_launch(self):
+        from agent_pm.session.adapters.claude import ClaudeAdapter
+        from agent_pm.session.adapters.codex import CodexAdapter
+
+        for runtime, adapter in (("claude", ClaudeAdapter), ("codex", CodexAdapter)):
+            self.configure(
+                tables={runtime: {"implementation": f"adapters.{runtime}:{adapter.__name__}"}}
+            )
+            flags = (
+                *adapter.forbidden_selection,
+                *(f"{word}=x" for word in adapter.forbidden_selection if word.startswith("--")),
+            )
+            for flag in flags:
+                with self.subTest(runtime=runtime, flag=flag):
                     self.refused(
                         api.ConfigError,
-                        "flags, env, protect and role_policy=False: tui mode only",
-                        lambda: self.start(runtime, mode, spec=self.spec(**fields)),
+                        f"{flag}: picks the session; use sid= or resume=",
+                        lambda: self.start(
+                            runtime=runtime, spec=self.spec(flags=("--verbose", flag, SID))
+                        ),
                     )
+
+    def test_selection_scanning_stops_at_the_separator_and_accepts_other_words(self):
+        forbidden = ("--resume", "-r", "resume", "fork", "--last")
+        for flags in (("--", *forbidden), ("--resumes", "--continued", "--teleport-x")):
+            with self.subTest(flags=flags):
+                selection.check(flags, forbidden)
+
+    def test_selection_words_used_as_option_values_are_not_selectors(self):
+        from agent_pm.session.adapters.codex import CodexAdapter
+
+        for flags in (
+            ("--add-dir", "fork"),
+            ("--add-dir=resume",),
+            ("--enable", "hooks"),
+            ("-c", "model=x"),
+            ("-cmodel=x",),
+        ):
+            with self.subTest(flags=flags):
+                selection.check(flags, CodexAdapter.forbidden_selection, CodexAdapter.valued_flags)
+        with self.assertRaisesRegex(api.ConfigError, "fork: picks the session"):
+            selection.check(
+                ("--add-dir", "safe", "fork"),
+                CodexAdapter.forbidden_selection,
+                CodexAdapter.valued_flags,
+            )
+
+    def test_selection_uses_declared_syntax_and_uuid_validation(self):
+        syntax = (("--session-id",), ("--resume",))
+        self.assertEqual(selection.select(SID, False, syntax, uuid=True), ("--session-id", SID))
+        self.assertEqual(selection.select(SID, True, syntax, uuid=True), ("--resume", SID))
+        self.assertEqual(selection.select("native", False, ((), ("resume",))), ())
+        self.assertEqual(selection.select("native", True, ((), ("resume",))), ("resume", "native"))
+        for native in ("abc", SID.upper(), SID + "\n"):
+            with (
+                self.subTest(native=native),
+                self.assertRaisesRegex(api.ConfigError, "session ids are UUIDs"),
+            ):
+                selection.select(native, False, syntax, uuid=True)
 
     def test_a_registry_error_passes_through(self):
         self.refused(
@@ -526,6 +596,13 @@ class InProcessTest(Base):
     def logged(self) -> list[dict]:
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
+
+    def test_flags_and_env_reach_the_in_process_adapter(self):
+        LAUNCHED.clear()
+        spec = self.spec(flags=("--custom", "v"), env={"CUSTOM": "value"})
+        _, found = self.run_in_process(runtime="checked", spec=spec)
+        self.assertEqual(found, [api.Exited(0)])
+        self.assertEqual((LAUNCHED[0].flags, dict(LAUNCHED[0].env)), (spec.flags, dict(spec.env)))
 
     def test_records_the_session_its_cwd_access_cwd_else_the_workdir_then_runs_it(self):
         cwd = os.path.join(self.dir, "cwd")
@@ -1122,6 +1199,18 @@ class TuiBase(Base):
 
 
 class TuiStartTest(TuiBase):
+    def test_driver_binds_the_adapter_session_selector_for_new_and_resumed_sessions(self):
+        self.configure(tables={"claude": {"implementation": "adapters.claude:ClaudeAdapter"}})
+        for resumed, word in ((False, "--session-id"), (True, "--resume")):
+            with self.subTest(resumed=resumed):
+                self.tui(
+                    runtime="claude",
+                    name=f"w{resumed}",
+                    **({"resume": SID} if resumed else {"sid": SID}),
+                )
+                argv = self.host.start.call_args.args[1]
+                self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
+
     def test_effective_project_override_reaches_info_record_and_tui_state(self):
         original = fake_adapter.FakeTui.launch
         for project in (True, False):
@@ -1293,10 +1382,7 @@ class TuiStartTest(TuiBase):
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
 
-class PlainTest(TuiBase):
-    """Tui sessions of the inner runtime: the spec its launch gets, and the env tmux starts it with, os.environ only
-    HOME plus each test's variables."""
-
+class EnvironmentTest(TuiBase):
     def setUp(self):
         super().setUp()
         LAUNCHED.clear()
@@ -1307,7 +1393,6 @@ class PlainTest(TuiBase):
         self.addCleanup(patch.stop)
 
     def env(self, name, **fields) -> dict[str, str]:
-        """The env inner tui session `name` started with under spec `fields`, but HOME and PWD (the workdir)."""
         self.tui(runtime="inner", name=name, spec=self.spec(**fields))
         env = dict(self.host.start.call_args.kwargs["env"])
         self.assertEqual((env.pop("HOME"), env.pop("PWD")), (os.environ["HOME"], self.workdir))
@@ -1315,68 +1400,67 @@ class PlainTest(TuiBase):
 
     def test_spec_name_is_the_session_name_and_protect_gains_the_hook_paths(self):
         self.tui(runtime="inner", name="w1", spec=self.spec(protect=("/c",)), events=self.events)
-        self.tui(runtime="inner", sid=SID, spec=self.spec(role_policy=False))
+        self.tui(runtime="inner", sid=SID)
         first, second = LAUNCHED
         self.assertEqual((first.name, first.protect), ("w1", ("/c", TMUX, self.events, self.root)))
-        self.assertEqual((second.name, second.protect), ("inner-0f8fad5b", (TMUX, self.root)))
-        self.assertEqual((second.sid, first.role_policy, second.role_policy), (SID, True, False))
-
-    def test_a_role_run_keeps_its_env(self):
-        self.environ(INNER_SESSION="1", INNER_ID="i", OTHER_ID="o", PAGER="cat", LAUNCH_DROP="x")
-        kept = {"INNER_SESSION": "1", "INNER_ID": "i", "OTHER_ID": "o", "PAGER": "cat"}
-        self.assertEqual(self.env("w1"), {**kept, "LAUNCH_SET": "1"})
-
-    def test_a_plain_env_drops_every_adapters_identity_then_applies_the_launch_then_spec_env(self):
-        self.environ(INNER_ID="i", OTHER_SESSION="", OTHER_ID="o", LAUNCH_DROP="x", KEEP="k")
-        self.assertEqual(self.env("w1", role_policy=False), {"KEEP": "k", "LAUNCH_SET": "1"})
         self.assertEqual(
-            self.env("w2", role_policy=False, env={"PAGER": "less", "OTHER_MODE": "off"}),
+            (second.name, second.protect, second.sid), ("inner-0f8fad5b", (TMUX, self.root), SID)
+        )
+
+    def test_every_session_drops_adapter_identities_and_merges_session_and_launch_env(self):
+        self.environ(INNER_ID="i", OTHER_SESSION="", OTHER_ID="o", LAUNCH_DROP="x", KEEP="k")
+        self.assertEqual(self.env("w1"), {"KEEP": "k", "LAUNCH_SET": "1"})
+        flags = ("--custom", "v")
+        self.assertEqual(
+            self.env(
+                "w2", flags=flags, env={"PAGER": "less", "OTHER_MODE": "off", "LAUNCH_SET": "spec"}
+            ),
             {"KEEP": "k", "LAUNCH_SET": "1", "PAGER": "less", "OTHER_MODE": "off"},
         )
+        self.assertEqual(LAUNCHED[-1].flags, flags)
 
     def test_a_child_default_is_dropped_only_inside_its_runtime_and_at_its_value(self):
         self.environ(PAGER="cat", NO_COLOR="1", OTHER_MODE="on")
         both = {"PAGER": "cat", "NO_COLOR": "1", "OTHER_MODE": "on", "LAUNCH_SET": "1"}
-        self.assertEqual(self.env("w1", role_policy=False), both)
+        self.assertEqual(self.env("w1"), both)
         self.environ(INNER_SESSION="1", PAGER="cat", NO_COLOR="0", OTHER_MODE="on")
-        self.assertEqual(
-            self.env("w2", role_policy=False),
-            {"NO_COLOR": "0", "OTHER_MODE": "on", "LAUNCH_SET": "1"},
-        )
+        self.assertEqual(self.env("w2"), {"NO_COLOR": "0", "OTHER_MODE": "on", "LAUNCH_SET": "1"})
         self.environ(OTHER_SESSION="1", PAGER="cat", NO_COLOR="1", OTHER_MODE="on")
-        self.assertEqual(
-            self.env("w3", role_policy=False),
-            {"PAGER": "cat", "NO_COLOR": "1", "LAUNCH_SET": "1"},
-        )
-        self.assertEqual(self.env("w4", role_policy=False, env={"OTHER_MODE": "on"}), both)
+        self.assertEqual(self.env("w3"), {"PAGER": "cat", "NO_COLOR": "1", "LAUNCH_SET": "1"})
+        self.assertEqual(self.env("w4", env={"OTHER_MODE": "on"}), both)
 
-    def test_a_plain_env_key_no_adapter_defaults_is_refused(self):
-        self.refused(
-            api.ConfigError,
-            "env EDITOR: want one of NO_COLOR, OTHER_MODE, PAGER",
-            lambda: self.tui(
-                runtime="inner",
-                name="w1",
-                spec=self.spec(
-                    role_policy=False, env={"PAGER": "less", "ZED": "1", "EDITOR": "vi"}
-                ),
+    def test_codex_injected_defaults_drop_only_inside_codex_at_their_injected_value(self):
+        self.configure(tables={"codex": {"implementation": "adapters.codex:CodexAdapter"}})
+        inside = {"CODEX_THREAD_ID": "t"}
+        for environ, dropped in (
+            ({"CLAUDECODE": "1", "NO_COLOR": "1", "PAGER": "cat"}, set()),
+            ({**inside, "NO_COLOR": "0", "PAGER": "less", "CODEX_CI": "x"}, set(inside)),
+            (
+                {**inside, "NO_COLOR": "1", "PAGER": "cat", "GIT_PAGER": "cat", "CODEX_CI": "1"},
+                {*inside, "NO_COLOR", "PAGER", "GIT_PAGER", "CODEX_CI"},
             ),
-        )
-        self.host.start.assert_not_called()
-        self.assertEqual(LAUNCHED, [])
+        ):
+            with self.subTest(environ=environ):
+                self.environ(**environ)
+                self.assertEqual(set(environ) & api._identity_drop(), dropped)
 
-    def test_an_adapter_failing_to_load_fails_a_plain_start_not_a_role_run(self):
+    def test_session_env_keys_need_no_adapter_allowlist(self):
+        self.environ(KEEP="k")
+        self.assertEqual(
+            self.env("w1", env={"EDITOR": "vi", "ZED": "1"}),
+            {"KEEP": "k", "LAUNCH_SET": "1", "EDITOR": "vi", "ZED": "1"},
+        )
+
+    def test_an_adapter_failing_to_load_refuses_every_start(self):
         self.configure(
             tui=True, tables={"broken": {"implementation": "adapters.broken:BrokenAdapter"}}
         )
         self.refused(
             api.ConfigError,
             "adapter 'broken' has no package adapters.broken",
-            lambda: self.tui(runtime="inner", name="w1", spec=self.spec(role_policy=False)),
+            lambda: self.tui(runtime="inner", name="w1"),
         )
         self.host.start.assert_not_called()
-        self.tui(runtime="inner", name="w1")
-        self.host.start.assert_called_once()
 
 
 class SessionEnvTest(TuiBase):

@@ -1,7 +1,6 @@
 """Codex shared configuration, recovery metadata and inspection behavior."""
 
 import dataclasses
-import json
 import os
 import shlex
 import stat
@@ -11,6 +10,7 @@ from unittest import mock
 from agent_pm.session.adapters.base import Access, ConfigError, SessionInfo
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -69,13 +69,13 @@ class CommonTest(Base):
         saved = self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        other = CodexAdapter(
+        other = configured(
+            CodexAdapter,
             {
                 "tiers": {"1": "changed"},
                 "efforts": {"low": "high"},
-                "shell_network": True,
                 "env": {"CODEX_HOME": str(self.root / "elsewhere")},
-            }
+            },
         )
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
         resumed = other.common.prepare(spec, True)
@@ -92,10 +92,14 @@ class CommonTest(Base):
         self.spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, env=env)
         )
-        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
+        adapter = configured(
+            CodexAdapter, {**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}}
+        )
         launch = adapter.headless().launch("hi", self.spec, False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
-        self.assertEqual(self.common.load(str(self.work), self.spec.sid).snapshot["env"], env)
+        self.assertEqual(
+            self.common.load(str(self.work), self.spec.sid).snapshot["env"], {**env, "K": "v"}
+        )
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         spec = dataclasses.replace(self.spec, access=Access())
@@ -106,26 +110,11 @@ class CommonTest(Base):
             self.assertTrue(
                 command.startswith(
                     f"cd {q(str(self.cwd))} && CODEX_HOME={q(str(self.codex_home))} "
-                    "PYTHONPATH='/a b;c' codex resume "
+                    "PYTHONPATH='/a b;c' K=v codex resume "
                 ),
                 command,
             )
             self.assertEqual(shlex.split(command)[4], "PYTHONPATH=/a b;c")
-
-    def test_a_snapshot_saved_without_env_is_an_empty_one(self):
-        self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        self.rollout()
-        record = json.loads(self.record().read_text())
-        self.assertEqual(record["snapshot"].pop("env"), {})
-        self.edit_record(snapshot=record["snapshot"])
-        state = self.common.load(str(self.work), self.spec.sid)
-        self.assertEqual(state.snapshot["env"], {})
-        with mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}):
-            launch = self.adapter.headless().launch("again", self.spec, True)
-        self.assertNotIn("PYTHONPATH", launch.env)
-        self.assertNotIn("PYTHONPATH", launch.resume)
-        self.assertNotIn("PYTHONPATH", self.common.resume_command(state))
 
     def test_both_modes_resume_with_saved_project_and_transcript(self):
         for saved in (False, True):
@@ -244,7 +233,7 @@ class CommonTest(Base):
         original = self.record().read_text()
         cases = (
             {"sid": "forged"},
-            {"snapshot": {**state.snapshot, "network": "yes"}},
+            {"snapshot": {**state.snapshot, "project": "yes"}},
             {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
             *(
                 {"snapshot": {**state.snapshot, "env": env}}
@@ -281,7 +270,9 @@ class CommonTest(Base):
                 self.common.load(str(self.work), self.spec.sid)
 
     def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
-        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
+        )
         with self.assertRaisesRegex(ConfigError, "writable"):
             adapter.common.prepare(self.spec, False)
         self.assertFalse((self.home / ".agent-pm").exists())
@@ -291,9 +282,10 @@ class CommonTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         saved = self.record().read_bytes()
-        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
-        with self.assertRaisesRegex(ConfigError, "writable"):
-            adapter.common.prepare(self.spec, True)
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
+        )
+        self.assertEqual(adapter.common.prepare(self.spec, True).native_id, NATIVE)
         self.assertEqual(self.record().read_bytes(), saved)
 
     def test_store_parent_permissions_and_symlink_guard(self):
@@ -344,7 +336,7 @@ class CommonTest(Base):
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    CodexAdapter(self.adapter.config | {key: value})
+                    configured(CodexAdapter, self.adapter.config | {key: value})
                 self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -355,9 +347,11 @@ class CommonTest(Base):
         ):
             for source, target in values.items():
                 with self.subTest(key=key, source=source):
-                    adapter = CodexAdapter(self.adapter.config | {key: {source: target}})
+                    adapter = configured(
+                        CodexAdapter, self.adapter.config | {key: {source: target}}
+                    )
                     self.assertEqual(adapter.common._mapped(key, source), target)
-        CodexAdapter(self.adapter.config | {"tiers": {}, "efforts": {}})
+        configured(CodexAdapter, self.adapter.config | {"tiers": {}, "efforts": {}})
 
     def test_invalid_environment_names_and_values_fail_before_launch(self):
         for key, value in (
@@ -370,7 +364,7 @@ class CommonTest(Base):
         ):
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    CodexAdapter(self.adapter.config | {"env": {key: value}})
+                    configured(CodexAdapter, self.adapter.config | {"env": {key: value}})
                 self.assertIn("[adapters.codex].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -382,10 +376,8 @@ class CommonTest(Base):
             {"env": {"A": 1}},
         ):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
-                CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False, **cfg})
-        adapter = CodexAdapter(
-            {"tiers": {}, "efforts": {}, "shell_network": False, "env": {"PROBE": "1"}}
-        )
+                configured(CodexAdapter, {"tiers": {}, "efforts": {}, **cfg})
+        adapter = configured(CodexAdapter, {"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
         launch = adapter.headless().launch(
             "hi", dataclasses.replace(self.spec, tier=None, effort=None), False
         )
@@ -402,16 +394,16 @@ class CommonTest(Base):
             ("efforts", dataclasses.replace(self.spec, tier=None)),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
-                CodexAdapter({"shell_network": False}).headless().launch("hi", spec, False)
+                configured(CodexAdapter, {}).headless().launch("hi", spec, False)
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
 class WritableDirsTest(Base):
     def new_launch(self, adapter, home):
-        roots = [str(path) for path in (self.work, self.cwd, home, self.extra)]
+        roots = [str(path) for path in (self.cwd, home, self.extra)]
         dirs = adapter.writable_dirs(self.spec, False)
         self.assertFalse((self.home / ".agent-pm").exists())
-        self.assertEqual(list(dirs[:4]), roots)
+        self.assertEqual(list(dirs[:3]), roots)
         self.assertEqual(len(set(dirs)), len(dirs))
         launch = adapter.headless().launch("hi", self.spec, False)
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
@@ -420,7 +412,7 @@ class WritableDirsTest(Base):
     def test_config_codex_home(self):
         home = self.root / "config-codex"
         self.new_launch(
-            CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
+            configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
         )
 
     def test_environment_codex_home_real_path(self):
@@ -438,7 +430,7 @@ class WritableDirsTest(Base):
         saved = self.prepare().writable_roots
         record = self.record().read_bytes()
         elsewhere = str(self.root / "elsewhere")
-        other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
+        other = configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
         spec = dataclasses.replace(self.spec, access=Access(project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec, False))
         dirs = other.writable_dirs(spec, True)
@@ -449,7 +441,7 @@ class WritableDirsTest(Base):
     def test_read_dirs_are_never_added_saved_or_writable(self):
         read = self.root / "read"
         read.mkdir()
-        adapter = CodexAdapter(self.adapter.config | {"sandbox": "workspace-write"})
+        adapter = configured(CodexAdapter, self.adapter.config)
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
         argv = adapter.headless().launch("hi", spec, False).argv
@@ -465,10 +457,10 @@ class WritableDirsTest(Base):
                 self.assertIn(str(self.extra), dirs)
                 self.assertNotIn(str(read), dirs)
 
-    def test_full_access_adds_no_dir_read_or_written(self):
+    def test_access_grants_are_passed_without_interpreting_policy(self):
         access = dataclasses.replace(self.spec.access, reads=(str(self.root),))
         spec = dataclasses.replace(self.spec, access=access)
-        self.assertNotIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
+        self.assertIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
 
     def test_the_session_env_adds_no_writable_dir(self):
         env = {"PYTHONPATH": str(self.root / "env-dir")}
@@ -489,8 +481,8 @@ class WritableDirsTest(Base):
         target = self.root / "config-tmp"
         target.mkdir()
         (self.root / "tmp-link").symlink_to(target)
-        adapter = CodexAdapter(
-            self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
+        adapter = configured(
+            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
         )
         self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, False))
         self.assertIn(str(target), adapter.writable_dirs(self.spec, False))
@@ -602,84 +594,57 @@ class InspectionTest(Base):
         self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
 
 
-class PlainTest(Base):
-    def setUp(self):
-        super().setUp()
-        self.plain = dataclasses.replace(self.spec, role_policy=False)
+class GrantTest(Base):
+    def test_record_directory_is_only_writable_when_explicitly_granted(self):
+        record = self.root / "worker-record"
+        record.mkdir()
+        for granted in (False, True):
+            spec = dataclasses.replace(
+                self.spec,
+                workdir=str(record),
+                sid=f"record-{granted}",
+                access=Access(
+                    cwd=str(self.cwd), project=True, dirs=(str(record),) if granted else ()
+                ),
+            )
+            state = self.common.prepare(spec, False)
+            with self.subTest(granted=granted):
+                self.assertEqual(str(record) in state.writable_roots, granted)
+                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, False), granted)
+                self.common.bind(str(record), spec.sid, NATIVE)
+                self.rollout()
+                resumed = self.common.prepare(spec, True)
+                self.assertEqual(str(record) in resumed.writable_roots, granted)
+                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, True), granted)
 
-    def bound(self, spec):
+    def test_access_and_flag_roots_are_combined_and_resume_ignores_new_flags(self):
+        added = self.root / "added"
+        spec = dataclasses.replace(self.spec, flags=("--add-dir", str(added)))
         state = self.common.prepare(spec, False)
+        expected = [
+            str(self.cwd),
+            str(self.codex_home),
+            str(self.extra),
+            str(added),
+        ]
+        self.assertEqual(state.writable_roots, expected)
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
-        return state
+        changed = dataclasses.replace(spec, flags=("--add-dir", "/changed"))
+        self.assertEqual(self.common.prepare(changed, True).writable_roots, expected)
+        self.assertNotIn("/changed", self.adapter.writable_dirs(changed, True))
 
-    def test_plain_roots_are_the_cwd_the_flags_add_dirs_and_codex_home(self):
-        second = self.root / "second"
-        flags = ("--add-dir", "../../added", f"--add-dir={second}", "--", "--add-dir", "/ignored")
-        spec = dataclasses.replace(self.plain, flags=flags)
-        expected = [str(self.cwd), str(self.root / "added"), str(second), str(self.codex_home)]
-        dirs = self.adapter.writable_dirs(spec, False)
-        self.assertEqual(list(dirs[:4]), expected)
-        for path in (str(self.work), str(self.extra), "/ignored"):
-            self.assertNotIn(path, dirs)
-        self.assertFalse((self.home / ".agent-pm").exists())
-        state = self.bound(spec)
-        self.assertEqual(state.writable_roots, expected)
-        self.assertFalse(state.snapshot["role_policy"])
-        resumed = self.common.prepare(spec, True)
-        self.assertEqual(resumed.writable_roots, expected)
-        self.assertEqual(resumed.native_id, NATIVE)
-        self.assertEqual(list(self.adapter.writable_dirs(spec, True)[:4]), expected)
-        third = self.root / "third"
-        resumed = dataclasses.replace(
-            spec, flags=("--add-dir", "../../third", f"--add-dir={third}/")
-        )
-        self.assertEqual(
-            list(self.adapter.writable_dirs(resumed, True)[:5]), [*expected, str(third)]
-        )
-
-    def test_a_plain_record_still_needs_roots_covering_cwd_and_home(self):
-        self.common.prepare(self.plain, False)
+    def test_recovery_needs_roots_covering_cwd_and_home(self):
+        self.prepare()
         self.edit_record(writable_roots=[str(self.codex_home)])
         with self.assertRaisesRegex(ConfigError, "no recorded root covers"):
-            self.common.load(str(self.work), self.plain.sid)
+            self.common.load(str(self.work), self.spec.sid)
 
-    def test_plain_sessions_skip_the_untrusted_project_guard(self):
+    def test_project_settings_guard_applies_to_every_caller(self):
         (self.cwd / ".codex").mkdir()
-        outside = dataclasses.replace(self.spec.access, cwd=str(self.extra))
-        for index, access in enumerate((self.spec.access, outside)):
-            spec = dataclasses.replace(self.plain, sid=f"plain-{index}", access=access)
-            with self.subTest(cwd=access.cwd):
-                with self.assertRaisesRegex(ConfigError, "project.*settings|outside"):
-                    self.common.prepare(dataclasses.replace(spec, role_policy=True), False)
-                self.common.prepare(spec, False)
-        self.bound(self.plain)
-        self.assertEqual(self.common.prepare(self.plain, True).native_id, NATIVE)
-
-    def test_a_resume_with_another_role_policy_is_refused(self):
-        for started in (True, False):
-            spec = dataclasses.replace(self.spec, sid=f"started-{started}", role_policy=started)
-            self.common.prepare(spec, False)
-            with self.subTest(started=started), self.assertRaises(ConfigError) as caught:
-                self.common.prepare(dataclasses.replace(spec, role_policy=not started), True)
-            self.assertEqual(
-                str(caught.exception),
-                f"Codex session {spec.sid} was started with role_policy={started}",
-            )
-
-    def test_a_snapshot_without_role_policy_is_a_role_run(self):
-        state = self.bound(self.spec)
-        self.assertTrue(state.snapshot["role_policy"])
-        snapshot = state.snapshot.copy()
-        snapshot.pop("role_policy")
-        self.edit_record(snapshot=snapshot)
-        self.assertTrue(self.common.prepare(self.spec, True).snapshot["role_policy"])
-        with self.assertRaisesRegex(ConfigError, "started with role_policy=True"):
-            self.common.prepare(self.plain, True)
-
-    def test_a_saved_role_policy_other_than_a_bool_fails_closed(self):
-        state = self.common.prepare(self.spec, False)
-        for value in (None, 0, 1, "False", []):
-            self.edit_record(snapshot=state.snapshot | {"role_policy": value})
-            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "role_policy"):
-                self.common.load(str(self.work), self.spec.sid)
+        with self.assertRaisesRegex(ConfigError, "project.*settings"):
+            self.prepare()
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, project=True)
+        )
+        self.common.prepare(spec, False)
