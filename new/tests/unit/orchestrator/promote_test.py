@@ -1,5 +1,5 @@
-"""orchestrator promote.py, ported from the old promote_test (less its prune hook, step 6) onto config.load(): every
-Linear call goes as the harness account."""
+"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call goes as the harness
+account."""
 
 from new.tests.unit.orchestrator import run_fixtures
 from new.tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TEAM, team_node
@@ -10,9 +10,11 @@ from new.tests.unit.orchestrator.run_fixtures import HARNESS, logged, show
 
 import config
 
+import functools
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -171,6 +173,16 @@ class FakeLinear:
         raise AssertionError(query)
 
 
+class FakePruner:
+    calls = []
+
+    def __init__(self, gql, now, dry, *, work, team, roles):
+        FakePruner.calls.append((gql, now, dry, work, team, roles))
+
+    def run(self):
+        return 0
+
+
 class Base(run_fixtures.Base):
     def setUp(self):
         super().setUp()
@@ -184,11 +196,16 @@ class Base(run_fixtures.Base):
     def write_config(self, text):
         self.write(self.config_path, text)
 
-    def run_main(self, *argv, gql=None):
+    def run_main(self, *argv, gql=None, pruner=FakePruner):
+        FakePruner.calls.clear()
         before, err, out = len(logged(self.logs)), io.StringIO(), io.StringIO()
         with redirect_stderr(err), redirect_stdout(out):
             rc = promote.main(
-                list(argv), gql=gql or self.fake, now=NOW, config_path=self.config_path
+                list(argv),
+                gql=gql or self.fake,
+                now=NOW,
+                config_path=self.config_path,
+                pruner=pruner,
             )
         self.assertEqual(out.getvalue(), "")
         self.err = err.getvalue()
@@ -704,6 +721,7 @@ class TestConfigError(Base):
     def test_a_config_error_is_logged_once_a_day_printed_only_on_a_terminal(self):
         from new.tests.unit.orchestrator.linear_test import Stderr
 
+        FakePruner.calls.clear()
         cases = (
             ("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
             (
@@ -718,14 +736,20 @@ class TestConfigError(Base):
                 for tty, printed in ((False, ""), (True, f"promote.py: {reason}\n")):
                     err, out = Stderr(tty), io.StringIO()
                     with redirect_stderr(err), redirect_stdout(out):
-                        rc = promote.main([], gql=self.fake, now=NOW, config_path=self.config_path)
+                        rc = promote.main(
+                            [],
+                            gql=self.fake,
+                            now=NOW,
+                            config_path=self.config_path,
+                            pruner=FakePruner,
+                        )
                     self.assertEqual((rc, err.getvalue(), out.getvalue()), (1, printed, ""))
                 events = logged(self.logs)[before:]
                 self.assertEqual(
                     [(e["src"], show(e)) for e in events],
                     [("promote", f"config-error reason={reason}")],
                 )
-        self.assertEqual(self.fake.calls, [])
+        self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
 
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
         self.write(self.local, 'work_dir = "w"\n')
@@ -734,7 +758,7 @@ class TestConfigError(Base):
             self.err,
             "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
         )
-        self.assertEqual(self.fake.calls, [])
+        self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
         self.assertFalse(os.path.exists(self.logs))
 
 
@@ -746,7 +770,7 @@ class Outage(Base):
                 for said in (f"linear-error op=teams {FIELDS[name]}", ""):
                     gql = failing(error)
                     self.assertEqual(self.run_main(gql=gql), 1)
-                    self.assertEqual((self.out, self.err), (said, ""))
+                    self.assertEqual((self.out, self.err, FakePruner.calls), (said, "", []))
                     self.assertEqual(gql.failed, [(linear.Q_TEAM, {"service": HARNESS, "t": TEAM})])
         self.assertEqual(self.fake.calls, [])
         self.assertEqual((self.run_main(), src["state"]), (0, "Done"))
@@ -756,8 +780,8 @@ class Outage(Base):
             with self.subTest(failure=name):
                 self.assertEqual(self.run_main("--dry-run", gql=failing(error)), 1)
                 self.assertEqual(
-                    (self.out, len(self.err.splitlines())),
-                    (f"linear-error op=teams {FIELDS[name]}", 1),
+                    (self.out, len(self.err.splitlines()), FakePruner.calls),
+                    (f"linear-error op=teams {FIELDS[name]}", 1, []),
                 )
         self.assertFalse(os.path.exists(self.logs))
 
@@ -774,7 +798,8 @@ class Outage(Base):
                     1,
                 )
                 self.assertEqual(
-                    (self.out, self.err), (f"linear-error op=issue {FIELDS[name]}", "")
+                    (self.out, self.err, FakePruner.calls),
+                    (f"linear-error op=issue {FIELDS[name]}", "", []),
                 )
                 self.assertIn((promote.Q_DETAIL, {"i": "DR-1"}), fake.calls)
                 self.assertEqual(
@@ -792,8 +817,8 @@ class Outage(Base):
                 gql = failing(error, gql=self.fake, ops={"issueRelationCreate"})
                 self.assertEqual(self.run_main(gql=gql), 1)
                 self.assertEqual(
-                    (self.out, self.err),
-                    (f"linear-error op=issueRelationCreate {FIELDS[name]}", ""),
+                    (self.out, self.err, FakePruner.calls),
+                    (f"linear-error op=issueRelationCreate {FIELDS[name]}", "", []),
                 )
                 self.assertEqual(
                     (src["state"], src["relations"], "posted" in src), ("Handoff", [], False)
@@ -825,7 +850,10 @@ class Outage(Base):
                         f"linear-error op=issueUpdate {FIELDS[name]}",
                     ],
                 )
-                self.assertEqual((src["state"], "posted" in src, self.err), ("Handoff", False, ""))
+                self.assertEqual(
+                    (src["state"], "posted" in src, self.err, FakePruner.calls),
+                    ("Handoff", False, "", []),
+                )
 
 
 class TestPath(Base):
@@ -841,6 +869,40 @@ class TestPath(Base):
             self.assertEqual(os.environ["PATH"], config.PATH)
         self.assertEqual(set(seen), {config.PATH})
         self.assertIn("/opt/homebrew/bin", config.PATH)
+
+
+class TestPruneHook(Base):
+    def test_prune_runs_each_tick(self):
+        self.run_main("--dry-run")
+        self.assertEqual(len(FakePruner.calls), 1)
+        gql, now, dry, work, team, roles = FakePruner.calls[0]
+        self.assertIsInstance(gql, functools.partial)
+        self.assertEqual((gql.func, gql.keywords), (self.fake, {"service": HARNESS}))
+        self.assertEqual((now, dry, work), (NOW, True, os.path.join(self.work, "work")))
+        self.assertEqual(team, linear.Team(TEAM, "Team", dict(IDS_BY_KEY)))
+        self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
+
+    def test_prune_error_does_not_break_promote(self):
+        class Boom:
+            def __init__(self, *a, **kw):
+                pass
+
+            def run(self):
+                raise RuntimeError("boom")
+
+        self.ready("DR-1")
+        for name, pruner in (("import error", None), ("run error", Boom)):
+            with self.subTest(name):
+                with mock.patch.dict(sys.modules, {"prune": None}):  # None: `import prune` fails
+                    rc = self.run_main("--dry-run", pruner=pruner)
+                self.assertEqual(rc, 0)
+                self.assertEqual(
+                    self.out.splitlines()[0], "promote DR-1 role=pm project=Deep Research"
+                )
+                self.assertRegex(
+                    self.out.splitlines()[1],
+                    r"^prune-error error=(ModuleNotFoundError: import of prune|RuntimeError: boom)",
+                )
 
 
 if __name__ == "__main__":

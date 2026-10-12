@@ -30,6 +30,10 @@ human instructions, relate it, and move the source to Done.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
 Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
 config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
+
+At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
+finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
+failure is logged and never breaks the Handoff work.
 """
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
@@ -272,7 +276,19 @@ class Promoter:
         return left is None
 
 
-def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG):
+def run_prune(gql, now, dry, team, roles, work, pruner=None):
+    # a failure, even an ImportError, is logged
+    try:
+        if pruner is None:
+            from prune import Pruner as pruner
+        pruner(gql, now, dry, work=work, team=team, roles=roles).run()
+    except linear.Unavailable as e:
+        linear_error("prune", e, dry)
+    except (Exception, SystemExit) as e:
+        log("prune", "prune-error", dry=dry, error=one_line(e))
+
+
+def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None):
     os.environ["PATH"] = config.PATH
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(HELP.strip(), file=sys.stderr)
@@ -288,10 +304,13 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG):
         return config_error("promote", e, dry)
     linear.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
+    now = now or datetime.now(UTC)
     try:
-        Promoter(gql, cfg, now or datetime.now(UTC), dry, wait="--now" not in argv).run()
+        promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
+        promoter.run()
     except linear.Unavailable as e:
         return linear_error("promote", e, dry)
+    run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner)
     return 0
 
 
