@@ -1142,8 +1142,8 @@ NOW = epoch("2026-10-11 10:00")  # a Sunday
 
 
 class LimitTest(unittest.TestCase):
-    def limit(self, screen):
-        with mock.patch("time.time", return_value=NOW):
+    def limit(self, screen, now=NOW):
+        with mock.patch("time.time", return_value=now):
             return ClaudeAdapter({}).tui().limit(screen)
 
     def check(self, rows):
@@ -1203,6 +1203,18 @@ class LimitTest(unittest.TestCase):
                 (week.format("sat 9am"), epoch("2026-10-17 09:00")),
             )
         )
+
+    def test_a_year_less_date_over_a_day_past_is_next_years(self):
+        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
+        for now, when, resets in (
+            ("2026-12-30 10:00", "Jan 2, 9am", "2027-01-02 09:00"),
+            ("2026-01-01 10:00", "Jan 2, 9am", "2026-01-02 09:00"),
+            ("2026-12-30 10:00", "Dec 30, 9am", "2026-12-30 09:00"),
+            ("2026-12-30 10:00", "Dec 29, 9am", "2027-12-29 09:00"),
+            ("2026-12-30 10:00", "Jan 2, 2026, 9am", "2026-01-02 09:00"),
+        ):
+            with self.subTest(now=now, when=when):
+                self.assertEqual(self.limit(week.format(when), epoch(now)), LimitHit(epoch(resets)))
 
     def test_no_known_zone_is_local_time(self):
         self.addCleanup(time.tzset)
