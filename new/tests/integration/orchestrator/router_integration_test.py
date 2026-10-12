@@ -1,9 +1,19 @@
 """router.py as a subprocess on the Driver: run.py in its detached session on a private tmux server, fake_claude as
 runtime claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear failure mid write-back resumes the
 same session; a Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
-SIGTERM'd run.py ends its run."""
+SIGTERM'd run.py ends its run; the researcher's gate runs on a session's PYTHONPATH."""
+
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import unittest
+
+from agent_pm_orchestrator import config
 
 from new.tests import live_tmux
+from new.tests.case import ROOT
 from new.tests.integration.delegate.cli_integration_test import mark, option
 from new.tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
@@ -12,15 +22,11 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     PROJECT,
     REPO,
     TIMEOUT,
+    Flow,
     TmuxFlow,
 )
 from new.tests.integration.orchestrator.segments import FIRST_WRITE, agent_calls, lookup
 from new.tests.unit.delegate.runner_test import block
-
-import os
-import signal
-import subprocess
-import unittest
 
 ENGINEER = ACCOUNTS["engineer"]
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
@@ -297,6 +303,31 @@ class Router(TmuxFlow):
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertRegex(session, rf"^Run {sid} · interrupted · .* · exit {128 + signal.SIGTERM}\n")
         self.assertEqual((self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["start"]}))
+
+
+class Gate(Flow):
+    SHIMS = ("claude", "python3")
+
+    def test_the_researchers_gate_on_a_sessions_core_only_pythonpath(self):
+        shim = os.path.join(self.bin, "python3")
+        with open(shim, "w") as f:
+            f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+        os.chmod(shim, 0o755)
+        self.guard()
+        self.scene([], rate_limit=usage(0.5))
+        res = subprocess.run(
+            ["sh", "-c", config.load().roles["researcher"].run.gate],
+            cwd=self.root,
+            env={**self.env(), "PYTHONPATH": ROOT},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+        self.assertNotIn("ModuleNotFoundError", res.stderr)
+        self.assertEqual(
+            (res.returncode, res.stdout), (0, "five_hour=50% weekly=none\n"), res.stderr
+        )
 
 
 if __name__ == "__main__":

@@ -3,17 +3,16 @@ becomes an ENG issue; a rework starts a new session; a failed run is not promote
 is retried; a run without an outcome resumes its session; a lost transcript (resumable no) sends the issue back to
 Todo for a new session."""
 
-from new.tests.integration.orchestrator import fake_linear
-from new.tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL
-from new.tests.integration.orchestrator.segments import BUILD, REPORT, Segment
-
 import os
 import re
 import unittest
 from urllib.parse import unquote
 
-import issues
-import promote
+from agent_pm_orchestrator import issues, promote
+
+from new.tests.integration.orchestrator import fake_linear
+from new.tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL
+from new.tests.integration.orchestrator.segments import BUILD, REPORT, Segment
 
 REWORK = "Add a section on stale sessions."
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."

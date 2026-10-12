@@ -17,18 +17,24 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from datetime import timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
-from config import CLONES  # noqa: E402
+from agent_pm.driver import api
+from agent_pm.utils.git import GUARD, common_dir, git
+from agent_pm.utils.paths import under
+from agent_pm.utils.shell import SHORT
 
-from driver import api  # noqa: E402
-from linear import HISTORY, ISSUE_ID, Unavailable, call, last_move, log, one_line  # noqa: E402
-from utils.git import GUARD, common_dir, git  # noqa: E402
-from utils.paths import under  # noqa: E402
-from utils.shell import SHORT  # noqa: E402
+from agent_pm_orchestrator import config
+from agent_pm_orchestrator.config import CLONES
+from agent_pm_orchestrator.linear import (
+    HISTORY,
+    ISSUE_ID,
+    Unavailable,
+    call,
+    last_move,
+    log,
+    one_line,
+)
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)

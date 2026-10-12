@@ -890,7 +890,9 @@ class TestPruneHook(Base):
         self.ready("DR-1")
         for name, pruner in (("import error", None), ("run error", Boom)):
             with self.subTest(name):
-                with mock.patch.dict(sys.modules, {"prune": None}):  # None: `import prune` fails
+                with mock.patch.dict(
+                    sys.modules, {"agent_pm_orchestrator.prune": None}
+                ):  # None: its import fails
                     rc = self.run_main("--dry-run", pruner=pruner)
                 self.assertEqual(rc, 0)
                 self.assertEqual(
@@ -898,7 +900,8 @@ class TestPruneHook(Base):
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
-                    r"^prune-error error=(ModuleNotFoundError: import of prune|RuntimeError: boom)",
+                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm_orchestrator\.prune"
+                    r"|RuntimeError: boom)",
                 )
 
 

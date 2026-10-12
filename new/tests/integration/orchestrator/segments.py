@@ -2,6 +2,17 @@
 --issue claim or resume, an agent run behind its fake_claude gate, a promote tick), says what it expects of the
 tracked issues, runs.jsonl and Linear's failed requests, and verify() compares them when the step ends."""
 
+import contextlib
+import copy
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
+
+from agent_pm_orchestrator import config, linear, router, runs
+
 from new.tests import live_tmux
 from new.tests.integration.delegate.cli_integration_test import mark, option
 from new.tests.integration.orchestrator import fake_linear
@@ -17,21 +28,6 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     TmuxFlow,
 )
 from new.tests.unit.delegate.runner_test import block
-
-import config
-
-import contextlib
-import copy
-import os
-import re
-import time
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
-
-import linear
-import router
-import runs
 
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}

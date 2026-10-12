@@ -2,6 +2,10 @@
 issue becomes a PM issue; a task label picks the task; a blocked issue waits for its blocker; an answer starts a new
 session; a failed run is not promoted; four failed runs cap the issue."""
 
+import unittest
+
+from agent_pm_orchestrator import router
+
 from new.tests.integration.orchestrator.flow_fixtures import (
     HARNESS_EMAIL,
     HUMAN,
@@ -9,10 +13,6 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     RESEARCH_DIR,
 )
 from new.tests.integration.orchestrator.segments import RESEARCH, Segment
-
-import unittest
-
-import router
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."

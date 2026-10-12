@@ -16,6 +16,7 @@ from agent_pm.driver import api
 from agent_pm_orchestrator import config, linear, run, sessions, writeback
 
 from new.tests.unit.orchestrator.board_ids import STATES
+from new.tests.unit.orchestrator.config_test import GATE
 from new.tests.unit.orchestrator.fake_api import FakeApi
 from new.tests.unit.orchestrator.run_fixtures import (
     ENGINEER,
@@ -275,9 +276,7 @@ class Inner(Case):
         self.assertEqual(self.main(assignee=RESEARCHER, target=None), 0)
         (researcher, *_), _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
-        self.assertEqual(
-            researcher.gate, "python3 -P -m agent_pm_orchestrator.router --brake researcher"
-        )
+        self.assertEqual(researcher.gate, GATE)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_resume(self):

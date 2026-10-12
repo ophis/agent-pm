@@ -16,8 +16,7 @@ Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
   exit        the exit code
   hang        print: true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
   log         a file each start appends {"pid", "argv", "cwd"} to
-  gate        a file: a run with --session-id or --resume (never the usage probe) waits after its log line until the
-              file exists, then runs its steps; orphaned or HANG_CAP s without it, exit 1
+  gate        a file a --session-id or --resume run waits for after its log line, as hang does
 """
 
 import argparse

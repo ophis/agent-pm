@@ -1,10 +1,8 @@
 """A fake Driver api for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) on driver.api."""
 
-from new.tests import hermetic  # noqa: F401
-
 from unittest import mock
 
-from driver import api
+from agent_pm.driver import api
 
 NAMES = (
     "sessions",

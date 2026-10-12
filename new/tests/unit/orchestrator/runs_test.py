@@ -1,8 +1,6 @@
 """orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim), plus runtime, limit rows
 (FR-60) and runtime_of."""
 
-from new.tests import hermetic  # noqa: F401
-
 import json
 import os
 import tempfile
@@ -10,8 +8,10 @@ import unittest
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-import runs
-import utils.files
+import agent_pm.utils.files
+from agent_pm_orchestrator import runs
+
+from new.tests import case
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
@@ -46,7 +46,7 @@ def entry(kind, issue, sid, role, runtime="a", **ago):
     return runs.Entry(NOW - timedelta(**ago), kind, issue, sid, role, runtime)
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -202,7 +202,7 @@ class Trim(Case):
             json.dumps({**json.loads(keep[0]), "kind": "end"}),
         ]
         self.write([junk[0], keep[0], *junk[1:4], keep[1], *junk[4:], keep[2]])
-        with mock.patch.object(utils.files.os, "replace", wraps=os.replace) as rep:
+        with mock.patch.object(agent_pm.utils.files.os, "replace", wraps=os.replace) as rep:
             runs.trim(self.log, NOW)
         [(src, dst), _] = rep.call_args
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp, self.log))
@@ -230,7 +230,9 @@ class Trim(Case):
 
     def test_no_temp_left_when_the_rewrite_fails(self):
         self.write([row("start", "TASK-1", "a", days=8), row("start", "TASK-1", "b", hours=1)])
-        with mock.patch.object(utils.files.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(
+            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
+        ):
             with self.assertRaises(OSError):
                 runs.trim(self.log, NOW)
         self.assertEqual(os.listdir(self.tmp), ["runs.jsonl"])
@@ -244,7 +246,7 @@ class Trim(Case):
         ]
         self.write(lines)
         with (
-            mock.patch.object(utils.files.os, "replace") as rep,
+            mock.patch.object(agent_pm.utils.files.os, "replace") as rep,
             mock.patch.object(runs, "save") as save,
         ):
             runs.trim(self.log, NOW)
@@ -253,14 +255,14 @@ class Trim(Case):
         self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
     def test_rewrites_through_the_atomic_save(self):
-        self.assertIs(runs.save, utils.files.save)
+        self.assertIs(runs.save, agent_pm.utils.files.save)
 
     def test_missing_log_is_noop(self):
         runs.trim(self.log, NOW)
         self.assertFalse(os.path.exists(self.log))
 
 
-class RuntimeOf(unittest.TestCase):
+class RuntimeOf(case.Case):
     def test_the_start_entrys_runtime_first(self):
         entries = [
             entry("resume", "TASK-1", "s", "pm", "r", minutes=50),

@@ -2,8 +2,7 @@
 """Router: the orchestrator's one entry point. Decides which agent run starts or resumes among the team's issues
 assigned to role accounts, then starts it through the outer (run.py in a detached Driver session).
 
-router.py [--now] [--dry-run] [--issue ID]   one tick, or one issue
-router.py --brake ROLE                       usage check for ROLE's runtime
+python3 -P -m agent_pm_orchestrator.router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
 (no mode)     One tick (launchd): the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
@@ -30,17 +29,11 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import config  # noqa: E402
+from agent_pm.driver import api
+from agent_pm.utils.paths import IMPORT_ROOT
 
-import inputs  # noqa: E402
-import issues  # noqa: E402
-import linear  # noqa: E402
-import sessions  # noqa: E402
-import target  # noqa: E402
-import writeback  # noqa: E402
-from driver import api  # noqa: E402
-from linear import (  # noqa: E402
+from agent_pm_orchestrator import config, inputs, issues, linear, sessions, target, writeback
+from agent_pm_orchestrator.linear import (
     ISSUE_ID,
     config_error,
     humans,
@@ -53,7 +46,7 @@ from linear import (  # noqa: E402
     task_group,
     team,
 )
-from runs import limits, note, parse_log, runtime_of, trim  # noqa: E402
+from agent_pm_orchestrator.runs import limits, note, parse_log, runtime_of, trim
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -65,9 +58,13 @@ MAX_WEEK = 100
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = "usage: router.py [--now] [--dry-run] [--issue ID] | --brake ROLE"
+USAGE = (
+    "usage: python3 -P -m agent_pm_orchestrator.router "
+    "[--now] [--dry-run] [--issue ID] | --brake ROLE"
+)
 FLAGS = {"--dry-run": "dry", "--now": "now"}
-RUN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py")
+RUN = ("-P", "-m", "agent_pm_orchestrator.run")
+ROOTS = os.pathsep.join((IMPORT_ROOT, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 SESSIONS = "agent-pm-"
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
 DONE = {"completed", "canceled", "duplicate"}
@@ -473,7 +470,7 @@ def fail(ident, kind, reason, rc):
 
 
 def outer(a, cfg, *, gql, run, keychain):
-    os.environ["PATH"] = config.PATH
+    os.environ["PATH"] = config.path()
     if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
         print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
         return 2
@@ -553,7 +550,7 @@ def outer(a, cfg, *, gql, run, keychain):
             config.session(role, a.issue),
             [
                 sys.executable,
-                RUN,
+                *RUN,
                 "--uuid",
                 issue.id,
                 *(["--target", f"{repo.owner}/{repo.name}"] if build else []),
@@ -561,7 +558,7 @@ def outer(a, cfg, *, gql, run, keychain):
                 f"--input={text}",
             ],
             cwd=rd,
-            env=os.environ,
+            env={**os.environ, "PYTHONPATH": ROOTS},
         )
     except (api.ConfigError, api.DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -757,7 +754,7 @@ def main(
     if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
         return 2
-    os.environ["PATH"] = config.PATH
+    os.environ["PATH"] = config.path()
     try:
         cfg = config.load(path=config_path)
     except config.ConfigError as e:

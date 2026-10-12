@@ -26,9 +26,9 @@ human instructions, relate it, and move the source to Done.
 Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
 config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
 
-At the end of every tick, orchestrator/src/prune.py's Pruner removes the worktrees and clones of
-finished issues (TASK-49), closes their left-open TUI sessions and archives finished pm and engineer issues; a prune
-failure is logged and never breaks the Handoff work.
+At the end of every tick, prune.py's Pruner removes the worktrees and clones of finished issues (TASK-49), closes
+their left-open TUI sessions and archives finished pm and engineer issues; a prune failure is logged and never breaks
+the Handoff work.
 """
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
@@ -275,7 +275,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
-            from prune import Pruner as pruner
+            from agent_pm_orchestrator.prune import Pruner as pruner
         pruner(gql, now, dry, work=work, team=team, roles=roles).run()
     except linear.Unavailable as e:
         linear_error("prune", e, dry)

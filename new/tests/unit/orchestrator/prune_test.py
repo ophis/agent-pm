@@ -1,15 +1,5 @@
 """orchestrator prune.py, ported from the old prune_test onto a fake Driver api (FR-50); its tick through promote.main."""
 
-from new.tests import hermetic
-from new.tests.unit.orchestrator import promote_test as tp
-from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
-from new.tests.unit.orchestrator.board_ids import TEAM, team_node
-from new.tests.unit.orchestrator.fake_api import FakeApi
-from new.tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
-from new.tests.unit.orchestrator.run_fixtures import CORE_LOCAL, HARNESS, logged, show
-
-import config
-
 import io
 import json
 import os
@@ -22,11 +12,17 @@ from datetime import timedelta
 from functools import partial
 from unittest import mock
 
-import linear
-import promote
-import prune
-from driver import api
-from utils import paths, shell
+from agent_pm.driver import api
+from agent_pm.utils import paths, shell
+from agent_pm_orchestrator import config, linear, promote, prune
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator import promote_test as tp
+from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
+from new.tests.unit.orchestrator.board_ids import TEAM, team_node
+from new.tests.unit.orchestrator.fake_api import FakeApi
+from new.tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
+from new.tests.unit.orchestrator.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
 NOW = tp.NOW
 STATE_IDS = {
@@ -115,9 +111,8 @@ def git(*argv):
     return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
 
 
-class PruneTest(unittest.TestCase):
+class PruneTest(Case):
     def setUp(self):
-        self.home = hermetic.home(self)
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root)
         self.work = os.path.join(self.root, "work")
@@ -867,8 +862,11 @@ class PruneTest(unittest.TestCase):
                 self.assertEqual(self.closed(), [B, A])
 
     def tick(self, prune_gql):
-        write(os.path.join(self.home, "core-new.local.toml"), CORE_LOCAL)
-        write(os.path.join(self.home, "orchestrator-new.local.toml"), f'work_dir = "{self.root}"\n')
+        write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
+        write(
+            os.path.join(self.agent_pm, "orchestrator-new.local.toml"),
+            f'work_dir = "{self.root}"\n',
+        )
         path = os.path.join(self.root, "config.toml")
         write(path, tp.CONFIG)
         fake = tp.FakeLinear()
@@ -943,7 +941,7 @@ class PruneTest(unittest.TestCase):
         )
 
 
-class Imports(unittest.TestCase):
+class Imports(Case):
     def test_clones_are_configs(self):
         self.assertIs(prune.CLONES, config.CLONES)
 

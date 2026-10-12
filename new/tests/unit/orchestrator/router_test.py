@@ -2,6 +2,29 @@
 IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's headless parts as Entry) onto config.load() and a fake
 Driver api, plus FR-44 to FR-48, FR-56 and FR-60. A tick's start is injected but in Entry, which runs main's own outer."""
 
+import argparse
+import contextlib
+import fcntl
+import functools
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import UTC, datetime, timedelta, timezone
+from unittest import mock
+
+from agent_pm.driver import api
+from agent_pm.utils.git import GUARD
+from agent_pm.utils.shell import SHORT
+from agent_pm_orchestrator import config, inputs, issues, linear, router, runs, target
+from agent_pm_orchestrator import run as run_py
+
+from new.tests.case import ORCH_ROOT, ROOT
 from new.tests.unit.orchestrator import run_fixtures
 from new.tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
@@ -26,35 +49,6 @@ from new.tests.unit.orchestrator.run_fixtures import (
 )
 from new.tests.unit.orchestrator.target_test import FakeRun, ok
 from new.tests.unit.orchestrator.target_test import api as repo_info
-
-import config
-
-import argparse
-import contextlib
-import fcntl
-import functools
-import io
-import json
-import os
-import re
-import subprocess
-import sys
-import tempfile
-import uuid
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import UTC, datetime, timedelta, timezone
-from unittest import mock
-
-import inputs
-import issues
-import linear
-import router
-import run as run_py
-import runs
-import target
-from driver import api
-from utils.git import GUARD
-from utils.shell import SHORT
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
@@ -1975,14 +1969,13 @@ class Tick(TickBase):
 
     def test_launchd_path_replaced(self):
         self.tick(FakeLinear([]))
-        self.assertEqual(self.path, config.PATH)
+        self.assertEqual(self.path, config.path())
         self.assertIn("/opt/homebrew/bin", self.path)
 
     def test_now_skips_hours_and_starts(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, "--now", hour=12)
         (launch,) = self.start.launches
-        self.assertEqual(router.RUN, os.path.join(config.ROOT, "orchestrator", "src", "run.py"))
         self.assertEqual(
             launch, outer_args("TASK-1", IDS[DR], ROLE["researcher"], launch.sid, None, "new", "a")
         )
@@ -3152,7 +3145,16 @@ def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
 
 
 def inner(*args, text=INPUT):
-    return [sys.executable, router.RUN, "--uuid", UUID, *args, f"--input={text}"]
+    return [
+        sys.executable,
+        "-P",
+        "-m",
+        "agent_pm_orchestrator.run",
+        "--uuid",
+        UUID,
+        *args,
+        f"--input={text}",
+    ]
 
 
 class ClaimLinear(FakeLinear):
@@ -3198,7 +3200,11 @@ class OuterBase(TickBase):
 
     def detached(self, role="engineer"):
         name, argv, cwd, env = self.api.detached[-1]
-        self.assertEqual((name, cwd, env["PATH"]), (f"agent-pm-{role}-{ID}", self.rd, config.PATH))
+        self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
+        self.assertEqual(
+            env,
+            {**os.environ, "PATH": config.path(), "PYTHONPATH": os.pathsep.join((ROOT, ORCH_ROOT))},
+        )
         return argv
 
     def input(self, **kw):
@@ -3220,7 +3226,7 @@ class Outer(OuterBase):
             self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), SHORT), (LS_REMOTE, SHORT)]
         )
         self.assertEqual(
-            (os.environ["PATH"], self.keychain_calls, self.api.info), (config.PATH, [KEY], [])
+            (os.environ["PATH"], self.keychain_calls, self.api.info), (config.path(), [KEY], [])
         )
         self.assertEqual((self.err, self.said()), ("", []))
 
@@ -3234,7 +3240,7 @@ class Outer(OuterBase):
             mock.patch.object(config, "load", return_value=cfg),
             mock.patch.object(linear, "use_logs"),
         ):
-            self.assertEqual(run_py.main(argv[2:]), 0)
+            self.assertEqual(run_py.main(argv[4:]), 0)
         a = run_inner.call_args.args[0]
         self.assertEqual(
             (a.uuid, a.target, a.issue, a.project, a.assignee, a.sid, a.task, a.mode, a.runtime),
@@ -3721,7 +3727,9 @@ class Usage(Base):
                 self.assertEqual(self.main(argv), (2, router.USAGE + "\n"))
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
-            router.USAGE, "usage: router.py [--now] [--dry-run] [--issue ID] | --brake ROLE"
+            router.USAGE,
+            "usage: python3 -P -m agent_pm_orchestrator.router "
+            "[--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
@@ -3769,7 +3777,7 @@ class Brake(Base):
                 self.api.usages, self.api.usage_calls = {"a": value}, []
                 self.assertEqual(self.brake("researcher"), (rc, out + "\n"))
                 self.assertEqual((self.api.usage_calls, self.err), (["a"], ""))
-        self.assertEqual(self.path, config.PATH)
+        self.assertEqual(self.path, config.path())
 
     def test_the_roles_own_runtime(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
