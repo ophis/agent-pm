@@ -1,5 +1,5 @@
-"""Run records: <workdir>/run.jsonl, one JSON object {"ts", "kind", **fields} per line. Files open nonblocking (a FIFO
-must not block) and never through a symlink; a write refuses anything but a regular file, a read returns what it can.
+"""Run records: <workdir>/run.jsonl, one JSON object {"ts", "kind", **fields} per line, through
+utils.files; a read returns what it can.
 The agent run can append to the file: what a read finds is a status hint, never an authorization or a recovery grant."""
 
 import json
