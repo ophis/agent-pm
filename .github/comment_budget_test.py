@@ -6,12 +6,11 @@ import io
 import os
 import subprocess
 import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
-from new.tests.case import NEW, Case
-
-PATH = os.path.join(os.path.dirname(NEW), ".github", "comment_budget.py")
+PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comment_budget.py")
 spec = importlib.util.spec_from_file_location("comment_budget", PATH)
 budget = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(budget)
@@ -40,7 +39,7 @@ def over(folder, n, code, limit):
     )
 
 
-class Measure(Case):
+class Measure(unittest.TestCase):
     def test_comments_count_with_their_hash_but_a_shebang_does_not(self):
         self.assertEqual(
             budget.measure("x = 1  # a note\n"), (chars("# a note"), 0, chars("x = 1"))
@@ -85,7 +84,7 @@ class Measure(Case):
         )
 
 
-class Rules(Case):
+class Rules(unittest.TestCase):
     def test_paths_pick_their_rule(self):
         for path in ("tests/a.py", "x/tests/b.py", "new/tests/c.py", "core/d_test.py"):
             with self.subTest(path=path):
@@ -95,7 +94,11 @@ class Rules(Case):
                 self.assertIs(budget.rule(path), budget.SOURCE)
 
 
-class Main(Case):
+class Main(unittest.TestCase):
+    def setUp(self):
+        home = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(mock.patch.dict(os.environ, HOME=home))  # git reads ~/.gitconfig
+
     def run_in(self, tracked, untracked=()):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

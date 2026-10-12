@@ -9,6 +9,7 @@ The plugin (`claude --plugin-dir`, `claude plugin validate`) and the tests (layo
 ```bash
 uvx ruff@0.16.9 check .                                   # lint; config: pyproject.toml
 uvx ruff@0.16.9 format .                                  # format; CI pins the same version
+python3 -m unittest discover -v -s .github -p "*_test.py" # .github/comment_budget.py's tests
 ```
 
 CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Comment budget, Ruff (`ruff check`, `ruff format --check`) and the test jobs; a test must pass on Linux too. Comment budget (`.github/comment_budget.py`) caps each directory's comment plus docstring characters over its own git-tracked `.py` files (not its subdirectories'), source and tests (`(^|/)tests/` or `_test.py`) separately, at 15% (source) or 10% (tests) of their code characters plus 500 characters: keep a comment only for a gotcha (≤3 lines).
