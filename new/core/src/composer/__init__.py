@@ -15,11 +15,12 @@ A role's index is checked whenever it is read, a team dir file whenever it is lo
 naming the file.
 """
 
+from utils.protocol import OUTCOME, PROGRESS
+
 from composer.base import SCHEMA, TEAM, ConfigError
-from composer.prompt import OUTCOME, render
+from composer.prompt import render
 from composer.run import RunConfig, RunParams, access, resolve, trusted_dirs
 from composer.teams import (
-    PROGRESS,
     Team,
     catalog,
     check_overlap,

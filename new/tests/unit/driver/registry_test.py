@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 from adapters.base import Adapter, ConfigError
+from adapters.print_prompt import PrintPromptAdapter
 from driver import registry
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
@@ -94,9 +95,15 @@ class Base(unittest.TestCase):
 
 
 class TablesTest(Base):
-    def test_committed_config_has_the_claude_table(self):
-        self.assertEqual(list(registry.tables()), ["claude", "codex"])
-        self.assertEqual(registry.configured(), ["claude", "codex"])
+    def test_committed_config_has_its_tables(self):
+        self.assertEqual(list(registry.tables()), ["claude", "codex", "print_prompt"])
+        self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
+
+    def test_committed_config_has_no_destination_key_and_builds_print_prompt(self):
+        for name, table in registry.tables().items():
+            with self.subTest(name=name):
+                self.assertEqual({"roles", "output"} & set(table), set())
+        self.assertIs(type(registry.adapter("print_prompt")), PrintPromptAdapter)
 
     def test_the_merged_tables_and_their_sorted_names(self):
         path = self.write("config.toml", "[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n")
@@ -136,7 +143,9 @@ class CacheTest(Base):
         with mock.patch.object(registry, "read", wraps=registry.read) as read:
             first = registry.adapter("fake")
             second = registry.adapter("fake")
-            self.assertEqual(registry.configured(), ["a", "claude", "codex", "fake"])
+            self.assertEqual(
+                registry.configured(), ["a", "claude", "codex", "fake", "print_prompt"]
+            )
         read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
         self.assertIsNot(first, second)
         self.assertEqual((first.config, second.config), ({"scenario": "/s"}, {"scenario": "/s"}))

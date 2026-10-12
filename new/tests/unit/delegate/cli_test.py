@@ -119,7 +119,14 @@ class Base(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def runs(
-        self, *extra, role="dummy-tester", task="echo", input="Hello.", runtime="fake", stdin=""
+        self,
+        *extra,
+        role="dummy-tester",
+        task="echo",
+        input="Hello.",
+        runtime="fake",
+        stdin="",
+        out=None,
     ):
         return self.cli(
             "--role",
@@ -128,7 +135,7 @@ class Base(unittest.TestCase):
             "--input",
             input,
             "--out",
-            self.out,
+            out or self.out,
             "--workdir",
             self.work,
             *(("--runtime", runtime) if runtime else ()),
@@ -230,6 +237,17 @@ class Usage(Base):
                 self.assertEqual((code, out), (2, ""))
                 self.assertIn("--runtime given twice", err)
         self.assertEqual(self.launches(), [])
+
+    def test_out_or_workdir_given_twice_exits_2_before_anything_starts(self):
+        for extra, error in (
+            (("--out", "b.md"), "--out given twice"),
+            (("--workdir", "b"), "--workdir given twice"),
+        ):
+            with self.subTest(extra=extra):
+                code, out, err = self.runs(*extra)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(error, err)
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_a_config_error_exits_2_before_anything_starts(self):
         cases = [
@@ -427,6 +445,48 @@ class Exits(Base):
         ):
             with self.subTest(want=want), mock.patch.object(cli, "run", return_value=result):
                 self.assertEqual(self.runs(), (want, "", f"{line}\n"))
+
+
+class Deliverable(Base):
+    """--out -: the deliverable on stdout; --out PATH: a stderr line naming the file holding it."""
+
+    def test_out_dash_prints_the_deliverable_exactly_and_saves_nothing(self):
+        code, out, err = self.runs(out="-")
+        self.assertEqual((code, out), (0, DONE["deliverable"]), err)
+        self.assertNotIn("delegate: deliverable", err)
+        self.assertTrue(err.endswith("delegate: status done\n"), err)
+        self.assertEqual(os.listdir(self.work), ["run.jsonl"])
+
+    def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
+        text = "a\x1b]0;x\x07b\n\tc\x1b[2Jd\x9be\n"
+        self.steps(said(START, block({**DONE, "deliverable": text})))
+        code, out, err = self.runs(out="-")
+        self.assertEqual((code, out), (0, "a]0;xb\n\tc[2Jde\n"), err)
+
+    def test_a_dry_run_with_out_dash_plans_no_out(self):
+        with mock.patch.object(cli, "plan", wraps=cli.plan) as planned:
+            code, out, err = self.runs("--dry-run", out="-")
+        self.assertEqual(code, 0, err)
+        self.assertIsNone(planned.call_args.kwargs["out"])
+        self.assertIn("`<Workdir>/tmp/deliverable.md`", json.loads(out)["prompt"])
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_out_path_is_named_on_stderr_holding_the_deliverable(self):
+        code, out, err = self.runs(out=os.path.join("work", "out.md"))
+        self.assertEqual((code, out), (0, ""), err)
+        self.assertTrue(
+            err.endswith(f"\ndelegate: deliverable {self.out}\ndelegate: status done\n"), err
+        )
+
+    def test_no_path_line_without_a_deliverable_at_out(self):
+        asking = {**DONE, "status": "needs_input", "questions": ["Q?"], "deliverable": ""}
+        self.steps(said(START, block(asking)))
+        code, out, err = self.runs()
+        self.assertEqual((code, out), (0, ""), err)
+        self.assertNotIn("delegate: deliverable", err)
+        elsewhere = Result(0, Outcome("done", "t", "s", deliverable="# Doc\n"))
+        with mock.patch.object(cli, "run", return_value=elsewhere):
+            self.assertEqual(self.runs(), (0, "", "delegate: status done\n"))
 
 
 class InProcess(Base):
