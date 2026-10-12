@@ -1,7 +1,8 @@
 """Codex access, settings, usage parsing and inspection; read dirs need no flag (the sandbox reads the whole disk).
 Both Modes share ~/.agent-pm/core-new-sessions/codex/; recovery and session files have bounded nonblocking reads with
 regular-file, ownership and symlink checks. A plain session's (adapters.base) snapshot saves role_policy=False, its
-flags only the model and effort, its roots its writable dirs. options parses spec.flags up to "--"."""
+flags only the model and effort, its roots its writable dirs; a resume's added_dirs count beside the saved roots.
+options parses spec.flags up to "--"."""
 
 import json
 import math
@@ -83,6 +84,10 @@ def refuse(flags) -> None:
 
 def passed(flags) -> list[str]:
     return [word for name, value, _ in options(flags) if name in PASSED for word in (name, value)]
+
+
+def added_dirs(flags, cwd: str) -> list[str]:
+    return [os.path.join(cwd, value) for name, value, _ in options(flags) if name == "--add-dir"]
 
 
 def _recover(method):
@@ -334,8 +339,8 @@ class CodexCommon:
             _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
         )
         if not spec.role_policy:
-            added = (value for name, value, _ in options(spec.flags) if name == "--add-dir")
-            return [cwd, *(absolute_path(os.path.join(cwd, path), "dir") for path in added), home]
+            added = (absolute_path(path, "dir") for path in added_dirs(spec.flags, cwd))
+            return [cwd, *added, home]
         return [workdir, cwd, home, *(absolute_path(path, "dir") for path in spec.access.dirs)]
 
     @_recover
@@ -345,6 +350,9 @@ class CodexCommon:
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
             roots = state.writable_roots
+            if not spec.role_policy:
+                added = added_dirs(spec.flags, state.snapshot["cwd"])
+                roots = [*roots, *map(os.path.realpath, added)]
         else:
             roots = self._new_roots(spec)
         environment = {**os.environ, **self.defaults, **self.config.get("env", {})}

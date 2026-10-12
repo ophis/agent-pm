@@ -1,4 +1,4 @@
-from new.tests.unit.adapters.codex.support import Base
+from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 import ast
 import copy
@@ -266,9 +266,9 @@ class StartTest(Base):
 
 
 class ProtectTest(Base):
-    def launch(self, spec):
+    def launch(self, spec, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            return self.adapter.tui().launch("prompt", spec, False, HOOK).argv[-1]
+            return self.adapter.tui().launch("prompt", spec, resume, HOOK).argv[-1]
 
     def test_the_recheck_keeps_carried_protect_paths_out_of_the_saved_roots(self):
         link = self.root / "protected-link"
@@ -309,13 +309,47 @@ class ProtectTest(Base):
     def test_bad_protect_launch_data_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
         with mock.patch.object(tui_start.subprocess, "Popen") as proc:
-            for protect in ("/protected", ["relative"], [1], ["/a\0b"], None):
-                with self.subTest(protect=protect), self.assertRaises(tui_start.StartError):
-                    tui_start.main([json.dumps({**data, "protect": protect})])
-            data.pop("protect")
-            with self.assertRaisesRegex(tui_start.StartError, "fields"):
-                tui_start.main([json.dumps(data)])
+            for key in ("protect", "add_dirs"):
+                for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
+                    with (
+                        self.subTest(key=key, paths=paths),
+                        self.assertRaises(tui_start.StartError),
+                    ):
+                        tui_start.main([json.dumps({**data, key: paths})])
+                with self.assertRaisesRegex(tui_start.StartError, "fields"):
+                    tui_start.main([json.dumps({k: v for k, v in data.items() if k != key})])
         proc.assert_not_called()
+
+    def test_the_recheck_covers_a_resumes_added_dirs(self):
+        self.launch(dataclasses.replace(self.spec, role_policy=False))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        link = self.root / "protected-link"
+        cases = (
+            (("--add-dir", "../../guarded"), self.root / "guarded" / "events"),
+            (("--add-dir=../../other/sub",), self.root / "other"),
+            ((f"--add-dir={self.root / 'third'}",), self.root / "third" / "events"),
+        )
+        for flags, target in cases:
+            link.unlink(missing_ok=True)
+            link.symlink_to("/protected/events")
+            spec = dataclasses.replace(
+                self.spec, role_policy=False, flags=flags, protect=(str(link),)
+            )
+            data = self.launch(spec, resume=True)
+            link.unlink()
+            link.symlink_to(target)
+            with (
+                self.subTest(flags=flags),
+                mock.patch("subprocess.Popen") as proc,
+                mock.patch("os.execve") as execute,
+                self.assertRaisesRegex(
+                    tui_start.sessions.RecoveryError, f"could rewrite hook dependency {target}$"
+                ),
+            ):
+                tui_start.main([data])
+            proc.assert_not_called()
+            execute.assert_not_called()
 
     def test_a_plain_start_lists_hooks_with_the_users_config_and_execs_the_flags(self):
         flags = ("-c", 'model_verbosity="low"', "--disable", "web", "-m", "o3")

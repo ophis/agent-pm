@@ -8,7 +8,7 @@ import sys
 from adapters.base import ACTIVITY, BLOCKED, TURN_END, ConfigError, Launch, LimitHit, Tui
 
 from . import sessions
-from .common import flags, native_id, passed, refuse
+from .common import added_dirs, flags, native_id, passed, refuse
 from .headless import LIMIT_PREFIXES, reset_at
 
 HOOKS = (
@@ -73,8 +73,9 @@ class CodexTuiRun(Tui):
             *(word for word in hook if os.path.isabs(word)),
             *spec.protect,
         ]
+        added = [] if spec.role_policy else added_dirs(spec.flags, snapshot["cwd"])
         try:
-            sessions.protect(self.state, dependencies, effective_env)
+            sessions.protect(self.state, dependencies, effective_env, added)
         except sessions.RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
         if not resume:
@@ -125,6 +126,7 @@ class CodexTuiRun(Tui):
             "sid": self.state.sid,
             "store": store,
             "protect": list(spec.protect),
+            "add_dirs": added,
         }
         return Launch(
             (

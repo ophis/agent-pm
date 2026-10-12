@@ -531,8 +531,8 @@ def bind_session(
         return validated
 
 
-def protect(state, dependencies, environment=None):
-    roots = [*state.writable_roots, *implicit_writable_roots(environment)]
+def protect(state, dependencies, environment=None, added=()):
+    roots = [*state.writable_roots, *added, *implicit_writable_roots(environment)]
     for root in roots:
         root = os.path.realpath(root)
         for dependency in dependencies:

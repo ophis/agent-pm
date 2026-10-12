@@ -451,6 +451,13 @@ class PlainTest(Base):
         self.assertEqual(resumed.writable_roots, expected)
         self.assertEqual(resumed.native_id, NATIVE)
         self.assertEqual(list(self.adapter.writable_dirs(spec, True)[:4]), expected)
+        third = self.root / "third"
+        resumed = dataclasses.replace(
+            spec, flags=("--add-dir", "../../third", f"--add-dir={third}/")
+        )
+        self.assertEqual(
+            list(self.adapter.writable_dirs(resumed, True)[:5]), [*expected, str(third)]
+        )
 
     def test_a_plain_record_still_needs_roots_covering_cwd_and_home(self):
         self.common.prepare(self.plain, False)

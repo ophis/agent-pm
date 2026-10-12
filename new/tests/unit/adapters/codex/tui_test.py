@@ -357,6 +357,7 @@ class PlainTest(Base):
             data["hook_flags"], [*hook_flags, "-c", 'model_verbosity="low"', "--enable", "web"]
         )
         self.assertEqual(data["protect"], ["/protected/events"])
+        self.assertEqual(data["add_dirs"], [os.path.join(self.cwd, "../../added")])
         self.assertEqual(launch.env, {"CODEX_HOME": str(self.codex_home)})
         self.assertEqual(launch.unset, self.adapter.identity_env)
         self.assertEqual(launch.cwd, str(self.cwd))
@@ -460,3 +461,29 @@ class PlainTest(Base):
                 self.launch(spec)
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.launch(dataclasses.replace(self.plain, protect=(events, str(self.work / "events"))))
+
+    def test_a_resume_adding_a_dir_over_or_inside_a_protect_path_is_refused(self):
+        self.launch(self.plain)
+        self.common.bind(str(self.work), self.plain.sid, NATIVE)
+        self.rollout()
+        guarded = self.root / "guarded"
+        events = str(guarded / "events")
+        cases = (
+            (("--add-dir", "../../guarded"), events),
+            (("--add-dir", str(guarded)), events),
+            (("--add-dir=../../guarded/sub",), str(guarded)),
+            ((f"--add-dir={guarded / 'sub'}",), str(guarded)),
+        )
+        for flags, path in cases:
+            spec = dataclasses.replace(self.plain, flags=flags, protect=(path,))
+            with (
+                self.subTest(flags=flags, path=path),
+                self.assertRaisesRegex(
+                    ConfigError, f"Codex tui writable root .* could rewrite hook dependency {path}$"
+                ),
+            ):
+                self.launch(spec, resume=True)
+        spec = dataclasses.replace(self.plain, flags=cases[0][0], protect=("/protected/x",))
+        self.assertEqual(
+            self.launch(spec, resume=True)[1]["add_dirs"], [os.path.join(self.cwd, "../../guarded")]
+        )
