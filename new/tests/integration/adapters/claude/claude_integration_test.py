@@ -1,4 +1,4 @@
-"""session.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
+"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
 registry.configure, runs new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""

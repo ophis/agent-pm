@@ -4,7 +4,7 @@ name (record): crew.py start (a worker, under its name), the old core's drive.de
 router.py --tui (a pipeline), keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one with
 its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled
 (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
-Sessions are reached only through session.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
+Sessions are reached only through session.engine.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
 default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client. A worker entry runs
 crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
 script, or the module agent_pm.crew, to that form."""

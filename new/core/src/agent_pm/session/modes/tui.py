@@ -26,9 +26,9 @@ from agent_pm.session.adapters.base import (
     Stderr,
     Tui,
 )
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.types import DriverError
 from agent_pm.utils.files import read_regular
 
 TUI_DIR = "~/.agent-pm/tui"

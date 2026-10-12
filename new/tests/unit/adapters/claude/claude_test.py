@@ -40,7 +40,7 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.selection import select
+from agent_pm.session.adapters.selection import select
 
 from new.tests.case import Case
 from new.tests.selection import configured

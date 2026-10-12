@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import api, records
+from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
@@ -31,6 +31,7 @@ from agent_pm.session.adapters.base import (
     TurnEnd,
 )
 from agent_pm.session.adapters.codex import tui_start
+from agent_pm.session.engine import records
 
 from new.tests import live_tmux
 from new.tests.case import NEW, PY, ROOT, Case, child_env

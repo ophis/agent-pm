@@ -1,6 +1,6 @@
 """A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of new/core,
 the fake adapter's package copied into it as src/agent_pm/session/adapters/fake/ and its table appended to the copy's
-config.toml, nothing else changed, runs a headless session through session.api.start in a child Python whose
+config.toml, nothing else changed, runs a headless session through session.engine.api.start in a child Python whose
 PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
 anything starts."""
 

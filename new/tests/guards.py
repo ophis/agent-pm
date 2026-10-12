@@ -34,12 +34,12 @@ import sys
 import tokenize
 
 GROUPS = ("session", "delegate", "manager")
-SESSION_API = "session.api"
-SESSION_TYPES = "session.types"
+SESSION_API = "session.engine.api"
+SESSION_TYPES = "session.engine.types"
 MODES = "session.modes"
-RECORDS = "session.records"
+RECORDS = "session.engine.records"
 HOSTS = "session.hosts"
-SELECTION = "session.selection"
+HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the layers, in unit SESSION
 LAYERS = (
     "session.adapters",
     SESSION_API,
@@ -47,7 +47,6 @@ LAYERS = (
     MODES,
     RECORDS,
     HOSTS,
-    SELECTION,
     "delegate.composer",
     "delegate",
 )
@@ -60,12 +59,10 @@ ALLOWED = {
     ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
     *(
         (SESSION_API, unit)
-        for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS, SELECTION)
+        for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)
     ),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     (SESSION_TYPES, "session.adapters"),
-    (SELECTION, "session.adapters"),
-    ("session.adapters.registry", SELECTION),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
@@ -111,7 +108,7 @@ ORCH_SRC = f"src/{ORCH}/"
 ROOTS = (("core", CORE_PKG), ("linear-orchestrator", ORCH))
 CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
 SESSION_SRC = f"{CORE_TOP}{SESSION}/"
-STATUS_LOG_HOME = f"{CORE_TOP}session/status_log.py"
+STATUS_LOG_HOME = f"{CORE_TOP}session/engine/status_log.py"
 STATUS_LOG_CLOCK = "%H:%M:%S"
 # until TASK-368
 STATUS_LOG_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
@@ -292,7 +289,9 @@ def modes_import_api(core: str) -> list[str]:
     for rel, names, imports in _modules(core):
         if names and _within(".".join(names), MODES):
             found.update(
-                f"{rel}: imports {m}" for m, inner in imports if _within(inner, SESSION_API)
+                f"{rel}: imports {m}"
+                for m, inner in imports
+                if _within(inner, SESSION_API) or _within(inner, f"{SESSION}.api")
             )
     return sorted(found)
 
@@ -316,7 +315,7 @@ def status_log_format(new: str) -> list[str]:
             rel = f"{top}/src/{rel}"
             if rel != STATUS_LOG_HOME and rel not in STATUS_LOG_WRITERS:
                 found.update(
-                    f"{rel}:{line}: status log line format outside session/status_log.py"
+                    f"{rel}:{line}: status log line format outside session/engine/status_log.py"
                     for line, s in _strings(ast.parse(text, rel))
                     if STATUS_LOG_CLOCK in s
                 )
@@ -637,6 +636,8 @@ def _modules(core):
 
 
 def _unit(inner):
+    if _within(inner, HOST_ABC):
+        return SESSION
     return max((u for u in UNITS if _within(inner, u)), key=len, default=inner.split(".")[0])
 
 

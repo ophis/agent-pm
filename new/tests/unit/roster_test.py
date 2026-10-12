@@ -1,4 +1,4 @@
-"""agent_pm.manager.roster, the old core's roster_test ported onto a fake session.api (Tmux): LEGACY_CLIENT's cases became
+"""agent_pm.manager.roster, the old core's roster_test ported onto a fake session.engine.api (Tmux): LEGACY_CLIENT's cases became
 FR-28's default runtime; worker_dir, default_runtime and the crew module's entries are new."""
 
 import contextlib

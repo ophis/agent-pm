@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-from agent_pm.session.status_log import SessionStatusLog
+from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.utils.files import save
 
 

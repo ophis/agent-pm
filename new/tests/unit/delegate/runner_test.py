@@ -108,9 +108,9 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 
 class FakeHandle:
-    """session.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
+    """session.engine.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
     left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
-    session.api.start's stand-in."""
+    session.engine.api.start's stand-in."""
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
@@ -836,7 +836,7 @@ LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 
 class TuiPolicy(Base):
-    """The tui policy over a FakeHandle (session.api.start patched as delegate.engine.runner sees it)."""
+    """The tui policy over a FakeHandle (session.engine.api.start patched as delegate.engine.runner sees it)."""
 
     def setUp(self):
         super().setUp()

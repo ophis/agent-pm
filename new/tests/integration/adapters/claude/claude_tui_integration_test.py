@@ -1,4 +1,4 @@
-"""session.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
+"""session.engine.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
 the real ClaudeAdapter runs new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""

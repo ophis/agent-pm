@@ -41,7 +41,7 @@ flowchart TB
       end
     end
     subgraph SE[session/]
-      DR["api.py · types.py · records.py<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
+      DR["engine/: api · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
       subgraph AD[adapters/]
         CL[claude]
         CX[codex]
@@ -62,8 +62,8 @@ flowchart TB
   R -.->|detached session| RU
   RU -->|"delegate.__all__"| D
   LC -->|"composer.__all__"| C
-  LO -->|"session.api · session chores"| DR
-  MG -->|session.api| DR
+  LO -->|"session.engine.api · session chores"| DR
+  MG -->|session.engine.api| DR
   D --> C
   D -->|"session.__all__"| SE
   C -->|reads| T
@@ -75,7 +75,7 @@ flowchart TB
   class EV,U,CF shared
 ```
 
-Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `new/README.md`'s import paragraph, checked by `new/tests/guards.py`.
+Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.engine.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `new/README.md`'s import paragraph, checked by `new/tests/guards.py`.
 
 ## Install
 

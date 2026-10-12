@@ -35,7 +35,7 @@ class ImportsAlone(Case):
             + modules(ORCH_ROOT, "agent_pm_linear")
             + modules(REPO, "new.tests")
         )
-        self.assertIn("agent_pm.session.api", names)
+        self.assertIn("agent_pm.session.engine.api", names)
         self.assertIn("agent_pm_linear.run", names)
         self.assertIn("new.tests.case", names)
         for name in names:

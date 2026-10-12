@@ -31,9 +31,9 @@ from agent_pm.session.adapters.base import (
     SessionInfo,
     TurnEnd,
 )
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
-from agent_pm.session.types import DriverError
 
 from new.tests import fake_adapter
 from new.tests.case import ROOT, Case

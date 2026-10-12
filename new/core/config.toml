@@ -133,7 +133,7 @@ effort = "low"
 
 # ── Adapters ────────────────────────────────────────────
 # [adapters.<name>]  one table per runtime, read only by src/agent_pm/session/adapters/registry.py; <name> is the
-#                    runtime name session.api.start takes and the package src/agent_pm/session/adapters/<name>/
+#                    runtime name session.engine.api.start takes and the package src/agent_pm/session/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 

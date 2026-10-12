@@ -5,8 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 
-from agent_pm.session.host import Host
-from agent_pm.session.types import (
+from agent_pm.session.engine.types import (
     Event,
     IdleTimeout,
     SessionInfo,
@@ -16,6 +15,7 @@ from agent_pm.session.types import (
     Stderr,
     Usage,
 )
+from agent_pm.session.hosts.base import Host
 from agent_pm.utils.record import Display, Record
 
 

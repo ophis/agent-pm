@@ -37,7 +37,7 @@ The component that turns a role, an optional task and free-text input into an ag
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Driver**:
-The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/session/` (`api.py`, `modes/`).
+The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/session/` (`engine/api.py`, `modes/`).
 _Avoid_: facade, runtime, harness
 
 **Adapter**:
@@ -49,13 +49,13 @@ How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, en
 _Avoid_: runner
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions), keeping each one's Record and display; only a Displayable Host can show them. In code: `new/core/src/agent_pm/session/host.py`.
+Where the session layer runs processes by name (e.g. in tmux sessions), keeping each one's Record and display; only a Displayable Host can show them. In code: `new/core/src/agent_pm/session/hosts/base.py`.
 
 **Record**:
 One JSON line naming a started thing (a worker, a role run, a pipeline) by its outermost starter: how to query it (its `ctl` command) and resume it (its `resume` command). In code: `new/core/src/agent_pm/utils/record.py`.
 
 **Session status log**:
-The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`. In code: `new/core/src/agent_pm/session/status_log.py`.
+The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`. In code: `new/core/src/agent_pm/session/engine/status_log.py`.
 _Avoid_: event
 
 **Delegate event**:

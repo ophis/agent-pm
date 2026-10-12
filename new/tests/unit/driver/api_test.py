@@ -1,4 +1,4 @@
-"""session/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
+"""session/engine/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
 session_info() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
 fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
 registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
@@ -24,12 +24,13 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.session import api, records, selection
-from agent_pm.session.adapters import base, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import base, registry, selection
 from agent_pm.session.adapters.base import Access, Launch
+from agent_pm.session.engine import records
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.types import DriverError
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests import fake_adapter

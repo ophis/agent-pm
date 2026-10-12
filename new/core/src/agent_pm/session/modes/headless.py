@@ -10,7 +10,7 @@ import threading
 from collections.abc import Iterable, Mapping, Sequence
 
 from agent_pm.session.adapters.base import Event, Headless, Stderr
-from agent_pm.session.types import DriverError
+from agent_pm.session.engine.types import DriverError
 
 STOP_WAIT = 5
 

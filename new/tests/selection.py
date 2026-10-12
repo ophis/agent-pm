@@ -1,4 +1,4 @@
-from agent_pm.session.selection import configure
+from agent_pm.session.adapters.selection import configure
 
 
 def configured(cls, config):

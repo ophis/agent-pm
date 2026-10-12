@@ -1,4 +1,4 @@
-"""session.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
+"""session.engine.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter, a script whose interpreter is missing, an env execve refuses."""
 

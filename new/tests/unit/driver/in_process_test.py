@@ -8,8 +8,8 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter, InProcess, Reply, Spec, Stderr
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.modes.in_process import InProcessMode
-from agent_pm.session.types import DriverError
 
 from new.tests.case import Case
 

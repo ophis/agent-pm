@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
-from agent_pm.session.types import DriverError, Key, Paste
+from agent_pm.session.engine.types import DriverError, Key, Paste
 from agent_pm.utils.record import Display, Record
 
 

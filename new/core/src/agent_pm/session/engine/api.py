@@ -18,7 +18,6 @@ from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Protocol
 
-from agent_pm.session import records
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     RESUMABLE,
@@ -47,11 +46,12 @@ from agent_pm.session.adapters.base import (
     Window,
     sid_error,
 )
+from agent_pm.session.adapters.selection import check as check_selection
+from agent_pm.session.engine import records
+from agent_pm.session.engine.records import session
+from agent_pm.session.engine.types import DriverError, IdleTimeout, SessionRow
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.records import session
-from agent_pm.session.selection import check as check_selection
-from agent_pm.session.types import DriverError, IdleTimeout, SessionRow
 from agent_pm.utils.paths import printable_abs
 
 __all__ = [

@@ -1,4 +1,4 @@
-"""A fake Driver api for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) on session.api."""
+"""A fake Driver api for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) on session.engine.api."""
 
 import re
 from unittest import mock

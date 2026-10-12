@@ -47,12 +47,11 @@ class UtilsImportsTest(Case):
                 f"{PKG}/delegate/team/tools/x.py: outside the layers imports {tools}.y",
                 f"{PKG}/delegate/x.py: delegate imports {tools}.repo",
                 f"{PKG}/session/adapters/x.py: session.adapters imports {tools}.repo",
-                f"{PKG}/session/api/x.py: session.api imports {tools}.repo",
+                f"{PKG}/session/engine/api/x.py: session.engine.api imports {tools}.repo",
+                f"{PKG}/session/engine/records/x.py: session.engine.records imports {tools}.repo",
+                f"{PKG}/session/engine/types/x.py: session.engine.types imports {tools}.repo",
                 f"{PKG}/session/hosts/x.py: session.hosts imports {tools}.repo",
                 f"{PKG}/session/modes/x.py: session.modes imports {tools}.repo",
-                f"{PKG}/session/records/x.py: session.records imports {tools}.repo",
-                f"{PKG}/session/selection/x.py: session.selection imports {tools}.repo",
-                f"{PKG}/session/types/x.py: session.types imports {tools}.repo",
                 f"{PKG}/utils/y.py: bare import tools.repo",
                 f"{PKG}/utils/z.py: outside the layers imports {tools}.repo",
                 f"{PKG}/x.py: outside the layers imports {tools}.repo",
@@ -65,7 +64,7 @@ class UtilsImportsTest(Case):
             {
                 f"{tools}/x.py": "import json\nfrom agent_pm.utils.paths import under\n"
                 "from ....utils import args\nfrom agent_pm.config import CONFIG\n",
-                f"{tools}/y.py": "import agent_pm.session.api\nimport third_party\n"
+                f"{tools}/y.py": "import agent_pm.session.engine.api\nimport third_party\n"
                 "from agent_pm.delegate.composer import run\n",
             }
         )
@@ -73,7 +72,7 @@ class UtilsImportsTest(Case):
             guards.pure_utils(root),
             [
                 f"{tools}/y.py: delegate.team.tools imports agent_pm.delegate.composer.run",
-                f"{tools}/y.py: delegate.team.tools imports agent_pm.session.api",
+                f"{tools}/y.py: delegate.team.tools imports agent_pm.session.engine.api",
                 f"{tools}/y.py: delegate.team.tools imports third_party",
             ],
         )
@@ -108,7 +107,7 @@ class UtilsImportsTest(Case):
     def test_utils_reject_layer_external_and_literal_imports(self):
         root = self.tree(
             {
-                f"{PKG}/utils/x.py": "import agent_pm.session.api\nimport third_party\n"
+                f"{PKG}/utils/x.py": "import agent_pm.session.engine.api\nimport third_party\n"
                 "def f():\n    import importlib\n    importlib.import_module('agent_pm.session.adapters.base')\n"
                 "    __import__('agent_pm.delegate.composer')\n",
                 f"{PKG}/utils/y.py": "from ..session import modes\nimport agent_pm.delegate.team.tools.repo\nimport utils.paths\n",
@@ -120,7 +119,7 @@ class UtilsImportsTest(Case):
             [
                 f"{PKG}/utils/x.py: utils imports agent_pm.delegate.composer",
                 f"{PKG}/utils/x.py: utils imports agent_pm.session.adapters.base",
-                f"{PKG}/utils/x.py: utils imports agent_pm.session.api",
+                f"{PKG}/utils/x.py: utils imports agent_pm.session.engine.api",
                 f"{PKG}/utils/x.py: utils imports third_party",
                 f"{PKG}/utils/y.py: utils imports agent_pm.delegate.team.tools.repo",
                 f"{PKG}/utils/y.py: utils imports agent_pm.session.modes",

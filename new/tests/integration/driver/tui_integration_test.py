@@ -1,4 +1,4 @@
-"""session.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
+"""session.engine.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
 the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
@@ -18,9 +18,10 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.session import api, records
+from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
+from agent_pm.session.engine import records
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
