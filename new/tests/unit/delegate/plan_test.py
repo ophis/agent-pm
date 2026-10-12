@@ -67,10 +67,11 @@ class Base(Case):
 
     def local(self, text):
         """The local config `text`, the registry's adapters re-read with it."""
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        local = os.path.join(self.agent_pm, "core-new.local.toml")
+        with open(local, "w") as f:
             f.write(text)
         fake = {"implementation": "adapters.fake:FakeAdapter"}
-        registry.configure({"adapters": registry.tables() | {"fake": fake}})
+        registry.configure({"adapters": registry.tables(registry.CONFIG, local) | {"fake": fake}})
 
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw

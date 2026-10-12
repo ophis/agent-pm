@@ -98,7 +98,7 @@ class Note(Base):
         self.assertRegex(err.getvalue(), r"^records: .*gone")
 
 
-class AppendLine(unittest.TestCase):
+class AppendLine(Case):
     def test_is_the_utils_one(self):
         self.assertIs(records.append_line, files.append_line)
 

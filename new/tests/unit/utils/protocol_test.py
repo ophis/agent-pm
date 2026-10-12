@@ -1,14 +1,14 @@
 """utils/protocol.py: the reply protocol's names, the objects composer exports."""
 
-from new.tests import SRC  # noqa: F401
-
 import unittest
 
-import composer
-from utils import protocol
+from agent_pm import composer
+from agent_pm.utils import protocol
+
+from new.tests.case import Case
 
 
-class ProtocolTest(unittest.TestCase):
+class ProtocolTest(Case):
     def test_the_names(self):
         self.assertEqual(
             (protocol.PROGRESS, protocol.OUTCOME), ("agent-pm-progress", "agent-pm-outcome")

@@ -1,13 +1,13 @@
-"""new/core/src/utils/text.py: printable (main's Sinks case)."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/text.py: printable (main's Sinks case)."""
 
 import unittest
 
-from utils.text import printable
+from agent_pm.utils.text import printable
+
+from new.tests.case import Case
 
 
-class Printable(unittest.TestCase):
+class Printable(Case):
     def test_drops_control_characters_but_tabs(self):
         self.assertEqual(printable("a\x1b]52;c;ZXZpbA==\x07b\tc\r\n"), "a]52;c;ZXZpbA==b\tc")
 
