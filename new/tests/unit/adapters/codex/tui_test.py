@@ -139,3 +139,9 @@ class TuiTest(Base):
         self.assertIn("Working directory · resume", self.adapter.tui().dialogs)
         self.assertIn("This conversation is open in another app", self.adapter.tui().dialogs)
         self.assertIn("Sign in with ChatGPT to use Codex", self.adapter.tui().dialogs)
+
+    def test_driver_flattened_limit_screen_keeps_header_and_reset(self):
+        adapter = CodexAdapter({"shell_network": False, "env": {"TZ": "UTC"}})
+        screen = "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › "
+        stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
+        self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))

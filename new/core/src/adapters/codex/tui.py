@@ -101,7 +101,8 @@ class CodexTuiRun(Tui):
 
     def limit(self, screen):
         screen = screen.replace("’", "'")
-        pattern = r"(?m)^[ \t]*(?:[■•✖!][ \t]*)?(?=You've hit your usage|Quota exceeded|Your workspace is out|You hit your spend cap)"
+        pattern = (r"(?m)(?:^[ \t]*(?:[■•✖!][ \t]*)?|(?<=[ \t])[■•✖!][ \t]*)"
+                   r"(?=You've hit your usage|Quota exceeded|Your workspace is out|You hit your spend cap)")
         for match in re.finditer(pattern, screen):
             message = " ".join(screen[match.end():].split())
             if message.startswith(LIMIT_PREFIXES):
