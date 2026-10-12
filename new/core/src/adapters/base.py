@@ -4,6 +4,7 @@ Launch, and the runtime's output into the frozen event set (Event) plus Stderr. 
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
 environ, signals), applying spec.access.cwd itself. A spec type raises ConfigError on a bad value; times are epoch
 seconds. Starts no process."""
+
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -12,7 +13,7 @@ from dataclasses import dataclass, field
 from utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-TURN_END = "turn_end"   # hook kinds
+TURN_END = "turn_end"  # hook kinds
 BLOCKED = "blocked"
 ACTIVITY = "activity"
 
@@ -58,9 +59,12 @@ class Spec:
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
-            raise ConfigError(f"workdir must be a printable absolute path, got {self.workdir!r:.80}")
-        if self.tier is not None and (isinstance(self.tier, bool) or not isinstance(self.tier, int)
-                                      or not 1 <= self.tier <= 4):
+            raise ConfigError(
+                f"workdir must be a printable absolute path, got {self.workdir!r:.80}"
+            )
+        if self.tier is not None and (
+            isinstance(self.tier, bool) or not isinstance(self.tier, int) or not 1 <= self.tier <= 4
+        ):
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort is not None and self.effort not in EFFORTS:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
@@ -77,13 +81,18 @@ class Launch:
     unset: tuple[str, ...] = ()
     cwd: str = ""
     transcript: str = ""
-    resume: str = ""       # a human's shell command, each interpolated field shlex.quoted
+    resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
     def __post_init__(self):
         env = self.env
-        for name, ok in (("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
-                         ("env", isinstance(env, Mapping) and all(_clean(k) and _clean(v) for k, v in env.items())),
-                         ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset)))):
+        for name, ok in (
+            ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
+            (
+                "env",
+                isinstance(env, Mapping) and all(_clean(k) and _clean(v) for k, v in env.items()),
+            ),
+            ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
+        ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")
 
@@ -142,13 +151,14 @@ RESUMABLE = ("yes", "no", "unknown")
 @dataclass(frozen=True)
 class Window:
     """One usage limit window."""
-    used_percent: float       # may exceed 100
-    resets_at: float | None   # None: not given
+
+    used_percent: float  # may exceed 100
+    resets_at: float | None  # None: not given
 
 
 @dataclass(frozen=True)
 class Usage:
-    five_hour: Window | None   # None: not reported
+    five_hour: Window | None  # None: not reported
     weekly: Window | None
 
 
@@ -229,7 +239,7 @@ class Headless(ABC):
 
 
 class Tui(ABC):
-    hooks: Mapping[str, str] = {}   # hook label → TURN_END, BLOCKED or ACTIVITY
+    hooks: Mapping[str, str] = {}  # hook label → TURN_END, BLOCKED or ACTIVITY
     dialogs: tuple[str, ...] = ()
 
     def __init__(self, adapter: Adapter):

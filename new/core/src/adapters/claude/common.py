@@ -6,6 +6,7 @@ the sid as its own session id), the usage probe and its reading, and a session's
 launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
 (--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), and the project and local setting
 sources only for a project run."""
+
 import json
 import math
 import os
@@ -41,7 +42,9 @@ def _full(window: Window | None, resets: float | None) -> Window:
     """`window` at least 100% used; its reset time, else `resets`."""
     if window is None:
         return Window(100.0, resets)
-    return Window(max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at)
+    return Window(
+        max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at
+    )
 
 
 def _strings(value) -> bool:
@@ -50,28 +53,59 @@ def _strings(value) -> bool:
 
 def _table(value, keys=None) -> bool:
     return isinstance(value, Mapping) and all(
-        isinstance(k, str) and (keys is None or k in keys) and isinstance(v, str) for k, v in value.items())
+        isinstance(k, str) and (keys is None or k in keys) and isinstance(v, str)
+        for k, v in value.items()
+    )
 
 
-CHECKS = (("flags", _strings, "a list of strings"),
-          ("allow", _strings, "a list of strings"),
-          ("tiers", lambda v: _table(v, TIERS), 'a table from tier "1"–"4" to a model name'),
-          ("efforts", lambda v: _table(v, EFFORTS), f"a table from effort ({', '.join(EFFORTS)}) to a string"),
-          ("env", _table, "a table of strings to strings"))
+CHECKS = (
+    ("flags", _strings, "a list of strings"),
+    ("allow", _strings, "a list of strings"),
+    ("tiers", lambda v: _table(v, TIERS), 'a table from tier "1"–"4" to a model name'),
+    (
+        "efforts",
+        lambda v: _table(v, EFFORTS),
+        f"a table from effort ({', '.join(EFFORTS)}) to a string",
+    ),
+    ("env", _table, "a table of strings to strings"),
+)
 
 
 class ClaudeCommon:
-    UNSET = ("CLAUDE_CODE_CHILD_SESSION", "CLAUDE_JOB_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
-             "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_EXECPATH",
-             "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT")
+    UNSET = (
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_JOB_DIR",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_PID",
+        "CLAUDE_EFFORT",
+    )
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
     # This core's own plugin (<plugin>@<marketplace>): a session loads the user's plugins, never it.
     PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
-    NOTE = ("Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
-            "on a permission prompt.")
-    PROBE = ("claude", "-p", "Reply with OK.", "--model", "haiku", "--output-format", "stream-json", "--verbose",
-             "--setting-sources", "user", "--strict-mcp-config")
+    NOTE = (
+        "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
+        "on a permission prompt."
+    )
+    PROBE = (
+        "claude",
+        "-p",
+        "Reply with OK.",
+        "--model",
+        "haiku",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+    )
 
     def __init__(self, config: Mapping):
         for key, ok, what in CHECKS:
@@ -103,8 +137,11 @@ class ClaudeCommon:
         return dict(self._env)
 
     def config_dir(self) -> str:
-        return self._env.get("CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR") \
+        return (
+            self._env.get("CLAUDE_CONFIG_DIR")
+            or os.environ.get("CLAUDE_CONFIG_DIR")
             or os.path.expanduser("~/.claude")
+        )
 
     def transcript(self, cwd: str, sid: str) -> str:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
@@ -124,8 +161,15 @@ class ClaudeCommon:
             return sid
         raise ConfigError(f"claude session ids are UUIDs, got {sid!r:.80}")
 
-    def launch(self, spec: Spec, resume: bool, settings: Mapping, head: tuple[str, ...] = (),
-               output: tuple[str, ...] = (), tail: tuple[str, ...] = ()) -> Launch:
+    def launch(
+        self,
+        spec: Spec,
+        resume: bool,
+        settings: Mapping,
+        head: tuple[str, ...] = (),
+        output: tuple[str, ...] = (),
+        tail: tuple[str, ...] = (),
+    ) -> Launch:
         """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
         sid = self.uuid(spec.sid)
         model, effort = self.model(spec.tier), self.effort(spec.effort)
@@ -133,18 +177,31 @@ class ClaudeCommon:
         cwd = access.cwd or spec.workdir
         mcp = os.path.join(cwd, ".mcp.json")
         allow = (*(f"Bash({command})" for command in access.commands), *self.allow)
-        argv = ("claude", *head, "--resume" if resume else "--session-id", sid,
-                *(("--model", model) if model is not None else ()),
-                *(("--effort", effort) if effort is not None else ()),
-                *self.flags,
-                "--setting-sources", "user,project,local" if access.project else "user",
-                *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
-                *output, "--settings", json.dumps(settings),
-                *(arg for d in access.dirs for arg in ("--add-dir", d)),
-                *(("--allowedTools", *allow) if allow else ()),
-                *tail)
-        return Launch(argv, env=self.env(), unset=self.UNSET, transcript=self.transcript(cwd, sid),
-                      resume=self.resume(cwd, sid, spec.workdir))
+        argv = (
+            "claude",
+            *head,
+            "--resume" if resume else "--session-id",
+            sid,
+            *(("--model", model) if model is not None else ()),
+            *(("--effort", effort) if effort is not None else ()),
+            *self.flags,
+            "--setting-sources",
+            "user,project,local" if access.project else "user",
+            *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
+            *output,
+            "--settings",
+            json.dumps(settings),
+            *(arg for d in access.dirs for arg in ("--add-dir", d)),
+            *(("--allowedTools", *allow) if allow else ()),
+            *tail,
+        )
+        return Launch(
+            argv,
+            env=self.env(),
+            unset=self.UNSET,
+            transcript=self.transcript(cwd, sid),
+            resume=self.resume(cwd, sid, spec.workdir),
+        )
 
     def probe(self) -> Launch:
         return Launch(self.PROBE, env=self.env(), unset=self.UNSET)
@@ -164,7 +221,10 @@ class ClaudeCommon:
         windows = info.get("unifiedWindows")
         windows = windows if isinstance(windows, dict) else {}
         five_hour = _window(windows.get("five_hour"))
-        weeks = filter(None, (_window(window) for name, window in windows.items() if name.startswith("seven_day")))
+        weeks = filter(
+            None,
+            (_window(window) for name, window in windows.items() if name.startswith("seven_day")),
+        )
         weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
             resets = number(info.get("resetsAt"))
@@ -190,7 +250,7 @@ class ClaudeCommon:
         else:
             resumable = "yes" if stat.S_ISREG(mode) else "unknown"
         paths = [path]
-        for top, _, files in os.walk(path[:-len(".jsonl")]):
+        for top, _, files in os.walk(path[: -len(".jsonl")]):
             paths += (os.path.join(top, name) for name in files)
         times = []
         for each in paths:

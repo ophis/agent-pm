@@ -17,7 +17,9 @@ NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
 SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
 SHA = re.compile(r"[0-9a-f]{40}")
-URL = re.compile(r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
+URL = re.compile(
+    r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?"
+)
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 USERINFO = re.compile(r"//[^@/\s]+@")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
@@ -44,7 +46,9 @@ class Once(argparse.Action):
 
 
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    return subprocess.run(
+        argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL
+    )
 
 
 @dataclass(frozen=True)
@@ -56,8 +60,14 @@ class Repo:
     @classmethod
     def parse(cls, spec: str) -> "Repo":
         m = SPEC.fullmatch(spec.strip())
-        if not m or m.group(3) in (".", "..") or (m.group(1) is None and spec.strip().startswith("https://")):
-            raise Invalid(f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name")
+        if (
+            not m
+            or m.group(3) in (".", "..")
+            or (m.group(1) is None and spec.strip().startswith("https://"))
+        ):
+            raise Invalid(
+                f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name"
+            )
         return cls((m.group(1) or "github.com").lower(), m.group(2), m.group(3))
 
     @property
@@ -70,7 +80,11 @@ def url_slug(url: str) -> str | None:
     if not m:
         return None
     scheme, host, port, owner, name = m.groups()
-    return f"{host}:{port}/{owner}/{name}" if port and scheme in ("http", "https") else f"{host}/{owner}/{name}"
+    return (
+        f"{host}:{port}/{owner}/{name}"
+        if port and scheme in ("http", "https")
+        else f"{host}/{owner}/{name}"
+    )
 
 
 def origin(url: str) -> str | None:
@@ -108,7 +122,11 @@ def trusted_dirs(cfg: dict) -> frozenset[str]:
     if not isinstance(paths, list):
         raise ValueError("trusted_dirs: want a list of local paths")
     for p in paths:
-        if not isinstance(p, str) or not p.startswith(("/", "~")) or os.path.expanduser(p).startswith("~"):
+        if (
+            not isinstance(p, str)
+            or not p.startswith(("/", "~"))
+            or os.path.expanduser(p).startswith("~")
+        ):
             raise ValueError(f"trusted_dirs: {p!r:.80} is not an absolute or expandable ~ path")
     return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
 
@@ -127,7 +145,7 @@ def workers_per_column(cfg: dict) -> int | None:
     return v
 
 
-RETILES = ("all", "open-close", "off")   # tmux_host.RETILES, which repo.py must not import
+RETILES = ("all", "open-close", "off")  # tmux_host.RETILES, which repo.py must not import
 
 
 def grid_retile(cfg: dict) -> str | None:
@@ -140,15 +158,24 @@ def grid_retile(cfg: dict) -> str | None:
 def temp_dirs() -> tuple[str, ...]:
     dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
     try:
-        dirs.append(subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True, timeout=SHORT,
-                                   stdin=subprocess.DEVNULL).stdout.strip())
+        dirs.append(
+            subprocess.run(
+                ["getconf", "DARWIN_USER_TEMP_DIR"],
+                capture_output=True,
+                text=True,
+                timeout=SHORT,
+                stdin=subprocess.DEVNULL,
+            ).stdout.strip()
+        )
     except (OSError, subprocess.SubprocessError):
         pass
     return tuple(dict.fromkeys(os.path.realpath(d) for d in dirs if d))
 
 
 def under(path: str, roots) -> str | None:
-    return next((r for r in map(os.path.realpath, roots) if os.path.commonpath([path, r]) == r), None)
+    return next(
+        (r for r in map(os.path.realpath, roots) if os.path.commonpath([path, r]) == r), None
+    )
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
@@ -217,11 +244,23 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
     if not os.path.lexists(wt):
         return wt, False
     dotgit = os.path.join(wt, ".git")
-    if os.path.islink(wt) or os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
+    if (
+        os.path.islink(wt)
+        or os.path.islink(dotgit)
+        or not (os.path.isdir(dotgit) or os.path.isfile(dotgit))
+    ):
         raise Invalid(f"{wt} exists and is not a checkout")
     if os.path.isfile(dotgit):
-        res = run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"], SHORT) if clone else None
-        if res is None or res.returncode != 0 or os.path.realpath(res.stdout.strip()) != os.path.join(clone, ".git"):
+        res = (
+            run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"], SHORT)
+            if clone
+            else None
+        )
+        if (
+            res is None
+            or res.returncode != 0
+            or os.path.realpath(res.stdout.strip()) != os.path.join(clone, ".git")
+        ):
             raise Invalid(f"{wt} is not a checkout of {repo.slug}")
     res = run(["git", "-C", wt, "remote", "get-url", "origin"], SHORT)
     if res.returncode != 0 or origin(res.stdout) != repo.slug.lower():
@@ -232,7 +271,20 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
 def clone_repo(repo: Repo, wt: str, *, run: Runner) -> None:
     os.makedirs(os.path.dirname(wt), exist_ok=True)
     # The repo is untrusted: no symlinks that could point outside the checkout.
-    res = run(["gh", "repo", "clone", repo.slug, wt, "--", "-c", "core.symlinks=false", "--filter=blob:none"], LONG)
+    res = run(
+        [
+            "gh",
+            "repo",
+            "clone",
+            repo.slug,
+            wt,
+            "--",
+            "-c",
+            "core.symlinks=false",
+            "--filter=blob:none",
+        ],
+        LONG,
+    )
     if res.returncode != 0:
         raise RuntimeError(f"gh repo clone: {err_text(res)}")
 
@@ -246,15 +298,23 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
     found, path = {}, None
     for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
-            path = os.path.realpath(line[len("worktree "):])
+            path = os.path.realpath(line[len("worktree ") :])
             found[path] = None
         elif line.startswith("branch refs/heads/") and path:
-            found[path] = line[len("branch refs/heads/"):]
+            found[path] = line[len("branch refs/heads/") :]
     return found
 
 
-def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh, temp=None,
-             links=frozenset()) -> dict:
+def worktree(
+    spec: str,
+    branch: str,
+    base: str,
+    *,
+    slug: str | None = None,
+    run: Runner = sh,
+    temp=None,
+    links=frozenset(),
+) -> dict:
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -265,14 +325,18 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
     wt, exists = place(repo, base, clone, slug, run=run)
     if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
         index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
-        if not os.path.isfile(index):   # its checkout never finished: it holds nothing
+        if not os.path.isfile(index):  # its checkout never finished: it holds nothing
             git(run, clone, "worktree", "remove", "--force", wt, timeout=LONG)
             exists = False
         else:
-            found = run(["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT).stdout.strip()
+            found = run(
+                ["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT
+            ).stdout.strip()
             if found != symlinks:
-                raise Invalid(f"{wt} has core.symlinks={found or 'unset'}, trusted_dirs gives {symlinks}: "
-                              "remove it and run again")
+                raise Invalid(
+                    f"{wt} has core.symlinks={found or 'unset'}, trusted_dirs gives {symlinks}: "
+                    "remove it and run again"
+                )
     push, default = info(repo, run=run)
     if not isinstance(default, str) or not BRANCH.fullmatch(default):
         raise Invalid(f"{repo.slug}: unsafe default branch name")
@@ -302,10 +366,26 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
             # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds our own path
             # when it was deleted by hand but is still registered.
-            if run(["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT).stdout.strip() != "true":
+            if (
+                run(
+                    ["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT
+                ).stdout.strip()
+                != "true"
+            ):
                 git(run, clone, "config", "extensions.worktreeConfig", "true")
             force = ["--force"] if mine in trees else []
-            git(run, clone, "worktree", "add", "--no-checkout", *force, *opts, wt, start, timeout=LONG)
+            git(
+                run,
+                clone,
+                "worktree",
+                "add",
+                "--no-checkout",
+                *force,
+                *opts,
+                wt,
+                start,
+                timeout=LONG,
+            )
             try:
                 git(run, wt, "config", "--worktree", "core.symlinks", symlinks)
                 git(run, wt, "reset", "-q", "--hard", timeout=LONG)
@@ -317,27 +397,38 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
     commit = git(run, wt, "rev-parse", "HEAD").strip()
     if not SHA.fullmatch(commit):
         raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
-    return {"repo": f"{repo.owner}/{repo.name}", "host": repo.host, "default": default, "branch": branch, "commit": commit,
-            "worktree": wt, "permalink_base": f"https://{repo.slug}/blob/{commit}/", "push": push}
+    return {
+        "repo": f"{repo.owner}/{repo.name}",
+        "host": repo.host,
+        "default": default,
+        "branch": branch,
+        "commit": commit,
+        "worktree": wt,
+        "permalink_base": f"https://{repo.slug}/blob/{commit}/",
+        "push": push,
+    }
 
 
 def common_dir(wt: str) -> str | None:
     def read(path):
-        if not os.path.isfile(path):   # a FIFO would block open()
+        if not os.path.isfile(path):  # a FIFO would block open()
             return None
         with open(path, "rb") as f:
             return f.read(4096).decode().rstrip("\r\n")
+
     try:
         dotgit = os.path.join(wt, ".git")
         text = None if os.path.islink(dotgit) else read(dotgit)
         if not text or not text.startswith("gitdir: "):
             return None
-        gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: "):]))
+        gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: ") :]))
         rel = read(os.path.join(gitdir, "commondir"))
         common = os.path.realpath(os.path.join(gitdir, rel)) if rel else None
-    except (OSError, ValueError):   # UnicodeDecodeError and a NUL in a path are ValueErrors
+    except (OSError, ValueError):  # UnicodeDecodeError and a NUL in a path are ValueErrors
         return None
-    return common if common and os.path.basename(common) == ".git" and os.path.isdir(common) else None
+    return (
+        common if common and os.path.basename(common) == ".git" and os.path.isdir(common) else None
+    )
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
@@ -366,46 +457,108 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: datetime.fromisoformat(e["at"]))
 
 
-def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
-           users: list[str] | None = None, base_branch: str | None = None) -> dict:
+def status(
+    spec: str,
+    branch: str,
+    base: str,
+    *,
+    slug: str | None = None,
+    run: Runner = sh,
+    users: list[str] | None = None,
+    base_branch: str | None = None,
+) -> dict:
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
-    since = git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip() if docs else ""
+    since = (
+        git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip()
+        if docs
+        else ""
+    )
     login = gh_json(run, ["api", "--hostname", repo.host, "user"]).get("login")
-    rows = gh_json(run, ["pr", "list", "--repo", repo.slug, "--head", branch, "--state", "all",
-                         "--json", "number,url,state,baseRefName,isCrossRepository,author", "--limit", "100"])
-    mine = [r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login]
+    rows = gh_json(
+        run,
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo.slug,
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--json",
+            "number,url,state,baseRefName,isCrossRepository,author",
+            "--limit",
+            "100",
+        ],
+    )
+    mine = [
+        r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login
+    ]
     by_user = {u.lower() for u in users} if users else {login.lower()}
     pr = {k: mine[0].get(k) for k in ("number", "url", "state", "baseRefName")} if mine else None
-    onto = pr["baseRefName"] if pr else base_branch if base_branch is not None else info(repo, run=run)[1]
+    onto = (
+        pr["baseRefName"]
+        if pr
+        else base_branch
+        if base_branch is not None
+        else info(repo, run=run)[1]
+    )
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     user, others = [], []
     if pr:
         api = f"repos/{repo.owner}/{repo.name}"
-        for path, key, kind in ((f"{api}/issues/{pr['number']}/comments", "created_at", "comment"),
-                                (f"{api}/pulls/{pr['number']}/reviews", "submitted_at", "review"),
-                                (f"{api}/pulls/{pr['number']}/comments", "created_at", "review_comment")):
-            for page in gh_json(run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path]):
+        for path, key, kind in (
+            (f"{api}/issues/{pr['number']}/comments", "created_at", "comment"),
+            (f"{api}/pulls/{pr['number']}/reviews", "submitted_at", "review"),
+            (f"{api}/pulls/{pr['number']}/comments", "created_at", "review_comment"),
+        ):
+            for page in gh_json(
+                run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path]
+            ):
                 for c in page:
                     at = c.get(key)
-                    if at is None or (since and datetime.fromisoformat(at) <= datetime.fromisoformat(since)):
+                    if at is None or (
+                        since and datetime.fromisoformat(at) <= datetime.fromisoformat(since)
+                    ):
                         continue
-                    e = {"at": at, "kind": kind, "author": _author(c, "user"), "body": c.get("body") or ""}
+                    e = {
+                        "at": at,
+                        "kind": kind,
+                        "author": _author(c, "user"),
+                        "body": c.get("body") or "",
+                    }
                     if kind == "review":
                         e["state"] = c.get("state")
                     if kind == "review_comment":
-                        e["path"], e["line"] = c.get("path"), c.get("line") or c.get("original_line")
+                        e["path"], e["line"] = (
+                            c.get("path"),
+                            c.get("line") or c.get("original_line"),
+                        )
                     (user if (e["author"] or "").lower() in by_user else others).append(e)
-    return {"pr": pr, "base": onto, "plan_docs": docs, "since": since or None, "user": _oldest_first(user),
-            "others": _oldest_first(others)}
+    return {
+        "pr": pr,
+        "base": onto,
+        "plan_docs": docs,
+        "since": since or None,
+        "user": _oldest_first(user),
+        "others": _oldest_first(others),
+    }
 
 
-def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, config: str = CONFIG, temp=None) -> int:
+def main(
+    argv: list[str],
+    run: Runner = sh,
+    out=sys.stdout,
+    err=sys.stderr,
+    config: str = CONFIG,
+    temp=None,
+) -> int:
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("worktree", "status"):
@@ -420,13 +573,30 @@ def main(argv: list[str], run: Runner = sh, out=sys.stdout, err=sys.stderr, conf
     try:
         cfg = read_config(config)
         if a.cmd == "worktree":
-            r = worktree(a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg))
+            r = worktree(
+                a.repo, a.branch, a.dir, slug=a.name, run=run, temp=temp, links=trusted_dirs(cfg)
+            )
         else:
-            r = status(a.repo, a.branch, a.dir, slug=a.name, run=run, users=cfg.get("users"), base_branch=a.base)
+            r = status(
+                a.repo,
+                a.branch,
+                a.dir,
+                slug=a.name,
+                run=run,
+                users=cfg.get("users"),
+                base_branch=a.base,
+            )
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2
-    except (RuntimeError, OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired) as e:
+    except (
+        RuntimeError,
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        subprocess.TimeoutExpired,
+    ) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 1
     json.dump(r, out)

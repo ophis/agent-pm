@@ -4,13 +4,24 @@ import hashlib
 import os
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import CONFIG, PATH, TASKS, load_config, runnable  # noqa: E402
+
 import linear  # noqa: E402
-from linear import CONFIG_ERRORS, config_error, linear_error, linear_gql, log, one_line, parse_time, role_ids, team  # noqa: E402
 import sessions  # noqa: E402
+from linear import (  # noqa: E402
+    CONFIG_ERRORS,
+    config_error,
+    linear_error,
+    linear_gql,
+    log,
+    one_line,
+    parse_time,
+    role_ids,
+    team,
+)
 
 HELP = """Promote issues in Handoff to the next role.
 
@@ -33,14 +44,20 @@ NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving bac
 Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
   project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
   nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
-Q_DETAIL = """query($i: String!) { issue(id: $i) { state { id }
-  """ + linear.HISTORY + """
+Q_DETAIL = (
+    """query($i: String!) { issue(id: $i) { state { id }
+  """
+    + linear.HISTORY
+    + """
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
   inverseRelations(first: 250) { nodes { issue { id } } } } }"""
+)
 Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
 M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
-M_RELATE = "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
+M_RELATE = (
+    "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
+)
 
 
 def child_id(source_id, target, handoff_at):
@@ -49,9 +66,11 @@ def child_id(source_id, target, handoff_at):
 
 
 def child_title(prefix, src_prefix, title):
-    title = one_line(title)  # agent-written: must not break out of its line and pose as the human Instructions section
+    title = one_line(
+        title
+    )  # agent-written: must not break out of its line and pose as the human Instructions section
     if src_prefix and title.startswith(f"{src_prefix}: "):
-        title = title[len(src_prefix) + 2:]
+        title = title[len(src_prefix) + 2 :]
     return f"{prefix}: {title}"
 
 
@@ -67,7 +86,9 @@ class Promoter:
         self.say = functools.partial(log, "promote", dry=dry)
 
     def run(self):
-        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))["issues"]["nodes"]
+        issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))[
+            "issues"
+        ]["nodes"]
         work = []
         for src in issues:
             role = self.roles[src["assignee"]["id"]]
@@ -84,8 +105,12 @@ class Promoter:
                     self.say("handoff-error", src["identifier"], error=one_line(e))
         for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
             if self.wait and self.now - parse_time(latest) < MATURE:
-                self.say("handoff-wait", src["identifier"], once=True,
-                         reason=f"in Handoff under {MATURE.seconds // 60} min")
+                self.say(
+                    "handoff-wait",
+                    src["identifier"],
+                    once=True,
+                    reason=f"in Handoff under {MATURE.seconds // 60} min",
+                )
                 continue
             found = [None]
             try:
@@ -99,24 +124,45 @@ class Promoter:
 
     def moves(self, src, detail):
         hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
-        cutoff = max((h["createdAt"] for h in hist if h["toStateId"] == self.states["in_review"]
-                      and h["fromStateId"] != self.states["handoff"]), key=parse_time, default=None)
-        handoffs = [h["createdAt"] for h in hist if h["toStateId"] == self.states["handoff"]
-                    and (cutoff is None or parse_time(h["createdAt"]) > parse_time(cutoff))]
+        cutoff = max(
+            (
+                h["createdAt"]
+                for h in hist
+                if h["toStateId"] == self.states["in_review"]
+                and h["fromStateId"] != self.states["handoff"]
+            ),
+            key=parse_time,
+            default=None,
+        )
+        handoffs = [
+            h["createdAt"]
+            for h in hist
+            if h["toStateId"] == self.states["handoff"]
+            and (cutoff is None or parse_time(h["createdAt"]) > parse_time(cutoff))
+        ]
         first = handoffs[0] if handoffs else src["createdAt"]
         return cutoff, first, handoffs[-1] if handoffs else first
 
     def instructions(self, detail, cutoff):
-        return sorted((c for c in detail["comments"]["nodes"] if c["user"] and (c["user"].get("email") or "").lower() in self.humans
-                       and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))),
-                      key=lambda c: parse_time(c["createdAt"]))
+        return sorted(
+            (
+                c
+                for c in detail["comments"]["nodes"]
+                if c["user"]
+                and (c["user"].get("email") or "").lower() in self.humans
+                and (cutoff is None or parse_time(c["createdAt"]) > parse_time(cutoff))
+            ),
+            key=lambda c: parse_time(c["createdAt"]),
+        )
 
     def promote(self, src, detail, role, nxt, cutoff, first, found):
         comments = self.instructions(detail, cutoff)
         required = self.cfg["roles"].get(role, {}).get("require_instructions", True)
         if not comments and required:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
-                self.say("handoff-bounce", src["identifier"], to="in_review", reason="no instructions")
+                self.say(
+                    "handoff-bounce", src["identifier"], to="in_review", reason="no instructions"
+                )
             return
         cid = child_id(src["id"], nxt, first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
@@ -126,61 +172,117 @@ class Promoter:
             self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
             return
         else:
-            child = found[0] = linear.call(self.gql, M_CREATE, "issueCreate", **{"in": {
-                "id": cid, "teamId": self.team.id, "projectId": src["project"]["id"], "assigneeId": self.ids[nxt],
-                "stateId": self.states["todo"], "priority": src["priority"],
-                "title": child_title(TASKS[nxt].prefix, TASKS[role].prefix or None, src["title"]),
-                "description": self.description(src, comments, detail)}})["issue"]
+            child = found[0] = linear.call(
+                self.gql,
+                M_CREATE,
+                "issueCreate",
+                **{
+                    "in": {
+                        "id": cid,
+                        "teamId": self.team.id,
+                        "projectId": src["project"]["id"],
+                        "assigneeId": self.ids[nxt],
+                        "stateId": self.states["todo"],
+                        "priority": src["priority"],
+                        "title": child_title(
+                            TASKS[nxt].prefix, TASKS[role].prefix or None, src["title"]
+                        ),
+                        "description": self.description(src, comments, detail),
+                    }
+                },
+            )["issue"]
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
         if child["id"] not in related and not self.dry:
-            linear.call(self.gql, M_RELATE, "issueRelationCreate",
-                        **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}})
+            linear.call(
+                self.gql,
+                M_RELATE,
+                "issueRelationCreate",
+                **{"in": {"type": "related", "issueId": src["id"], "relatedIssueId": child["id"]}},
+            )
         if not self.move(src, "done", "promote"):
             return
         self.say("promote", src["identifier"], to=child["identifier"])
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
         except (Exception, SystemExit) as e:
-            self.say("handoff-error", src["identifier"], reason="promoted, but the comment failed", error=one_line(e))
+            self.say(
+                "handoff-error",
+                src["identifier"],
+                reason="promoted, but the comment failed",
+                error=one_line(e),
+            )
 
     def description(self, src, comments, detail):
         parts = [f"Handoff from {src['identifier']}: {src['url']}"]
         attachments = [a for a in src["attachments"]["nodes"] if not sessions.is_record(a)]
         if attachments:
-            parts.append("## Source\n" + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments))
+            parts.append(
+                "## Source\n"
+                + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments)
+            )
         if comments:
-            parts.append("## Instructions\n" + "\n\n".join(
-                f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments))
-        everything = sorted((c for c in detail["comments"]["nodes"] if not sessions.is_comment(c)),
-                            key=lambda c: parse_time(c["createdAt"]))
+            parts.append(
+                "## Instructions\n"
+                + "\n\n".join(
+                    f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments
+                )
+            )
+        everything = sorted(
+            (c for c in detail["comments"]["nodes"] if not sessions.is_comment(c)),
+            key=lambda c: parse_time(c["createdAt"]),
+        )
         if everything:
             # Quoted so agent-written text cannot pose as a section of this description.
-            parts.append("## Comments\n" + "\n".join(
-                f"- {(c['user'] or {}).get('name', 'integration')}, {c['createdAt']}:\n"
-                + "\n".join(f"  > {line}" for line in c["body"].splitlines()) for c in everything))
+            parts.append(
+                "## Comments\n"
+                + "\n".join(
+                    f"- {(c['user'] or {}).get('name', 'integration')}, {c['createdAt']}:\n"
+                    + "\n".join(f"  > {line}" for line in c["body"].splitlines())
+                    for c in everything
+                )
+            )
         return "\n\n".join(parts)
 
     def bounce_failed(self, src, error, child):
-        body = f"Handoff failed: {str(error)[:300]}" + (f" The next-stage issue {child['identifier']} already exists." if child else "")
+        body = f"Handoff failed: {str(error)[:300]}" + (
+            f" The next-stage issue {child['identifier']} already exists." if child else ""
+        )
         try:
             if self.comment_and_move(src, body, "handoff-failed"):
                 self.say("handoff-failed", src["identifier"], to="in_review")
         except linear.Unavailable:
             raise
         except (Exception, SystemExit) as e:
-            self.say("handoff-error", src["identifier"], reason="could not move to In Review", error=one_line(e))
+            self.say(
+                "handoff-error",
+                src["identifier"],
+                reason="could not move to In Review",
+                error=one_line(e),
+            )
 
     def comment(self, src, body):
         if not self.dry:
             linear.comment(self.gql, src["id"], body)
 
     def move(self, src, state, step):
-        return self.dry or self.moved(src, step, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"]))
+        return self.dry or self.moved(
+            src, step, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"])
+        )
 
     def comment_and_move(self, src, body, step):
-        return self.dry or self.moved(src, step, linear.comment_and_move(
-            self.gql, src["id"], body, self.states["in_review"], self.states["handoff"], self.cfg.get("human_members") or []))
+        return self.dry or self.moved(
+            src,
+            step,
+            linear.comment_and_move(
+                self.gql,
+                src["id"],
+                body,
+                self.states["in_review"],
+                self.states["handoff"],
+                self.cfg.get("human_members") or [],
+            ),
+        )
 
     def moved(self, src, step, left):
         if left is not None:
@@ -211,7 +313,7 @@ def main(argv, gql=linear_gql, now=None, config=CONFIG, pruner=None):
         runnable(cfg)
     except CONFIG_ERRORS as e:
         return config_error("promote", e, dry)
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     try:
         promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
         promoter.run()

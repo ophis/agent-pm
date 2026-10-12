@@ -26,4 +26,4 @@ python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
 python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
 ```
 
-CI (`.github/workflows/test.yml`) runs each in its own job. Never run them in one process with the repo's `tests/`: nothing here imports it or the old core (root `core/src/`) (`tests/guards.py` `old_core`).
+CI (`.github/workflows/test.yml`) runs each in its own job, and Ruff over the whole repo (root `CLAUDE.md` › Commands). Never run them in one process with the repo's `tests/`: nothing here imports it or the old core (root `core/src/`) (`tests/guards.py` `old_core`).

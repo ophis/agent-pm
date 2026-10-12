@@ -1,8 +1,10 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
+
+from new.tests import CORE, SRC
+
 import os
 import unittest
 
-from new.tests import CORE, SRC
 from composer import base
 from utils import config_file
 
@@ -20,8 +22,10 @@ class Paths(unittest.TestCase):
 
 class Fill(unittest.TestCase):
     def test_a_default_is_used_when_the_value_is_missing_and_a_value_beats_it(self):
-        for text, values, want in (("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "https://github.com/o/n"),
-                                   ("{{host|github.com}}", {"host": "ghe.example.com"}, "ghe.example.com")):
+        for text, values, want in (
+            ("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "https://github.com/o/n"),
+            ("{{host|github.com}}", {"host": "ghe.example.com"}, "ghe.example.com"),
+        ):
             with self.subTest(values=values):
                 self.assertEqual(base.fill(text, values, "t"), want)
 
@@ -62,16 +66,20 @@ text **not** an item
 class Outline(unittest.TestCase):
     def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
         steps = ("Role", "Steps")
-        self.assertEqual(base.outline(OUTLINED), [
-            (0, ("Role",), "role", True),
-            (3, steps, "custom", True),
-            (4, steps + ("Which build",), "custom", False),
-            (5, steps + ("Done",), "custom", False),
-            (6, steps + ("Nested",), "custom", False),
-            (15, steps + ("Deep",), "deep", True),
-            (16, steps + ("Deep", "Item"), "deep", False),
-            (17, ("Role", "Other"), "other", True),
-            (18, ("Role", "Other", "Other item"), "other", False)])
+        self.assertEqual(
+            base.outline(OUTLINED),
+            [
+                (0, ("Role",), "role", True),
+                (3, steps, "custom", True),
+                (4, steps + ("Which build",), "custom", False),
+                (5, steps + ("Done",), "custom", False),
+                (6, steps + ("Nested",), "custom", False),
+                (15, steps + ("Deep",), "deep", True),
+                (16, steps + ("Deep", "Item"), "deep", False),
+                (17, ("Role", "Other"), "other", True),
+                (18, ("Role", "Other", "Other item"), "other", False),
+            ],
+        )
 
     def test_a_skipped_level_nests_under_the_last_shallower_heading(self):
         paths = [path for _, path, _, _ in base.outline("# A\n### B\n## C\n### D\n# E\n")]
@@ -82,8 +90,12 @@ class Outline(unittest.TestCase):
         self.assertEqual(base.outline(text), [(4, ("Six",), "six", True)])
 
     def test_an_explicit_id_is_the_whole_previous_unfenced_line(self):
-        cases = {'<a id="x"></a>\n## H': "x", 'a <a id="x"></a>\n## H': "h", '<a id="x"></a>\n\n## H': "h",
-                 '```\n<a id="x"></a>\n```\n## H': "h"}
+        cases = {
+            '<a id="x"></a>\n## H': "x",
+            'a <a id="x"></a>\n## H': "h",
+            '<a id="x"></a>\n\n## H': "h",
+            '```\n<a id="x"></a>\n```\n## H': "h",
+        }
         for text, want in cases.items():
             with self.subTest(text=text):
                 self.assertEqual([a for _, _, a, h in base.outline(text) if h], [want])
@@ -94,7 +106,9 @@ class Outline(unittest.TestCase):
     def test_a_bold_item_opens_its_line(self):
         for line in ("**X** y", "- **X**", "* **X.**", "12. **X:**", "  - **X**", "**X**: y"):
             with self.subTest(line=line):
-                self.assertEqual([path for _, path, _, _ in base.outline(f"# T\n{line}\n")][1:], [("T", "X")])
+                self.assertEqual(
+                    [path for _, path, _, _ in base.outline(f"# T\n{line}\n")][1:], [("T", "X")]
+                )
         for line in ("a **X**", "-**X**", "**X", "- a **X**"):
             with self.subTest(line=line):
                 self.assertEqual(len(base.outline(f"# T\n{line}\n")), 1)
