@@ -366,6 +366,11 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.attach(), [self.sid, "live", "", self.bound().native_id])
         handle.send("silent")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
+        live_tmux.wait(
+            lambda: len([row for row in self.hooks() if row["hook"] == "Stop"]) == 2,
+            WAIT,
+            what="both Stop hooks logged",
+        )
         self.assertIsNone(self.hooks()[-1]["payload"]["last_assistant_message"])
         self.assertEqual(self.lines(2), ["w1 done"] * 2)
 
