@@ -1,4 +1,4 @@
-"""driver.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
+"""session.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
 the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
@@ -18,9 +18,11 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
+from agent_pm.session import api, records
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
-from agent_pm.session.driver import api, records, registry, tmux_host
-from agent_pm.session.driver.modes import tui
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes import tui
 
 from new.tests import fake_adapter, live_tmux
 from new.tests.case import PY, Case, child_env
@@ -35,7 +37,8 @@ fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
 sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 registry.configure(json.loads(config))
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
@@ -43,10 +46,10 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session.driver import api; api.close(sys.argv[1])"
+CLOSE = "import sys; from agent_pm.session import api; api.close(sys.argv[1])"
 SLOW_CLOSE = """import sys, time
-from agent_pm.session.driver import api
-from agent_pm.session.driver.modes import tui
+from agent_pm.session import api
+from agent_pm.session.modes import tui
 remove = tui._remove
 def slow(*args):
     open(sys.argv[2], "w").close()

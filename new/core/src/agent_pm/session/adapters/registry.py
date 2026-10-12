@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from agent_pm.config import CONFIG, LOCAL
 from agent_pm.session.adapters.base import Adapter, ConfigError
-from agent_pm.session.driver import tmux_host
+from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils.config_file import read_config
 
 PACKAGE = __package__.rpartition(".")[0]

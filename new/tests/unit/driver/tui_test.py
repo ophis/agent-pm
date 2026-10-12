@@ -1,4 +1,4 @@
-"""driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
+"""modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
@@ -17,6 +17,7 @@ import threading
 import unittest
 from unittest import mock
 
+from agent_pm.session import api
 from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
@@ -30,9 +31,9 @@ from agent_pm.session.adapters.base import (
     SessionInfo,
     TurnEnd,
 )
-from agent_pm.session.driver import api, tmux_host
-from agent_pm.session.driver.errors import DriverError
-from agent_pm.session.driver.modes import tui
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes import tui
+from agent_pm.session.types import DriverError
 
 from new.tests import fake_adapter
 from new.tests.case import ROOT, Case
@@ -191,7 +192,7 @@ class PathsTest(Base):
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
-        hook = os.path.join(ROOT, "agent_pm", "session", "driver", "modes", "tui_hook.py")
+        hook = os.path.join(ROOT, "agent_pm", "session", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
         self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
         self.assertTrue(os.path.isabs(argv[2]))

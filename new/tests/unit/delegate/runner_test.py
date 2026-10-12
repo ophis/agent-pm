@@ -36,7 +36,8 @@ from agent_pm.role.delegate import (
 )
 from agent_pm.role.delegate.outcome import save
 from agent_pm.role.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
 
 from new.tests import fake_adapter
@@ -107,9 +108,9 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 
 class FakeHandle:
-    """driver.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
+    """session.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
     left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
-    driver.api.start's stand-in."""
+    session.api.start's stand-in."""
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
@@ -835,7 +836,7 @@ LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 
 class TuiPolicy(Base):
-    """The tui policy over a FakeHandle (driver.api.start patched as delegate.runner sees it)."""
+    """The tui policy over a FakeHandle (session.api.start patched as delegate.runner sees it)."""
 
     def setUp(self):
         super().setUp()

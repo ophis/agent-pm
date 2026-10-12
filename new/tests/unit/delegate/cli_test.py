@@ -23,8 +23,8 @@ from agent_pm.role import composer
 from agent_pm.role.composer.prompt import RESUME
 from agent_pm.role.delegate import Begun, Outcome, Result, cli, runner
 from agent_pm.role.delegate.runner import STOP_LIMIT
-from agent_pm.session.adapters import base
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import base, registry
 
 from new.tests import fake_adapter
 from new.tests.case import PY, Case, child_env

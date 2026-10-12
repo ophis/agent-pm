@@ -1,4 +1,4 @@
-"""driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
+"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
 start (no pane), detach, respawn, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
 file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
@@ -22,7 +22,7 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-from agent_pm.session.driver import tmux_host
+from agent_pm.session.hosts.tmux import tmux_host
 
 from new.tests import guards
 from new.tests.case import Case

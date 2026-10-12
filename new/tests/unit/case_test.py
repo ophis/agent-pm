@@ -7,7 +7,7 @@ import types
 import unittest
 from unittest import mock
 
-from agent_pm.session.driver import registry
+from agent_pm.session.adapters import registry
 from agent_pm.utils import paths
 
 from new.tests.case import NEW, ORCH_ROOT, ROOT, Case, child_env

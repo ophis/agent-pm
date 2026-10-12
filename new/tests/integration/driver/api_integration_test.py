@@ -1,4 +1,4 @@
-"""driver.api over fake runtimes: events, idle timeouts, exits, stop, process groups, inherited pipes,
+"""session.api over fake runtimes: events, idle timeouts, exits, stop, process groups, inherited pipes,
 launch environment, limits and resume. Custom adapters use registry.configure with in-process module tables."""
 
 import dataclasses
@@ -16,6 +16,8 @@ import types
 import unittest
 from unittest import mock
 
+from agent_pm.session import api, records
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
     Activity,
@@ -28,7 +30,6 @@ from agent_pm.session.adapters.base import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.driver import api, records, registry
 
 from new.tests import fake_adapter
 from new.tests.case import Case

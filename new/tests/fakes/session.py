@@ -9,7 +9,7 @@ import re
 import uuid
 
 from agent_pm.session import DriverError, NotDisplayable, Session
-from agent_pm.session.driver.api import (
+from agent_pm.session.api import (
     Exited,
     Reply,
     SessionInfo,

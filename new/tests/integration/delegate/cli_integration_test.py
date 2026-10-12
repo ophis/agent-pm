@@ -15,7 +15,8 @@ from unittest import mock
 
 from agent_pm.role.composer.prompt import RESUME
 from agent_pm.role.delegate.runner import FIX
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 
 from new.tests.case import PY, Case, child_env
 from new.tests.integration.adapters.claude import fake_claude

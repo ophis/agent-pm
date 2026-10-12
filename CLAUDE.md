@@ -43,7 +43,7 @@ The core's and the Linear orchestrator's modules, entries and import rules: `new
 - Skills and `new/core/config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:act-as`), never "the act-as skill" or `agent-pm:act-as`.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
-- Tmux calls: `new/core/src/agent_pm/session/driver/tmux_host.py` (`new/README.md` › Layout). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- Tmux calls: `new/core/src/agent_pm/session/hosts/tmux/tmux_host.py` (`new/README.md` › Layout). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating). The plists are installed as copies (README › Setup).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 

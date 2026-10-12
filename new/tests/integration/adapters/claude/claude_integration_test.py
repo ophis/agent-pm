@@ -1,4 +1,4 @@
-"""driver.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
+"""session.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
 registry.configure, runs new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
@@ -16,6 +16,8 @@ import unittest
 import uuid
 from unittest import mock
 
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Activity,
     Exited,
@@ -28,7 +30,6 @@ from agent_pm.session.adapters.base import (
     Usage,
     Window,
 )
-from agent_pm.session.driver import api, registry
 
 from new.tests.case import PY, Case, child_env
 from new.tests.integration.adapters.claude import fake_claude
@@ -59,7 +60,8 @@ PROBE = [
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
 # (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 signal.signal(signal.SIGINT, signal.default_int_handler)
 registry.configure({"adapters": {"claude": json.loads(sys.argv[1])}})
 handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[2]))

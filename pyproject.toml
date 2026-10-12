@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-per-file-target-version = { "new/core/src/agent_pm/session/driver/tmux_host.py" = "py39", "new/core/src/agent_pm/session/driver/modes/tui_hook.py" = "py39" }
+per-file-target-version = { "new/core/src/agent_pm/session/hosts/tmux/tmux_host.py" = "py39", "new/core/src/agent_pm/session/modes/tui_hook.py" = "py39" }
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]

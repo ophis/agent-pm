@@ -14,7 +14,7 @@ import threading
 import time
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
-from agent_pm.session.driver.api import Key, Paste
+from agent_pm.session.api import Key, Paste
 from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.record import Display, Record
 

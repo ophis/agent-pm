@@ -11,7 +11,7 @@ import signal
 import sys
 
 from agent_pm.role import delegate
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.text import printable
 
 from agent_pm_linear import config, linear, runs, sessions, writeback

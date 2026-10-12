@@ -1,4 +1,4 @@
-"""driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the payload on
+"""modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the payload on
 stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only a decoy tmux (no tmux runs
 here); in process for its one locked write, its check of that tmux and its load of tmux_host; and the file standing
 alone."""
@@ -18,12 +18,12 @@ import unittest
 import unittest.mock
 import uuid
 
-from agent_pm.session.driver.modes import tui_hook
+from agent_pm.session.modes import tui_hook
 
 from new.tests import guards
 from new.tests.case import ROOT, Case
 
-HOOK = os.path.join(ROOT, "agent_pm", "session", "driver", "modes", "tui_hook.py")
+HOOK = os.path.join(ROOT, "agent_pm", "session", "modes", "tui_hook.py")
 PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
@@ -503,7 +503,9 @@ class InProcess(Case):
         module = tui_hook.load_tmux_host()
         self.assertEqual(
             os.path.realpath(module.__file__),
-            os.path.realpath(os.path.join(ROOT, "agent_pm", "session", "driver", "tmux_host.py")),
+            os.path.realpath(
+                os.path.join(ROOT, "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
+            ),
         )
         self.assertTrue(callable(module.mark))
         self.assertEqual(sys.path, path)

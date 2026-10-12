@@ -6,7 +6,7 @@
 # Each layer reads only its own keys: the Composer (src/agent_pm/role/composer/) the run keys, [output],
 # [roles.<role>], trusted_dirs and team_dirs; src/agent_pm/role/agent_tools/repo.py users and trusted_dirs;
 # src/agent_pm/manager/roster.py runtime (the default of src/agent_pm/manager/crew.py's workers); the Driver
-# (src/agent_pm/session/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
+# (src/agent_pm/session/adapters/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -47,7 +47,7 @@
 #   status_line     local, global only: true → tui sessions show tmux's status line; unset → false
 #   workers_per_column local, global only: panes per tmux grid column (the Driver's show), 1..9999; unset → 3
 #   grid_retile     local, global only: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all"
-#                   (also a drag or a window resize), "off" (never by itself: src/agent_pm/session/driver/tmux_host.py
+#                   (also a drag or a window resize), "off" (never by itself: src/agent_pm/session/hosts/tmux/tmux_host.py
 #                   tile @N); unset → "open-close"
 tier = 2
 effort = "high"
@@ -131,8 +131,8 @@ tier = 3
 effort = "low"
 
 # ── Adapters ────────────────────────────────────────────
-# [adapters.<name>]  one table per runtime, read only by src/agent_pm/session/driver/registry.py; <name> is the
-#                    runtime name driver.api.start takes and the package src/agent_pm/session/adapters/<name>/
+# [adapters.<name>]  one table per runtime, read only by src/agent_pm/session/adapters/registry.py; <name> is the
+#                    runtime name session.api.start takes and the package src/agent_pm/session/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 

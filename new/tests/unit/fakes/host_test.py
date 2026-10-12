@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import DriverError
-from agent_pm.session.driver.api import Key, Paste
+from agent_pm.session.api import Key, Paste
 
 from new.tests.case import Case
 from new.tests.contracts.host import SLEEP, HostContract, program

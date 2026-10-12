@@ -20,7 +20,7 @@ from unittest import mock
 
 from agent_pm.role.repos.git import GUARD
 from agent_pm.role.repos.shell import SHORT
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm_linear import config, inputs, issues, linear, router, runs, target
 from agent_pm_linear import run as run_py
 

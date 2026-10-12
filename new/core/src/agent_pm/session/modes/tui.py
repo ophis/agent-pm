@@ -26,9 +26,9 @@ from agent_pm.session.adapters.base import (
     Stderr,
     Tui,
 )
-from agent_pm.session.driver import tmux_host
-from agent_pm.session.driver.errors import DriverError
-from agent_pm.session.driver.modes import tui_hook
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes import tui_hook
+from agent_pm.session.types import DriverError
 from agent_pm.utils.files import read_regular
 
 TUI_DIR = "~/.agent-pm/tui"
@@ -133,7 +133,7 @@ def _exit(status) -> int | None:
 
 
 class TuiMode:
-    """One tui session, driver.api's Mode, acting on its session's pane by id."""
+    """One tui session, api.py's Mode, acting on its session's pane by id."""
 
     def __init__(self, name: str, run: Tui, sid: str, events: str | None, runtime: str):
         self.name, self.run, self.sid, self.events, self.runtime = name, run, sid, events, runtime

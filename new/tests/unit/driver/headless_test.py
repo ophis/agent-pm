@@ -1,4 +1,4 @@
-"""driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
+"""modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
 
 import json
@@ -14,9 +14,9 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter, Headless, Launch, Reply, Stderr
-from agent_pm.session.driver.errors import DriverError
-from agent_pm.session.driver.modes import headless
-from agent_pm.session.driver.modes.headless import HeadlessMode
+from agent_pm.session.modes import headless
+from agent_pm.session.modes.headless import HeadlessMode
+from agent_pm.session.types import DriverError
 
 from new.tests.case import Case
 

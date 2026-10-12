@@ -17,6 +17,8 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+from agent_pm.session import api, records
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
     Activity,
@@ -29,7 +31,6 @@ from agent_pm.session.adapters.base import (
     TurnEnd,
 )
 from agent_pm.session.adapters.codex import tui_start
-from agent_pm.session.driver import api, records, registry
 
 from new.tests import live_tmux
 from new.tests.case import NEW, PY, ROOT, Case, child_env
@@ -38,7 +39,8 @@ from new.tests.integration.adapters.codex import fake_codex, fake_tui
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 registry.configure(json.loads(sys.argv[1]))
 h = api.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]

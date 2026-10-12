@@ -1,4 +1,4 @@
-"""agent_pm.manager.roster, the old core's roster_test ported onto a fake driver.api (Tmux): LEGACY_CLIENT's cases became
+"""agent_pm.manager.roster, the old core's roster_test ported onto a fake session.api (Tmux): LEGACY_CLIENT's cases became
 FR-28's default runtime; worker_dir, default_runtime and the crew module's entries are new."""
 
 import contextlib
@@ -20,7 +20,7 @@ import unittest.mock
 
 import agent_pm.config
 from agent_pm.manager import roster
-from agent_pm.session.driver import api
+from agent_pm.session import api
 
 from new.tests.case import PY, ROOT, Case, child_env
 
@@ -323,7 +323,7 @@ LEASE_CHILD = """
 import sys
 from unittest import mock
 from agent_pm.manager import roster
-from agent_pm.session.driver import api
+from agent_pm.session import api
 d, own = sys.argv[1], sys.argv[2]
 live = [api.SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()

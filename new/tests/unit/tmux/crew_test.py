@@ -1,4 +1,4 @@
-"""agent_pm.manager.crew, the old core's crew_test ported onto a fake driver.api (Api): argv, env, tmux and the tui settings
+"""agent_pm.manager.crew, the old core's crew_test ported onto a fake session.api (Api): argv, env, tmux and the tui settings
 are the Driver's now, and the worker record replaces the session options."""
 
 import contextlib
@@ -21,7 +21,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.manager import crew, roster
-from agent_pm.session.driver import api
+from agent_pm.session import api
 
 from new.tests.case import ROOT, Case
 
@@ -112,7 +112,7 @@ class Attached:
 
 
 class Api:
-    """driver.api as crew calls it: rows by name (own: the caller's), start adding its row, every call recorded."""
+    """session.api as crew calls it: rows by name (own: the caller's), start adding its row, every call recorded."""
 
     def __init__(self, own="mgr", rows=()):
         self.own, self.rows = own, {r.name: r for r in rows}
@@ -209,7 +209,7 @@ class Runs:
 
 
 class CrewCase(Case):
-    """driver.api faked by self.api (replaceable), sleep patched, stderr captured."""
+    """session.api faked by self.api (replaceable), sleep patched, stderr captured."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

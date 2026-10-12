@@ -1,4 +1,4 @@
-"""driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
+"""modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
 
 import signal
@@ -8,8 +8,8 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter, InProcess, Reply, Spec, Stderr
-from agent_pm.session.driver.errors import DriverError
-from agent_pm.session.driver.modes.in_process import InProcessMode
+from agent_pm.session.modes.in_process import InProcessMode
+from agent_pm.session.types import DriverError
 
 from new.tests.case import Case
 

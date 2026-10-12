@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.session.driver import registry
+from agent_pm.session.adapters import registry
 from agent_pm.utils import paths
 
 NEW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

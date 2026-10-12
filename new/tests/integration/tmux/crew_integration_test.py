@@ -27,7 +27,7 @@ from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
 CREW = [*PY, "-m", "agent_pm.manager.crew"]
 ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.crew"]
-TMUX_HOST = os.path.join(ROOT, "agent_pm", "session", "driver", "tmux_host.py")
+TMUX_HOST = os.path.join(ROOT, "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
 MANAGER = "mgr"
 SECOND = "mgr2"
 TIMEOUT = 60

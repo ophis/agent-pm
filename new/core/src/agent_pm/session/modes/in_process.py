@@ -9,7 +9,7 @@ import threading
 import traceback
 
 from agent_pm.session.adapters.base import Event, InProcess, Spec, Stderr
-from agent_pm.session.driver.errors import DriverError
+from agent_pm.session.types import DriverError
 
 END = object()
 

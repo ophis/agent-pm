@@ -25,7 +25,7 @@ WORDS = ("done", "blocked", "working")
 STATE = "session.json"
 HOOKS = "hooks.jsonl"
 TMUX_HOST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmux_host.py"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosts/tmux/tmux_host.py"
 )
 
 

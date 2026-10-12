@@ -1,4 +1,4 @@
-"""A manager's workers, each a plain tui session reached only through driver.api, and its roster (roster.py). start
+"""A manager's workers, each a plain tui session reached only through session.api, and its roster (roster.py). start
 picks the runtime (--client, else the caller's own tui session's, else the core config's `runtime`), starts the worker
 with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (what restart replays), shows it, enters
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
@@ -23,7 +23,7 @@ import uuid
 from collections.abc import Iterator
 
 from agent_pm.manager import roster
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.files import save
 from agent_pm.utils.paths import IMPORT_ROOT, printable_abs
 

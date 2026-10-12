@@ -37,7 +37,7 @@ The component that turns a role, an optional task and free-text input into an ag
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Driver**:
-The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/session/driver/`.
+The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/session/` (`api.py`, `modes/`).
 _Avoid_: facade, runtime, harness
 
 **Adapter**:

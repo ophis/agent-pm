@@ -45,7 +45,11 @@ class UtilsImportsTest(Case):
                 f"{PKG}/role/composer/x.py: role.composer imports {tools}.repo",
                 f"{PKG}/role/delegate/x.py: role.delegate imports {tools}.repo",
                 f"{PKG}/session/adapters/x.py: session.adapters imports {tools}.repo",
-                f"{PKG}/session/driver/x.py: session.driver imports {tools}.repo",
+                f"{PKG}/session/api/x.py: session.api imports {tools}.repo",
+                f"{PKG}/session/hosts/x.py: session.hosts imports {tools}.repo",
+                f"{PKG}/session/modes/x.py: session.modes imports {tools}.repo",
+                f"{PKG}/session/records/x.py: session.records imports {tools}.repo",
+                f"{PKG}/session/types/x.py: session.types imports {tools}.repo",
                 f"{PKG}/utils/y.py: bare import agent_tools.repo",
                 f"{PKG}/utils/z.py: outside the layers imports {tools}.repo",
                 f"{PKG}/x.py: outside the layers imports {tools}.repo",
@@ -57,7 +61,7 @@ class UtilsImportsTest(Case):
             {
                 f"{PKG}/role/agent_tools/x.py": "import json\nfrom agent_pm.utils.paths import under\n"
                 "from ...utils import args\n",
-                f"{PKG}/role/agent_tools/y.py": "import agent_pm.session.driver.api\nimport third_party\n"
+                f"{PKG}/role/agent_tools/y.py": "import agent_pm.session.api\nimport third_party\n"
                 "from agent_pm.role.composer import run\n",
             }
         )
@@ -65,7 +69,7 @@ class UtilsImportsTest(Case):
             guards.pure_utils(root),
             [
                 f"{PKG}/role/agent_tools/y.py: role.agent_tools imports agent_pm.role.composer.run",
-                f"{PKG}/role/agent_tools/y.py: role.agent_tools imports agent_pm.session.driver.api",
+                f"{PKG}/role/agent_tools/y.py: role.agent_tools imports agent_pm.session.api",
                 f"{PKG}/role/agent_tools/y.py: role.agent_tools imports third_party",
             ],
         )
@@ -100,11 +104,11 @@ class UtilsImportsTest(Case):
     def test_utils_reject_layer_external_and_literal_imports(self):
         root = self.tree(
             {
-                f"{PKG}/utils/x.py": "import agent_pm.session.driver.api\nimport third_party\n"
+                f"{PKG}/utils/x.py": "import agent_pm.session.api\nimport third_party\n"
                 "def f():\n    import importlib\n    importlib.import_module('agent_pm.session.adapters.base')\n"
                 "    __import__('agent_pm.role.composer')\n",
-                f"{PKG}/utils/y.py": "from ..session import driver\nimport agent_pm.role.agent_tools.repo\nimport utils.paths\n",
-                f"{PKG}/session/driver/x.py": "import third_party\n",
+                f"{PKG}/utils/y.py": "from ..session import modes\nimport agent_pm.role.agent_tools.repo\nimport utils.paths\n",
+                f"{PKG}/session/modes/x.py": "import third_party\n",
             }
         )
         self.assertEqual(
@@ -112,10 +116,10 @@ class UtilsImportsTest(Case):
             [
                 f"{PKG}/utils/x.py: utils imports agent_pm.role.composer",
                 f"{PKG}/utils/x.py: utils imports agent_pm.session.adapters.base",
-                f"{PKG}/utils/x.py: utils imports agent_pm.session.driver.api",
+                f"{PKG}/utils/x.py: utils imports agent_pm.session.api",
                 f"{PKG}/utils/x.py: utils imports third_party",
                 f"{PKG}/utils/y.py: utils imports agent_pm.role.agent_tools.repo",
-                f"{PKG}/utils/y.py: utils imports agent_pm.session.driver",
+                f"{PKG}/utils/y.py: utils imports agent_pm.session.modes",
                 f"{PKG}/utils/y.py: utils imports utils.paths",
             ],
         )

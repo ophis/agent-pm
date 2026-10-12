@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.session.driver import records
+from agent_pm.session import records
 
 from new.tests import live_tmux
 from new.tests.case import ROOT, Case

@@ -16,9 +16,11 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Protocol
 
+from agent_pm.session import records
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     RESUMABLE,
     Access,
@@ -46,10 +48,10 @@ from agent_pm.session.adapters.base import (
     Window,
     sid_error,
 )
-from agent_pm.session.driver import records, registry, tmux_host
-from agent_pm.session.driver.errors import DriverError
-from agent_pm.session.driver.modes import headless, in_process, tui
-from agent_pm.session.driver.records import session
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes import headless, in_process, tui
+from agent_pm.session.records import session
+from agent_pm.session.types import DriverError, IdleTimeout, SessionRow
 from agent_pm.utils.paths import printable_abs
 
 __all__ = [
@@ -103,26 +105,6 @@ PROBE_DIR = "~/.agent-pm/probe"
 PROBE_TIMEOUT = 120
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 LOG = logging.getLogger("driver")
-
-
-@dataclass(frozen=True)
-class IdleTimeout:
-    seconds: float
-
-
-@dataclass(frozen=True)
-class SessionRow:
-    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None none."""
-
-    name: str
-    sid: str | None
-    runtime: str | None
-    state: str
-    pane: str | None
-    opener: str | None
-    shown: str | None
-    last_lines: str | None
-    own: bool
 
 
 class Mode(Protocol):

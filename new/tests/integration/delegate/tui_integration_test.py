@@ -1,7 +1,7 @@
 """delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test, the core config's
 ClaudeAdapter running new/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn end with no prompt before it).
 The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle
-give-up on a clock ahead (driver.api's `time` only), the fix send; the session left open. Main's
+give-up on a clock ahead (session.api's `time` only), the fix send; the session left open. Main's
 tests/integration/core/drive_tui_integration_test.py, its tui run."""
 
 import io
@@ -16,7 +16,8 @@ from unittest import mock
 from agent_pm.role import composer
 from agent_pm.role.delegate import Progress, run
 from agent_pm.role.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 
 from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.delegate.cli_integration_test import (
@@ -47,7 +48,7 @@ def stop(text: str, pending: int = 0) -> dict:
 
 
 class Ahead:
-    """driver.api's `time`: monotonic() `by` s ahead of the real clock."""
+    """session.api's `time`: monotonic() `by` s ahead of the real clock."""
 
     def __init__(self):
         self.by = 0.0

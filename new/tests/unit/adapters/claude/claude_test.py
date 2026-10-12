@@ -14,6 +14,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
@@ -36,7 +37,6 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.driver import registry
 
 from new.tests.case import Case
 

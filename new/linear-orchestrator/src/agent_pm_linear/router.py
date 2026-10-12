@@ -29,7 +29,7 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from agent_pm_linear import config, inputs, issues, linear, sessions, target, writeback

@@ -9,18 +9,18 @@ layer_commands(new)   COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (p
 core_standalone(core) no file names LINEAR
 runtime_names(core)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no str constant naming OLD
-adapters_key(core)    no str constant "adapters" outside session/driver/
+adapters_key(core)    no str constant "adapters" outside registry.py
 syntax_311(new)       every .py parses as Python 3.11
 pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
-modes_import_api(core) driver.modes never imports driver.api
+modes_import_api(core) MODES never imports SESSION_API
 tmux_calls(core)      "tmux" only in TMUX_HOST
 events_format(new)    EVENT_CLOCK only in EVENTS_HOME
 syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
                       src/ hold only their package
 python_commands(new)  PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session.driver import api`, EXPORTERS' __all__
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's in config.py only), no bare name; any module name (packages cannot clash)
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
@@ -34,18 +34,34 @@ import sys
 import tokenize
 
 GROUPS = ("session", "role", "manager")
-DRIVER = "session.driver"
-DRIVER_API = f"{DRIVER}.api"
-MODES = f"{DRIVER}.modes"
-LAYERS = ("session.adapters", DRIVER, "role.composer", "role.delegate")
+SESSION_API = "session.api"
+SESSION_TYPES = "session.types"
+MODES = "session.modes"
+RECORDS = "session.records"
+HOSTS = "session.hosts"
+LAYERS = (
+    "session.adapters",
+    SESSION_API,
+    SESSION_TYPES,
+    MODES,
+    RECORDS,
+    HOSTS,
+    "role.composer",
+    "role.delegate",
+)
 SESSION = "session"
 OUTSIDE = "outside the layers"
 ALLOWED = {
     ("role.delegate", "role.composer"),
     ("role.delegate", SESSION),
-    (DRIVER, "session.adapters"),
+    ("role.delegate", SESSION_API),
+    *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
+    *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
+    (SESSION_TYPES, "session.adapters"),
+    ("session.adapters.registry", HOSTS),  # until TASK-368
     (OUTSIDE, SESSION),
-    (OUTSIDE, DRIVER),
+    (OUTSIDE, SESSION_API),
+    (OUTSIDE, SESSION_TYPES),
 }
 SHARED = ("utils", "config", "role.contract", "role.repos")
 # until TASK-366 (356-5) deletes print_prompt
@@ -58,7 +74,13 @@ PURE = {
     "role.repos": SHARED,
     TOOLS: ("utils", "config", "role.repos"),
 }
-BARE = (*GROUPS, *(layer.rpartition(".")[2] for layer in LAYERS), "utils", "agent_tools", "repo")
+BARE = (
+    *GROUPS,
+    *(n for n in (u.rpartition(".")[2] for u in LAYERS) if n not in sys.stdlib_module_names),
+    "utils",
+    "agent_tools",
+    "repo",
+)
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -68,8 +90,8 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))  # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
-TMUX_HOST = "src/agent_pm/session/driver/tmux_host.py"
-TUI_HOOK = "src/agent_pm/session/driver/modes/tui_hook.py"
+TMUX_HOST = "src/agent_pm/session/hosts/tmux/tmux_host.py"
+TUI_HOOK = "src/agent_pm/session/modes/tui_hook.py"
 STANDALONE = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
@@ -83,7 +105,7 @@ SESSION_SRC = f"{CORE_TOP}{SESSION}/"
 EVENTS_HOME = f"{CORE_TOP}session/events.py"
 EVENT_CLOCK = "%H:%M:%S"
 # until TASK-368
-EVENT_WRITERS = {f"{CORE_TOP}session/driver/tmux_host.py"}
+EVENT_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
 COMMAND_SRC = (SESSION_SRC, f"{CORE_TOP}role/", f"{ROOTS[1][0]}/{ORCH_SRC}")
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
@@ -109,7 +131,7 @@ def layer_imports(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
         name = ".".join(names or ())
-        layer = next((each for each in LAYERS if name.startswith(f"{each}.")), OUTSIDE)
+        layer = next((each for each in LAYERS if _within(name, each)), OUTSIDE)
         for module, inner in imports:
             unit = _unit(inner) if inner else module.split(".")[0]
             if module.split(".")[0] in BARE:
@@ -125,7 +147,8 @@ def layer_imports(core: str) -> list[str]:
                 or (
                     unit in (*LAYERS, SESSION)
                     and unit != layer
-                    and ((layer, unit) not in ALLOWED or unit == DRIVER and inner != DRIVER_API)
+                    and (layer, unit) not in ALLOWED
+                    and (name, unit) not in ALLOWED
                 )
             ):
                 found.add(f"{rel}: {layer} imports {module}")
@@ -228,7 +251,7 @@ def old_core(new: str) -> list[str]:
 
 def adapters_key(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/agent_pm/session/driver/"):
+    for rel, text in _files(core, ".py", skip="src/agent_pm/session/adapters/registry.py"):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -252,7 +275,7 @@ def modes_import_api(core: str) -> list[str]:
     for rel, names, imports in _modules(core):
         if names and _within(".".join(names), MODES):
             found.update(
-                f"{rel}: imports {m}" for m, inner in imports if _within(inner, DRIVER_API)
+                f"{rel}: imports {m}" for m, inner in imports if _within(inner, SESSION_API)
             )
     return sorted(found)
 
@@ -507,7 +530,7 @@ def _denied(rel, module, name, exported):
         )
     return not (
         any(_within(target, f"{CORE_PKG}.{s}") for s in SHARED)
-        or (module, name) == (f"{CORE_PKG}.{DRIVER}", "api")
+        or (module, name) == (f"{CORE_PKG}.{SESSION}", "api")
     )
 
 

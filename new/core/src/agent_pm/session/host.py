@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
-from agent_pm.session.driver.api import DriverError, Key, Paste
+from agent_pm.session.types import DriverError, Key, Paste
 from agent_pm.utils.record import Display, Record
 
 
@@ -93,7 +93,7 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: driver.api.layout's, split folded into display."""
+    """show: None once shown, else an attach command; layout: api.layout's, split folded into display."""
 
     @abstractmethod
     def show(self, name: str, display: Display = None) -> str | None: ...

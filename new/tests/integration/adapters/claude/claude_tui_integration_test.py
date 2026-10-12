@@ -1,4 +1,4 @@
-"""driver.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
+"""session.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
 the real ClaudeAdapter runs new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
@@ -14,6 +14,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Activity,
     Blocked,
@@ -23,8 +25,8 @@ from agent_pm.session.adapters.base import (
     TurnEnd,
 )
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.driver import api, registry, tmux_host
-from agent_pm.session.driver.modes import tui
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes import tui
 
 from new.tests import live_tmux
 from new.tests.case import PY, child_env
@@ -49,7 +51,8 @@ RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
-from agent_pm.session.driver import api, registry
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 registry.configure({"adapters": {"claude": json.loads(table)}})
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]

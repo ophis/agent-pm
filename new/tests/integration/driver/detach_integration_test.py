@@ -1,4 +1,4 @@
-"""driver.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
+"""session.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter, a script whose interpreter is missing, an env execve refuses."""
 
@@ -12,7 +12,8 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.driver import api, tmux_host
+from agent_pm.session import api
+from agent_pm.session.hosts.tmux import tmux_host
 
 from new.tests import live_tmux
 from new.tests.case import Case

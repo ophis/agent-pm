@@ -1,4 +1,4 @@
-"""driver/records.py: run.jsonl writes, reads and attempt completeness."""
+"""session/records.py: run.jsonl writes, reads and attempt completeness."""
 
 import errno
 import io
@@ -11,7 +11,7 @@ import unittest.mock
 from contextlib import redirect_stderr
 from datetime import datetime
 
-from agent_pm.session.driver import records
+from agent_pm.session import records
 from agent_pm.utils import files
 
 from new.tests.case import Case
