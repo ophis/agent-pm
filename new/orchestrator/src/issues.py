@@ -1,4 +1,5 @@
-"""Linear issues as the orchestrator reads them (read_issue) and the one Handoff grammar: parse_handoff and head."""
+"""Linear issues as the orchestrator reads them (read_issue) and the one Handoff grammar: handoff, parse_handoff
+and head."""
 
 import os
 import re
@@ -156,6 +157,31 @@ def head(description) -> str:
         return text[: m.start()] if m else text
     i = _starts(lines).get(SECTIONS[2])
     return text if i is None else text[: list(re.finditer(r"\r?\n", text))[i - 1].end()]
+
+
+def handoff(identifier, url, *, sources, instructions, comments) -> str:
+    """sources: (title, url) pairs; instructions and comments: (name, at, body) triples."""
+    parts = [f"Handoff from {identifier}: {url}"]
+    source, said, quoted = SECTIONS
+    if sources:
+        parts.append(
+            f"{source}\n"
+            + "\n".join(f"- {linear.one_line(t)}: {linear.one_line(u)}" for t, u in sources)
+        )
+    if instructions:
+        parts.append(
+            f"{said}\n" + "\n\n".join(f"{n}, {at}:\n{body}" for n, at, body in instructions)
+        )
+    if comments:
+        # Quoted so agent-written text cannot pose as a section of this description.
+        parts.append(
+            f"{quoted}\n"
+            + "\n".join(
+                f"- {n}, {at}:\n" + "\n".join(f"  > {line}" for line in body.splitlines())
+                for n, at, body in comments
+            )
+        )
+    return "\n\n".join(parts)
 
 
 def is_user(note, humans) -> bool:

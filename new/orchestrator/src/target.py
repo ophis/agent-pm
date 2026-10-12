@@ -67,7 +67,7 @@ def parse_repo(description) -> tuple[str, str] | Invalid:
             found.append(one)
     distinct = {(o.lower(), n.lower()) for o, n in found}
     if not found:
-        return Invalid("no Repo: line in the description or its ## Instructions")
+        return Invalid(f"no Repo: line in the description or its {issues.SECTIONS[1]}")
     if len(distinct) > 1:
         return Invalid("several different Repo: values")
     return found[0]

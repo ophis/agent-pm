@@ -21,7 +21,7 @@ OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 ISSUE, ISSUE_ID = "TASK-12", "00000000-0000-4000-8000-000000000012"
 OTHER_ISSUE = "00000000-0000-4000-8000-000000000013"
 CID = linear.client_id(SID, "session")
-T1, T2 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00"
+T1, T2, T3 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00", "2026-09-30T12:00:00+08:00"
 WORKDIR, RUNTIME = "/w/TASK-12", "claude"
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
@@ -192,6 +192,20 @@ class Record(Case):
                 line = fake.only()["body"].splitlines()[0]
                 self.assertEqual(line, f"Run {SID} · {status} · #1 · {T1} → {T2} · exit 3")
                 self.assertNotIn("interrupted", line)
+
+    def test_a_limit_ended_run_says_limit_unless_it_reported_an_outcome(self):
+        rec, asked = record(), Outcome("needs_input", "title", "summary")
+        self.assertEqual(sessions.body(rec, limit=True), text(f"running · #1 · {T1}"))
+        self.assertEqual(
+            sessions.body(rec, -9, T2, limit=True), text(f"limit · #2 · {T1} → {T2} · exit -9")
+        )
+        self.assertEqual(
+            sessions.body(rec, -9, T2, outcome=asked, limit=True),
+            text(f"needs_input · #3 · {T1} → {T2} · exit -9"),
+        )
+        fake = FakeLinear()
+        self.assertIsNone(sessions.post(ISSUE, record(), -9, gql=fake, ended_at=T2, limit=True))
+        self.assertEqual(fake.only()["body"], text(f"limit · #1 · {T1} → {T2} · exit -9"))
 
     def test_recover_resume_updates_the_one_comment(self):
         fake, rec = FakeLinear(), record()
@@ -421,6 +435,25 @@ class Repair(Case):
         self.assertIsNone(self.repair())
         self.assertEqual(self.fake.calls, ["comment", "commentUpdate", "commentCreate"])
         self.assertEqual(self.fake.only()["body"], text(f"done · #2 · {self.DONE}"))
+
+    def test_a_limit_end_is_rewritten_as_limit(self):
+        down = FakeLinear(fail={"commentCreate": RuntimeError("down")})
+        self.assertEqual(
+            sessions.post(ISSUE, self.rec, -9, gql=down, ended_at=T2, limit=True),
+            "RuntimeError: down",
+        )
+        self.assertIsNone(self.repair())
+        self.assertEqual(self.fake.only()["body"], text(f"limit · #2 · {T1} → {T2} · exit -9"))
+
+    def test_a_previous_runs_body_is_rewritten_on_a_resume(self):
+        down = FakeLinear(fail={"commentUpdate": RuntimeError("down")})
+        self.rec = record(started_at=T2)
+        self.assertEqual(start(down, self.rec), "RuntimeError: down")
+        self.assertEqual(end(down, self.rec, 0, ended_at=T3), "RuntimeError: down")
+        self.fake = FakeLinear(comment(CID, text(f"done · #3 · {self.DONE}")))
+        self.assertIsNone(self.repair())
+        self.assertEqual(self.fake.calls, ["comment", "commentUpdate"])
+        self.assertEqual(self.fake.only()["body"], text(f"done · #3 · {T2} → {T3} · exit 0"))
 
     def test_errors_return_a_string_and_write_nothing(self):
         theirs = f"RuntimeError: comment {CID} is not ours"

@@ -12,7 +12,7 @@ tmux_calls(core)      "tmux" only in TMUX_HOST
 syntax_39(core)       STANDALONE files parse as Python 3.9
 orchestrator_imports(orch) src/ imports stdlib, siblings, utils, `from driver import api`, delegate's __all__ (and
                       composer's, in config.py only); no module named as in NAMED
-orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"
+orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     config.load, linear.use_logs only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
 
@@ -50,6 +50,8 @@ TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 ENTRIES = ("src/run.py", "src/promote.py", "src/router.py")
 ONCE = ("config.load", "linear.use_logs")
 LOAD_HELPERS = ("runnable", "run_config", "docs")
+HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
+HANDOFF_HOME = "src/issues.py"
 
 
 def layer_imports(core: str) -> list[str]:
@@ -231,11 +233,14 @@ def orchestrator_text(orch: str) -> list[str]:
     found = set()
     for rel, text in _files(orch, (".py", ".toml")):
         lines = text.splitlines()
+        grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
         for number, line in enumerate(lines, 1):
             found.update(
                 f"{rel}:{number}: runtime name {w}"
                 for w in RUNTIME.findall(line.replace("CLAUDE.md", " "))
             )
+            if grammar:
+                found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
         strings = (
             _strings(ast.parse(text, rel))
             if rel.endswith(".py")

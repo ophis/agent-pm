@@ -17,7 +17,7 @@ LIMIT = 10
 M_UPDATE = (
     "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
 )
-SEQ = re.compile(r" · #(\d+) · ")
+SEQ = re.compile(r" · #(\d+) · (\S+)")
 now = linear.stamp
 
 
@@ -49,12 +49,20 @@ def command(rec):
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 
 
-def body(rec, rc=None, ended_at=None, *, outcome=None):
+def _status(rc, outcome, limit):
+    if outcome is not None:
+        return outcome.status
+    if limit:
+        return "limit"
+    return "done" if rc == 0 else "interrupted"
+
+
+def body(rec, rc=None, ended_at=None, *, outcome=None, limit=False):
     rec["seq"] += 1
     if rc is None:
         line = f"running · #{rec['seq']} · {rec['started_at']}"
     else:
-        status = outcome.status if outcome is not None else "done" if rc == 0 else "interrupted"
+        status = _status(rc, outcome, limit)
         line = f"{status} · #{rec['seq']} · {rec['started_at']} → {ended_at} · exit {rc}"
     cmd = command(rec)
     return f"Run {rec['sid']} · {line}" + ("" if cmd is None else f"\n\n```\n{cmd}\n```")
@@ -99,14 +107,14 @@ def write(gql, sid, issue, text, limit=LIMIT):
 
 
 def _text(rec):
-    rc, ended_at, outcome = rec["args"]
-    out = body(rec, rc, ended_at, outcome=outcome)
+    rc, ended_at, outcome, limit = rec["args"]
+    out = body(rec, rc, ended_at, outcome=outcome, limit=limit)
     rec["last"] = rec["seq"]
     return out
 
 
-def post(issue, rec, rc=None, *, gql, ended_at=None, outcome=None):
-    rec["args"] = (rc, None if rc is None else ended_at or now(), outcome)
+def post(issue, rec, rc=None, *, gql, ended_at=None, outcome=None, limit=False):
+    rec["args"] = (rc, None if rc is None else ended_at or now(), outcome, limit)
     return write(gql, rec["sid"], issue, _text(rec))
 
 
@@ -117,6 +125,6 @@ def repair(issue, issue_id, rec, *, gql, limit=LIMIT):
     if error:
         return error
     seq = found and SEQ.search(found.split("\n", 1)[0])
-    if seq and int(seq[1]) >= rec["last"]:
+    if seq and int(seq[1]) >= rec["last"] and seq[2] == rec["started_at"]:
         return None
     return write(gql, rec["sid"], issue, _text(rec), limit=limit)

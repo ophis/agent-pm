@@ -31,7 +31,7 @@ LIMIT = {"kind": "limit", "resets_at": T}
 PICK = "picked the task."
 RUNNING = r"running · #1 · \S+"
 DONE = r"done · #2 · \S+ → \S+ · exit 0"
-STOPPED = r"interrupted · #2 · \S+ → \S+ · exit -9"  # the Driver kills a limit-hit session
+LIMITED = r"limit · #2 · \S+ → \S+ · exit -9"  # the Driver kills a limit-hit session
 KINDS = ["session", "input", "client_session", "progress", "result", "end"]
 RESEARCH = {
     "status": "done",
@@ -227,7 +227,7 @@ class Undone(Run):
                 post("limit", f"Usage limit, resets at {RESETS}."),
                 REREAD,
                 TO_REVIEW,
-                end=STOPPED,
+                end=LIMITED,
             ),
         )
         limit = f"writeback step {ID} sid={SID} step=limit"
@@ -242,7 +242,7 @@ class Undone(Run):
         self.run_py([], mode="resume", resume=[LIMIT], hang=True)
         self.assertEqual(
             self.wrote(n),
-            self.framed(SUBSCRIBE, REREAD, TO_REVIEW, end=STOPPED, created=False, since=n),
+            self.framed(SUBSCRIBE, REREAD, TO_REVIEW, end=LIMITED, created=False, since=n),
         )
         self.assertEqual(self.runs(), [note, note])
         self.assertEqual([s for _, s in self.stored()].count(cid("limit")), 1)

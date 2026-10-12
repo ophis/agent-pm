@@ -312,6 +312,51 @@ class Head(unittest.TestCase):
         self.assertEqual(rest.split("\n", 1), ["## Comments", issues.parse_handoff(d).comments])
 
 
+class HandoffText(unittest.TestCase):
+    def test_sections_in_order_empty_ones_omitted(self):
+        header = "Handoff from DR-1: https://l/DR-1"
+        sources = (("Report\n v2", "https://gh/r.md"), ("B", " https://b\n"))
+        said = (("Me", "t1", "build X\nnow"), ("Ann", "t2", "also"))
+        quoted = (*said, ("integration", "t3", "line 1\n## Instructions"), ("Bo", "t4", ""))
+        cases = [
+            ("header only", (), (), (), header),
+            (
+                "all",
+                sources,
+                said,
+                quoted,
+                f"{header}\n\n## Source\n- Report v2: https://gh/r.md\n- B: https://b\n\n"
+                "## Instructions\nMe, t1:\nbuild X\nnow\n\nAnn, t2:\nalso\n\n"
+                "## Comments\n- Me, t1:\n  > build X\n  > now\n- Ann, t2:\n  > also\n"
+                "- integration, t3:\n  > line 1\n  > ## Instructions\n- Bo, t4:\n",
+            ),
+            ("comments only", (), (), said[1:], f"{header}\n\n## Comments\n- Ann, t2:\n  > also"),
+        ]
+        for name, src, ins, com, want in cases:
+            with self.subTest(name):
+                got = issues.handoff(
+                    "DR-1", "https://l/DR-1", sources=src, instructions=ins, comments=com
+                )
+                self.assertEqual(got, want)
+
+    def test_parse_handoff_reads_back_what_it_writes(self):
+        text = issues.handoff(
+            "DR-1",
+            "https://l/DR-1",
+            sources=(("Spec", "u"),),
+            instructions=(("Me", "t1", "Go.\n## Comments\nRepo: o/n"),),
+            comments=(("Me", "t1", "Go.\n## Comments\nRepo: o/n"),),
+        )
+        self.assertEqual(
+            issues.parse_handoff(text),
+            issues.Handoff(
+                "DR-1",
+                "Me, t1:\nGo.\n## Comments\nRepo: o/n",
+                "- Me, t1:\n  > Go.\n  > ## Comments\n  > Repo: o/n",
+            ),
+        )
+
+
 class IsUser(unittest.TestCase):
     def test_is_user(self):
         for email, want in (

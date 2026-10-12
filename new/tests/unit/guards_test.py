@@ -422,6 +422,26 @@ class OrchestratorText(Sample):
         )
         self.assertEqual(guards.orchestrator_text(root), [])
 
+    def test_handoff_literals_only_in_issues(self):
+        root = self.tree(
+            {
+                "src/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                "src/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
+                "src/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
+                "config.toml": 'x = "## Comments"\n',
+                "tests/a_test.py": 'X = "Handoff from ## Source"\n',
+            }
+        )
+        self.assertEqual(
+            guards.orchestrator_text(root),
+            [
+                "src/promote.py:1: Handoff literal Handoff from",
+                "src/promote.py:2: Handoff literal ## Comments",
+                "src/target.py:1: Handoff literal ## Instructions",
+                "src/target.py:2: Handoff literal ## Source",
+            ],
+        )
+
 
 class ConfigOnce(Sample):
     def test_load_and_use_logs_outside_an_entry_main(self):

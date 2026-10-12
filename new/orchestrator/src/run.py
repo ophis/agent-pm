@@ -87,8 +87,8 @@ def inner(a, cfg, *, gql, run=delegate.run):
     ctx = _context(a, cfg, role, gql, rd)
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
-    def post(rc=None, *, outcome=None):
-        if error := sessions.post(a.issue, rec, rc, gql=harness, outcome=outcome):
+    def post(rc=None, *, outcome=None, limit=False):
+        if error := sessions.post(a.issue, rec, rc, gql=harness, outcome=outcome, limit=limit):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
 
     def on_event(event):
@@ -143,11 +143,11 @@ def inner(a, cfg, *, gql, run=delegate.run):
                     runtime=a.runtime,
                     resets_at=writeback.local_time(at),
                 )
-            except OSError as e:
+            except Exception as e:
                 log("run", "run-error", a.issue, error=one_line(e))
         elif not (result and result.outcome):
             log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
-        post(rc, outcome=result.outcome if result else None)
+        post(rc, outcome=result.outcome if result else None, limit=bool(result and result.limit))
         if error := sessions.repair(a.issue, a.uuid, rec, gql=harness):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
     return 0

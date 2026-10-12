@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
 
+import issues  # noqa: E402
 import linear  # noqa: E402
 import sessions  # noqa: E402
 from linear import (  # noqa: E402
@@ -206,35 +207,24 @@ class Promoter:
             )
 
     def description(self, src, comments, detail):
-        parts = [f"Handoff from {src['identifier']}: {src['url']}"]
-        attachments = [a for a in src["attachments"]["nodes"] if not sessions.is_record(a)]
-        if attachments:
-            parts.append(
-                "## Source\n"
-                + "\n".join(f"- {one_line(a['title'])}: {one_line(a['url'])}" for a in attachments)
-            )
-        if comments:
-            parts.append(
-                "## Instructions\n"
-                + "\n\n".join(
-                    f"{c['user']['name']}, {c['createdAt']}:\n{c['body']}" for c in comments
-                )
-            )
         everything = sorted(
             (c for c in detail["comments"]["nodes"] if not sessions.is_comment(c)),
             key=lambda c: parse_time(c["createdAt"]),
         )
-        if everything:
-            # Quoted so agent-written text cannot pose as a section of this description.
-            parts.append(
-                "## Comments\n"
-                + "\n".join(
-                    f"- {(c['user'] or {}).get('name', 'integration')}, {c['createdAt']}:\n"
-                    + "\n".join(f"  > {line}" for line in c["body"].splitlines())
-                    for c in everything
-                )
-            )
-        return "\n\n".join(parts)
+        return issues.handoff(
+            src["identifier"],
+            src["url"],
+            sources=[
+                (a["title"], a["url"])
+                for a in src["attachments"]["nodes"]
+                if not sessions.is_record(a)
+            ],
+            instructions=[(c["user"]["name"], c["createdAt"], c["body"]) for c in comments],
+            comments=[
+                ((c["user"] or {}).get("name", "integration"), c["createdAt"], c["body"])
+                for c in everything
+            ],
+        )
 
     def bounce_failed(self, src, error, child):
         body = f"Handoff failed: {str(error)[:300]}" + (
