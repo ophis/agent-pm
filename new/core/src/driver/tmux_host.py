@@ -55,6 +55,10 @@ BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
+LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}"
+SHOWN = "#{client_activity}\t#{client_tty}\t#{session_name}"
+HOSTS = "#{pane_dead}\t#{pane_tty}\t#{session_name}"
+LAST_LINES = 40
 WINDOW = re.compile(r"@[0-9]+")
 PER_COLUMN = 3
 GRID_MANAGER = "@grid-manager"
@@ -585,6 +589,78 @@ def sessions(prefix: str = "", *, proc=subprocess.run) -> list[str] | None:
     if res.returncode:
         return [] if _absent(res) else None
     return sorted(n for n in res.stdout.split("\n") if NAME.fullmatch(n) and n.startswith(prefix))
+
+
+def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
+    """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane state, `shown` (no client:
+    None; else the newest client's host session, "" if none or not NAME), a dead pane's last LAST_LINES lines; a bad or
+    empty field None. [] when no server runs, None when tmux fails."""
+    found = _table(["list-sessions", "-F", LISTING], 7, proc)
+    if found is None:
+        return None
+    rows = sorted(
+        f for f in found if NAME.fullmatch(f[0]) and (match is None or match.fullmatch(f[0]))
+    )
+    if not rows:
+        return []
+    clients = _table(["list-clients", "-F", SHOWN], 3, proc)
+    if clients is None:
+        return None
+    recent = {}
+    for _, tty, session in sorted(
+        (c for c in clients if c[0].isdigit() and c[1]), key=lambda c: int(c[0])
+    ):
+        recent[session] = tty
+    hosts = {}
+    if any(f[0] in recent for f in rows):
+        panes = _table(["list-panes", "-a", "-F", HOSTS], 3, proc)
+        if panes is None:
+            return None
+        hosts = {tty: session for dead, tty, session in panes if dead != "1"}
+    out = []
+    for name, dead, sid, runtime, state, pane, opener in rows:
+        host = hosts.get(recent.get(name), "")
+        out.append(
+            {
+                "name": name,
+                "sid": _printable(sid),
+                "runtime": _printable(runtime),
+                "state": _printable(state),
+                "pane": pane if PANE.fullmatch(pane) or ITERM_ID.fullmatch(pane) else None,
+                "opener": opener if OPENER.fullmatch(opener) else None,
+                "dead": {"1": True, "0": False}.get(dead),
+                "shown": None if name not in recent else host if NAME.fullmatch(host) else "",
+                "last_lines": _last_lines(name, proc) if dead == "1" else None,
+            }
+        )
+    return out
+
+
+def _table(args: list[str], width: int, proc) -> list[list[str]] | None:
+    try:
+        res = _tmux(args, proc)
+    except TuiError:
+        return None
+    if res.returncode:
+        return [] if _absent(res) else None
+    return [f for f in (line.split("\t") for line in res.stdout.split("\n")) if len(f) == width]
+
+
+def _printable(value: str) -> str | None:
+    return value if value and value.isprintable() else None
+
+
+def _last_lines(name: str, proc) -> str | None:
+    try:
+        return read(name, LAST_LINES, proc=proc) or None
+    except TuiError:
+        return None
+
+
+def tmux_path() -> str | None:
+    """The real path of the tmux on PATH, else None."""
+    found = shutil.which("tmux")
+    return None if found is None else os.path.realpath(found)
 
 
 def kill(target: str, *, proc=subprocess.run) -> None:
