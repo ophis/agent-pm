@@ -101,24 +101,30 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
 def flags(snapshot: dict, *, interactive: bool) -> list[str]:
     result = [
         "-s",
-        "workspace-write",
+        snapshot["sandbox"],
         "-c",
         'approval_policy="on-request"',
         "-c",
         'approvals_reviewer="auto_review"',
-        "-c",
-        f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
-        "-c",
-        "sandbox_workspace_write.writable_roots=[]",
     ]
+    if snapshot["sandbox"] == "workspace-write":
+        result.extend(
+            (
+                "-c",
+                f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+            )
+        )
     if snapshot["model"] is not None:
         result.extend(("-m", snapshot["model"]))
     if snapshot["effort"] is not None:
         result.extend(("-c", f"model_reasoning_effort={snapshot['effort']}"))
     if not snapshot["project"]:
         result.extend(("-c", "project_doc_max_bytes=0"))
-    for directory in snapshot["dirs"]:
-        result.extend(("--add-dir", directory))
+    if snapshot["sandbox"] == "workspace-write":
+        for directory in snapshot["dirs"]:
+            result.extend(("--add-dir", directory))
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result
@@ -184,6 +190,10 @@ class CodexCommon:
 
     def __init__(self, config):
         self.config = dict(config)
+        sandbox = config.get("sandbox", "danger-full-access")
+        if sandbox not in ("danger-full-access", "workspace-write"):
+            raise ConfigError("Codex sandbox must be danger-full-access or workspace-write")
+        self.config["sandbox"] = sandbox
         if type(config.get("shell_network")) is not bool:
             raise ConfigError("Codex shell_network must be a boolean")
         for name in ("tiers", "efforts"):
@@ -246,6 +256,7 @@ class CodexCommon:
                 "model": self._mapped("tiers", spec.tier),
                 "effort": self._mapped("efforts", spec.effort),
                 "network": self.config["shell_network"],
+                "sandbox": self.config["sandbox"],
                 "codex_home": home,
             }
         )

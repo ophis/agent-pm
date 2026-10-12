@@ -21,6 +21,12 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 
 Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; any module → `utils/`, which imports only the standard library. `tests/guards.py` (`layer_imports`, `pure_utils`) enforces it, with the other rules in its docstring.
 
+## Codex sandbox
+
+`[adapters.codex].sandbox` accepts `danger-full-access` (default) or `workspace-write`. Both Modes explicitly pass `-s`, `approval_policy="on-request"` and `approvals_reviewer="auto_review"`; crew workers use the same Adapter through the Driver. Automatic review only handles actions requiring approval.
+
+With full access, `shell_network`, writable-root boundaries and team-dir protection do not restrict the runtime. `workspace-write` retains the existing sandbox flags. Recovery saves the effective policy; resume keeps it despite config changes. Older snapshots without `sandbox` retain `workspace-write`.
+
 ## Tests
 
 ```bash
