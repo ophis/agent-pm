@@ -2,6 +2,7 @@
 from adapters.base import Adapter, SessionStatus
 from .common import CodexCommon
 from .headless import CodexHeadless
+from .tui import CodexTuiRun
 
 
 class CodexAdapter(Adapter):
@@ -16,7 +17,7 @@ class CodexAdapter(Adapter):
         return CodexHeadless(self)
 
     def tui(self):
-        return None
+        return CodexTuiRun(self)
 
     def usage_probe(self):
         return self.common.probe()

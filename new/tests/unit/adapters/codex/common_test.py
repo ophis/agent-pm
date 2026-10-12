@@ -175,7 +175,7 @@ class CommonTest(Base):
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         self.assertIn("CODEX_PERMISSION_PROFILE", launch.unset)
         self.assertIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
-        self.assertIsNone(adapter.tui())
+        self.assertIsNotNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):
         with self.assertRaisesRegex(ConfigError, "model|tier"):
