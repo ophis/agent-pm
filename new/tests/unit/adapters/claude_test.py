@@ -85,7 +85,7 @@ WHAT = {
     "allow": "a list of strings",
     "tiers": 'a table from tier "1"–"4" to a model name',
     "efforts": "a table from effort (low, medium, high, xhigh, max) to a string",
-    "env": "a table of strings to strings",
+    "env": "a table of environment names to strings without NUL",
 }
 
 
@@ -145,6 +145,7 @@ class ConfigTest(Base):
             ("efforts", "SECRET"),
             ("efforts", {"low": 1}),
             ("efforts", {"turbo": "SECRET"}),
+            ("efforts", {1: "SECRET"}),
             ("env", "SECRET"),
             ("env", {"K": 1}),
             ("env", {1: "SECRET"}),
@@ -156,6 +157,21 @@ class ConfigTest(Base):
                     lambda: ClaudeAdapter({key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
+
+    def test_invalid_environment_names_and_values_fail_before_launch(self):
+        for key, value in (
+            ("", "SECRET"),
+            ("A=B", "SECRET"),
+            ("A\0B", "SECRET"),
+            (1, "SECRET"),
+            ("A", "SECRET\0"),
+            ("A", 1),
+        ):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    ClaudeAdapter({"env": {key: value}})
+                self.assertIn("[adapters.claude].env", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
 
     def test_setting_sources_in_flags_is_refused(self):
         for flags in (

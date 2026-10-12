@@ -1,3 +1,5 @@
+"""Codex headless Driver sessions and recovery through fake native processes."""
+
 from new.tests import NEW
 from new.tests.integration.adapters.codex import fake_codex
 
@@ -201,7 +203,11 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
         self.assertEqual(
-            [(entry["kind"], entry.get("client_id")) for entry in self.written()],
+            [
+                (entry["kind"], entry.get("client_id"))
+                for entry in self.written()
+                if entry["kind"] != "session_metadata"
+            ],
             [("session", None), ("client_session", NATIVE)],
         )
 
@@ -357,6 +363,9 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
         spec = dataclasses.replace(self.spec, tier=4, effort="max", access=access)
         handle = api.start("codex", "headless", "again", spec, resume=self.sid, sid=self.sid)
+        self.assertTrue(handle.info().project)
+        self.assertEqual(handle.info().transcript, str(fake_codex.session_path(NATIVE)))
+        self.assertIn(NATIVE, handle.info().resume)
         self.assertEqual(self.drain(handle)[0], SessionBound(NATIVE))
         first, second = self.logged()
         self.assertEqual(second["snapshot"]["snapshot"], first["snapshot"]["snapshot"])
@@ -425,7 +434,10 @@ class HeadlessIntegrationTest(unittest.TestCase):
             [SessionBound(NATIVE), *(Reply(text) for text in texts), TurnEnd(texts[-1]), Exited(0)],
         )
         self.assertEqual(handle.reply, texts[-1])
-        self.assertEqual([entry["kind"] for entry in self.written()], ["session", "client_session"])
+        self.assertEqual(
+            [entry["kind"] for entry in self.written() if entry["kind"] != "session_metadata"],
+            ["session", "client_session"],
+        )
         self.assertFalse((self.work / "out.md").exists())
 
     def test_interrupted_first_turn_keeps_binding_and_resumes(self):
@@ -660,8 +672,18 @@ class HeadlessIntegrationTest(unittest.TestCase):
                 info.transcript,
                 info.resume,
             ),
-            ("caller-owned", "caller-owned", NATIVE, str(self.cwd), True, "", ""),
+            (
+                "caller-owned",
+                "caller-owned",
+                NATIVE,
+                str(self.cwd),
+                True,
+                str(fake_codex.session_path(NATIVE)),
+                info.resume,
+            ),
         )
+        self.assertIn(NATIVE, info.resume)
+        self.assertEqual(records.session(str(self.work), handle.sid)["transcript"], info.transcript)
         status = api.session_info("codex", handle.sid, str(self.cwd))
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)

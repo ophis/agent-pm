@@ -1,3 +1,5 @@
+"""Codex shared configuration, recovery metadata and inspection behavior."""
+
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import dataclasses
@@ -59,6 +61,60 @@ class CommonTest(Base):
         self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
         self.assertEqual(launch.cwd, str(self.cwd))
         self.assertIn(NATIVE, launch.argv)
+
+    def test_both_modes_resume_with_saved_project_and_transcript(self):
+        for saved in (False, True):
+            with self.subTest(saved=saved):
+                spec = dataclasses.replace(
+                    self.spec,
+                    sid=f"project-{saved}",
+                    access=dataclasses.replace(self.spec.access, project=saved),
+                )
+                self.common.prepare(spec, False)
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                path = self.rollout()
+                requested = dataclasses.replace(
+                    spec,
+                    access=dataclasses.replace(spec.access, project=not saved),
+                )
+                for mode in ("headless", "tui"):
+                    with (
+                        self.subTest(mode=mode),
+                        mock.patch("shutil.which", return_value="/fake/codex"),
+                    ):
+                        run = getattr(self.adapter, mode)()
+                        launch = (
+                            run.launch("again", requested, True)
+                            if mode == "headless"
+                            else run.launch("again", requested, True, ("/fake/hook",))
+                        )
+                    self.assertIs(launch.project, saved)
+                    self.assertEqual(launch.transcript, str(path))
+                    self.assertIn(NATIVE, launch.resume)
+
+    def test_metadata_resolves_only_the_matching_trusted_binding(self):
+        from adapters.base import SessionInfo
+
+        info = SessionInfo(self.spec.sid, NATIVE, str(self.cwd), False, "", "")
+        self.assertEqual(self.adapter.session_metadata(info), info)
+        self.prepare()
+        self.assertEqual(self.adapter.session_metadata(info), info)
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        bound = self.adapter.session_metadata(info)
+        self.assertEqual(bound.transcript, "")
+        self.assertIn(NATIVE, bound.resume)
+        path = self.rollout()
+        resolved = self.adapter.session_metadata(bound)
+        self.assertEqual(resolved.transcript, str(path))
+        for unknown in (
+            dataclasses.replace(resolved, native_id=CHILD),
+            dataclasses.replace(resolved, sid="unknown"),
+        ):
+            self.assertEqual(self.adapter.session_metadata(unknown), unknown)
+        with mock.patch("os.scandir", side_effect=PermissionError("denied")):
+            self.assertEqual(self.adapter.session_metadata(resolved), resolved)
+        with mock.patch("os.stat", side_effect=PermissionError("denied")):
+            self.assertEqual(self.adapter.session_metadata(resolved), resolved)
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
@@ -182,6 +238,57 @@ class CommonTest(Base):
                 dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), False
             )
 
+    def test_mapping_keys_and_values_name_the_table(self):
+        cases = (
+            ("tiers", {"0": "SECRET"}),
+            ("tiers", {"5": "SECRET"}),
+            ("tiers", {"01": "SECRET"}),
+            ("tiers", {1: "SECRET"}),
+            ("tiers", {None: "SECRET"}),
+            ("tiers", {"1": ""}),
+            ("tiers", {"1": "  "}),
+            ("tiers", {"1": "line\nfeed"}),
+            ("tiers", {"1": 1}),
+            ("efforts", {"turbo": "SECRET"}),
+            ("efforts", {1: "SECRET"}),
+            ("efforts", {None: "SECRET"}),
+            ("efforts", {"low": ""}),
+            ("efforts", {"low": "\0"}),
+            ("efforts", {"low": None}),
+        )
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    CodexAdapter(self.adapter.config | {key: value})
+                self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
+
+    def test_valid_partial_mapping_keys_preserve_values(self):
+        for key, values in (
+            ("tiers", {"1": "one", "2": "two", "3": "three", "4": "four"}),
+            ("efforts", {"low": "lo", "medium": "med", "high": "hi", "xhigh": "xh", "max": "mx"}),
+        ):
+            for source, target in values.items():
+                with self.subTest(key=key, source=source):
+                    adapter = CodexAdapter(self.adapter.config | {key: {source: target}})
+                    self.assertEqual(adapter.common._mapped(key, source), target)
+        CodexAdapter(self.adapter.config | {"tiers": {}, "efforts": {}})
+
+    def test_invalid_environment_names_and_values_fail_before_launch(self):
+        for key, value in (
+            ("", "SECRET"),
+            ("A=B", "SECRET"),
+            ("A\0B", "SECRET"),
+            (1, "SECRET"),
+            ("A", "SECRET\0"),
+            ("A", 1),
+        ):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    CodexAdapter(self.adapter.config | {"env": {key: value}})
+                self.assertIn("[adapters.codex].env", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
+
     def test_config_validation_and_environment_isolation(self):
         for cfg in (
             {"shell_network": "yes"},
@@ -205,10 +312,13 @@ class CommonTest(Base):
         self.assertIsNotNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):
-        with self.assertRaisesRegex(ConfigError, "model|tier"):
-            CodexAdapter({"tiers": {}, "efforts": {}, "shell_network": False}).headless().launch(
-                "hi", self.spec, False
-            )
+        for key, spec in (
+            ("tiers", dataclasses.replace(self.spec, effort=None)),
+            ("efforts", dataclasses.replace(self.spec, tier=None)),
+        ):
+            with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
+                CodexAdapter({"shell_network": False}).headless().launch("hi", spec, False)
+            self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
 class WritableDirsTest(Base):

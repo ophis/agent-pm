@@ -182,6 +182,19 @@ class Session(Base):
         )
         self.assertEqual(records.session(self.dir, SID), latest)
 
+    def test_metadata_updates_only_the_matching_latest_session(self):
+        first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
+        self.write(
+            first,
+            {"kind": "session_metadata", "sid": "other", "resume": "wrong"},
+            {"kind": "session_metadata", "sid": SID, "transcript": "/t", "resume": "resume"},
+        )
+        self.assertEqual(
+            records.session(self.dir, SID), {**first, "transcript": "/t", "resume": "resume"}
+        )
+        self.write(first, {"kind": "session_metadata", "sid": SID, "transcript": "/t"}, first)
+        self.assertEqual(records.session(self.dir, SID), first)
+
     def test_none_without_a_valid_session_record(self):
         self.assertIsNone(records.session(self.dir, SID))
         self.write(b"", {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": "yes"})

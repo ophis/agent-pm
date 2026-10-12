@@ -1,18 +1,51 @@
+"""Codex isolated startup trust, launch validation and process cleanup."""
+
 from new.tests.unit.adapters.codex.support import Base
 
 import ast
 import copy
 import json
 import pathlib
+import subprocess
 import sys
 from unittest import mock
 
-from adapters.codex import tui_start
+from adapters.codex import tui_hook, tui_start
 
 
 class StartTest(Base):
+    def test_shared_schema_preserves_hooks_in_isolated_scripts_and_adapter(self):
+        from adapters.codex import hook_schema
+
+        expected = (
+            ("SessionStart", "sessionStart", "activity"),
+            ("UserPromptSubmit", "userPromptSubmit", "activity"),
+            ("PostToolUse", "postToolUse", "activity"),
+            ("PermissionRequest", "permissionRequest", "blocked"),
+            ("Stop", "stop", "turn_end"),
+            ("Interrupt", "interrupt", "turn_end"),
+        )
+        self.assertEqual(hook_schema.HOOKS, expected)
+        self.assertEqual(self.adapter.tui().hooks, {label: kind for label, _, kind in expected})
+        self.assertEqual(tui_start.HOOKS, expected)
+        self.assertEqual(tui_hook.LABELS, {label for label, _, _ in expected})
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import json, sys; sys.path.insert(0, sys.argv[1]); "
+                "import hook_schema; print(json.dumps(hook_schema.HOOKS))",
+                str(pathlib.Path(tui_start.__file__).parent),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(json.loads(result.stdout), [list(row) for row in expected])
+
     def catalog(self):
-        commands = {event: "command-" + event for event, name in tui_start.HOOKS}
+        commands = {event: "command-" + event for event, name, _ in tui_start.HOOKS}
         hooks = [
             {
                 "source": "sessionFlags",
@@ -23,7 +56,7 @@ class StartTest(Base):
                 "key": "key-" + name,
                 "currentHash": "sha256:" + "a" * 64,
             }
-            for event, name in tui_start.HOOKS
+            for event, name, _ in tui_start.HOOKS
         ]
         return {"data": [{"hooks": hooks, "errors": []}]}, commands
 
@@ -93,7 +126,7 @@ class StartTest(Base):
 
     def test_standalone_dependencies_use_python39_syntax_and_stdlib(self):
         directory = pathlib.Path(tui_start.__file__).parent
-        for name in ("sessions.py", "tui_start.py", "tui_hook.py"):
+        for name in ("sessions.py", "tui_start.py", "tui_hook.py", "hook_schema.py"):
             with self.subTest(name=name):
                 tree = ast.parse((directory / name).read_text(), feature_version=(3, 9))
                 for node in ast.walk(tree):

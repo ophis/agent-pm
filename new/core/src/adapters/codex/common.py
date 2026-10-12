@@ -5,12 +5,15 @@ regular-file, ownership and symlink checks."""
 import json
 import math
 import os
+import re
 import shlex
 import sys
 from dataclasses import dataclass, replace
+from datetime import datetime
 from functools import wraps
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from adapters.base import ConfigError, Launch, Usage, Window
+from adapters.base import EFFORTS, ConfigError, Launch, SessionInfo, Usage, Window
 
 from .sessions import (
     RecoveryError,
@@ -35,6 +38,54 @@ from .sessions import (
     store_root,
     validate_snapshot,
 )
+
+TABLE = "[adapters.codex]"
+TIERS = ("1", "2", "3", "4")
+LIMIT_PREFIXES = (
+    "You've hit your usage limit.",
+    "You've hit your usage limit for ",
+    "Quota exceeded. Check your plan and billing details.",
+    "Your workspace is out of credits.",
+    "You hit your spend cap set in your workspace.",
+    "You hit your spend cap set by the owner of your workspace.",
+)
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+RESET = re.compile(
+    r"(?:Try|try) again at (?:(?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2})"
+    r"(?P<suffix>st|nd|rd|th), (?P<year>\d{4}) )?"
+    r"(?P<hour>[1-9]|1[0-2]):(?P<minute>[0-5]\d) (?P<period>AM|PM)\.$"
+)
+
+
+def reset_at(message, environment):
+    match = RESET.search(message)
+    if match is None:
+        return None
+    try:
+        zone_name = environment.get("TZ", os.environ.get("TZ"))
+        zone = ZoneInfo(zone_name.removeprefix(":")) if zone_name else None
+        value = match.groupdict()
+        today = datetime.now(zone)
+        year, month, day = today.year, today.month, today.day
+        if value["month"]:
+            year, month, day = (
+                int(value["year"]),
+                MONTHS.index(value["month"]) + 1,
+                int(value["day"]),
+            )
+            suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+            if value["suffix"] != suffix:
+                return None
+        hour = int(value["hour"]) % 12 + (12 if value["period"] == "PM" else 0)
+        local = datetime(year, month, day, hour, int(value["minute"]))
+        stamps = set()
+        for fold in (0, 1):
+            stamp = local.replace(tzinfo=zone, fold=fold).timestamp()
+            if datetime.fromtimestamp(stamp, zone).replace(tzinfo=None, fold=0) == local:
+                stamps.add(stamp)
+        return stamps.pop() if len(stamps) == 1 else None
+    except (ValueError, OverflowError, OSError, ZoneInfoNotFoundError):
+        return None
 
 
 def _recover(method):
@@ -172,7 +223,7 @@ def _usage(snapshot) -> Usage | None:
 
 
 class CodexCommon:
-    unset = (
+    UNSET = (
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",
         "CODEX_VERSION",
@@ -181,7 +232,7 @@ class CodexCommon:
         "CODEX_PERMISSION_PROFILE",
         "CLAUDECODE",
     )
-    defaults = {
+    DEFAULTS = {
         "NO_COLOR": "1",
         "CODEX_CI": "1",
         "PAGER": "cat",
@@ -197,16 +248,17 @@ class CodexCommon:
         self.config["sandbox"] = sandbox
         if type(config.get("shell_network")) is not bool:
             raise ConfigError("Codex shell_network must be a boolean")
-        for name in ("tiers", "efforts"):
+        for name, keys in (("tiers", TIERS), ("efforts", EFFORTS)):
             values = config.get(name, {})
             if not isinstance(values, dict) or any(
                 not isinstance(key, str)
+                or key not in keys
                 or not isinstance(value, str)
                 or not value.strip()
                 or not value.isprintable()
                 for key, value in values.items()
             ):
-                raise ConfigError(f"Codex {name} must map strings to printable text")
+                raise ConfigError(f"{TABLE}.{name} must map {', '.join(keys)} to printable text")
         env = config.get("env", {})
         if not isinstance(env, dict) or any(
             not isinstance(key, str)
@@ -217,19 +269,19 @@ class CodexCommon:
             or "\0" in value
             for key, value in env.items()
         ):
-            raise ConfigError("Codex env must map environment names to strings without NUL")
+            raise ConfigError(f"{TABLE}.env must map environment names to strings without NUL")
 
     def _mapped(self, name, value):
         if value is None:
             return None
         result = self.config.get(name, {}).get(str(value))
         if result is None:
-            raise ConfigError(f"no Codex {name} mapping for {value!r}")
+            raise ConfigError(f"no mapping for {value!r} in {TABLE}.{name}")
         return result
 
     @_recover
     def prepare(self, spec, resume: bool, *, persist: bool = True) -> SessionState:
-        environment = {**os.environ, **self.defaults, **self.config.get("env", {})}
+        environment = {**os.environ, **self.DEFAULTS, **self.config.get("env", {})}
         check_writable_roots(store_root(), implicit_writable_roots(environment))
         if resume:
             state = self.load(spec.workdir, spec.sid)
@@ -280,7 +332,7 @@ class CodexCommon:
             roots = state.writable_roots
         else:
             roots = self._new_roots(spec)
-        environment = {**os.environ, **self.defaults, **self.config.get("env", {})}
+        environment = {**os.environ, **self.DEFAULTS, **self.config.get("env", {})}
         implicit = map(os.path.realpath, implicit_writable_roots(environment))
         return tuple(dict.fromkeys([*roots, *implicit]))
 
@@ -298,31 +350,28 @@ class CodexCommon:
 
     def environment(self, snapshot: dict, *, interactive: bool = False) -> dict[str, str]:
         return {
-            **({} if interactive else self.defaults),
+            **({} if interactive else self.DEFAULTS),
             **self.config.get("env", {}),
             "CODEX_HOME": snapshot["codex_home"],
         }
 
     def interactive_unset(self) -> tuple[str, ...]:
         return (
-            *self.unset,
-            *(key for key in self.defaults if key not in self.config.get("env", {})),
+            *self.UNSET,
+            *(key for key in self.DEFAULTS if key not in self.config.get("env", {})),
         )
 
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
         return Launch(
             (os.path.realpath(sys.executable), script),
-            env={**self.defaults, **self.config.get("env", {})},
-            unset=self.unset,
+            env={**self.DEFAULTS, **self.config.get("env", {})},
+            unset=self.UNSET,
         )
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """The account/rateLimits/read result as Usage; None when it is no JSON object or holds no snapshot dict
-        (rateLimitsByLimitId.codex, else rateLimits). five_hour and weekly: the first of the snapshot's primary and
-        secondary windows lasting 300 and 10080 minutes; None when absent or its usedPercent is no finite number >= 0
-        (a resetsAt that is not: None)."""
+        """Map native account rate limits to five-hour and weekly usage; malformed data is unknown."""
         try:
             result = json.loads(output)
         except (ValueError, TypeError, RecursionError):
@@ -388,6 +437,25 @@ class CodexCommon:
                 raise ConfigError("duplicate Codex descendant session files")
             related.update(added)
             newest = max([newest, *(stamp for identifier, stamp in children)])
+
+    def session_metadata(self, info: SessionInfo) -> SessionInfo:
+        try:
+            state = self.lookup(info.sid, info.cwd)
+            if state is None or not state.native_id or state.native_id != info.native_id:
+                return info
+            found = session_file(state.snapshot, state.native_id)
+            return replace(
+                info,
+                transcript=found.path if found is not None else info.transcript,
+                resume=self.resume_command(state),
+            )
+        except (ConfigError, RecoveryError, OSError):
+            return info
+
+    @_recover
+    def transcript(self, state: SessionState) -> str:
+        found = session_file(state.snapshot, state.native_id) if state.native_id else None
+        return found.path if found is not None else ""
 
     def inspect(self, sid: str, cwd: str) -> Inspection:
         result = Inspection(sid, cwd=cwd)

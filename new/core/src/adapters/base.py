@@ -1,4 +1,4 @@
-"""The Adapter interface: one runtime's abstract factory, built from its [adapters.<name>] table minus `implementation`.
+"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
@@ -84,7 +84,11 @@ class Launch:
     transcript: str = ""
     resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
+    project: bool | None = None
+
     def __post_init__(self):
+        if self.project is not None and not isinstance(self.project, bool):
+            raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
             ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
@@ -210,6 +214,10 @@ class Adapter(ABC):
     def usage(self, output: str) -> Usage | None:
         """None only when the probe failed."""
         return None
+
+    def session_metadata(self, info: SessionInfo) -> SessionInfo:
+        """Refresh metadata; preserve identity."""
+        return info
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")

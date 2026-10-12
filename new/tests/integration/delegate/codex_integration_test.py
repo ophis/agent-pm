@@ -127,7 +127,8 @@ class Codex(Integration):
             self.assertIn(line, res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
         self.assertEqual(
-            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"]
+            self.kinds(),
+            ["session", "input", "client_session", "session_metadata", "progress", "result", "end"],
         )
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE])
         (call,) = self.calls()
@@ -199,6 +200,7 @@ class Codex(Integration):
                 "session",
                 "input",
                 "client_session",
+                "session_metadata",
                 "progress",
                 "invalid",
                 "session",

@@ -1,11 +1,4 @@
-"""What every Claude Code Mode shares: ClaudeCommon validates [adapters.claude] (an error names the key, never its
-value) and gives a tier's model, an effort's value, a command's env and UNSET (a parent session's identity keys, which
-a child must not inherit), a session's transcript and resume command, Claude's sid rule (a lowercase UUID: Claude takes
-the sid as its own session id), the usage probe and its reading, and a session's SessionStatus.
-
-launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
-(--add-dir), command and read dir (--allowedTools Bash(<command>), then Read(//<dir>/**) for the read dir and its real
-path, then the config's allow), and the project and local setting sources only for a project run."""
+"""Claude Code configuration, launch metadata, usage and session inspection shared by both Modes."""
 
 import json
 import math
@@ -74,6 +67,13 @@ def _table(value, keys=None) -> bool:
     )
 
 
+def _environment(value) -> bool:
+    return _table(value) and all(
+        key and "=" not in key and "\0" not in key and "\0" not in item
+        for key, item in value.items()
+    )
+
+
 CHECKS = (
     ("flags", _strings, "a list of strings"),
     ("allow", _strings, "a list of strings"),
@@ -83,7 +83,7 @@ CHECKS = (
         lambda v: _table(v, EFFORTS),
         f"a table from effort ({', '.join(EFFORTS)}) to a string",
     ),
-    ("env", _table, "a table of strings to strings"),
+    ("env", _environment, "a table of environment names to strings without NUL"),
 )
 
 
@@ -186,7 +186,7 @@ class ClaudeCommon:
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
     ) -> Launch:
-        """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
+        """Build a Claude command with configured settings, access grants and output arguments."""
         sid = self.uuid(spec.sid)
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access

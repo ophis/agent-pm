@@ -4,7 +4,7 @@ from adapters.base import Adapter, SessionStatus
 
 from .common import CodexCommon
 from .headless import CodexHeadless
-from .tui import CodexTuiRun
+from .tui import CodexTui
 
 
 class CodexAdapter(Adapter):
@@ -21,13 +21,16 @@ class CodexAdapter(Adapter):
         return CodexHeadless(self)
 
     def tui(self):
-        return CodexTuiRun(self)
+        return CodexTui(self)
 
     def usage_probe(self):
         return self.common.probe()
 
     def usage(self, output):
         return self.common.parse_usage(output)
+
+    def session_metadata(self, info):
+        return self.common.session_metadata(info)
 
     def session_status(self, sid, cwd):
         found = self.common.inspect(sid, cwd)

@@ -1,3 +1,5 @@
+"""Codex interactive launch policy, hook events and native limits."""
+
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import dataclasses

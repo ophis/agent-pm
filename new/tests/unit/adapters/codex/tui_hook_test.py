@@ -1,3 +1,5 @@
+"""Codex standalone hook binding and opaque Driver forwarding."""
+
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import contextlib
