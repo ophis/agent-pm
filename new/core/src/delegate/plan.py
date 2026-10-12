@@ -71,7 +71,7 @@ def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime:
          out: str | None = None, repo: str | None = None, cwd: str | None = None, team: Team | None = None) -> Plan:
     """`team` None: the built-in team, the configured team dirs checked for overlap only."""
     if mode not in api.MODES:
-        raise ConfigError(f"mode must be headless or tui, got {mode!r}")
+        raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {mode!r}")
     if mode == "tui":
         raise ConfigError("tui mode is not available yet")
     if name is not None:

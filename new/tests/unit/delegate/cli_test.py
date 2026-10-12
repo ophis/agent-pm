@@ -1,5 +1,5 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
-drive_test Main, RoleRuns and TeamRuns cases of its command line."""
+drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake."""
 import io
 import json
 import os
@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,8 +15,9 @@ from datetime import datetime
 from unittest import mock
 
 from new.tests import fake_adapter, hermetic
-from new.tests.unit.delegate.runner_test import DONE, START, block, limit, said
+from new.tests.unit.delegate.runner_test import DONE, START, block, limit, no_child, said
 import composer
+from adapters import base
 from composer.prompt import RESUME
 from delegate import Outcome, Result, cli
 from driver import registry
@@ -24,6 +26,16 @@ SID = "11111111-2222-3333-4444-555555555555"
 KEYS = {"runtime", "mode", "sid", "resume", "cwd", "project", "dirs", "commands", "tier", "effort", "prompt"}
 HEADS = ["researcher  local  built-in", "pm  local  built-in", "engineer  pull-request  built-in",
          "dummy-tester  local  built-in"]
+
+
+class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
+    def in_process(self):
+        return RefusingRun(self)
+
+
+class RefusingRun(fake_adapter.FakeInProcess):
+    def check(self, prompt, spec, resume):
+        raise base.ConfigError("refused by check")
 
 
 class Base(unittest.TestCase):
@@ -260,6 +272,61 @@ class Exits(Base):
                                     "delegate: status done")):
             with self.subTest(want=want), mock.patch.object(cli, "run", return_value=result):
                 self.assertEqual(self.runs(), (want, "", f"{line}\n"))
+
+
+class InProcess(Base):
+    """The in_process-only fake, and RefusingAdapter (runtime `refusing`); no child process starts."""
+    def setUp(self):
+        super().setUp()
+        refusing = types.ModuleType("adapters.refusing")
+        refusing.RefusingAdapter = RefusingAdapter
+        self.enterContext(mock.patch.dict(sys.modules, {"adapters.refusing": refusing}))
+        classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
+        registry.configure({"adapters": {name: {"implementation": f"adapters.{name}:{cls}", "scenario": self.scenario,
+                                                "log": self.log} for name, cls in classes.items()}})
+
+    def runs(self, *extra, **kw):
+        with no_child():
+            return super().runs(*extra, **kw)
+
+    def test_a_done_run_exits_0_naming_its_session_and_status(self):
+        code, out, err = self.runs("--mode", "in_process", "--sid", SID)
+        self.assertEqual((code, out), (0, ""), err)
+        lines = err.splitlines()
+        self.assertLess(lines.index(f"delegate: session {SID}"), lines.index("Progress (start): go"))
+        self.assertLess(lines.index("Progress (start): go"), lines.index("delegate: status done"))
+        self.assertTrue(err.endswith("delegate: status done\n"), err)
+        with open(self.out) as f:
+            self.assertEqual(f.read(), DONE["deliverable"])
+        self.assertEqual([r["kind"] for r in self.records()], ["session", "input", "progress", "result", "end"])
+        self.assertEqual([(e["sid"], e["pid"]) for e in self.launches()], [(SID, os.getpid())])
+
+    def test_headless_and_tui_exit_2_and_nothing_runs(self):
+        for mode, want in (("headless", "runtime 'fake' does not support headless mode"),
+                           ("tui", "tui mode is not available yet")):
+            with self.subTest(mode=mode):
+                code, out, err = self.runs("--mode", mode)
+                self.assertEqual((code, out, err.splitlines()[-1]), (2, "", f"delegate: {want}"))
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
+    def test_claude_and_codex_refuse_it_with_exit_2(self):
+        registry.configure({"adapters": registry.tables()})
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                code, out, err = self.runs("--mode", "in_process", runtime=runtime)
+                self.assertEqual((code, out, err.splitlines()[-1]),
+                                 (2, "", f"delegate: runtime {runtime!r} does not support in_process mode"))
+                self.assertFalse(os.path.exists(self.work))
+
+    def test_dry_run_shows_the_mode(self):
+        code, out, err = self.runs("--mode", "in_process", "--dry-run")
+        self.assertEqual((code, json.loads(out)["mode"]), (0, "in_process"), err)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_a_check_refusal_exits_2_with_no_record(self):
+        code, out, err = self.runs("--mode", "in_process", runtime="refusing")
+        self.assertEqual((code, out, err.splitlines()[-1]), (2, "", "delegate: refused by check"))
+        self.assertEqual((os.path.exists(os.path.join(self.work, "run.jsonl")), self.launches()), (False, []))
 
 
 if __name__ == "__main__":

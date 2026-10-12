@@ -53,7 +53,7 @@ class Finished:
 Event = Begun | Progress | Finished
 
 
-class Headless:
+class OneShot:
     def start(self, p: Plan) -> api.Handle:
         return api.start(p.runtime, p.mode, p.prompt, p.spec, resume=p.sid if p.resume else None,
                          sid=None if p.resume else p.sid, idle_timeout=IDLE_TIMEOUT)
@@ -62,7 +62,7 @@ class Headless:
         return api.start(p.runtime, p.mode, text, p.spec, resume=p.sid, idle_timeout=IDLE_TIMEOUT)
 
 
-POLICIES = {"headless": Headless}
+POLICIES = {"headless": OneShot, "in_process": OneShot}
 
 
 def printable(text: str) -> str:

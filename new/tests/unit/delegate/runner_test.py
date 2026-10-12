@@ -1,6 +1,8 @@
 """delegate/runner.py over the fake runtime (new/tests/fake_adapter/, registered in-process): callbacks and replies
 (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21), idle (FR-22), a usage limit (FR-58), and main's
-drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines."""
+drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines. The
+in_process Mode over the in_process-only fake, with no child process."""
+import contextlib
 import dataclasses
 import io
 import json
@@ -20,12 +22,13 @@ from datetime import datetime
 from unittest import mock
 
 from new.tests import fake_adapter, hermetic
+from new.tests.unit.driver.api_test import SPAWNS
 import composer
 from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run
 from delegate import runner
 from delegate.outcome import save
-from delegate.runner import FIX, IDLE_TIMEOUT, printable
-from driver import registry
+from delegate.runner import FIX, IDLE_TIMEOUT, POLICIES, printable
+from driver import api, registry
 
 SID = "11111111-2222-3333-4444-555555555555"
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
@@ -64,6 +67,16 @@ def running(pid: int) -> bool:
 
 def bare(record: dict) -> dict:
     return {k: v for k, v in record.items() if k != "ts"}
+
+
+@contextlib.contextmanager
+def no_child():
+    """Each of SPAWNS fails inside, and none was called."""
+    with contextlib.ExitStack() as stack:
+        spawns = [stack.enter_context(mock.patch(target, side_effect=AssertionError(target))) for target in SPAWNS]
+        yield
+    for spawn in spawns:
+        spawn.assert_not_called()
 
 
 class Base(unittest.TestCase):
@@ -456,6 +469,56 @@ class Stops(Base):
             self.go(said(START, block(DONE)), runtime="nope")
         self.assertIn("nope", str(cm.exception))
         self.assertEqual((os.path.lexists(self.channel), os.path.lexists(self.log), self.events), (False, False, []))
+
+
+class InProcess(Base):
+    """The in_process-only fake, its run with no child process."""
+    def setUp(self):
+        super().setUp()
+        registry.configure({"adapters": {"fake": {"implementation": "adapters.fake:InProcessFakeAdapter",
+                                                  "scenario": self.scenario, "log": self.log}}})
+
+    def go(self, *steps, **kw) -> Result:
+        with no_child():
+            return super().go(*steps, mode="in_process", **kw)
+
+    def test_one_policy_for_each_mode_but_tui(self):
+        self.assertEqual(set(POLICIES), set(api.MODES) - {"tui"})
+        self.assertEqual(set(POLICIES.values()), {runner.OneShot})
+
+    def test_a_done_run(self):
+        r = self.go(said(START, block(DONE)))
+        sid = self.events[0].sid
+        self.assertEqual(self.events, [Begun(sid), Progress("start", "go"), Finished(r)])
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
+        self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
+        self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
+
+    def test_a_raise_is_the_client_exiting_1_its_traceback_on_stderr(self):
+        r = self.go(said(START), {"raise": "boom"})
+        self.assertEqual(r, Result(1, None, "the client exited 1"))
+        self.assertEqual(([type(e) for e in self.events], self.last("end")["rc"]), ([Begun, Progress], 1))
+        lines = self.err.splitlines()
+        self.assertLess(lines.index("Traceback (most recent call last):"), lines.index("RuntimeError: boom"))
+        r = self.go(said(START, block(DONE)), {"raise": "boom"})
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (1, "done", "the client exited 1"))
+
+    def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
+        with mock.patch.object(runner, "IDLE_TIMEOUT", 0.3):
+            r = self.go({"sleep": 1.0}, said(START, block(DONE)))
+        self.assertEqual(r.outcome.status, "done")
+        idle = [e for e in self.records() if e["kind"] == "idle"]
+        self.assertTrue(idle)
+        self.assertEqual({e["seconds"] for e in idle}, {0.3})
+
+    def test_an_invalid_block_is_fixed_by_one_resume_of_the_session(self):
+        r = self.go(said(START, block(INVALID)), fixes=[said(block(DONE))])
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
+        first, second = self.launches()
+        sid = self.events[0].sid
+        self.assertEqual((first["sid"], first["resume"], second["sid"], second["resume"]), (sid, False, sid, True))
+        self.assertEqual(second["prompt"], FIX.format(error=INVALID_ERROR))
+        self.assertEqual(self.kinds(), ["session", "input", "progress", "invalid", "session", "result", "end"])
 
 
 class Terminal(Base):
