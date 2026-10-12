@@ -8,7 +8,6 @@ from agent_pm.utils import markdown
 from agent_pm.utils.config_file import CONFIG as CONFIG
 from agent_pm.utils.paths import CORE
 
-SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEAM = os.path.join(CORE, "team")
 OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")

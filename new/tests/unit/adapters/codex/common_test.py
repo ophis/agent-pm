@@ -1,6 +1,7 @@
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import dataclasses
+import json
 import os
 import shlex
 import stat
@@ -60,6 +61,46 @@ class CommonTest(Base):
         self.assertEqual(launch.cwd, str(self.cwd))
         self.assertIn(NATIVE, launch.argv)
 
+    def test_the_session_env_is_saved_and_wins_in_new_and_resumed_launches(self):
+        env = {"PYTHONPATH": "/a b;c"}
+        self.spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, env=env)
+        )
+        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
+        launch = adapter.headless().launch("hi", self.spec, False)
+        self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).snapshot["env"], env)
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        spec = dataclasses.replace(self.spec, access=Access())
+        resumed = adapter.headless().launch("again", spec, True)
+        self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
+        for command in (resumed.resume, self.common.resume_command(state)):
+            q = shlex.quote
+            self.assertTrue(
+                command.startswith(
+                    f"cd {q(str(self.cwd))} && CODEX_HOME={q(str(self.codex_home))} "
+                    "PYTHONPATH='/a b;c' codex resume "
+                ),
+                command,
+            )
+            self.assertEqual(shlex.split(command)[4], "PYTHONPATH=/a b;c")
+
+    def test_a_snapshot_saved_without_env_is_an_empty_one(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        record = json.loads(self.record().read_text())
+        self.assertEqual(record["snapshot"].pop("env"), {})
+        self.edit_record(snapshot=record["snapshot"])
+        state = self.common.load(str(self.work), self.spec.sid)
+        self.assertNotIn("env", state.snapshot)
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}):
+            launch = self.adapter.headless().launch("again", self.spec, True)
+        self.assertNotIn("PYTHONPATH", launch.env)
+        self.assertNotIn("PYTHONPATH", launch.resume)
+        self.assertNotIn("PYTHONPATH", self.common.resume_command(state))
+
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
         launch = self.adapter.headless().launch("hi", spec, False)
@@ -118,6 +159,19 @@ class CommonTest(Base):
             {"sid": "forged"},
             {"snapshot": {**state.snapshot, "network": "yes"}},
             {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
+            *(
+                {"snapshot": {**state.snapshot, "env": env}}
+                for env in (
+                    {"X;Y": "1"},
+                    {"A=B": "1"},
+                    {"1A": "1"},
+                    {"": "1"},
+                    {"A": 1},
+                    {"A": "b\0"},
+                    [],
+                )
+            ),
+            {"snapshot": {**state.snapshot, "other": 1}},
             {"writable_roots": [str(self.extra)]},
             {"writable_roots": [str(self.home)]},
             {"native_id": "not-a-uuid"},

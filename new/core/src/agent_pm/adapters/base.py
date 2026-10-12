@@ -1,11 +1,12 @@
 """The Adapter interface: one runtime's abstract factory, built from its [adapters.<name>] table minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
-Launch, and the runtime's output into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError
-refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
-environ, signals), applying spec.access.cwd itself. A spec type raises ConfigError on a bad value; times are epoch
-seconds. Starts no process."""
+Launch whose env (last) and resume carry spec.access.env, and the runtime's output into the frozen event set (Event)
+plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at its next
+yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env. A spec type
+raises ConfigError on a bad value; times are epoch seconds. Starts no process."""
 
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -30,6 +31,13 @@ def _clean(value) -> bool:
     return isinstance(value, str) and "\0" not in value
 
 
+def env_ok(env) -> bool:
+    return isinstance(env, Mapping) and all(
+        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean(v)
+        for k, v in env.items()
+    )
+
+
 def sid_error(sid) -> str | None:
     if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
         return None
@@ -42,11 +50,16 @@ class Access:
     commands: tuple[str, ...] = ()
     cwd: str = ""
     project: bool = False
+    env: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         for name in ("dirs", "commands"):
             if not _strings(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
+        if not env_ok(self.env):
+            raise ConfigError(
+                "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
+            )
 
 
 @dataclass(frozen=True, kw_only=True)

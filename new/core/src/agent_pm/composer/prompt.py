@@ -22,7 +22,6 @@ from agent_pm.composer.base import (
     OUTPUT,
     PAREN,
     SCHEME,
-    SRC,
     ConfigError,
     anchor,
     fill,
@@ -46,7 +45,6 @@ RULE = (
 )
 PARAMETERS = {
     "<Workdir>": "workdir",
-    "<scripts>": "scripts",
     "<tasks>": "tasks",
     "<methods>": "methods",
     "<gate>": "gate",
@@ -246,7 +244,6 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     }
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
-        "scripts": _code(SRC),
         "tasks": _code(tasks_path(run.role, team)),
         "methods": _code(os.path.join(team.root, "methods")),
         "gate": _code(run.gate or "none"),
@@ -261,7 +258,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
             raise ConfigError(
                 f"{name} is used in {where} but Parameters doesn't define it ({source} is not set)"
             )
-        if where or name in ("<Workdir>", "<scripts>", "<tasks>"):
+        if where or name in ("<Workdir>", "<tasks>"):
             lines.append(f"- `{name}`: {values[source]}\n")
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
 

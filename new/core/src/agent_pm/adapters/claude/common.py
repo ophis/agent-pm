@@ -5,7 +5,7 @@ the sid as its own session id), the usage probe and its reading, and a session's
 
 launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
 (--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), and the project and local setting
-sources only for a project run."""
+sources only for a project run; its env and resume command carry the session env."""
 
 import json
 import math
@@ -148,9 +148,15 @@ class ClaudeCommon:
         return os.path.join(self.config_dir(), "projects", project, f"{sid}.jsonl")
 
     @staticmethod
-    def resume(cwd: str, sid: str, workdir: str | None = None) -> str:
+    def resume(
+        cwd: str,
+        sid: str,
+        workdir: str | None = None,
+        env: Mapping[str, str] = MappingProxyType({}),
+    ) -> str:
         q = shlex.quote
-        command = f"cd {q(cwd)} && claude --resume {q(sid)}"
+        assign = "".join(f"{name}={q(value)} " for name, value in env.items())
+        command = f"cd {q(cwd)} && {assign}claude --resume {q(sid)}"
         if workdir is not None and os.path.realpath(workdir) != os.path.realpath(cwd):
             command += f" --add-dir {q(workdir)}"
         return command
@@ -197,10 +203,10 @@ class ClaudeCommon:
         )
         return Launch(
             argv,
-            env=self.env(),
+            env={**self.env(), **access.env},
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid, spec.workdir),
+            resume=self.resume(cwd, sid, spec.workdir, access.env),
         )
 
     def probe(self) -> Launch:

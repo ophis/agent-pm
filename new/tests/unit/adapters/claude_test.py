@@ -334,6 +334,20 @@ class EnvTest(Base):
         self.assertEqual(ClaudeCommon.UNSET, UNSET)
         self.assertEqual(launch.cwd, "")
 
+    def test_the_session_env_wins_over_the_config_env(self):
+        config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
+        access = Access(env={"PYTHONPATH": "/root", "S": "s"})
+        self.env({"PYTHONPATH": "/parent"})
+        for launch in (
+            self.launch(config=config, access=access),
+            ClaudeAdapter(config)
+            .tui()
+            .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+        ):
+            self.assertEqual(
+                dict(launch.env), {**CEILING, "K": "v", "PYTHONPATH": "/root", "S": "s"}
+            )
+
 
 class TranscriptTest(Base):
     def test_projects_dir_named_by_the_mangled_cwd(self):
@@ -397,6 +411,15 @@ class ResumeTest(Base):
             self.launch(access=Access(cwd=cwd)).resume,
             f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)}",
         )
+
+    def test_the_launch_resume_assigns_the_session_env_quoted(self):
+        env = {"PYTHONPATH": "/a b;c", "S": "s"}
+        resume = self.launch(access=Access(env=env)).resume
+        self.assertEqual(
+            resume,
+            f"cd {shlex.quote(self.work)} && PYTHONPATH='/a b;c' S=s claude --resume {SID}",
+        )
+        self.assertEqual(shlex.split(resume)[3:6], ["PYTHONPATH=/a b;c", "S=s", "claude"])
 
 
 def line(record) -> str:

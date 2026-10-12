@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-from agent_pm.composer.base import SRC, ConfigError
+from agent_pm.composer.base import ConfigError
 from agent_pm.composer.run import (
     RUN_KEYS,
     Intent,
@@ -25,6 +25,7 @@ from agent_pm.composer.run import (
 )
 from agent_pm.composer.teams import team
 from agent_pm.utils import config_file
+from agent_pm.utils.paths import IMPORT_ROOT
 
 CONFIG = """\
 tier = 2
@@ -518,27 +519,31 @@ class Access(Fake):
             team=found or team(self.root),
         )
 
-    def test_dirs_writes_and_commands_filled_and_the_gate_apart_verbatim(self):
+    def test_dirs_writes_and_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
-        for name, cfg, repo_dir, dirs, writes, commands, want in (
+        env = {"PYTHONPATH": IMPORT_ROOT}
+        for name, cfg, repo_dir, dirs, writes, commands, want, session in (
             (
                 "gate",
-                {"commands": ["{{scripts}}/x *"], "gate": gate},
+                {"commands": ["python3 -P -m x *"], "gate": gate},
                 None,
                 [self.tasks],
                 [],
-                [f"{SRC}/x *"],
+                ["python3 -P -m x *"],
                 gate,
+                env,
             ),
-            ("no gate", {"commands": ["x"]}, None, [self.tasks], [], ["x"], ""),
+            ("no gate", {"commands": ["x"]}, None, [self.tasks], [], ["x"], "", env),
+            ("a gate alone", {"gate": gate}, None, [self.tasks], [], [], gate, env),
             (
                 "repo entry binds to the repo dir",
-                {"write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]},
+                {"write": ["repo"], "commands": ["x --dir {{workdir}}/src *"]},
                 self.repo,
                 [self.tasks, self.repo],
                 [self.repo],
-                [f"{SRC}/x --dir {self.work}/src *"],
+                [f"x --dir {self.work}/src *"],
                 "",
+                env,
             ),
             (
                 "no repo dir drops the repo entry",
@@ -548,6 +553,7 @@ class Access(Fake):
                 [home],
                 [],
                 "",
+                {},
             ),
             (
                 "methods fills read and write, deduped",
@@ -557,6 +563,7 @@ class Access(Fake):
                 [os.path.join(self.methods, "out"), self.methods],
                 [],
                 "",
+                {},
             ),
         ):
             with self.subTest(name):
@@ -567,6 +574,7 @@ class Access(Fake):
                         writes=tuple(writes),
                         commands=tuple(commands),
                         gate=want,
+                        env=session,
                         cwd=self.work,
                         project=False,
                     ),
@@ -599,9 +607,10 @@ class Access(Fake):
 
     def test_an_unknown_placeholder(self):
         for key in ("read", "write", "commands"):
-            with self.subTest(key), self.assertRaises(ConfigError) as cm:
-                self.intent(**{key: ["{{nope}}"]})
-            self.assertEqual(str(cm.exception), f"unfilled placeholder {{{{nope}}}} in {key}")
+            for name in ("nope", "scripts"):
+                with self.subTest(key=key, name=name), self.assertRaises(ConfigError) as cm:
+                    self.intent(**{key: [f"{{{{{name}}}}}"]})
+                self.assertEqual(str(cm.exception), f"unfilled placeholder {{{{{name}}}}} in {key}")
 
 
 if __name__ == "__main__":

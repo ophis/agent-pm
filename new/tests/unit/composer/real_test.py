@@ -28,11 +28,12 @@ import types
 import unittest
 
 from agent_pm import composer
-from agent_pm.composer.base import CONFIG, SRC, anchor, fill, outline
+from agent_pm.composer.base import CONFIG, anchor, fill, outline
 from agent_pm.composer.prompt import RETURN, RULE, reference_errors
 from agent_pm.composer.run import check_old_keys
 from agent_pm.composer.teams import START
 from agent_pm.utils.markdown import unfenced
+from agent_pm.utils.paths import IMPORT_ROOT
 
 CATALOG = composer.catalog()
 ROLES = list(CATALOG)
@@ -214,10 +215,11 @@ class Acceptance(unittest.TestCase):
                 self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
                 self.assertNotRegex(block, RUNTIME)
 
-    def test_scripts_holds_repo_py(self):
+    def test_each_requested_command_runs_the_repo_module_from_the_import_root(self):
+        self.assertTrue(os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "repo.py")))
         for role in ROLES:
-            scripts = parameters(composed(role)[0])["<scripts>"].strip("`")
-            self.assertTrue(os.path.isfile(os.path.join(scripts, "repo.py")), role)
+            for command in composed(role)[1].commands:
+                self.assertTrue(command.startswith("python3 -P -m agent_pm.repo "), (role, command))
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
         for dest in ("local", "orchestrator"):
@@ -320,7 +322,7 @@ class Shipped(unittest.TestCase):
         texts = team_texts() | {
             f"{role} {task}": words(composed(role, task)[0]) for role, task in RUNS
         }
-        for path in [CONFIG, *glob.glob(os.path.join(SRC, "composer", "*.py"))]:
+        for path in [CONFIG, *glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))]:
             with open(path) as f:
                 texts[path] = f.read()
         for label, text in texts.items():
@@ -680,7 +682,7 @@ class RealCore(unittest.TestCase):
 
     def test_each_roles_parameters_follow_what_its_texts_use(self):
         base, out = (
-            ["<Workdir>", "<scripts>", "<tasks>"],
+            ["<Workdir>", "<tasks>"],
             ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
         )
         want = {
@@ -718,22 +720,24 @@ class RealCore(unittest.TestCase):
             prompt, run = composed(role)
             prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = fill(cmd, {"scripts": SRC, "workdir": RUN.workdir}, role).removesuffix(" *")
+                cmd = fill(cmd, {"workdir": RUN.workdir}, role).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
 
     def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
         for role, task in RUNS:
             prompt, _ = composed(role, task)
-            for value in (RUN.workdir, SRC, RULE):
+            for value in (RUN.workdir, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
+            self.assertNotIn(IMPORT_ROOT, prompt, (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
-    def test_every_repo_py_command_takes_the_inputs_checkout(self):
+    def test_every_repo_command_takes_the_inputs_checkout(self):
         found = {}
         for role in ROLES:
             prompt, _ = composed(role)
             text = prompt + "".join(task_text(t) for t in CATALOG[role])
-            cmds = re.findall(r"`python3 \S+/repo\.py (worktree|status) ([^`]*)`", text)
+            cmds = re.findall(r"`python3 -P -m agent_pm\.repo (worktree|status) ([^`]*)`", text)
+            self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]
             for cmd, args in cmds:
                 self.assertEqual(args, REPO_ARGS[cmd], role)

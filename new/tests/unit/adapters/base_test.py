@@ -106,7 +106,8 @@ class AccessTest(Refusals):
     def test_defaults(self):
         access = Access()
         self.assertEqual(
-            (access.dirs, access.commands, access.cwd, access.project), ((), (), "", False)
+            (access.dirs, access.commands, access.cwd, access.project, access.env),
+            ((), (), "", False, {}),
         )
 
     def test_accepts_tuples_of_strings(self):
@@ -118,6 +119,31 @@ class AccessTest(Refusals):
             with self.subTest(bad=bad):
                 self.refused(lambda: Access(dirs=bad), "dirs must be a tuple of strings")
                 self.refused(lambda: Access(commands=bad), "commands must be a tuple of strings")
+
+    def test_accepts_an_env_of_shell_names_to_strings(self):
+        env = {"PYTHONPATH": "/a b;c", "_x1": ""}
+        self.assertEqual(Access(env=MappingProxyType(env)).env, env)
+
+    def test_refuses_an_env_name_a_shell_assignment_cannot_hold_or_a_value_not_a_string_without_nul(
+        self,
+    ):
+        message = "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
+        for bad in (
+            {"X;Y": "a"},
+            {"A=B": "a"},
+            {"1A": "a"},
+            {"": "a"},
+            {"A B": "a"},
+            {"A\n": "a"},
+            {1: "a"},
+            {"A": 1},
+            {"A": None},
+            {"A": "b\0"},
+            [("A", "b")],
+            None,
+        ):
+            with self.subTest(bad=bad):
+                self.refused(lambda: Access(env=bad), message)
 
 
 class SpecTest(Refusals):

@@ -1,6 +1,6 @@
 """A role's run config (resolve: the core config, then the caller's overlays), one run's params and its runtime-neutral
-access intent (access). An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
-config as one."""
+access intent (access), whose env is the session env its commands and gate need. An overlay can widen read, write,
+commands and gate, so a caller passes only operator-controlled config as one."""
 
 import os
 from collections.abc import Mapping, Sequence
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
 
-from agent_pm.composer.base import CONFIG, SRC, ConfigError, fill, title_of
+from agent_pm.composer.base import CONFIG, ConfigError, fill, title_of
 from agent_pm.composer.teams import (
     Team,
     index,
@@ -18,7 +18,7 @@ from agent_pm.composer.teams import (
     team_or_default,
 )
 from agent_pm.utils.config_file import LOCAL, read_config
-from agent_pm.utils.paths import real_dirs
+from agent_pm.utils.paths import IMPORT_ROOT, real_dirs
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
@@ -110,6 +110,7 @@ class Intent:
     writes: tuple[str, ...]
     commands: tuple[str, ...]
     gate: str
+    env: Mapping[str, str]
     cwd: str
     project: bool
 
@@ -207,12 +208,13 @@ def access(
                 dirs.append(p)
             if p and key == "write" and p not in writes:
                 writes.append(p)
-    values = {"scripts": SRC, "workdir": workdir}
+    commands = tuple(fill(c, {"workdir": workdir}, "commands") for c in run.commands)
     return Intent(
         dirs=tuple(dirs),
         writes=tuple(writes),
-        commands=tuple(fill(c, values, "commands") for c in run.commands),
+        commands=commands,
         gate=run.gate,
+        env={"PYTHONPATH": IMPORT_ROOT} if commands or run.gate else {},
         cwd=cwd,
         project=project,
     )

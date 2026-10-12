@@ -27,6 +27,7 @@ class NewRun(child.Case):
                 "writes": [],
                 "commands": [],
                 "gate": "",
+                "env": {},
                 "cwd": self.proj,
                 "project": False,
             },

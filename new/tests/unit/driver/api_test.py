@@ -1,10 +1,11 @@
 """new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
-usage() and session_info(), over the fake adapter and test adapters registered in-process (sys.modules) with
-[adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail;
-usage()'s probe is headless.probe patched, but for a spawn error. An in_process start over the in_process-only fake,
-SPAWNS patched to fail during its run; claude and codex, from the committed config, refuse it. The Mode protocol, and
-a Handle over a scripted Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close,
-show, layout, attach_command, detach) over tmux_host autospecced (no tmux runs)."""
+usage() and session_info(), the session env (Access.env) reaching a session but not its usage probe, over the fake
+adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
+registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
+patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
+run; claude and codex, from the committed config, refuse it. The Mode protocol, and a Handle over a scripted Mode on a
+fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
+detach) over tmux_host autospecced (no tmux runs)."""
 
 from new.tests import fake_adapter, hermetic
 
@@ -29,6 +30,7 @@ from agent_pm.adapters import base
 from agent_pm.adapters.base import Access, Launch
 from agent_pm.driver import api, errors, records, registry, tmux_host
 from agent_pm.driver.modes import headless, in_process, tui
+from agent_pm.utils.paths import IMPORT_ROOT
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -101,6 +103,26 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return base.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
 
 
+class EnvAdapter(ProbeAdapter):
+    """The probe adapter whose session launches carry spec.access.env, as claude's and codex's do."""
+
+    def headless(self):
+        return EnvRun(self)
+
+    def tui(self):
+        return EnvTui(self)
+
+
+class EnvRun(fake_adapter.FakeHeadless):
+    def launch(self, prompt, spec, resume):
+        return dataclasses.replace(super().launch(prompt, spec, resume), env=spec.access.env)
+
+
+class EnvTui(fake_adapter.FakeTui):
+    def launch(self, prompt, spec, resume, hook):
+        return dataclasses.replace(super().launch(prompt, spec, resume, hook), env=spec.access.env)
+
+
 def package(name, cls) -> types.ModuleType:
     """An in-memory module agent_pm.adapters.<name> holding `cls`."""
     module = types.ModuleType(f"agent_pm.adapters.{name}")
@@ -118,6 +140,7 @@ PACKAGES = {
             ("quiet", QuietAdapter),
             ("probe", ProbeAdapter),
             ("checked", CheckedAdapter),
+            ("env", EnvAdapter),
         )
     },
 }
@@ -1094,6 +1117,28 @@ class TuiStartTest(TuiBase):
         handle.stop()
         self.host.kill.assert_called_once_with("w1")
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+
+class SessionEnvTest(TuiBase):
+    def setUp(self):
+        super().setUp()
+        self.configure("env", probe={"argv": ("probe-cmd",)})
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
+        self.access = Access(commands=("git",), env={"PYTHONPATH": IMPORT_ROOT})
+
+    def test_a_headless_session_gets_it_and_its_usage_probe_does_not(self):
+        handle, _ = self.run_once(runtime="env", spec=self.spec(access=self.access))
+        with open(self.log, encoding="utf-8") as f:
+            (entry,) = [json.loads(line) for line in f]
+        self.assertEqual(entry["env"]["PYTHONPATH"], IMPORT_ROOT)
+        with mock.patch.object(headless, "probe", return_value="7") as probe:
+            self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
+        self.assertEqual(probe.call_args.kwargs["env"]["PYTHONPATH"], "/parent")
+
+    def test_a_tui_session_gets_it(self):
+        self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
+        (call,) = self.host.start.call_args_list
+        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], IMPORT_ROOT)
 
 
 class AttachTest(TuiBase):

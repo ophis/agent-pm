@@ -81,7 +81,7 @@ type = "local"
 #                 included; unset → none. What a runtime grants for them: its Adapter (src/adapters/<name>/)
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the runtime's Adapter decides how
-#                 they are approved. {{scripts}} is new/core/src/, {{workdir}} the agent run's workdir; unset → none
+#                 they are approved. {{workdir}} is the agent run's workdir; unset → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the runtime's Adapter; unset → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, runtime, language, show, cwd or [output], for that role
@@ -90,7 +90,7 @@ type = "local"
 [roles.researcher]
 templates = ["research-report"]
 read = ["{{methods}}"]
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: [roles.researcher.output]
@@ -102,7 +102,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 # ── PM ──────────────────────────────────────────────────
 [roles.pm]
 templates = ["prd"]
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.pm.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
@@ -112,7 +112,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]
 effort = "xhigh"
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *", "python3 -P -m agent_pm.repo status --dir {{workdir}}/src *"]
 
 [roles.engineer.output]
 type = "pull-request"

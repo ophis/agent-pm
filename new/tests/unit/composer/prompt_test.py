@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from agent_pm.composer.base import METHOD, SRC, TEAM, ConfigError, outline
+from agent_pm.composer.base import METHOD, TEAM, ConfigError, outline
 from agent_pm.composer.prompt import (
     OUTCOME,
     PARAMETERS,
@@ -261,18 +261,17 @@ class Prompt(Fake):
     def test_texts_keep_the_names_and_parameters_give_the_composers_paths(self):
         self.write(
             {
-                "principles.md": "# Principles\n\nRun `<scripts>/x.py`; tasks in `<tasks>`.\n",
+                "principles.md": "# Principles\n\nRun `<Workdir>/x.py`; tasks in `<tasks>`.\n",
                 "roles/writer.md": WRITER + "\nKnow `<methods>` and `<tasks>/short-note.md`.\n",
             }
         )
         prompt, _ = self.compose()
-        self.assertIn("Run `<scripts>/x.py`; tasks in `<tasks>`.", prompt)
+        self.assertIn("Run `<Workdir>/x.py`; tasks in `<tasks>`.", prompt)
         self.assertIn("Know `<methods>` and `<tasks>/short-note.md`.", prompt)
         self.assertEqual(
             parameters(prompt),
             {
                 "<Workdir>": "`/w`",
-                "<scripts>": f"`{SRC}`",
                 "<tasks>": f"`{self.root}/tasks`",
                 "<methods>": f"`{self.root}/methods`",
             },
@@ -432,7 +431,6 @@ class Parameters(Fake):
             list(PARAMETERS),
             [
                 "<Workdir>",
-                "<scripts>",
                 "<tasks>",
                 "<methods>",
                 "<gate>",
@@ -443,13 +441,19 @@ class Parameters(Fake):
             ],
         )
 
-    def test_the_rule_opens_the_section_then_the_workdir_scripts_and_tasks(self):
+    def test_the_rule_opens_the_section_then_the_workdir_and_tasks(self):
         prompt = self.compose()[0]
         self.assertIn(f"\n# Parameters\n\n{RULE}\n\n- `<Workdir>`: `/w`\n", prompt)
         self.assertEqual(
             list(parameters(prompt).items()),
-            [("<Workdir>", "`/w`"), ("<scripts>", f"`{SRC}`"), ("<tasks>", f"`{self.root}/tasks`")],
+            [("<Workdir>", "`/w`"), ("<tasks>", f"`{self.root}/tasks`")],
         )
+
+    def test_scripts_is_no_name(self):
+        self.write({"principles.md": "# Principles\n\nRun `<scripts>/x.py`.\n"})
+        prompt = self.compose()[0]
+        self.assertIn("Run `<scripts>/x.py`.", prompt)
+        self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<tasks>"])
 
     def test_a_task_file_using_a_name_its_run_cannot_define(self):
         self.write({"tasks/long-note.md": "# Long Note\n\nOpen `<out-repo>`.\n"})
@@ -462,7 +466,7 @@ class Parameters(Fake):
     def test_methods_used_by_name_in_the_role(self):
         self.write({"roles/writer.md": WRITER + "\nKnow `<methods>`.\n"})
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>"])
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>"])
         self.assertEqual(names["<methods>"], f"`{self.root}/methods`")
 
     def test_gate_used_by_name_in_an_indexed_task_file_only(self):
@@ -482,14 +486,14 @@ class Parameters(Fake):
             }
         )
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>"])
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>", "<gate>"])
         self.write({"tasks/long-note.md": "# Long Note\n\nFollow `{{methods}}/m.md`.\n"})
         self.assertNotIn("<gate>", parameters(self.compose()[0]))
 
     def test_github_output_its_used_keys(self):
         names = parameters(self.compose("editor")[0])
         self.assertEqual(
-            list(names.items())[3:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")]
+            list(names.items())[2:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")]
         )
 
     def test_an_unset_host_is_github_com(self):

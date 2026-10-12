@@ -15,7 +15,11 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from agent_pm.adapters.base import ConfigError, Launch, Usage, Window
+from agent_pm.adapters.base import ConfigError, Launch, Usage, Window, env_ok
+
+_SNAPSHOT_KEYS = frozenset(
+    {"cwd", "project", "dirs", "commands", "model", "effort", "network", "codex_home"}
+)
 
 
 def _absolute(path: str, label: str) -> str:
@@ -25,17 +29,11 @@ def _absolute(path: str, label: str) -> str:
 
 
 def _snapshot(value: dict) -> dict:
-    if not isinstance(value, dict) or set(value) != {
-        "cwd",
-        "project",
-        "dirs",
-        "commands",
-        "model",
-        "effort",
-        "network",
-        "codex_home",
-    }:
+    """A snapshot recorded without `env` has an empty session env."""
+    if not isinstance(value, dict) or set(value) not in (_SNAPSHOT_KEYS, _SNAPSHOT_KEYS | {"env"}):
         raise ConfigError("invalid Codex recovery snapshot fields")
+    if "env" in value and not env_ok(value["env"]):
+        raise ConfigError("invalid Codex recovery snapshot env")
     paths = {key: _absolute(value[key], key) for key in ("cwd", "codex_home")}
     for key in ("project", "network"):
         if type(value[key]) is not bool:
@@ -60,6 +58,7 @@ def _snapshot(value: dict) -> dict:
         "model": value["model"],
         "effort": value["effort"],
         "network": value["network"],
+        **({"env": dict(value["env"])} if "env" in value else {}),
     }
     if validated != value:
         raise ConfigError("invalid Codex recovery snapshot path")
@@ -679,6 +678,7 @@ class CodexCommon:
                 "effort": self._mapped("efforts", spec.effort),
                 "network": self.config["shell_network"],
                 "codex_home": home,
+                "env": dict(spec.access.env),
             }
         )
         return _create_session(workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]])
@@ -690,7 +690,12 @@ class CodexCommon:
         return _bind_session(workdir, sid, identifier)
 
     def environment(self, snapshot: dict) -> dict[str, str]:
-        return {**self.defaults, **self.config.get("env", {}), "CODEX_HOME": snapshot["codex_home"]}
+        return {
+            **self.defaults,
+            **self.config.get("env", {}),
+            "CODEX_HOME": snapshot["codex_home"],
+            **snapshot.get("env", {}),
+        }
 
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
@@ -721,7 +726,9 @@ class CodexCommon:
         command = shlex.join(
             ["codex", "resume", *flags(snapshot, interactive=True), state.native_id]
         )
-        return f"cd {shlex.quote(snapshot['cwd'])} && CODEX_HOME={shlex.quote(snapshot['codex_home'])} {command}"
+        env = {"CODEX_HOME": snapshot["codex_home"], **snapshot.get("env", {})}
+        assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
+        return f"cd {shlex.quote(snapshot['cwd'])} && {assign}{command}"
 
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
         cwd = _absolute(cwd, "cwd")

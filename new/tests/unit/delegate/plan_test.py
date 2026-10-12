@@ -18,12 +18,11 @@ from unittest import mock
 
 from agent_pm import composer
 from agent_pm.composer import RunConfig, RunParams
-from agent_pm.composer.base import SRC
 from agent_pm.composer.prompt import RESUME
 from agent_pm.delegate import ConfigError, plan
 from agent_pm.delegate.plan import place
 from agent_pm.driver import api
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")
@@ -257,17 +256,26 @@ class Refusals(Base):
 
 
 class Planned(Base):
-    KEYS = {"read": ["{{methods}}"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}
+    KEYS = {"read": ["{{methods}}"], "commands": ["x --dir {{workdir}}/src *"]}
 
-    def test_the_access_is_the_intents_with_the_gate_last(self):
-        command, gate = f"{SRC}/x --dir {self.work}/src *", "python3 /u/usage.py *"
-        for value, commands in ((gate, (command, gate)), ("", (command,))):
-            with self.subTest(gate=value):
-                got, _ = self.planned(keys=self.KEYS | {"gate": value})
+    def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
+        command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
+        env = {"PYTHONPATH": IMPORT_ROOT}
+        for keys, commands, want in (
+            (self.KEYS | {"gate": gate}, (command, gate), env),
+            (self.KEYS | {"gate": ""}, (command,), env),
+            (self.KEYS | {"commands": [], "gate": ""}, (), {}),
+        ):
+            with self.subTest(keys=keys):
+                got, _ = self.planned(keys=keys)
                 self.assertEqual(
                     got.spec.access,
                     api.Access(
-                        dirs=(TASKS, METHODS), commands=commands, cwd=self.work, project=False
+                        dirs=(TASKS, METHODS),
+                        commands=commands,
+                        cwd=self.work,
+                        project=False,
+                        env=want,
                     ),
                 )
 
