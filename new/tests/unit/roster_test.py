@@ -980,6 +980,7 @@ class RosterTest(Base):
 
     def test_recovery_runs_the_new_crew_py_for_a_legacy_workers_py_entry(self):
         self.assertEqual(roster.CREW, os.path.join(CORE, "skills", "tmux", "scripts", "crew.py"))
+        self.assertTrue(os.path.isfile(roster.CREW))
         resume = ["/usr/bin/python3", "/old/version/workers.py", "start", "w1"]
         for kind in ("worker", "pipeline", "role"):
             with self.subTest(kind=kind):
