@@ -46,7 +46,7 @@ flowchart TB
       CX[Codex adapter]
     end
   end
-  subgraph SH[used by every layer]
+  subgraph SH[shared, not a layer]
     U["utils/"]
     CFG["config"]
     AT["agent_tools/<br>run by the agent"]
