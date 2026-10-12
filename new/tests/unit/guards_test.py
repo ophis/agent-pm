@@ -3,13 +3,22 @@
 from new.tests import CORE, NEW, ORCH_SRC, ORCHESTRATOR, SRC, guards
 
 import importlib
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 
 OLD = "/".join(("core", "src"))
 ORCH_GUARDS = (guards.orchestrator_imports, guards.orchestrator_text, guards.config_once)
+PROBE = (
+    "import importlib, json, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "modules = {n: importlib.import_module(n).__file__ for n in sys.argv[2:]}\n"
+    "files = [getattr(m, '__file__', None) for m in list(sys.modules.values())]\n"
+    "print(json.dumps({'modules': modules, 'files': files, 'path': sys.path}))\n"
+)
 
 
 class Sample(unittest.TestCase):
@@ -44,8 +53,7 @@ class RealTree(unittest.TestCase):
             with self.subTest(guard.__name__, root=root):
                 self.assertEqual(guard(root), [])
 
-    def test_src_and_orchestrator_never_reach_the_old_core(self):
-        old = os.path.realpath(os.path.join(os.path.dirname(NEW), "core", "src"))
+    def test_src_never_reaches_the_old_core(self):
         src = os.path.realpath(SRC)
         for top, dirs, files in os.walk(SRC):
             dirs[:] = sorted(d for d in dirs if d != "__pycache__")
@@ -54,19 +62,30 @@ class RealTree(unittest.TestCase):
                 parts = parts[:-1] if parts[-1] == "__init__" else parts
                 module = importlib.import_module(".".join(parts))
                 self.assertEqual(os.path.commonpath([src, os.path.realpath(module.__file__)]), src)
+        files = [getattr(m, "__file__", None) for m in list(sys.modules.values())]
+        self.assert_no_old_core(files, sys.path)
+
+    def test_orchestrator_loads_from_its_src_and_never_the_old_core(self):
+        # A fresh interpreter: a src/ script that puts its own dir on sys.path (codex tui_hook.py)
+        # shadows bare names such as `sessions` for the rest of this process.
+        names = sorted(f[:-3] for f in os.listdir(ORCH_SRC) if f.endswith(".py"))
+        out = subprocess.run(
+            [sys.executable, "-I", "-c", PROBE, ORCH_SRC, *names],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        loaded = json.loads(out)
         orch = os.path.realpath(ORCH_SRC)
-        for name in (
-            sorted(f for f in os.listdir(ORCH_SRC) if f.endswith(".py"))
-            if os.path.isdir(ORCH_SRC)
-            else []
-        ):
-            module = importlib.import_module(name[:-3])
-            self.assertEqual(os.path.dirname(os.path.realpath(module.__file__)), orch)
-        for name, module in list(sys.modules.items()):
-            file = getattr(module, "__file__", None)
-            if file:
-                self.assertNotEqual(os.path.commonpath([old, os.path.realpath(file)]), old, name)
-        self.assertNotIn(old, {os.path.realpath(p) for p in sys.path if p})
+        for name in names:
+            self.assertEqual(os.path.dirname(os.path.realpath(loaded["modules"][name])), orch)
+        self.assert_no_old_core(loaded["files"], loaded["path"])
+
+    def assert_no_old_core(self, files, path):
+        old = os.path.realpath(os.path.join(os.path.dirname(NEW), "core", "src"))
+        for file in filter(None, files):
+            self.assertNotEqual(os.path.commonpath([old, os.path.realpath(file)]), old, file)
+        self.assertNotIn(old, {os.path.realpath(p) for p in path if p})
 
 
 class LayerImports(Sample):
