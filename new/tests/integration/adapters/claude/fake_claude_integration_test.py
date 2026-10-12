@@ -21,7 +21,6 @@ from new.tests import case, live_tmux
 from new.tests.integration.adapters.claude import fake_claude
 from new.tests.selection import configured
 
-
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"
 SESSION = ("--session-id", SID)
