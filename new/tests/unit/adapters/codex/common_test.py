@@ -361,6 +361,30 @@ class WritableDirsTest(Base):
         self.assertNotIn(elsewhere, dirs)
         self.assertEqual(self.record().read_bytes(), record)
 
+    def test_read_dirs_are_never_added_saved_or_writable(self):
+        read = self.root / "read"
+        read.mkdir()
+        adapter = CodexAdapter(self.adapter.config | {"sandbox": "workspace-write"})
+        access = dataclasses.replace(self.spec.access, reads=(str(read),))
+        spec = dataclasses.replace(self.spec, access=access)
+        argv = adapter.headless().launch("hi", spec, False).argv
+        self.assertEqual(
+            [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
+        )
+        self.assertEqual(
+            adapter.common.load(str(self.work), spec.sid).snapshot["dirs"], [str(self.extra)]
+        )
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                dirs = adapter.writable_dirs(spec, resume)
+                self.assertIn(str(self.extra), dirs)
+                self.assertNotIn(str(read), dirs)
+
+    def test_full_access_adds_no_dir_read_or_written(self):
+        access = dataclasses.replace(self.spec.access, reads=(str(self.root),))
+        spec = dataclasses.replace(self.spec, access=access)
+        self.assertNotIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
+
     def test_a_resume_without_saved_state_is_refused(self):
         with self.assertRaisesRegex(
             ConfigError, "missing Codex recovery state for run ID 'caller-id'"

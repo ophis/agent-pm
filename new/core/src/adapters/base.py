@@ -2,8 +2,8 @@
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
-environ, signals), applying spec.access.cwd itself. A spec type raises ConfigError on a bad value; times are epoch
-seconds. Starts no process."""
+environ, signals), applying spec.access.cwd itself. Access.dirs are granted write, Access.reads only read. Times are
+epoch seconds. Starts no process."""
 
 import json
 from abc import ABC, abstractmethod
@@ -42,9 +42,10 @@ class Access:
     commands: tuple[str, ...] = ()
     cwd: str = ""
     project: bool = False
+    reads: tuple[str, ...] = ()
 
     def __post_init__(self):
-        for name in ("dirs", "commands"):
+        for name in ("dirs", "commands", "reads"):
             if not _strings(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
 
@@ -222,7 +223,7 @@ class Adapter(ABC):
         return SessionStatus("unknown", None, "")
 
     def writable_dirs(self, spec: Spec, resume: bool) -> tuple[str, ...]:
-        """Own write dirs (resume: spec.sid's); override if any."""
+        """Own write dirs (resume: spec.sid's)."""
         return ()
 
 

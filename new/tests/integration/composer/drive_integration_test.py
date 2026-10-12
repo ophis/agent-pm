@@ -23,7 +23,8 @@ class NewRun(child.Case):
         self.assertEqual(
             got["intent"],
             {
-                "dirs": [self.work, TASKS],
+                "dirs": [self.work],
+                "reads": [TASKS],
                 "writes": [],
                 "commands": [],
                 "gate": "",

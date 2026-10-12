@@ -29,6 +29,10 @@ Imports go one way: delegate → composer or driver, driver → adapters, a modu
 
 With full access, `shell_network`, writable-root boundaries and team-dir protection do not restrict the runtime. `workspace-write` retains the existing sandbox flags. Recovery saves the effective policy; resume keeps it despite config changes. Older snapshots without `sandbox` retain `workspace-write`.
 
+## Access
+
+A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Codex sandbox, above) it can write them too. Each runtime's grant and its limits: `core/config.toml`'s `read` comment.
+
 ## Tests
 
 ```bash

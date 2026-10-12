@@ -213,7 +213,7 @@ class ModelEffortTest(Base):
 
 class ArgvTest(Base):
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
         self.assertEqual(
             self.launch("do it", tier=4, effort="low", access=access).argv,
             (
@@ -241,6 +241,8 @@ class ArgvTest(Base):
                 "--allowedTools",
                 "Bash(git status)",
                 "Bash(ls)",
+                "Read(//r1/**)",
+                "Read(//r 2/**)",
                 "Read",
                 "Edit(/x)",
                 "--",
@@ -334,6 +336,77 @@ class ArgvTest(Base):
         )
         self.refused(lambda: ClaudeCommon.uuid(None), "claude session ids are UUIDs, got None")
         self.assertEqual(ClaudeCommon.uuid(SID), SID)
+
+
+class ReadRulesTest(Base):
+    def modes(self, resume=False, config=None, **access):
+        spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
+        adapter = ClaudeAdapter({} if config is None else config)
+        return (
+            lambda: adapter.headless().launch("hi", spec, resume),
+            lambda: adapter.tui().launch("hi", spec, resume, HOOK),
+        )
+
+    def both(self, resume=False, config=None, **access) -> list[tuple[str, ...]]:
+        return [launch().argv for launch in self.modes(resume, config, **access)]
+
+    def test_reads_alone_are_allowed_tools_never_added_dirs(self):
+        for argv in self.both(reads=("/r",)):
+            self.assertEqual(argv[-4:], ("--allowedTools", "Read(//r/**)", "--", "hi"))
+            self.assertNotIn("--add-dir", argv)
+
+    def test_the_root_is_one_rule(self):
+        for argv in self.both(reads=("/", "//")):
+            self.assertEqual(argv[-4:], ("--allowedTools", "Read(//**)", "--", "hi"))
+
+    def test_a_symlinked_read_dir_gets_a_rule_for_both_spellings_each_once(self):
+        target = os.path.join(self.tmp, "target")
+        os.mkdir(target)
+        link = os.path.join(self.tmp, "link")
+        os.symlink(target, link)
+        for reads, dirs in (
+            ((link,), (link, target)),
+            ((link + "/", target), (link, target)),
+            ((target, link), (target, link)),
+        ):
+            with self.subTest(reads=reads):
+                for argv in self.both(reads=reads):
+                    self.assertEqual(
+                        argv[-5:],
+                        ("--allowedTools", *(f"Read(/{d}/**)" for d in dirs), "--", "hi"),
+                    )
+
+    def test_a_resume_keeps_the_rules(self):
+        for argv in self.both(True, CONFIG, commands=("ls",), reads=("/r",)):
+            self.assertEqual(argv[1 + argv.index("--resume")], SID)
+            self.assertEqual(
+                argv[-7:],
+                ("--allowedTools", "Bash(ls)", "Read(//r/**)", "Read", "Edit(/x)", "--", "hi"),
+            )
+
+    def test_a_read_dir_a_rule_cannot_hold_literally_is_refused_before_any_launch(self):
+        bad = ["", "r", "./r", "/r\n", "/r\0", *(f"/r{c}s" for c in "*?[]{}()\\,"), "/" + "*" * 99]
+        for read in bad:
+            for launch in self.modes(reads=("/ok", read)):
+                with self.subTest(read=read), mock.patch("adapters.claude.common.Launch") as made:
+                    self.refused(
+                        launch,
+                        f"claude: read dir {read!r:.80} must be a printable absolute path "
+                        "without *?[]{}()\\,",
+                    )
+                    made.assert_not_called()
+
+    def test_a_read_dir_whose_real_path_a_rule_cannot_hold_is_refused(self):
+        target = os.path.join(self.tmp, "a*b")
+        os.mkdir(target)
+        link = os.path.join(self.tmp, "link")
+        os.symlink(target, link)
+        for launch in self.modes(reads=(link,)):
+            self.refused(
+                launch,
+                f"claude: read dir {target!r:.80} must be a printable absolute path without "
+                "*?[]{}()\\,",
+            )
 
 
 class EnvTest(Base):
@@ -909,7 +982,7 @@ class TuiArgvTest(Base):
         return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
 
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
         self.assertEqual(
             self.tui("do it", tier=4, effort="low", access=access).argv,
             (
@@ -933,6 +1006,8 @@ class TuiArgvTest(Base):
                 "--allowedTools",
                 "Bash(git status)",
                 "Bash(ls)",
+                "Read(//r1/**)",
+                "Read(//r 2/**)",
                 "Read",
                 "Edit(/x)",
                 "--",
@@ -1369,6 +1444,14 @@ class WritableDirsTest(Base):
         ):
             with self.subTest(access=access):
                 self.assertEqual(self.dirs(True, **access), dirs)
+
+    def test_read_dirs_never(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(
+                    self.dirs(resume, dirs=(self.added,), reads=(self.cwd, self.link)),
+                    (self.work, self.added),
+                )
 
 
 class CommittedConfigTest(Base):

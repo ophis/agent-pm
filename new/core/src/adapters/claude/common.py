@@ -9,11 +9,14 @@ import stat
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from utils.paths import printable_abs
+
 from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Spec, Usage, Window
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+NOT_LITERAL = "*?[]{}()\\,"
 
 
 def number(value) -> float | None:
@@ -42,6 +45,19 @@ def _full(window: Window | None, resets: float | None) -> Window:
 
 def _strings(value) -> bool:
     return isinstance(value, list) and all(isinstance(s, str) for s in value)
+
+
+def _read_dir(path: str) -> str:
+    if not printable_abs(path) or any(c in NOT_LITERAL for c in path):
+        raise ConfigError(
+            f"claude: read dir {path!r:.80} must be a printable absolute path without {NOT_LITERAL}"
+        )
+    return path
+
+
+def _read_rules(reads: tuple[str, ...]) -> tuple[str, ...]:
+    dirs = (d for read in reads for d in (_read_dir(read), _read_dir(os.path.realpath(read))))
+    return tuple(dict.fromkeys(f"Read(/{d.rstrip('/')}/**)" for d in dirs))
 
 
 def _table(value, keys=None) -> bool:
@@ -176,7 +192,11 @@ class ClaudeCommon:
         access = spec.access
         cwd = access.cwd or spec.workdir
         mcp = os.path.join(cwd, ".mcp.json")
-        allow = (*(f"Bash({command})" for command in access.commands), *self.allow)
+        allow = (
+            *(f"Bash({command})" for command in access.commands),
+            *_read_rules(access.reads),
+            *self.allow,
+        )
         argv = (
             "claude",
             *head,
