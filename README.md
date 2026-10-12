@@ -64,7 +64,7 @@ flowchart TB
   D --> C
   C -->|"reads (Delegate: outcome.schema.json)"| T
   D <==>|"start · events, replies"| DR
-  DR -->|"loads; headless() / tui() / in_process()"| B
+  DR -->|"loads by config (registry); headless() · tui() · in_process()"| AD
   L3 -->|"starts & hosts (pipe / tmux) · argv · output · hooks"| RT
   R ~~~ RU
   PP ~~~ CF
