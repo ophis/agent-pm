@@ -1,6 +1,6 @@
 # new/
 
-The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and orchestrator ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)), under construction; they replace the root `core/` and `orchestrator/` at cutover. Terms: root `CONTEXT.md`; diagram: root `README.md` › Core architecture (planned). Paths below are relative to `new/`; commands run from the repo root. Each module's docstring states its behaviour.
+The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and orchestrator ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)), under construction; they replaced the old root `core/` and `orchestrator/` code and move to the root at cutover ([TASK-334](https://linear.app/ophis-workgroup/issue/TASK-334)). Terms: root `CONTEXT.md`; diagram: root `README.md` › Core architecture (planned). Paths below are relative to `new/`; commands run from the repo root. Each module's docstring states its behaviour.
 
 ## Layout
 
@@ -16,7 +16,7 @@ The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and
 | `core/src/agent_pm/driver/tmux_host.py` | hosts a command in a detached tmux session and shows it in a pane or grid; the only module calling tmux (`tests/guards.py` `tmux_calls`) |
 | `core/src/agent_pm/driver/modes/` | the Driver's Modes: `headless.py` (a command on pipes), `tui.py` (a tmux session through `tmux_host.py`), `in_process.py` (an Adapter's run on a thread, no process); `tui_hook.py`, the command a tui session's hooks run |
 | `core/src/agent_pm/roster.py` | a manager's roster, outside the layers: `~/.agent-pm/managers/<name>/roster.json`, beside its `events` file |
-| `core/src/agent_pm/crew.py` | a manager's workers, each a plain tui session (`core/src/agent_pm/adapters/base.py`), and its roster, outside the layers: the old crew's CLI (root `core/skills/tmux/SKILL.md` until cutover) as `env PYTHONPATH=<absolute new/core/src>[:<your PYTHONPATH>] python3 -P -m agent_pm.crew …` (`env`: the act-as row; PYTHONPATH: its docstring) |
+| `core/src/agent_pm/crew.py` | a manager's workers, each a plain tui session (`core/src/agent_pm/adapters/base.py`), and its roster, outside the layers: the old crew's CLI (`/agent-pm:tmux`: removed, rebuilt by TASK-356) as `env PYTHONPATH=<absolute new/core/src>[:<your PYTHONPATH>] python3 -P -m agent_pm.crew …` (`env`: the act-as row; PYTHONPATH: its docstring) |
 | `core/team/` | the Composer's built-in team: main's root `core/team/` at a0bf18c, except that `output/output.md` and `output/destinations/{local,orchestrator}.md` name the outcome's `deliverable_file` and agent commands run `agent_pm.agent_tools.repo` |
 | `core/config.toml` | the Composer's run keys (`runtime` among them) and `[roles.<role>]` tables, the Driver's `[adapters.<name>]` tables and tui display keys (the registry reads both once per process); which layer reads which keys, and this machine's settings in `~/.agent-pm/core-new.local.toml`: the file's header |
 | `core/.claude-plugin/plugin.json` | the Claude Code plugin `agent-pm`, root `core/`, its skills `core/skills/`; `../.claude-plugin/marketplace.json` lists it. This checkout's: `claude --plugin-dir new/core`; check: `claude plugin validate new/core && claude plugin validate .` |
@@ -49,4 +49,4 @@ PYTHONPATH=new/core/src:new/orchestrator/src python3 -m unittest discover -s new
 PYTHONPATH=new/core/src:new/orchestrator/src python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
 ```
 
-CI (`.github/workflows/test.yml`) runs each in its own job, and Ruff over the whole repo (root `CLAUDE.md` › Commands). Never run them in one process with the repo's `tests/`: it puts the old core's and orchestrator's flat modules (root `core/src/`, `orchestrator/src/`) on `sys.path`; nothing here imports it or the old core (`tests/guards.py` `old_core`).
+CI (`.github/workflows/test.yml`) runs each in its own job, and Ruff over the whole repo (root `CLAUDE.md` › Commands).
