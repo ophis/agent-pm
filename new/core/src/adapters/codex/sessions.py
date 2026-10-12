@@ -179,10 +179,10 @@ class SessionState:
     native_id: str | None = None
 
 
-def recovery_snapshot(state: SessionState) -> dict:
+def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
     snapshot = validate_snapshot(state.snapshot)
     paths = [state.workdir, snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
-    check_writable_roots(store_root(), paths)
+    check_writable_roots(store_root(root), paths)
     for path in paths:
         if not any(inside(path, grant) for grant in state.writable_roots):
             raise RecoveryError(
@@ -271,16 +271,20 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
     return True
 
 
-def store_root() -> str:
+def store_root(root: str | None = None) -> str:
+    if root is not None:
+        canonical = absolute_path(root, "store")
+        _check_ancestors(root)
+        if canonical != root:
+            raise RecoveryError("invalid Codex recovery store: expected a canonical path")
+        return root
     return os.path.join(
         os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
     )
 
 
 def store_directory(*, create: bool, root: str | None = None) -> str | None:
-    if root is not None and absolute_path(root, "store") != root:
-        raise RecoveryError("invalid Codex recovery store: expected a canonical path")
-    root = store_root() if root is None else root
+    root = store_root(root)
     parent = os.path.dirname(root)
     base = os.path.dirname(parent)
     check_writable_roots(root, implicit_writable_roots())
@@ -316,8 +320,9 @@ def check_writable_roots(root: str, paths: list[str]) -> None:
 
 
 def read_state(
-    path: str, workdir: str | None = None, sid: str | None = None
+    path: str, workdir: str | None = None, sid: str | None = None, *, root: str | None = None
 ) -> SessionState | None:
+    root = store_root(root)
     _check_ancestors(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -350,11 +355,11 @@ def read_state(
         if not isinstance(data, dict):
             raise RecoveryError("malformed recovery state")
         workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
-        if data.get("workdir") != workdir or path != _path(os.path.dirname(path), workdir, sid):
-            raise RecoveryError("invalid recovery state identity")
     state = _state(data, workdir, sid)
-    recovery_snapshot(state)
-    check_writable_roots(store_root(), state.writable_roots)
+    if path != _path(root, workdir, sid):
+        raise RecoveryError("invalid recovery state identity")
+    recovery_snapshot(state, root=root)
+    check_writable_roots(root, state.writable_roots)
     return state
 
 
@@ -422,8 +427,15 @@ def _write(path: str, state: SessionState, *, exclusive: bool) -> None:
 
 
 def create_session(
-    workdir: str, sid: str, snapshot: dict, writable_roots: list[str], *, persist: bool = True
+    workdir: str,
+    sid: str,
+    snapshot: dict,
+    writable_roots: list[str],
+    *,
+    persist: bool = True,
+    root: str | None = None,
 ) -> SessionState:
+    root = store_root(root)
     workdir, sid = session_identity(workdir, sid)
     state = _state(
         {
@@ -441,15 +453,16 @@ def create_session(
         workdir,
         sid,
     )
-    recovery_snapshot(state)
-    check_writable_roots(store_root(), [*state.writable_roots, *implicit_writable_roots()])
-    return save_session(state) if persist else state
+    recovery_snapshot(state, root=root)
+    check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
+    return save_session(state, root=root) if persist else state
 
 
-def save_session(state: SessionState) -> SessionState:
-    recovery_snapshot(state)
-    check_writable_roots(store_root(), [*state.writable_roots, *implicit_writable_roots()])
-    root = store_directory(create=True)
+def save_session(state: SessionState, *, root: str | None = None) -> SessionState:
+    root = store_root(root)
+    recovery_snapshot(state, root=root)
+    check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
+    root = store_directory(create=True, root=root)
     assert root is not None
     _write(_path(root, state.workdir, state.sid), state, exclusive=True)
     return state
@@ -460,7 +473,7 @@ def load_session(workdir: str, sid: str, *, root: str | None = None) -> SessionS
     root = store_directory(create=False, root=root)
     if root is None:
         return None
-    state = read_state(_path(root, workdir, sid), workdir, sid)
+    state = read_state(_path(root, workdir, sid), workdir, sid, root=root)
     if state is not None:
         check_writable_roots(root, [workdir, *state.writable_roots])
     return state

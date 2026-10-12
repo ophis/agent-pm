@@ -140,3 +140,63 @@ class HookTest(Base):
                 )
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
+
+    def test_authoritative_store_validates_every_recovery_path_with_writable_runtime_home(self):
+        state = self.prepare()
+        record = self.record()
+        store = str(record.parent)
+        runtime_home = self.cwd / "runtime-home"
+        runtime_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
+            self.assertEqual(sessions.recovery_snapshot(state, root=store), state.snapshot)
+            self.assertEqual(sessions.read_state(str(record), root=store), state)
+            self.assertEqual(
+                sessions.load_session(str(self.work), self.spec.sid, root=store), state
+            )
+            bound = sessions.bind_session(str(self.work), self.spec.sid, NATIVE, root=store)
+            self.assertEqual(bound.native_id, NATIVE)
+            self.assertTrue(
+                tui_hook.bind("Stop", self.payload(), str(self.work), self.spec.sid, root=store)
+            )
+            fresh = sessions.create_session(
+                str(self.work),
+                "explicit-store",
+                state.snapshot,
+                state.writable_roots,
+                persist=False,
+                root=store,
+            )
+            self.assertEqual(sessions.save_session(fresh, root=store), fresh)
+            self.assertEqual(sessions.load_session(str(self.work), fresh.sid, root=store), fresh)
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+        self.assertFalse((runtime_home / ".agent-pm").exists())
+
+    def test_authoritative_store_still_rejects_actual_writable_store(self):
+        state = self.prepare()
+        record = self.record()
+        unsafe = self.cwd / ".private-state" / "core-new-sessions" / "codex"
+        for directory in (unsafe.parent.parent, unsafe.parent, unsafe):
+            directory.mkdir(mode=0o700, exist_ok=True)
+        copied = unsafe / record.name
+        copied.write_bytes(record.read_bytes())
+        copied.chmod(0o600)
+        root = str(unsafe)
+        calls = (
+            lambda: sessions.recovery_snapshot(state, root=root),
+            lambda: sessions.read_state(str(copied), root=root),
+            lambda: sessions.load_session(str(self.work), self.spec.sid, root=root),
+            lambda: sessions.bind_session(str(self.work), self.spec.sid, NATIVE, root=root),
+            lambda: sessions.create_session(
+                str(self.work), "unsafe-store", state.snapshot, state.writable_roots, root=root
+            ),
+            lambda: sessions.save_session(state, root=root),
+        )
+        for call in calls:
+            with (
+                self.subTest(call=call),
+                self.assertRaisesRegex(sessions.RecoveryError, "inside writable root"),
+            ):
+                call()
+        self.assertEqual(record.read_bytes(), copied.read_bytes())
+        self.assertEqual(list(unsafe.iterdir()), [copied])
+        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)

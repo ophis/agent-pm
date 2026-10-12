@@ -646,6 +646,37 @@ class TuiIntegrationTest(Live):
         self.assertFalse((runtime_home / ".agent-pm").exists())
         self.assertTrue(all(call["env"]["HOME"] == str(runtime_home) for call in self.calls()))
 
+    def test_configured_home_in_writable_roots_keeps_caller_store_fresh_and_resumed(self):
+        self.scene([["writable runtime home"]])
+        for index, grant in enumerate((self.work, self.extra)):
+            with self.subTest(grant=grant):
+                runtime_home = grant / "runtime-home"
+                runtime_home.mkdir()
+                self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
+                registry.configure(self.config)
+                name, sid = f"configured{index}", f"configured-{index}"
+                before = len(self.calls())
+                first = self.start(name, sid=sid)
+                first_stream = Stream(self, first)
+                found = [first_stream.next()]
+                while not isinstance(found[-1], TurnEnd):
+                    self.assertNotIsInstance(found[-1], Exited)
+                    found.append(first_stream.next())
+                self.assertEqual(found[-1], TurnEnd("writable runtime home"))
+                native = self.bound(sid).native_id
+                first.stop()
+                second = self.start(name, sid=sid, resume=sid)
+                self.assertEqual(
+                    Stream(self, second).until(TurnEnd)[-1], TurnEnd("writable runtime home")
+                )
+                second.stop()
+                self.assertEqual(self.bound(sid).native_id, native)
+                self.assertFalse((runtime_home / ".agent-pm").exists())
+                self.assertTrue(
+                    all(call["env"]["HOME"] == str(runtime_home) for call in self.calls()[before:])
+                )
+        self.assertEqual(len(list(self.record().parent.glob("*.json"))), 2)
+
 
 class HookTrustIntegrationTest(Live):
     def test_interleaved_catalog_notifications_exact_hashes_and_cleanup(self):
