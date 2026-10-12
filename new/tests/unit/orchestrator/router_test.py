@@ -1,14 +1,31 @@
 """orchestrator router.py, ported from the old router_test (Plan, Claim, Blockers, TaskLabels, Gate over Usage, Tick,
-IssueFlag, OneRouter, Outage, Usage, Brake) onto config.load() and a fake Driver api, plus FR-44, FR-46 to FR-48, FR-56
-and FR-60. A tick's start is injected."""
+IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's headless parts as Entry) onto config.load() and a fake
+Driver api, plus FR-44 to FR-48, FR-56 and FR-60. A tick's start is injected but in Entry, which runs main's own outer."""
 
 from new.tests.unit.orchestrator import run_fixtures
 from new.tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from new.tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
 from new.tests.unit.orchestrator.board_ids import role as role_table
 from new.tests.unit.orchestrator.fake_api import FakeApi
+from new.tests.unit.orchestrator.linear_test import Stderr
 from new.tests.unit.orchestrator.outage import FAILURES, FIELDS, failing
-from new.tests.unit.orchestrator.run_fixtures import HARNESS, logged, show
+from new.tests.unit.orchestrator.run_fixtures import (
+    ENGINEER,
+    HARNESS,
+    ID,
+    KEY,
+    PROJECT,
+    RESEARCHER,
+    SID,
+    USER_NOTE,
+    UUID,
+    Gql,
+    logged,
+    node,
+    show,
+)
+from new.tests.unit.orchestrator.target_test import FakeRun, ok
+from new.tests.unit.orchestrator.target_test import api as repo_info
 
 import config
 
@@ -20,16 +37,24 @@ import io
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
+import inputs
+import issues
 import linear
 import router
+import run as run_py
 import runs
+import target
 from driver import api
+from utils.git import GUARD
+from utils.shell import SHORT
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
@@ -1892,12 +1917,15 @@ def other_router(path):
 
 
 class TickBase(Base):
-    def tick(self, fake, *argv, hour=2, live=(), start=None, again=False, now=NOW):
+    def tick(
+        self, fake, *argv, hour=2, live=(), start=None, again=False, now=NOW, tty=False, outer=None
+    ):
+        # outer: main's run and keychain; main then starts through its own outer
         self.api.live = None if live is None else list(live)
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
-        self.start = start or Start()
+        self.start = None if outer else start or Start()
         self.write_runs()
-        err = io.StringIO()
+        err = Stderr(tty)
         with (
             redirect_stderr(err),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
@@ -1911,6 +1939,7 @@ class TickBase(Base):
                 config_path=self.config_path,
                 hour=hour,
                 start=self.start,
+                **(outer or {}),
             )
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -3062,6 +3091,592 @@ class TickTaskLabels(TickBase):
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
 
+LS_REMOTE = (
+    "git",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+    "ls-remote",
+    "--heads",
+    "https://github.com/Ophis/Agent-PM.git",
+    "TASK-7-*",
+)
+ENG_RUN = [
+    (("gh", "api", "repos/ophis/agent-pm"), repo_info("Ophis/Agent-PM")),
+    (LS_REMOTE[:3], ok()),
+]
+LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Research?ref=main")
+DESIGN_LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Product%20Design?ref=main")
+OUTER = (
+    HEADER
+    + 'human_members = ["Me@X.com"]\n'
+    + CONFIG.removeprefix(HEADER)
+    + f'[project_repos]\n"{PROJECT}" = "ophis/agent-pm"\n'
+)
+INPUT = f"""Reference: TASK-7
+Title: TASK-7: Session registry
+Repo: Ophis/Agent-PM
+Checkout: TASK-7
+Branch: TASK-7-session-registry
+Links: {run_fixtures.URL}
+
+{inputs.PRECEDENCE["build"]}
+
+## The user's requirements since the last build
+
+Me, 2026-09-02T00:00:00.000Z:
+Use SQLite.
+
+## The user's instructions
+
+ENG: Session registry
+
+Add a session registry.
+
+## PRD
+
+None linked."""
+
+
+def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
+    return [
+        f"--issue={ID}",
+        f"--project={PROJECT}",
+        f"--assignee={assignee}",
+        f"--sid={sid}",
+        *([f"--task={task}"] if task else []),
+        f"--mode={mode}",
+        f"--runtime={runtime}",
+    ]
+
+
+def inner(*args, text=INPUT):
+    return [sys.executable, router.RUN, "--uuid", UUID, *args, f"--input={text}"]
+
+
+class ClaimLinear(FakeLinear):
+    """FakeLinear plus the outer's issue read, answered with `node`."""
+
+    def __init__(self, todo, node):
+        super().__init__([todo])
+        self.node = node
+
+    def __call__(self, query, **v):
+        if query == issues.Q_ISSUE:
+            self.queries.append((query, v))
+            return {"issue": self.node}
+        return super().__call__(query, **v)
+
+
+class OuterBase(TickBase):
+    def setUp(self):
+        super().setUp()
+        self.write_config(OUTER)
+        self.gql = Gql(issue=node(comments=[USER_NOTE]))
+        self.run_ = FakeRun(ENG_RUN)
+        self.missing, self.keychain_calls = set(), []
+
+    def keychain(self, service):
+        self.keychain_calls.append(service)
+        return service not in self.missing
+
+    def outer(self, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
+        a = outer_args(ident, PROJECT, assignee, sid, task, mode, runtime)
+        cfg = config.load(path=self.config_path)
+        err = io.StringIO()
+        with redirect_stderr(err), self.log_dir(again=True):
+            rc = router.outer(
+                a,
+                cfg,
+                gql=functools.partial(self.gql, service=HARNESS),
+                run=self.run_,
+                keychain=self.keychain,
+            )
+        self.err = err.getvalue()
+        return rc
+
+    def detached(self, role="engineer"):
+        name, argv, cwd, env = self.api.detached[-1]
+        self.assertEqual((name, cwd, env["PATH"]), (f"agent-pm-{role}-{ID}", self.rd, config.PATH))
+        return argv
+
+    def input(self, **kw):
+        last = self.detached(**kw)[-1]
+        self.assertTrue(last.startswith("--input="), last[:40])
+        return last.removeprefix("--input=")
+
+
+class Outer(OuterBase):
+    """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input and starts run.py in
+    a detached Driver session."""
+
+    def test_build_starts_run_py_in_a_detached_driver_session(self):
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded()))
+        self.assertEqual((len(self.api.detached), os.listdir(self.rd)), (1, []))
+        self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})])
+        self.assertEqual(
+            self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), SHORT), (LS_REMOTE, SHORT)]
+        )
+        self.assertEqual(
+            (os.environ["PATH"], self.keychain_calls, self.api.info), (config.PATH, [KEY], [])
+        )
+        self.assertEqual((self.err, self.said()), ("", []))
+
+    def test_a_given_task_reaches_run_py_whose_argv_parses_it(self):
+        self.assertEqual(self.outer(task="light-build"), 0)
+        argv = self.detached()
+        self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
+        cfg = config.load(path=self.config_path)
+        with (
+            mock.patch.object(run_py, "inner", return_value=0) as run_inner,
+            mock.patch.object(config, "load", return_value=cfg),
+            mock.patch.object(linear, "use_logs"),
+        ):
+            self.assertEqual(run_py.main(argv[2:]), 0)
+        a = run_inner.call_args.args[0]
+        self.assertEqual(
+            (a.uuid, a.target, a.issue, a.project, a.assignee, a.sid, a.task, a.mode, a.runtime),
+            (UUID, "Ophis/Agent-PM", ID, PROJECT, ENGINEER, SID, "light-build", "new", "a"),
+        )
+        self.assertEqual((a.input, a.tui), (INPUT, False))
+
+    def test_a_long_input_reaches_run_py_intact(self):
+        big = "".join(
+            f"Requirement {i}: keep the session registry small.\n" for i in range(500)
+        ).strip()
+        self.gql.issue = node(description=big, comments=[USER_NOTE])
+        self.assertEqual(self.outer(), 0)
+        text = INPUT.replace("Add a session registry.", big)
+        self.assertGreater(len(text.encode()), 20_000)
+        self.assertEqual(
+            self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded(), text=text)
+        )
+
+    def test_nul_is_removed_and_a_lone_surrogate_replaced_in_the_input(self):
+        for description, want in (
+            ("Add a session\0 registry.\0", INPUT),
+            (
+                "Add a session\ud800 registry.",
+                INPUT.replace("Add a session registry.", "Add a session? registry."),
+            ),
+        ):
+            with self.subTest(description=description):
+                self.gql.issue = node(description=description, comments=[USER_NOTE])
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.input(), want)
+
+    def test_research_and_design_have_no_target(self):
+        rows = (
+            (RESEARCHER, "researcher", LISTING, "research", "Question", "Compare queues", "Which?"),
+            (ROLE["pm"], "pm", DESIGN_LISTING, "design", "Brief", "Queues PRD", "Build a PRD."),
+        )
+        for who_, role, listing, kind, heading, title, description in rows:
+            with self.subTest(role=role):
+                self.gql.issue = node(title=title, description=description)
+                self.run_.table, self.run_.calls = [(listing, ok("[]"))], []
+                self.assertEqual(self.outer(who_), 0)
+                self.assertEqual(
+                    self.detached(role),
+                    inner(
+                        *forwarded(who_),
+                        text=(
+                            f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n"
+                            f"{inputs.PRECEDENCE[kind]}\n\n## {heading}\n\n{title}\n\n{description}"
+                        ),
+                    ),
+                )
+                self.assertEqual(self.run_.calls, [(listing, SHORT)])
+
+    def local_clone(self):
+        path = os.path.realpath(os.path.join(self.tmp, "clone"))
+        for argv in (
+            ["init", "-q", path],
+            ["-C", path, "remote", "add", "origin", "https://github.com/ophis/agent-pm.git"],
+        ):
+            subprocess.run(["git", *argv], check=True)
+        self.write_config(OUTER + f'[local_clones]\n"Ophis/Agent-PM" = "{path}"\n')
+        return path
+
+    def test_a_configured_local_clone_is_the_inputs_repo(self):
+        clone = self.local_clone()
+        self.assertEqual(self.outer(), 0)
+        self.assertEqual(self.input(), INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}"))
+        self.assertEqual(
+            self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), SHORT), (LS_REMOTE, SHORT)]
+        )
+        self.assertEqual(self.err, "")
+
+    def test_research_and_design_name_the_local_clone(self):
+        clone = self.local_clone()
+        for who_, role, listing in (
+            (RESEARCHER, "researcher", LISTING),
+            (ROLE["pm"], "pm", DESIGN_LISTING),
+        ):
+            with self.subTest(who=who_):
+                self.run_.table = [(listing, ok("[]"))]
+                self.assertEqual(self.outer(who_), 0)
+                argv = self.detached(role)
+                self.assertNotIn("--target", argv)
+                self.assertEqual(argv[-1].splitlines()[1], f"Repo: {clone}")
+
+    def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
+        self.local_clone()
+        cfg = config.load(path=self.config_path)
+        os.makedirs(
+            os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
+        )
+        self.run_.table = [(("git", *GUARD, "-C"), ok()), *ENG_RUN]
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.input(), INPUT)
+        self.assertEqual([argv[0] for argv, _ in self.run_.calls], ["gh", "git", "git"])
+
+    def test_a_resume_reads_its_session_at_its_runtime_and_rebuilds_the_input(self):
+        self.assertEqual(self.outer(mode="resume", runtime="b"), 0)
+        self.assertEqual(
+            self.detached(),
+            inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", runtime="b")),
+        )
+        self.assertEqual(self.api.info, [("b", SID, self.rd)])
+
+    def test_a_resume_not_resumable_starts_nothing(self):
+        for value, why in (
+            (NO, "no"),
+            (api.SessionStatus("unknown", None, ""), "unknown"),
+            (RuntimeError("boom"), "RuntimeError: boom"),
+        ):
+            with self.subTest(why=why):
+                self.api.statuses[SID] = value
+                self.assertEqual(self.outer(mode="resume"), 3)
+                self.assertEqual(
+                    (self.said(), self.err),
+                    ([f"transient TASK-7 reason=session {SID} not resumable ({why})"], ""),
+                )
+        self.assertEqual((self.api.detached, self.gql.calls, self.run_.calls), ([], [], []))
+        self.assertEqual(self.api.info, [("a", SID, self.rd)] * 3)
+
+    def test_bad_issue_or_session_id(self):
+        for ident, sid in (("task-7", SID), (ID, "not-a-sid"), (ID, "z" * 36)):
+            with self.subTest(ident=ident, sid=sid):
+                self.assertEqual(self.outer(ident=ident, sid=sid), 2)
+                self.assertEqual(self.err, f"router.py: bad issue or session id: {ident} {sid}\n")
+        self.assertEqual((self.api.detached, self.gql.calls, self.keychain_calls), ([], [], []))
+
+    def test_role_and_task_errors_are_config_errors_of_the_issue(self):
+        for kw, reason in (
+            ({"assignee": "x@y.com"}, "'x@y.com' is not a role account"),
+            (
+                {"assignee": RESEARCHER, "task": "build"},
+                "task 'build' is not one of researcher's tasks (deep-research, light-research)",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.assertEqual(self.outer(mode="resume", **kw), 2)
+                self.assertEqual(
+                    (self.said(), self.err), ([f"config-error TASK-7 reason={reason}"], "")
+                )
+        self.assertEqual(
+            (self.api.detached, self.api.info, self.gql.calls, self.keychain_calls),
+            ([], [], [], []),
+        )
+
+    def test_no_keychain_item(self):
+        self.missing.add(KEY)
+        for mode in ("new", "resume"):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.outer(mode=mode), 2)
+                self.assertEqual(
+                    self.said(),
+                    [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
+                )
+        self.assertEqual((self.api.detached, self.api.info, self.gql.calls), ([], [], []))
+
+    def test_linear_errors_are_transient(self):
+        for gql, reason in (
+            (Gql(), "LookupError: TASK-7: issue not found"),
+            (
+                Gql(lambda n, v: SystemExit("linear api error: boom"), node()),
+                "SystemExit: linear api error: boom",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.gql = gql
+                self.assertEqual(self.outer(), 3)
+                self.assertEqual(self.said(), [f"transient TASK-7 reason=Linear: {reason}"])
+        self.assertEqual((self.api.detached, self.run_.calls), ([], []))
+
+    def test_invalid_new_bounces_without_a_run(self):
+        self.run_.table = [(("gh", "api"), ok(code=1, stderr="gh: Not Found (HTTP 404)"))]
+        reason = "project mapping ophis/agent-pm: not found or no access (HTTP 404)"
+        for task in (None, "light-build"):
+            with self.subTest(task=task):
+                self.gql = Gql(issue=node(comments=[USER_NOTE]))
+                self.assertEqual(self.outer(task=task), 0)
+                self.assertEqual(
+                    self.gql.calls,
+                    [
+                        ("issue", HARNESS, {"i": ID}),
+                        ("subscribe", KEY, {"i": UUID, "e": "me@x.com"}),
+                        (
+                            "post",
+                            KEY,
+                            {
+                                "i": UUID,
+                                "b": f"Question: repo check failed: {reason}. Fix the description's "
+                                "`Repo:` line, then move this issue back to Todo.",
+                            },
+                        ),
+                        ("reread", KEY, {"i": UUID}),
+                        ("state", KEY, {"i": UUID, "s": IDS_BY_KEY["in_review"]}),
+                    ],
+                )
+                self.assertEqual(self.said(), [f"bounce TASK-7 reason={reason}"])
+                self.assertEqual((self.api.detached, os.path.exists(self.rd)), ([], False))
+
+    def test_bounce_failure_is_transient(self):
+        self.run_.table = [(("gh", "api"), ok(code=1, stderr="HTTP 404"))]
+        self.gql = Gql(
+            lambda n, v: SystemExit("linear api error: boom") if n == "post" else None, node()
+        )
+        self.assertEqual(self.outer(), 3)
+        self.assertEqual(
+            self.said(), ["transient TASK-7 reason=bounce: SystemExit: linear api error: boom"]
+        )
+        self.assertEqual(self.api.detached, [])
+
+    def test_invalid_resume_and_transient_check_start_nothing(self):
+        for mode, r, reason in (
+            (
+                "resume",
+                ok(code=1, stderr="HTTP 404"),
+                "project mapping ophis/agent-pm: not found or no access (HTTP 404)",
+            ),
+            (
+                "new",
+                ok(code=1, stderr="HTTP 502: Bad Gateway"),
+                "gh api repos/ophis/agent-pm: HTTP 502: Bad Gateway",
+            ),
+            (
+                "new",
+                subprocess.TimeoutExpired(["gh", "api"], 60),
+                "repo check: TimeoutExpired: Command '['gh', 'api']' timed out after 60 seconds",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.run_.table = [(("gh", "api"), r)]
+                self.assertEqual(self.outer(mode=mode), 3)
+                self.assertEqual(self.said(), [f"transient TASK-7 reason={reason}"])
+        self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})] * 3)
+        self.assertEqual(self.api.detached, [])
+
+    def test_docs_failure_is_transient(self):
+        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
+        for r, reason in (
+            (ok(code=1, stderr="HTTP 500"), "RuntimeError: gh api contents Research: HTTP 500"),
+            (OSError("gh missing"), "OSError: gh missing"),
+        ):
+            with self.subTest(reason=reason):
+                self.run_.table = [(LISTING, r)]
+                self.assertEqual(self.outer(RESEARCHER), 3)
+                self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
+        self.assertEqual(self.api.detached, [])
+
+    def test_a_run_dir_that_cannot_be_made_starts_nothing(self):
+        self.write(self.rd, "")
+        self.assertEqual(self.outer(), 1)
+        self.assertEqual(
+            (self.said(), self.err, self.api.detached),
+            (
+                [
+                    f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"
+                ],
+                "",
+                [],
+            ),
+        )
+
+    def test_a_driver_session_that_cannot_start_exits_1(self):
+        for error in (
+            api.DriverError("detach agent-pm-engineer-TASK-7: duplicate session"),
+            api.ConfigError("cwd must be an existing directory"),
+        ):
+            with self.subTest(error=error):
+                self.api.detach_error = error
+                self.assertEqual(self.outer(), 1)
+                self.assertEqual(
+                    (self.said(), self.err),
+                    ([f"launch-error TASK-7 error={type(error).__name__}: {error}"], ""),
+                )
+        self.assertEqual(self.input(), INPUT)
+
+
+class Entry(OuterBase):
+    """router.main end to end through its own outer (the old AttendedEntry's headless parts)."""
+
+    def setUp(self):
+        super().setUp()
+        self.todo = issue(ID, "Todo", "engineer")
+        self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
+        self.fake = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
+
+    def entry(self, *argv, live=(), tty=False):
+        outer = {"run": self.run_, "keychain": self.keychain}
+        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer)
+
+    def test_claims_then_starts_run_py_after_its_start_line(self):
+        for argv, said in (
+            (("--issue", ID), []),
+            (("--now",), ["launch TASK-7 exit=0"]),
+        ):
+            with self.subTest(argv=argv):
+                self.todo["state"], self.fake.mutations, self.api.detached = "Todo", [], []
+                lines, detach = [], self.api.detach
+
+                def at_detach(*args, **kw):
+                    with open(self.runs) as f:
+                        lines.append(f.read())
+                    return detach(*args, **kw)
+
+                with mock.patch.object(api, "detach", at_detach):
+                    self.assertEqual(self.entry(*argv), 0)
+                kind, ident, sid, role, runtime = self.last_run()
+                self.assertEqual((kind, ident, role, runtime), ("start", ID, "engineer", "a"))
+                self.assertEqual(lines, [self.state])
+                self.assertEqual(
+                    self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid))
+                )
+                self.assertEqual(
+                    self.said()[-2 - len(said) :],
+                    ["pick TASK-7 queue=1", "claim TASK-7 role=engineer runtime=a", *said],
+                )
+                self.assertEqual(
+                    self.fake.mutations,
+                    [(linear.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})],
+                )
+                self.assertEqual(self.err, "")
+
+    def test_a_task_label_reaches_run_py_as_its_task(self):
+        self.write_config(OUTER + f'[task_labels]\nlight-build = "{LIGHT}"\n')
+        self.todo["labels"] = [label("Light Build", LIGHT)]
+        self.assertEqual(self.entry("--issue", ID), 0)
+        sid = self.last_run()[2]
+        self.assertEqual(
+            self.detached(),
+            inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build", sid=sid)),
+        )
+        self.assertIn("claim TASK-7 role=engineer task=light-build runtime=a", self.said())
+
+    def test_a_resume_keeps_the_runtime_of_its_claim(self):
+        with mock.patch.object(linear, "stamp", return_value=ago(minutes=60)):
+            self.assertEqual(self.entry(), 0)
+        sid = self.last_run()[2]
+        with open(self.runs) as f:
+            self.lines = f.read().splitlines()
+        self.api.statuses[sid] = api.SessionStatus(
+            "yes", (NOW - timedelta(minutes=40)).timestamp(), ""
+        )
+        self.write_config(OUTER.replace(OVERLAY, '[core]\nruntime = "b"\n'))
+        self.assertEqual(self.entry(), 0)
+        self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
+        self.assertEqual(
+            self.detached(),
+            inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid, mode="resume")),
+        )
+        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, ["a"]))
+
+    def test_the_outers_lines_follow_the_ticks_plan(self):
+        self.todo["state"], self.fake.node = "In Progress", None
+        self.resumable(ID, "s", 60, role="engineer")
+        self.assertEqual(self.entry(), 0)
+        self.assertEqual(
+            self.said(),
+            [
+                "plan TASK-7 mode=resume sid=s",
+                "transient TASK-7 reason=Linear: LookupError: TASK-7: issue not found",
+                "launch TASK-7 exit=3",
+            ],
+        )
+
+    def test_a_live_run_is_refused(self):
+        for role in ("engineer", "pm"):
+            with self.subTest(role=role):
+                self.assertEqual(self.entry("--issue", ID, live=[f"agent-pm-{role}-{ID}"]), 1)
+                self.assertEqual(
+                    self.err,
+                    f"router.py: {ID} has a live agent run: attach agent-pm-{role}-{ID}\n",
+                )
+                self.assertEqual((self.api.order, self.state), (SESSIONS, ""))
+        self.assertEqual((self.fake.queries, self.api.detached), ([], []))
+
+    def test_nothing_started_exits_1_without_a_start_line(self):
+        for change, said, state in (
+            (
+                {"state": "In Review"},
+                "pick-none TASK-7 reason=not a Todo issue assigned to a role account",
+                "In Review",
+            ),
+            (
+                {"state": "In Progress"},
+                f"recover TASK-7 to=todo reason=no session updated={self.todo['updatedAt']}",
+                "Todo",
+            ),
+            (
+                {"inverseRelations": {"nodes": [blocker("TASK-9")]}},
+                'blocked TASK-7 by=["TASK-9"]',
+                "Todo",
+            ),
+            (
+                {"labels": [label("Stray", STRAY)]},
+                "claim-skip TASK-7 to=in_review reason=bad task label",
+                "In Review",
+            ),
+        ):
+            with self.subTest(said=said):
+                self.todo.update(state="Todo", inverseRelations={"nodes": []}, labels=[])
+                self.todo.update(change)
+                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertIn(said, self.said())
+                self.assertEqual(
+                    (self.todo["state"], self.state, self.api.order), (state, "", SESSIONS)
+                )
+        self.assertEqual(self.api.detached, [])
+
+    def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
+        for text, reason in (
+            ("bogus = 1\n" + OUTER, "orchestrator/config.toml: unknown keys: bogus"),
+            (
+                OUTER + role_table("bogus"),
+                "orchestrator/config.toml: role 'bogus' is not in core/config.toml",
+            ),
+        ):
+            self.write_config(text)
+            self.logs = None
+            for argv in (["--now"], ["--issue", ID]):
+                for tty, err in ((False, ""), (True, f"router.py: {reason}\n")):
+                    with self.subTest(reason=reason, argv=argv, tty=tty):
+                        self.assertEqual(self.entry(*argv, tty=tty), 1)
+                        self.assertEqual(self.err, err)
+            self.assertEqual(
+                [show(e) for e in logged(self.logs)], [f"config-error reason={reason}"]
+            )
+        self.logs = None
+        error = config.ConfigError("orchestrator/config.toml:\n  bad", self.tmp)
+        with mock.patch.object(config, "load", side_effect=error):
+            self.assertEqual(self.entry(), 1)
+        self.assertEqual(self.said(), ["config-error reason=orchestrator/config.toml: bad"])
+        self.write(self.local, 'work_dir = "w"\n')
+        self.assertEqual(self.entry(), 1)
+        self.assertEqual(
+            (self.err, self.said()),
+            (
+                "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+                [],
+            ),
+        )
+        self.assertEqual((self.fake.queries, self.api.order, self.api.detached), ([], [], []))
+
+
 class Usage(Base):
     def main(self, argv):
         err = io.StringIO()
@@ -3098,6 +3713,9 @@ class Usage(Base):
             ["--issue", "TASK-1", "--issue", "TASK-2"],
             ["--issue"],
             ["--now", "--issue", "--dry-run"],
+            *([f, "x"] for f in ("--uuid", "--target", "--project", "--assignee", "--sid")),
+            *([f, "x"] for f in ("--task", "--mode", "--runtime", "--input", "--runner")),
+            ["--issue", "TASK-1", "--runtime", "a"],
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(argv), (2, router.USAGE + "\n"))

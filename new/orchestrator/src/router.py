@@ -10,7 +10,7 @@ router.py --brake ROLE                       usage check for ROLE's runtime
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
               Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
-              outer's code.
+              outer's code: 0 started or bounced, 1 the start failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
 --brake ROLE  Print ROLE's runtime usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
@@ -33,8 +33,12 @@ from datetime import UTC, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
 
+import inputs  # noqa: E402
+import issues  # noqa: E402
 import linear  # noqa: E402
 import sessions  # noqa: E402
+import target  # noqa: E402
+import writeback  # noqa: E402
 from driver import api  # noqa: E402
 from linear import (  # noqa: E402
     ISSUE_ID,
@@ -463,6 +467,108 @@ def begin(mode, issue, sid, role, task, runtime, runs):
     )
 
 
+def fail(ident, kind, reason, rc):
+    log("router", kind, ident, reason=reason)
+    return rc
+
+
+def outer(a, cfg, *, gql, run, keychain):
+    os.environ["PATH"] = config.PATH
+    if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
+        print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
+        return 2
+    role = config.role_for(cfg.roles, a.assignee)
+    if role is None:
+        return fail(a.issue, "config-error", f"{a.assignee!r} is not a role account", 2)
+    tasks, key = cfg.roles[role].tasks, cfg.roles[role].key
+    if a.task is not None and a.task not in tasks:
+        why = f"task {a.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
+        return fail(a.issue, "config-error", why, 2)
+    if not keychain(key):
+        return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
+    if a.mode == "resume":
+        try:
+            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid)
+            why = None if st.resumable == "yes" else st.resumable
+        except Exception as e:
+            why = one_line(e)
+        if why:
+            return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
+    try:
+        issue = issues.read_issue(gql, a.issue)
+    except (Exception, SystemExit) as e:
+        return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
+    ctx = writeback.context(
+        cfg,
+        role,
+        gql,
+        ident=a.issue,
+        issue_id=issue.id,
+        sid=a.sid,
+        resume=a.mode == "resume",
+        project=a.project,
+        target=None,
+    )
+    build = config.TASKS[role].kind == "build"
+    if build:
+        try:
+            repo = target.check(
+                issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
+            )
+        except Exception as e:
+            return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
+        if (
+            isinstance(repo, target.Transient)
+            or isinstance(repo, target.Invalid)
+            and a.mode == "resume"
+        ):
+            return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
+        if isinstance(repo, target.Invalid):
+            try:
+                writeback.bounce(ctx, issue, repo.reason)
+            except (Exception, SystemExit) as e:
+                return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
+            log("router", "bounce", a.issue, reason=repo.reason)
+            return 0
+    else:
+        repo = target.research_repo(issue, cfg.project_repos)
+    if repo is not None:
+        repo = target.with_clone(repo, a.issue, cfg.local_clones, work=cfg.runs_dir, run=run)
+    rd = cfg.run_dir(a.issue)
+    try:
+        sources = inputs.gather(issue, role, cfg.docs, run=run)
+    except Exception as e:
+        return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
+    try:
+        os.makedirs(rd, exist_ok=True)
+        text = inputs.render(
+            issue, role, sources, humans=ctx.humans, target=repo, docs=cfg.docs
+        ).replace("\0", "")
+        text = text.encode("utf-8", "replace").decode()  # a lone surrogate would fail execve
+    except Exception as e:
+        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
+        return 1
+    try:
+        api.detach(
+            config.session(role, a.issue),
+            [
+                sys.executable,
+                RUN,
+                "--uuid",
+                issue.id,
+                *(["--target", f"{repo.owner}/{repo.name}"] if build else []),
+                *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
+                f"--input={text}",
+            ],
+            cwd=rd,
+            env=os.environ,
+        )
+    except (api.ConfigError, api.DriverError) as e:
+        log("router", "launch-error", a.issue, error=one_line(e))
+        return 1
+    return 0
+
+
 @contextlib.contextmanager
 def lock(runs, dry):
     if dry:
@@ -564,6 +670,7 @@ def tick(opts, cfg, gql, now, hour, start):
             if run is None or dry:
                 return 0
             a = begin(*run, runs)
+            walk.write()  # the outer logs past the walk
             try:
                 rc = start(a)
             except (Exception, SystemExit) as e:
@@ -666,6 +773,7 @@ def main(
             return 2
         return brake(opts["brake"], cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
+    start = start or functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain)
     now = now or datetime.now(UTC)
     try:
         if opts["issue"]:
