@@ -24,11 +24,10 @@ WRITER = ("# Writer\n\nYou write notes.\n\n## Tasks\n\n"
           "- `note` (`<tasks>/note.md`): a short note; always; light.\n")
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from composer.base import CONFIG, LOCAL
-from utils.config_file import read_config
+CATALOG = """from utils.config_file import CONFIG, read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(read_config(CONFIG, LOCAL))
+team.check_all(read_config(CONFIG))
 params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
 rows = {}
 for role, tasks in composer.catalog(team).items():

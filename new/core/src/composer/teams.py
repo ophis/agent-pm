@@ -7,8 +7,9 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from composer.base import CONFIG, LOCAL, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
-from utils.config_file import read_config
+
+from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
+from utils.config_file import LOCAL, read_config
 from utils.markdown import unfenced
 from utils.paths import temp_dirs, under
 

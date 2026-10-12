@@ -25,7 +25,8 @@ class Sample(unittest.TestCase):
 class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
-                            (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.private_imports, CORE)):
+                            (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.private_imports, CORE),
+                            (guards.modes_import_api, CORE), (guards.tmux_calls, CORE), (guards.syntax_39, CORE)):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
 
@@ -52,7 +53,7 @@ class LayerImports(Sample):
         self.assertEqual(guards.layer_imports(root), ["src/adapters/x.py: adapters imports driver"])
 
     def test_driver_modes_outside_driver_names_it(self):
-        root = self.tree({"src/delegate/x.py": "from driver.modes import headless_run\n"})
+        root = self.tree({"src/delegate/x.py": "from driver.modes import headless\n"})
         self.assertEqual(guards.layer_imports(root), ["src/delegate/x.py: delegate imports driver.modes"])
 
     def test_a_relative_import_is_resolved(self):
@@ -61,8 +62,8 @@ class LayerImports(Sample):
 
     def test_allowed_imports_are_clean(self):
         root = self.tree({"src/delegate/x.py": "from driver.api import start\nfrom composer import y\n",
-                          "src/driver/x.py": "import adapters.base\nfrom .modes import headless_run\n"
-                                             "from driver.modes import headless_run\n",
+                          "src/driver/x.py": "import adapters.base\nfrom .modes import headless\n"
+                                             "from driver.modes import headless\n",
                           "src/x.py": "from driver import api\nimport driver.api\nfrom driver.api import start\n"})
         self.assertEqual(guards.layer_imports(root), [])
 
@@ -127,6 +128,60 @@ class AdaptersKey(Sample):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
         root = self.tree({"src/composer/x.py": sample, "src/driver/x.py": sample})
         self.assertEqual(guards.adapters_key(root), ['src/composer/x.py:2: literal key "adapters"'])
+
+
+class ModesImportApi(Sample):
+    def test_a_mode_importing_driver_api_any_way_is_a_violation(self):
+        root = self.tree({"src/driver/modes/a.py": "from driver import api\n",
+                          "src/driver/modes/b.py": "import driver.api\n",
+                          "src/driver/modes/c.py": "from ..api import DriverError\n",
+                          "src/driver/modes/d.py": "def f():\n    from .. import api\n",
+                          "src/driver/modes/__init__.py": "__import__('driver.api')\n"})
+        self.assertEqual(guards.modes_import_api(root), ["src/driver/modes/__init__.py: imports driver.api",
+                                                         "src/driver/modes/a.py: imports driver.api",
+                                                         "src/driver/modes/b.py: imports driver.api",
+                                                         "src/driver/modes/c.py: imports driver.api",
+                                                         "src/driver/modes/d.py: imports driver.api"])
+
+    def test_driver_errors_in_a_mode_and_driver_api_outside_modes_are_clean(self):
+        root = self.tree({"src/driver/modes/a.py": "from driver.errors import DriverError\nfrom driver import records\n"
+                                                   "from ..errors import DriverError\n",
+                          "src/driver/x.py": "from driver import api\n", "src/y.py": "import driver.api\n"})
+        self.assertEqual(guards.modes_import_api(root), [])
+
+
+class TmuxCalls(Sample):
+    def test_the_tmux_constant_only_in_tmux_host(self):
+        sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
+        root = self.tree({"src/driver/tmux_host.py": sample, "src/driver/modes/x.py": sample,
+                          "src/composer/y.py": 'TOOL = "tmux"\n', "tests/z.py": sample})
+        self.assertEqual(guards.tmux_calls(root), ['src/composer/y.py:1: str constant "tmux"',
+                                                   'src/driver/modes/x.py:2: str constant "tmux"',
+                                                   'tests/z.py:2: str constant "tmux"'])
+
+    def test_tmux_inside_a_longer_string_is_clean(self):
+        root = self.tree({"src/driver/x.py": 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'})
+        self.assertEqual(guards.tmux_calls(root), [])
+
+
+class Syntax39(Sample):
+    def test_newer_syntax_in_a_standalone_file_is_a_violation(self):
+        root = self.tree({"src/driver/tmux_host.py": "def f(x: int | None): pass\nmatch x:\n    case _: pass\n",
+                          "src/driver/api.py": "match x:\n    case _: pass\n"})
+        found = guards.syntax_39(root)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("src/driver/tmux_host.py: "), found)
+
+    def test_the_tui_hook_is_standalone_too(self):
+        root = self.tree({"src/driver/modes/tui_hook.py": "match x:\n    case _: pass\n"})
+        found = guards.syntax_39(root)
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("src/driver/modes/tui_hook.py: "), found)
+
+    def test_3_9_syntax_is_clean(self):
+        root = self.tree({"src/driver/tmux_host.py": "from __future__ import annotations\n"
+                                                     "def f(x: int | None) -> list[str]: return []\n"})
+        self.assertEqual(guards.syntax_39(root), [])
 
 
 class PrivateImports(Sample):

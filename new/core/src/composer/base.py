@@ -4,10 +4,9 @@ import re
 from collections.abc import Mapping
 
 from utils import markdown
+from utils.config_file import CONFIG
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG = os.path.join(os.path.dirname(SRC), "config.toml")
-LOCAL = "~/.agent-pm/core-new.local.toml"
 TEAM = os.path.join(os.path.dirname(SRC), "team")
 OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")

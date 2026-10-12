@@ -1,3 +1,4 @@
+"""new/core/src/utils/paths.py: real_dirs, under, temp_dirs and printable_abs."""
 import os
 import subprocess
 import tempfile
@@ -6,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from new.tests import NEW
-from utils.paths import real_dirs, temp_dirs, under
+from utils.paths import printable_abs, real_dirs, temp_dirs, under
 
 
 class PathsTest(unittest.TestCase):
@@ -36,6 +37,10 @@ class PathsTest(unittest.TestCase):
         self.assertEqual(under(path, [self.root, self.alias]), str(self.root))
         self.assertIsNone(under(str(self.root / "home-other"), [self.home]))
 
+    def test_under_a_root_equal_to_the_path_holds_it_and_no_roots_hold_nothing(self):
+        self.assertEqual(under(str(self.home), [self.alias]), str(self.home))
+        self.assertIsNone(under(str(self.home), []))
+
     def test_temp_dirs_collects_environment_python_system_and_darwin_roots(self):
         value = subprocess.CompletedProcess([], 0, str(self.root / "darwin") + "\n", "")
         with mock.patch.dict(os.environ, {"TMPDIR": str(self.alias)}), \
@@ -51,3 +56,17 @@ class PathsTest(unittest.TestCase):
         for error in (OSError("no getconf"), subprocess.TimeoutExpired("getconf", 60)):
             with self.subTest(error=error), mock.patch("subprocess.run", side_effect=error):
                 self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
+
+
+class PrintableAbs(unittest.TestCase):
+    def test_a_printable_absolute_str_only(self):
+        for value in ("/", "/a/b", "/a b/é", "/x/../y"):
+            with self.subTest(value=value):
+                self.assertTrue(printable_abs(value))
+        for value in ("", "rel", "./a", "~/a", "/c\n", "/x\x1b[2J", "/a\0b", b"/a", None, 1, ["/a"]):
+            with self.subTest(value=value):
+                self.assertFalse(printable_abs(value))
+
+
+if __name__ == "__main__":
+    unittest.main()

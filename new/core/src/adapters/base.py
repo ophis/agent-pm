@@ -1,23 +1,23 @@
 """The Adapter interface: one runtime's abstract factory, built from its [adapters.<name>] table minus `implementation`.
-Its HeadlessRun (a fresh one per session: launch may keep state for parse) or TuiRun turns a prompt and a Spec into a
+Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. It also gives a usage probe's Launch,
 reads its stdout as Usage, and gives a session's SessionStatus. A spec type raises ConfigError on a bad value; times
 are epoch seconds. Starts no process."""
 import json
-import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 
+from utils.paths import printable_abs
+
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+TURN_END = "turn_end"   # hook kinds
+BLOCKED = "blocked"
+ACTIVITY = "activity"
 
 
 class ConfigError(Exception):
     """A config or spec error."""
-
-
-def _path(value) -> bool:
-    return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
 
 
 def _strings(value) -> bool:
@@ -56,14 +56,14 @@ class Spec:
     sid: str | None = None
 
     def __post_init__(self):
-        if not _path(self.workdir):
+        if not printable_abs(self.workdir):
             raise ConfigError(f"workdir must be a printable absolute path, got {self.workdir!r:.80}")
         if self.tier is not None and (isinstance(self.tier, bool) or not isinstance(self.tier, int)
                                       or not 1 <= self.tier <= 4):
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort is not None and self.effort not in EFFORTS:
             raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
-        if self.access.cwd != "" and not _path(self.access.cwd):
+        if self.access.cwd != "" and not printable_abs(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
@@ -139,10 +139,16 @@ RESUMABLE = ("yes", "no", "unknown")
 
 
 @dataclass(frozen=True)
+class Window:
+    """One usage limit window."""
+    used_percent: float       # may exceed 100
+    resets_at: float | None   # None: not given
+
+
+@dataclass(frozen=True)
 class Usage:
-    five_hour: float          # percent, may exceed 100
-    weekly_full: bool
-    resets_at: float | None
+    five_hour: Window | None   # None: not reported
+    weekly: Window | None
 
 
 @dataclass(frozen=True)
@@ -177,24 +183,25 @@ class Adapter(ABC):
         self.config = dict(config)
 
     @abstractmethod
-    def headless_run(self) -> "HeadlessRun | None":
-        """A fresh HeadlessRun, or None."""
+    def headless(self) -> "Headless | None":
+        """A fresh Headless, or None."""
 
     @abstractmethod
-    def tui_run(self) -> "TuiRun | None":
-        """The TuiRun, or None."""
+    def tui(self) -> "Tui | None":
+        """The Tui, or None."""
 
     def usage_probe(self) -> Launch | None:
         return None
 
     def usage(self, output: str) -> Usage | None:
+        """None only when the probe failed."""
         return None
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
 
-class HeadlessRun(ABC):
+class Headless(ABC):
     def __init__(self, adapter: Adapter):
         self.adapter = adapter
 
@@ -216,7 +223,8 @@ class HeadlessRun(ABC):
                 yield from self.parse(record)
 
 
-class TuiRun(ABC):
+class Tui(ABC):
+    hooks: Mapping[str, str] = {}   # hook label → TURN_END, BLOCKED or ACTIVITY
     dialogs: tuple[str, ...] = ()
 
     def __init__(self, adapter: Adapter):
@@ -224,26 +232,44 @@ class TuiRun(ABC):
 
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
-        """As HeadlessRun.launch, plus hooks running `hook`."""
+        """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its payload on stdin."""
 
     @abstractmethod
     def reply(self, payload: dict) -> str:
-        """A Stop hook's reply."""
+        """A TURN_END hook's reply."""
 
     def pending(self, payload: dict) -> int:
         return 0
 
+    def activity(self, payload: dict) -> str:
+        """An ACTIVITY hook's detail."""
+        return ""
+
+    def blocked_reason(self, payload: dict) -> str:
+        """A BLOCKED hook's reason."""
+        return ""
+
+    def session_id(self, payload: dict) -> str:
+        native = payload.get("session_id")
+        return native if isinstance(native, str) else ""
+
+    def limit(self, screen: str) -> LimitHit | None:
+        """The runtime's usage-limit message on the visible pane `screen`; None: none shown."""
+        return None
+
     def submit(self, text: str) -> tuple[Paste | Key, ...]:
         return Paste(text), Key("Enter")
 
-    def hook_events(self, name: str, payload: dict, bound: str = "") -> list[Event]:
+    def hook_events(self, label: str, payload: dict, bound: str = "") -> list[Event]:
         found = []
-        native = payload.get("session_id")
-        if isinstance(native, str) and native and native != bound:
+        native = self.session_id(payload)
+        if native and native != bound:
             found.append(SessionBound(native))
-        if name == "Stop":
+        kind = self.hooks.get(label)
+        if kind == TURN_END:
             found.append(TurnEnd(self.reply(payload), self.pending(payload)))
-        elif name == "PostToolUse":
-            tool = payload.get("tool_name")
-            found.append(Activity(tool if isinstance(tool, str) else ""))
+        elif kind == BLOCKED:
+            found.append(Blocked(self.blocked_reason(payload)))
+        elif kind == ACTIVITY:
+            found.append(Activity(self.activity(payload)))
         return found

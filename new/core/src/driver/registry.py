@@ -1,43 +1,52 @@
-"""The adapter registry, the only reader of the core config's [adapters] tables (config.toml, LOCAL merged on top),
-read once per process and cached (a failed read is not); configure() sets the cache instead, reset() drops it.
-adapter(name) builds the class [adapters.<name>].implementation names from the table's other keys. Every failure is a
-ConfigError."""
+"""The adapter registry, the only reader of the core config's [adapters] tables and TUI_KEYS (config.toml, LOCAL
+merged on top), read once per process and cached (a failed read is not); configure() sets the cache instead, reset()
+drops it. adapter(name) builds the class [adapters.<name>].implementation names. Every failure is a ConfigError."""
 import importlib
 import inspect
-import os
 import re
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from adapters.base import Adapter, ConfigError
-from utils.config_file import merge, read_config as _read_config
+from driver import tmux_host
+from utils.config_file import CONFIG, LOCAL, read_config
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CONFIG = os.path.join(ROOT, "config.toml")
-LOCAL = "~/.agent-pm/core-new.local.toml"
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
+TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 _lock = threading.Lock()
-_cache: dict[str, dict] | None = None
+_cache: dict | None = None
 
 
-def read_config(path: str = CONFIG, local: str = LOCAL) -> dict:
-    return _read_config(path, local)
+@dataclass(frozen=True)
+class TuiSettings:
+    """tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
+    status_line: bool = False
+    per_column: int | None = None
+    retile: str | None = None
+
+
+def read(path: str = CONFIG, local: str = LOCAL) -> dict:
+    try:
+        return _kept(read_config(path, local))
+    except (OSError, ValueError) as e:
+        raise ConfigError(f"core config {path}: {e}") from e
+
+
+def _kept(config: Mapping) -> dict:
+    found = config.get("adapters")
+    return {"adapters": found if isinstance(found, dict) else {}, **{k: config[k] for k in TUI_KEYS if k in config}}
 
 
 def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
-    try:
-        found = read_config(path, local).get("adapters")
-    except (OSError, ValueError) as e:
-        raise ConfigError(f"core config {path}: {e}") from e
-    return found if isinstance(found, dict) else {}
+    return read(path, local)["adapters"]
 
 
 def configure(config: Mapping) -> None:
     global _cache
-    found = config.get("adapters")
     with _lock:
-        _cache = found if isinstance(found, dict) else {}
+        _cache = _kept(config)
 
 
 def reset() -> None:
@@ -46,22 +55,33 @@ def reset() -> None:
         _cache = None
 
 
-def _tables() -> dict[str, dict]:
+def _config() -> dict:
     global _cache
     with _lock:
         if _cache is None:
-            _cache = tables(CONFIG, LOCAL)
+            _cache = read(CONFIG, LOCAL)
         return _cache
 
 
 def configured() -> list[str]:
-    return sorted(_tables())
+    return sorted(_config()["adapters"])
+
+
+def tui() -> TuiSettings:
+    line, per, retile = (_config().get(k) for k in TUI_KEYS)
+    if line is not None and not isinstance(line, bool):
+        raise ConfigError("status_line: want true or false")
+    if per is not None and (isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999):
+        raise ConfigError("workers_per_column: want an integer from 1 to 9999")
+    if retile is not None and (not isinstance(retile, str) or retile not in tmux_host.RETILES):
+        raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.RETILES)}")
+    return TuiSettings(bool(line), per, retile)
 
 
 def adapter(name: str) -> Adapter:
     if not isinstance(name, str) or not NAME.match(name):
         raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
-    table = _tables().get(name)
+    table = _config()["adapters"].get(name)
     if not isinstance(table, dict):
         raise ConfigError(f"no [adapters.{name}] table in {CONFIG} or {LOCAL}")
     config = dict(table)

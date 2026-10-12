@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from adapters.base import ConfigError, Launch, Usage
+from adapters.base import ConfigError, Launch, Usage, Window
 
 
 def _absolute(path: str, label: str) -> str:
@@ -469,6 +469,13 @@ def _number(value) -> bool:
         return False
 
 
+def _window(window: dict) -> Window | None:
+    percent, reset = window.get("usedPercent"), window.get("resetsAt")
+    if not _number(percent) or percent < 0:
+        return None
+    return Window(float(percent), float(reset) if _number(reset) and reset >= 0 else None)
+
+
 def _usage(snapshot) -> Usage | None:
     if not isinstance(snapshot, dict):
         return None
@@ -480,13 +487,7 @@ def _usage(snapshot) -> Usage | None:
         duration = window.get("windowDurationMins")
         if type(duration) is int and duration in (300, 10080) and duration not in windows:
             windows[duration] = window
-    five, weekly = windows.get(300, {}), windows.get(10080, {})
-    percent, used = five.get("usedPercent"), weekly.get("usedPercent")
-    if not _number(percent) or percent < 0 or not _number(used) or used < 0:
-        return None
-    full = used >= 100
-    reset = (weekly if full else five).get("resetsAt")
-    return Usage(percent, full, reset if _number(reset) and reset >= 0 else None)
+    return Usage(_window(windows.get(300, {})), _window(windows.get(10080, {})))
 
 
 class CodexCommon:
@@ -561,6 +562,10 @@ class CodexCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
+        """The account/rateLimits/read result as Usage; None when it is no JSON object or holds no snapshot dict
+        (rateLimitsByLimitId.codex, else rateLimits). five_hour and weekly: the first of the snapshot's primary and
+        secondary windows lasting 300 and 10080 minutes; None when absent or its usedPercent is no finite number >= 0
+        (a resetsAt that is not: None)."""
         try:
             result = json.loads(output)
         except (ValueError, TypeError, RecursionError):

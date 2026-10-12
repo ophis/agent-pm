@@ -1,7 +1,11 @@
 """What every Claude Code Mode shares: ClaudeCommon validates [adapters.claude] (an error names the key, never its
 value) and gives a tier's model, an effort's value, a command's env and UNSET (a parent session's identity keys, which
 a child must not inherit), a session's transcript and resume command, Claude's sid rule (a lowercase UUID: Claude takes
-the sid as its own session id), the usage probe and its reading, and a session's SessionStatus."""
+the sid as its own session id), the usage probe and its reading, and a session's SessionStatus.
+
+launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
+(--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), and the project and local setting
+sources only for a project run."""
 import json
 import math
 import os
@@ -11,7 +15,7 @@ import stat
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Usage
+from adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Spec, Usage, Window
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
@@ -26,6 +30,18 @@ def number(value) -> float | None:
     except OverflowError:
         return None
     return value if math.isfinite(value) else None
+
+
+def _window(value) -> Window | None:
+    used = number(value.get("utilization")) if isinstance(value, dict) else None
+    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
+
+
+def _full(window: Window | None, resets: float | None) -> Window:
+    """`window` at least 100% used; its reset time, else `resets`."""
+    if window is None:
+        return Window(100.0, resets)
+    return Window(max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at)
 
 
 def _strings(value) -> bool:
@@ -108,6 +124,28 @@ class ClaudeCommon:
             return sid
         raise ConfigError(f"claude session ids are UUIDs, got {sid!r:.80}")
 
+    def launch(self, spec: Spec, resume: bool, settings: Mapping, head: tuple[str, ...] = (),
+               output: tuple[str, ...] = (), tail: tuple[str, ...] = ()) -> Launch:
+        """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
+        sid = self.uuid(spec.sid)
+        model, effort = self.model(spec.tier), self.effort(spec.effort)
+        access = spec.access
+        cwd = access.cwd or spec.workdir
+        mcp = os.path.join(cwd, ".mcp.json")
+        allow = (*(f"Bash({command})" for command in access.commands), *self.allow)
+        argv = ("claude", *head, "--resume" if resume else "--session-id", sid,
+                *(("--model", model) if model is not None else ()),
+                *(("--effort", effort) if effort is not None else ()),
+                *self.flags,
+                "--setting-sources", "user,project,local" if access.project else "user",
+                *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
+                *output, "--settings", json.dumps(settings),
+                *(arg for d in access.dirs for arg in ("--add-dir", d)),
+                *(("--allowedTools", *allow) if allow else ()),
+                *tail)
+        return Launch(argv, env=self.env(), unset=self.UNSET, transcript=self.transcript(cwd, sid),
+                      resume=self.resume(cwd, sid, spec.workdir))
+
     def probe(self) -> Launch:
         return Launch(self.PROBE, env=self.env(), unset=self.UNSET)
 
@@ -121,24 +159,21 @@ class ClaudeCommon:
                 continue
             if isinstance(record, dict) and record.get("type") == "rate_limit_event":
                 info = record.get("rate_limit_info")
-        windows = info.get("unifiedWindows") if isinstance(info, dict) else None
-        if not isinstance(windows, dict):
+        if not isinstance(info, dict):
             return None
-        five = windows.get("five_hour")
-        five = number(five.get("utilization")) if isinstance(five, dict) else None
-        if five is None:
-            return None
-        five_hour = 100 * five
-        weekly_full = any(name.startswith("seven_day") and isinstance(window, dict)
-                          and (used := number(window.get("utilization"))) is not None and used >= 1
-                          for name, window in windows.items())
+        windows = info.get("unifiedWindows")
+        windows = windows if isinstance(windows, dict) else {}
+        five_hour = _window(windows.get("five_hour"))
+        weeks = filter(None, (_window(window) for name, window in windows.items() if name.startswith("seven_day")))
+        weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
+            resets = number(info.get("resetsAt"))
             kind = info.get("rateLimitType")
             if isinstance(kind, str) and kind.startswith("seven_day"):
-                weekly_full = True
+                weekly = _full(weekly, resets)
             else:
-                five_hour = max(five_hour, 100.0)
-        return Usage(five_hour, weekly_full, number(info.get("resetsAt")))
+                five_hour = _full(five_hour, resets)
+        return Usage(five_hour, weekly)
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         try:

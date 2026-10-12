@@ -1,19 +1,24 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadlessRun's launch and parse; ClaudeAdapter's hooks; the committed [adapters.claude] table. HOME and
-CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
+committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 import json
 import os
+import re
 import shlex
 import tempfile
+import time
 import unittest
+from datetime import datetime
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 from new.tests import hermetic
-from adapters.base import (Access, Activity, ConfigError, Launch, LimitHit, Reply, SessionBound, SessionStatus, Spec,
-                           TurnEnd, Usage)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Access, Activity, Blocked, ConfigError, Launch, LimitHit, Reply,
+                           SessionBound, SessionStatus, Spec, TurnEnd, Usage, Window)
 from adapters.claude import ClaudeAdapter
 from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless_run import ClaudeHeadlessRun
+from adapters.claude.headless import ClaudeHeadless
+from adapters.claude.tui import ClaudeTui
 from driver import registry
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -60,7 +65,7 @@ class Base(unittest.TestCase):
 
     def launch(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless_run().launch(prompt, spec, resume)
+        return ClaudeAdapter(config).headless().launch(prompt, spec, resume)
 
 
 class ConfigTest(Base):
@@ -246,7 +251,7 @@ INIT = {"type": "system", "subtype": "init", "session_id": SID}
 class ParseTest(Base):
     def setUp(self):
         super().setUp()
-        self.run = ClaudeAdapter({}).headless_run()
+        self.run = ClaudeAdapter({}).headless()
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -292,28 +297,28 @@ class ParseTest(Base):
                 ({"type": "rate_limit_event"}, []))
         for record, events in rows:
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(record)), events)
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), events)
 
     def test_a_rejected_rate_limit_event_is_a_limit_hit(self):
         self.assertEqual(self.parse(rejected(1700000000)), [LimitHit(1700000000.0)])
         for record in (rejected(status="allowed"), rejected(status="allowed_warning")):
             with self.subTest(record=record):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(record)), [])
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(record)), [])
         for resets in (None, True, "1700000000", 1e999):
             with self.subTest(resets=resets):
-                self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(rejected(resets))), [LimitHit(None)])
+                self.assertEqual(list(ClaudeAdapter({}).headless().parse(rejected(resets))), [LimitHit(None)])
 
     def test_an_assistant_rate_limit_error_is_one_limit_hit_with_the_remembered_reset(self):
         self.assertEqual(self.parse(rejected(5), assistant(text("limit"), error="rate_limit"), rejected(6)),
                          [LimitHit(5.0), Reply("limit")])
-        run = ClaudeAdapter({}).headless_run()
+        run = ClaudeAdapter({}).headless()
         self.assertEqual([e for r in (assistant(text("limit"), error="rate_limit"), assistant(error="rate_limit"),
                                       rejected(7)) for e in run.parse(r)], [LimitHit(None), Reply("limit")])
-        self.assertEqual(list(ClaudeAdapter({}).headless_run().parse(assistant(error="other"))), [])
+        self.assertEqual(list(ClaudeAdapter({}).headless().parse(assistant(error="other"))), [])
 
     def test_each_run_sends_its_own(self):
         adapter = ClaudeAdapter({})
-        first, second = adapter.headless_run(), adapter.headless_run()
+        first, second = adapter.headless(), adapter.headless()
         self.assertIsNot(first, second)
         self.assertEqual(list(first.parse(rejected(1))), [LimitHit(1.0)])
         self.assertEqual(list(second.parse(assistant(error="rate_limit"))), [LimitHit(None)])
@@ -331,6 +336,11 @@ def info_line(info) -> str:
     return json.dumps({"type": "rate_limit_event", "rate_limit_info": info})
 
 
+def unified(**found) -> str:
+    """An allowed rate_limit_event line whose unifiedWindows are `found`."""
+    return info_line({"status": "allowed", "unifiedWindows": found})
+
+
 def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
@@ -345,42 +355,100 @@ class ParseUsageTest(unittest.TestCase):
                 ([event(five=0.1, seven_day=1.0)], False),
                 ([event(five=0.89, seven_day=0.99, seven_day_opus=0.5)], True),
                 ([event(five=0.1, seven_day=0.2, seven_day_opus=1.0)], False),
+                ([event(status="rejected", five=0.1, kind="seven_day_opus", seven_day=0.2)], False),
                 ([event(status="allowed_warning", five=0.5)], True),
                 ([event(five=0.1), event(five=0.9)], False),
                 ([event(five=0.9), "{}", event(five=0.1)], True))
         for row, (lines, ok) in enumerate(rows):
             with self.subTest(row=row):
                 found = usage(*lines)
-                self.assertEqual(found is not None and found.five_hour < 90 and not found.weekly_full, ok)
+                self.assertEqual(found is not None and found.five_hour is not None
+                                 and found.five_hour.used_percent < 90
+                                 and (found.weekly is None or found.weekly.used_percent < 100), ok)
 
-    def test_the_fields(self):
-        rows = ((event(five=0.25, seven_day=0.5), Usage(25.0, False, 1.0)),
-                (event(five=1, seven_day=1), Usage(100.0, True, 1.0)),
-                (event(five=0.25, seven_day_opus=2), Usage(25.0, True, 1.0)),
-                (event(five=0.25, seven_day="1", seven_day_sonnet=True), Usage(25.0, False, 1.0)),
-                (event(status="rejected", five=0.25), Usage(100.0, False, 1.0)),
-                (event(status="rejected", five=1.5), Usage(150.0, False, 1.0)),
-                (event(status="rejected", five=0.25, kind="seven_day"), Usage(25.0, True, 1.0)),
-                (event(status="rejected", five=0.25, kind="seven_day_opus"), Usage(25.0, True, 1.0)),
-                (event(status="rejected", five=0.25, kind=None), Usage(100.0, False, 1.0)),
-                (event(resets=1700000000.5), Usage(10.0, False, 1700000000.5)),
-                (event(resets=None), Usage(10.0, False, None)),
-                (event(resets=True), Usage(10.0, False, None)),
-                (event(resets="1"), Usage(10.0, False, None)),
-                (event(resets=10 ** 400), Usage(10.0, False, None)))
-        for row, (found, want) in enumerate(rows):
+    def test_each_window(self):
+        rows = ((event(five=0.25), Usage(Window(25.0, 1.0), None)),
+                (event(five=0.25, seven_day=0.5), Usage(Window(25.0, 1.0), Window(50.0, 2.0))),
+                (event(five=1, seven_day=1), Usage(Window(100.0, 1.0), Window(100.0, 2.0))),
+                (event(five=1.5, seven_day_opus=2), Usage(Window(150.0, 1.0), Window(200.0, 2.0))),
+                (event(five=0.25, seven_day="1", seven_day_sonnet=True), Usage(Window(25.0, 1.0), None)),
+                (event(five=0.25, seven_day=None, seven_day_opus=1e999), Usage(Window(25.0, 1.0), None)),
+                (event(five=None, seven_day=0.5), Usage(None, Window(50.0, 2.0))),
+                (event(five="0.5"), Usage(None, None)), (event(five=True), Usage(None, None)),
+                (event(five=1e999), Usage(None, None)), (event(five=10 ** 400), Usage(None, None)),
+                (unified(five_hour=0.5, seven_day=[1]), Usage(None, None)),
+                (unified(five_hour={"utilization": 0.5}, weekly={"utilization": 0.9},
+                         one_day={"utilization": 0.9}), Usage(Window(50.0, None), None)))
+        for row, (line, want) in enumerate(rows):
             with self.subTest(row=row):
-                self.assertEqual(usage(found), want)
-        weekly = info_line({"unifiedWindows": {"five_hour": {"utilization": 0.25}, "seven_day": "x",
-                                               "seven_day_opus": {"utilization": None}}})
-        self.assertEqual(usage(weekly), Usage(25.0, False, None))
+                self.assertEqual(usage(line), want)
 
-    def test_unknown_is_none(self):
-        rows = ((), ("garbage",), ('{"type":"system"}',), ("[" * 100000,), (event(five=None),), (event(five="0.5"),),
-                (event(five=True),), (event(five=1e999),), (info_line({"unifiedWindows": {}}),),
-                (info_line({"unifiedWindows": {"five_hour": 0.5}}),), (info_line({"unifiedWindows": [1]}),),
-                (info_line({"status": "allowed"}),), (info_line(None),), (info_line([1]),),
-                (event(five=0.1), info_line(None)))
+    def test_weekly_is_the_most_used_seven_day_window(self):
+        rows = ((event(five=0.1, seven_day=0.3, seven_day_opus=0.8, seven_day_sonnet=0.5), Window(80.0, 2.0)),
+                (unified(seven_day={"utilization": 0.5, "resetsAt": 3},
+                         seven_day_opus={"utilization": 0.5, "resetsAt": 4}), Window(50.0, 3.0)),
+                (unified(seven_day_opus={"utilization": 0.5, "resetsAt": 4},
+                         seven_day={"utilization": 0.5, "resetsAt": 3}), Window(50.0, 4.0)),
+                (unified(seven_day={"utilization": "0.9"}, seven_day_opus={"utilization": 0.4}), Window(40.0, None)),
+                (unified(seven_day_x={"utilization": 0.7, "resetsAt": 5}, seven_day={"utilization": 0.2}),
+                 Window(70.0, 5.0)))
+        for row, (line, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(usage(line).weekly, want)
+
+    def test_each_window_resets_at_its_own_time(self):
+        rows = (({"resetsAt": 1700000000.5}, Window(25.0, 1700000000.5)), ({}, Window(25.0, None)),
+                ({"resetsAt": None}, Window(25.0, None)), ({"resetsAt": True}, Window(25.0, None)),
+                ({"resetsAt": "1"}, Window(25.0, None)), ({"resetsAt": 10 ** 400}, Window(25.0, None)))
+        for row, (resets, want) in enumerate(rows):
+            with self.subTest(row=row):
+                line = info_line({"status": "allowed", "resetsAt": 9,
+                                  "unifiedWindows": {"five_hour": {"utilization": 0.25, **resets},
+                                                     "seven_day": {"utilization": 0.5, **resets}}})
+                self.assertEqual(usage(line), Usage(want, Window(50.0, want.resets_at)))
+
+    def test_a_rejected_status_fills_its_window(self):
+        rows = ((event(status="rejected", five=0.25, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=1.5, resets=9), Usage(Window(150.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind=None, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind=5, resets=9), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=0.25, kind="five_hour_x", seven_day=0.5, resets=9),
+                 Usage(Window(100.0, 1.0), Window(50.0, 2.0))),
+                (event(status="rejected", five=0.25, kind="seven_day", resets=9),
+                 Usage(Window(25.0, 1.0), Window(100.0, 9.0))),
+                (event(status="rejected", five=0.25, kind="seven_day_opus", seven_day=0.5, resets=9),
+                 Usage(Window(25.0, 1.0), Window(100.0, 2.0))),
+                (event(status="rejected", five=0.25, kind="seven_day", seven_day=1.5, resets=9),
+                 Usage(Window(25.0, 1.0), Window(150.0, 2.0))),
+                (event(status="rejected", five="x", resets=9), Usage(Window(100.0, 9.0), None)),
+                (event(status="rejected", five=0.25, resets=None), Usage(Window(100.0, 1.0), None)),
+                (event(status="rejected", five=None, resets=None), Usage(Window(100.0, None), None)),
+                (event(status="rejected", five=None, resets=True), Usage(Window(100.0, None), None)),
+                (info_line({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": 9}),
+                 Usage(Window(100.0, 9.0), None)),
+                (info_line({"status": "rejected", "rateLimitType": "seven_day", "resetsAt": 9,
+                            "unifiedWindows": {"five_hour": {"utilization": 0.25},
+                                               "seven_day": {"utilization": 0.5}}}),
+                 Usage(Window(25.0, None), Window(100.0, 9.0))),
+                (info_line({"status": "rejected", "resetsAt": 9,
+                            "unifiedWindows": {"five_hour": {"utilization": 0.25}}}), Usage(Window(100.0, 9.0), None)),
+                (event(status="allowed_warning", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
+                (event(status="Rejected", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)))
+        for row, (line, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(usage(line), want)
+
+    def test_an_event_without_windows_is_a_reading(self):
+        for line in (info_line({}), info_line({"status": "allowed", "resetsAt": 9}), info_line({"unifiedWindows": {}}),
+                     info_line({"unifiedWindows": [1]}), info_line({"unifiedWindows": None}),
+                     info_line({"unifiedWindows": {"five_hour": 0.5}})):
+            with self.subTest(line=line):
+                self.assertEqual(usage(line), Usage(None, None))
+
+    def test_no_event_or_a_bad_info_is_none(self):
+        rows = ((), ("garbage",), ('{"type":"system"}',), ("[" * 100000,), ('[{"type": "rate_limit_event"}]',),
+                (json.dumps({"type": "rate_limit_event"}),), (info_line(None),), (info_line([1]),),
+                (info_line("x"),), (event(five=0.1), info_line(None)))
         for lines in rows:
             with self.subTest(lines=[x[:40] for x in lines]):
                 self.assertIsNone(usage(*lines))
@@ -446,21 +514,273 @@ class SessionStatusTest(Base):
                 self.assertEqual(self.status(sid), SessionStatus("no", None, ""))
 
 
+HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
+HOOKS = {"Stop": TURN_END, "PermissionRequest": BLOCKED, "Notification": BLOCKED, "PostToolUse": ACTIVITY,
+         "UserPromptSubmit": ACTIVITY}
+MATCHER = "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|quota_auto_resume_stale)$"
+WAITING = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
+           "quota_auto_resume_stale")
+NOT_WAITING = ("idle_prompt", "auth_success", "elicitation_complete", "elicitation_response", "agent_completed",
+               "quota_auto_resume_fired", "quota_auto_resume_disabled", "", "permission_prompt_x", "xidle_prompt")
+
+
+def entry(label) -> dict:
+    return {"hooks": [{"type": "command", "command": shlex.join((*HOOK, label))}]}
+
+
+TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": {
+    "Stop": [entry("Stop")], "PermissionRequest": [entry("PermissionRequest")],
+    "Notification": [{"matcher": MATCHER, **entry("Notification")}],
+    "PostToolUse": [entry("PostToolUse")], "UserPromptSubmit": [entry("UserPromptSubmit")]}})
+
+
+class TuiArgvTest(Base):
+    def tui(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
+        spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
+        return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+
+    def test_a_new_session_with_every_part(self):
+        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"))
+        self.assertEqual(self.tui("do it", tier=4, effort="low", access=access).argv,
+                         ("claude", "--session-id", SID, "--model", "haiku", "--effort", "lo",
+                          "--permission-mode", "auto", "--setting-sources", "user", "--settings", TUI_SETTINGS,
+                          "--add-dir", "/d1", "--add-dir", "/d 2",
+                          "--allowedTools", "Bash(git status)", "Bash(ls)", "Read", "Edit(/x)", "--", "do it"))
+
+    def test_resume_with_none_of_the_optional_parts(self):
+        self.assertEqual(self.tui(config={}, resume=True).argv,
+                         ("claude", "--resume", SID, "--setting-sources", "user", "--settings", TUI_SETTINGS, "--",
+                          "hi"))
+
+    def test_an_empty_prompt_has_no_separator(self):
+        self.assertEqual(self.tui("", config={}).argv[-2:], ("--settings", TUI_SETTINGS))
+        self.assertEqual(self.tui("", config={"allow": ["Read"]}).argv[-2:], ("--allowedTools", "Read"))
+        self.assertEqual(self.tui("-p --help", config={}).argv[-2:], ("--", "-p --help"))
+
+    def test_each_hook_runs_the_hook_argv_and_its_label(self):
+        self.assertEqual(ClaudeTui.hooks, HOOKS)
+        hooks = json.loads(self.tui(config={}).argv[6])["hooks"]
+        self.assertEqual(list(hooks), list(HOOKS))
+        for label, entries in hooks.items():
+            with self.subTest(label=label):
+                self.assertEqual(shlex.split(entries[0]["hooks"][0]["command"]), [*HOOK, label])
+
+    def test_the_notification_matcher_takes_only_the_types_waiting_on_the_user(self):
+        for kind, hit in ((k, k in WAITING) for k in (*WAITING, *NOT_WAITING)):
+            with self.subTest(kind=kind):
+                self.assertEqual(re.search(ClaudeTui.MATCHER, kind) is not None, hit)
+        self.assertEqual(ClaudeTui.MATCHER, MATCHER)
+
+    def test_a_project_run_and_the_rest_as_headless(self):
+        cwd = os.path.join(self.tmp, "cwd")
+        os.mkdir(cwd)
+        with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        access = Access(cwd=cwd, project=True)
+        tui, headless = self.tui(access=access), self.launch(access=access)
+        self.assertEqual(tui.argv[3:9], ("--permission-mode", "auto", "--setting-sources", "user,project,local",
+                                         "--mcp-config", os.path.join(cwd, ".mcp.json")))
+        self.assertEqual(dict(tui.env), {**CEILING, "K": "v"})
+        self.assertEqual((tui.env, tui.unset, tui.cwd, tui.transcript, tui.resume),
+                         (headless.env, headless.unset, headless.cwd, headless.transcript, headless.resume))
+
+    def test_a_bad_sid_or_tier_is_refused(self):
+        self.refused(lambda: self.tui(sid="abc"), "claude session ids are UUIDs, got 'abc'")
+        self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
+
+
+def said(mid, *blocks) -> dict:
+    """An assistant transcript record of message `mid` (None: no id)."""
+    return {"type": "assistant", "message": {**({"id": mid} if mid else {}), "content": list(blocks)}}
+
+
+class TuiPayloadTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.run = ClaudeAdapter({}).tui()
+        self.path = os.path.join(self.tmp, "t.jsonl")
+
+    def transcript(self, *records):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("".join(f"{r if isinstance(r, str) else json.dumps(r)}\n" for r in records))
+
+    def test_the_last_assistant_message_first(self):
+        self.transcript(said("m1", text("old")))
+        self.assertEqual(self.run.reply({"last_assistant_message": "new", "transcript_path": self.path}), "new")
+        self.assertEqual(self.run.reply({"last_assistant_message": "", "transcript_path": self.path}), "")
+
+    def test_else_the_transcripts_last_assistant_message(self):
+        self.transcript({"type": "user", "message": {"content": "q"}}, said("m1", text("old")),
+                        said("m2", text("first")), said("m2", tool("Bash")),
+                        {"type": "user", "message": {"content": [{"type": "tool_result"}]}},
+                        said("m2", text("second")), said("m3", tool("Read")), "not json", "[1]", "")
+        for extra in ({}, {"last_assistant_message": None}, {"last_assistant_message": 1}):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.run.reply({"transcript_path": self.path, **extra}), "first\nsecond")
+
+    def test_a_record_without_an_id_is_its_own_message(self):
+        self.transcript(said(None, text("x")), said(None, text("y")))
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "y")
+        self.transcript(said("m1", text("x")), {"type": "assistant", "message": {"id": 1, "content": [text("y")]}})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "y")
+
+    def test_wrong_typed_records_are_skipped(self):
+        self.transcript(said("m1", text("ok")), {"type": "assistant", "message": "x"},
+                        {"type": "assistant", "message": {"content": "x"}}, {"type": "assistant"},
+                        said("m2", text(1), {"type": "text"}, "x", 1),
+                        {"type": "user", "message": said("m3", text("u"))})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "ok")
+
+    def test_only_the_last_4_mib_is_read(self):
+        self.transcript(said("m1", text("early")), {"type": "user", "message": {"content": "x" * (5 << 20)}})
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "")
+        self.transcript(said("m1", text("x" * (5 << 20))), said("m2", text("late")))
+        self.assertEqual(self.run.reply({"transcript_path": self.path}), "late")
+
+    def test_no_readable_transcript_is_empty(self):
+        self.transcript(said("m1", text("ok")))
+        link = os.path.join(self.tmp, "link.jsonl")
+        os.symlink(self.path, link)
+        fifo = os.path.join(self.tmp, "fifo.jsonl")
+        os.mkfifo(fifo)
+        for path in (link, fifo, self.tmp, os.path.join(self.tmp, "absent.jsonl"), "", 1, None, "a\0b", "\ud800"):
+            with self.subTest(path=path):
+                self.assertEqual(self.run.reply({"transcript_path": path}), "")
+        self.assertEqual(self.run.reply({}), "")
+
+    def test_pending_activity_and_blocked_reason(self):
+        rows = ((self.run.pending, {"background_tasks": [1, {}]}, 2), (self.run.pending, {"background_tasks": []}, 0),
+                (self.run.pending, {}, 0), (self.run.pending, {"background_tasks": 3}, 0),
+                (self.run.pending, {"background_tasks": "ab"}, 0),
+                (self.run.pending, {"background_tasks": {"a": 1}}, 0),
+                (self.run.activity, {"tool_name": "Bash"}, "Bash"), (self.run.activity, {}, ""),
+                (self.run.activity, {"tool_name": 1}, ""),
+                (self.run.blocked_reason, {"tool_name": "Bash", "message": "m"}, "Bash"),
+                (self.run.blocked_reason, {"message": "Claude needs your permission"}, "Claude needs your permission"),
+                (self.run.blocked_reason, {"tool_name": 1, "message": "m"}, "m"),
+                (self.run.blocked_reason, {"tool_name": "", "message": "m"}, "m"),
+                (self.run.blocked_reason, {"tool_name": None, "message": 2}, ""), (self.run.blocked_reason, {}, ""))
+        for row, (call, payload, want) in enumerate(rows):
+            with self.subTest(row=row):
+                self.assertEqual(call(payload), want)
+
+    def test_hook_events_by_label(self):
+        rows = (("Stop", {"session_id": "n1", "last_assistant_message": "hi", "background_tasks": [1, 2]},
+                 [SessionBound("n1"), TurnEnd("hi", 2)]),
+                ("PermissionRequest", {"session_id": "n0", "tool_name": "Bash"}, [Blocked("Bash")]),
+                ("Notification", {"message": "Claude is waiting"}, [Blocked("Claude is waiting")]),
+                ("PostToolUse", {"tool_name": "Edit"}, [Activity("Edit")]),
+                ("UserPromptSubmit", {"prompt": "x"}, [Activity("")]),
+                ("SessionStart", {"session_id": "n0"}, []))
+        for label, payload, events in rows:
+            with self.subTest(label=label):
+                self.assertEqual(self.run.hook_events(label, payload, "n0"), events)
+
+    def test_the_trust_dialog(self):
+        self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
+
+
+LA = "America/Los_Angeles"
+
+
+def epoch(stamp, zone=LA) -> float:
+    return datetime.fromisoformat(stamp).replace(tzinfo=ZoneInfo(zone)).timestamp()
+
+
+NOW = epoch("2026-10-11 10:00")   # a Sunday
+
+
+class LimitTest(unittest.TestCase):
+    def limit(self, screen):
+        with mock.patch("time.time", return_value=NOW):
+            return ClaudeAdapter({}).tui().limit(screen)
+
+    def check(self, rows):
+        for screen, resets in rows:
+            with self.subTest(screen=screen):
+                self.assertEqual(self.limit(screen), LimitHit(resets))
+
+    def test_the_limit_messages_and_their_reset(self):
+        self.check((
+            ("You've hit your session limit · resets 3pm (America/Los_Angeles)", epoch("2026-10-11 15:00")),
+            ("You've hit your session limit · resets 9:30am (America/Los_Angeles)", epoch("2026-10-12 09:30")),
+            ("You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles) · progress saved",
+             epoch("2026-10-15 09:00")),
+            ("You've hit your Opus limit · resets Jan 2, 2027, 12am (Europe/London)",
+             epoch("2027-01-02 00:00", "Europe/London")),
+            ("You've hit your usage limit · resets 12pm (UTC)", epoch("2026-10-12 12:00", "UTC")),
+            ("You've hit your org's monthly spend limit · your session limit resets 4pm (Asia/Tokyo)",
+             epoch("2026-10-12 16:00", "Asia/Tokyo")),
+            ("You've hit your limit · resets 11pm (Etc/GMT+5)", epoch("2026-10-11 23:00", "Etc/GMT+5")),
+            ("Usage limit reached · resets 3pm (America/New_York)", epoch("2026-10-11 15:00", "America/New_York")),
+            ("> go on\n\n  ⎿  You've hit your\n   session  limit ·\n resets 3pm\n  (America/Los_Angeles)\n",
+             epoch("2026-10-11 15:00"))))
+
+    def test_a_weekday_is_the_next_such_day(self):
+        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
+        self.check(((week.format("Monday 9am"), epoch("2026-10-12 09:00")),
+                    (week.format("Sun 11am"), epoch("2026-10-11 11:00")),
+                    (week.format("Sunday, 9am"), epoch("2026-10-18 09:00")),
+                    (week.format("sat 9am"), epoch("2026-10-17 09:00"))))
+
+    def test_no_known_zone_is_local_time(self):
+        self.addCleanup(time.tzset)
+        patch = mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        time.tzset()
+        today = epoch("2026-10-12 15:00", "Asia/Tokyo")
+        self.check((("You've hit your session limit · resets 3pm", today),
+                    ("You've hit your session limit · resets 3pm (Mars/Olympus)", today),
+                    ("You've hit your session limit · resets 3pm (America)", today),
+                    ("You've hit your session limit · resets 3pm (../../etc/passwd)", today),
+                    ("You've hit your session limit · resets 3pm ()", today),
+                    ("You've hit your session limit · resets 3pm (A/B/C/D)", today),
+                    ("You've hit your weekly limit · resets Oct 15, 9am", epoch("2026-10-15 09:00", "Asia/Tokyo"))))
+
+    def test_the_last_message_counts(self):
+        session = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        self.check(((f"{session} … You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles)",
+                     epoch("2026-10-15 09:00")),
+                    (f"{session} You've hit your fast limit · resets in 5m", epoch("2026-10-11 15:00"))))
+
+    def test_an_unparseable_reset_is_none(self):
+        self.check((("You've hit your session limit", None),
+                    ("Usage limit reached · continuing automatically in 2h · esc to cancel", None),
+                    ("You've hit your session limit · resets soon", None),
+                    ("You've hit your session limit · resets 13pm (UTC)", None),
+                    ("You've hit your session limit · resets 0am (UTC)", None),
+                    ("You've hit your session limit · resets 3:75pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Feb 30, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Monday 15, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Smarch 3, 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Funday 3pm (UTC)", None),
+                    ("You've hit your weekly limit · resets Oct 3pm (UTC)", None)))
+
+    def test_no_limit_message_is_none(self):
+        for screen in ("", "Welcome back", "You've hit your fast limit · resets in 5m",
+                       "You've used 90% of your session limit · resets 3pm (America/Los_Angeles)",
+                       "Approaching weekly limit", "Your usage limit has reset", "usage limit reached"):
+            with self.subTest(screen=screen):
+                self.assertIsNone(self.limit(screen))
+
+
 class AdapterTest(Base):
     def test_its_parts(self):
         adapter = ClaudeAdapter(CONFIG)
         self.assertEqual(ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"}))
         self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
         self.assertIsInstance(adapter.common, ClaudeCommon)
-        self.assertIs(type(adapter.headless_run()), ClaudeHeadlessRun)
-        self.assertIsNot(adapter.headless_run(), adapter.headless_run())
-        self.assertIs(adapter.headless_run().adapter, adapter)
-        self.assertIsNone(adapter.tui_run())
+        for mode, kind in ((adapter.headless, ClaudeHeadless), (adapter.tui, ClaudeTui)):
+            with self.subTest(kind=kind):
+                self.assertIs(type(mode()), kind)
+                self.assertIsNot(mode(), mode())
+                self.assertIs(mode().adapter, adapter)
 
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)
         self.assertEqual(ClaudeAdapter(CONFIG).usage_probe(), Launch(PROBE, env={**CEILING, "K": "v"}, unset=UNSET))
-        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(25.0, False, 1.0))
+        self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
         self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
 
     def test_session_status(self):
@@ -481,7 +801,7 @@ class CommittedConfigTest(Base):
         self.addCleanup(registry.reset)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
-        argv = adapter.headless_run().launch("hi", Spec(workdir=self.work, tier=4, effort="low", sid=SID), False).argv
+        argv = adapter.headless().launch("hi", Spec(workdir=self.work, tier=4, effort="low", sid=SID), False).argv
         self.assertEqual(argv[4:12], ("--model", "haiku", "--effort", "low", "--permission-mode", "auto",
                                       "--strict-mcp-config", "--setting-sources"))
 

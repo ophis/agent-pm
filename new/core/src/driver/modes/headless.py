@@ -1,4 +1,4 @@
-"""The Driver's headless Mode: a HeadlessRun's command on pipes, leading its own process group; two daemon threads pump
+"""The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two daemon threads pump
 its events and Stderr lines into one queue, and the session ends at both pipes' EOF. stop() kills the whole group, so a
 grandchild holding the pipes dies too; every wait is bounded. probe() runs a short command for its stdout."""
 import os
@@ -8,7 +8,8 @@ import subprocess
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 
-from adapters.base import Event, HeadlessRun, Stderr
+from adapters.base import Event, Headless, Stderr
+from driver.errors import DriverError
 
 STOP_WAIT = 5
 
@@ -45,7 +46,7 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
 
 
 class HeadlessMode:
-    def __init__(self, run: HeadlessRun):
+    def __init__(self, run: Headless):
         self.run, self.proc = run, None
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], popen=None) -> None:
@@ -88,8 +89,14 @@ class HeadlessMode:
         except subprocess.TimeoutExpired:
             return None
 
-    def alive(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
+    def state(self) -> str:
+        return "live" if self.proc is not None and self.proc.poll() is None else "absent"
+
+    def send(self, text: str) -> None:
+        raise DriverError("send: tui mode only")
+
+    def screen(self, lines: int | None = None) -> str:
+        raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
         if self.proc is not None:

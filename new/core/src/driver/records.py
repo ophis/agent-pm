@@ -9,6 +9,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from utils.files import read_regular
+from utils.paths import printable_abs
+
 CHANNEL = "run.jsonl"
 
 
@@ -22,11 +25,7 @@ def stamp() -> str:
 
 def holds(path: str | Path, text: str) -> bool:
     data = text.encode()
-    try:
-        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
-            return stat.S_ISREG(os.fstat(f.fileno()).st_mode) and f.read(len(data) + 1) == data
-    except OSError:
-        return False
+    return read_regular(path, limit=len(data) + 1) == data
 
 
 def append_line(path: str | Path, text: str, *, durable: bool = False) -> None:
@@ -60,15 +59,11 @@ def note(path: str, kind: str, *, best_effort: bool = False, durable: bool = Fal
 
 
 def read(path: str) -> list[dict]:
-    try:
-        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
-            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
-                return []
-            lines = f.read().split(b"\n")
-    except OSError:
+    data = read_regular(path)
+    if data is None:
         return []
     found = []
-    for line in lines:
+    for line in data.split(b"\n"):
         try:
             record = json.loads(line)
         except (ValueError, RecursionError):
@@ -81,8 +76,8 @@ def read(path: str) -> list[dict]:
 def session(workdir: str, sid: str) -> dict | None:
     found = None
     for e in read(path(workdir)):
-        if (e.get("kind") == "session" and e.get("sid") == sid and isinstance(e.get("cwd"), str)
-                and os.path.isabs(e["cwd"]) and e["cwd"].isprintable() and isinstance(e.get("project"), bool)):
+        if (e.get("kind") == "session" and e.get("sid") == sid and printable_abs(e.get("cwd"))
+                and isinstance(e.get("project"), bool)):
             found = e
     return found
 

@@ -1,4 +1,5 @@
-"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped)."""
+"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
+helpers' cases: unit/utils/)."""
 import io
 import json
 import os
@@ -9,7 +10,7 @@ import threading
 import unittest
 import unittest.mock
 
-from new.tests import CORE, hermetic
+from new.tests import hermetic
 import repo
 
 LOCAL = "core-new.local.toml"
@@ -118,34 +119,6 @@ class Base(unittest.TestCase):
         with open(path, "w") as f:
             f.write(text)
         return path
-
-
-class ReadConfig(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.path = os.path.join(tmp.name, "config.toml")
-
-    def test_the_new_cores_config_pair(self):
-        self.assertEqual(repo.CONFIG, os.path.join(CORE, "config.toml"))
-        self.assertEqual(repo.LOCAL, "~/.agent-pm/core-new.local.toml")
-
-    def test_the_local_file_goes_on_top(self):
-        """The old core's local file is not read."""
-        with open(self.path, "w") as f:
-            f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
-        home = hermetic.home(self)
-        with open(os.path.join(home, "core.local.toml"), "w") as f:
-            f.write('users = ["old"]\n')
-        self.assertEqual(repo.read_config(self.path), {"users": ["a", "b"], "t": {"x": 1, "y": 1}})
-        with open(os.path.join(home, LOCAL), "w") as f:
-            f.write('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
-        merged = {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
-        self.assertEqual(repo.read_config(self.path), merged)
-        other = os.path.join(os.path.dirname(self.path), "other.toml")
-        with open(other, "w") as f:
-            f.write('users = ["d"]\n')
-        self.assertEqual(repo.read_config(self.path, other), {"users": ["d"], "t": {"x": 1, "y": 1}})
 
 
 class Parse(unittest.TestCase):

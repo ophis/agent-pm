@@ -1,13 +1,13 @@
 """The test-only Adapter, runtime `fake`, importing only adapters.base: a test registers it in-process
-(sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a TuiRun).
+(sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a Tui).
 Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
 record to Exited(99), which the Driver drops."""
 import os
 import shlex
 import sys
 
-from adapters.base import (Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, LimitHit, Reply, SessionBound,
-                           TuiRun, TurnEnd)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, Launch,
+                           LimitHit, Reply, SessionBound, Tui, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -16,11 +16,11 @@ class FakeAdapter(Adapter):
     keys = frozenset({"scenario", "log", "tui"})
     runtime_note = "FAKE NOTE"
 
-    def headless_run(self):
-        return FakeHeadlessRun(self)
+    def headless(self):
+        return FakeHeadless(self)
 
-    def tui_run(self):
-        return FakeTuiRun(self) if self.config.get("tui") else None
+    def tui(self):
+        return FakeTui(self) if self.config.get("tui") else None
 
 
 def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
@@ -28,7 +28,7 @@ def _argv(adapter, prompt, spec, resume) -> tuple[str, ...]:
             "--sid", spec.sid, *(["--resume"] if resume else []), "--", prompt)
 
 
-class FakeHeadlessRun(HeadlessRun):
+class FakeHeadless(Headless):
     def launch(self, prompt, spec, resume):
         return Launch(_argv(self.adapter, prompt, spec, resume),
                       transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
@@ -52,7 +52,9 @@ class FakeHeadlessRun(HeadlessRun):
             yield Exited(99)
 
 
-class FakeTuiRun(TuiRun):
+class FakeTui(Tui):
+    hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
+
     def launch(self, prompt, spec, resume, hook):
         return Launch((*_argv(self.adapter, prompt, spec, resume), *hook))
 

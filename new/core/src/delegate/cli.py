@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The Delegate's command line: one role's headless run, its plan as JSON (--dry-run, writing nothing) or the team
-(--list: the built-in one and the core config's team_dirs). --task unset: the agent run picks one from its index.
+"""The Delegate's command line: one role's run in headless mode, its plan as JSON (--dry-run, writing nothing) or the
+team (--list: the built-in one and the core config's team_dirs). --task unset: the agent run picks one from its index.
 Exits 0 on a valid outcome, even when the client exited non-zero; 1 on none, the client exiting 0; 2 on a config or
 usage error (nothing started, stdout empty); 3 when the client exited non-zero or failed to start without a valid
 outcome, or on a usage limit."""

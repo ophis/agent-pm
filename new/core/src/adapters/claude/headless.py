@@ -1,15 +1,11 @@
-"""Claude Code's headless Mode, `claude -p` with stream-json output. launch binds Claude's session id to the sid,
-grants each access dir (--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), adds the
-project and local setting sources only for a project run, and puts the prompt last after "--" so a leading "-" stays
-the prompt. parse turns init, assistant, result and rate-limit records into events, one LimitHit per run."""
-import json
-import os
-
-from adapters.base import Activity, HeadlessRun, Launch, LimitHit, Reply, SessionBound, TurnEnd
+"""Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with the prompt last
+after "--" so a leading "-" stays the prompt. parse turns init, assistant, result and rate-limit records into events,
+one LimitHit per run."""
+from adapters.base import Activity, Headless, LimitHit, Reply, SessionBound, TurnEnd
 from adapters.claude.common import number
 
 
-class ClaudeHeadlessRun(HeadlessRun):
+class ClaudeHeadless(Headless):
     def __init__(self, adapter):
         super().__init__(adapter)
         self.limit_sent = False
@@ -17,24 +13,8 @@ class ClaudeHeadlessRun(HeadlessRun):
 
     def launch(self, prompt, spec, resume):
         common = self.adapter.common
-        sid = common.uuid(spec.sid)
-        model, effort = common.model(spec.tier), common.effort(spec.effort)
-        access = spec.access
-        cwd = access.cwd or spec.workdir
-        mcp = os.path.join(cwd, ".mcp.json")
-        allow = (*(f"Bash({command})" for command in access.commands), *common.allow)
-        argv = ("claude", "-p", "--resume" if resume else "--session-id", sid,
-                *(("--model", model) if model is not None else ()),
-                *(("--effort", effort) if effort is not None else ()),
-                *common.flags,
-                "--setting-sources", "user,project,local" if access.project else "user",
-                *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
-                "--output-format", "stream-json", "--verbose", "--settings", json.dumps(common.PLUGINS),
-                *(arg for d in access.dirs for arg in ("--add-dir", d)),
-                *(("--allowedTools", *allow) if allow else ()),
-                "--", prompt)
-        return Launch(argv, env=common.env(), unset=common.UNSET, transcript=common.transcript(cwd, sid),
-                      resume=common.resume(cwd, sid, spec.workdir))
+        return common.launch(spec, resume, common.PLUGINS, ("-p",), ("--output-format", "stream-json", "--verbose"),
+                             ("--", prompt))
 
     def parse(self, record):
         kind = record.get("type")
