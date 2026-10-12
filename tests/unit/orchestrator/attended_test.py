@@ -1,6 +1,10 @@
-import os, subprocess, unittest
-from unittest import mock
 from tests import hermetic  # noqa: F401
+
+import os
+import subprocess
+import unittest
+from unittest import mock
+
 import attended
 import drive
 import tmux_host
@@ -14,8 +18,16 @@ NO_SERVER = (1, "no server running on /private/tmp/tmux-501/default\n")
 
 
 class Tmux:
-    def __init__(self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 0 /tmp/s\n", listing=None):
-        self.live, self.fail, self.own, self.clients, self.listing = dict.fromkeys(live), set(fail), own, clients, listing
+    def __init__(
+        self, live=(), fail=(), own="mine", clients="5 /dev/ttys004 %1 0 /tmp/s\n", listing=None
+    ):
+        self.live, self.fail, self.own, self.clients, self.listing = (
+            dict.fromkeys(live),
+            set(fail),
+            own,
+            clients,
+            listing,
+        )
         self.calls = []
 
     def __call__(self, argv, **kw):
@@ -45,8 +57,10 @@ class Tmux:
 
 
 class LayoutTest(unittest.TestCase):
-    NO_ANCHOR = (r"^no pane to show the TUI beside \(no anchor pane: not in tmux, .*\): run from tmux or iTerm2, "
-                 r"or pass --split-from SESSION$")
+    NO_ANCHOR = (
+        r"^no pane to show the TUI beside \(no anchor pane: not in tmux, .*\): run from tmux or iTerm2, "
+        r"or pass --split-from SESSION$"
+    )
 
     def call(self, split=None, split_from=None, *, tmux=None, environ=None):
         tmux = tmux or Tmux()
@@ -57,12 +71,33 @@ class LayoutTest(unittest.TestCase):
         iterm_bad = {**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}
         cases = [
             ("below", "dev", {}, dict(live=["dev"]), drive.Layout("below", "dev", None), False),
-            ("below", "dev", ITERM, dict(live=["dev"]), drive.Layout("below", "dev", "w0t0p0:ABC"), False),
-            ("below", "dev", iterm_bad, dict(live=["dev"]), drive.Layout("below", "dev", None), False),
+            (
+                "below",
+                "dev",
+                ITERM,
+                dict(live=["dev"]),
+                drive.Layout("below", "dev", "w0t0p0:ABC"),
+                False,
+            ),
+            (
+                "below",
+                "dev",
+                iterm_bad,
+                dict(live=["dev"]),
+                drive.Layout("below", "dev", None),
+                False,
+            ),
             ("below", "dev", PANE, dict(live=["dev"]), drive.Layout("below", "dev", "mine"), False),
             (None, None, PANE, dict(own="mine"), drive.Layout(None, None, "mine"), False),
             ("below", None, PANE, dict(own="mine"), drive.Layout("below", None, "mine"), False),
-            (None, None, {**PANE, **ITERM}, dict(own="mine", clients=""), drive.Layout(None, None, "mine"), False),
+            (
+                None,
+                None,
+                {**PANE, **ITERM},
+                dict(own="mine", clients=""),
+                drive.Layout(None, None, "mine"),
+                False,
+            ),
             ("below", None, ITERM, {}, drive.Layout("below", None, "w0t0p0:ABC"), True),
         ]
         for split, split_from, environ, fake, want, no_calls in cases:
@@ -77,16 +112,41 @@ class LayoutTest(unittest.TestCase):
             ("left", None, ITERM, {}, "split must be one of right, below", True),
             (None, "a:b", {}, {}, "bad tmux session name", True),
             (None, "gone", {}, {}, "no tmux session gone", False),
-            (None, "dev", {}, dict(live=["dev"], clients=""),
-             r"^no pane to show the TUI beside \(no terminal shows tmux session dev\)$", False),
-            (None, None, PANE, dict(own="mine", clients=""), "^no pane to show the TUI beside", False),
+            (
+                None,
+                "dev",
+                {},
+                dict(live=["dev"], clients=""),
+                r"^no pane to show the TUI beside \(no terminal shows tmux session dev\)$",
+                False,
+            ),
+            (
+                None,
+                None,
+                PANE,
+                dict(own="mine", clients=""),
+                "^no pane to show the TUI beside",
+                False,
+            ),
             (None, None, {"TMUX": "x", "TMUX_PANE": "junk"}, {}, "", False),
-            *((None, None, environ, {}, self.NO_ANCHOR, False)
-              for environ in ({}, {"ITERM_SESSION_ID": "w0t0p0"}, {"ITERM_SESSION_ID": "w0t0p0:ABC"},
-                              {**ITERM, "TERM_PROGRAM": "Apple_Terminal"})),
-            (None, None, {**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"}, {},
-             r"^no pane to show the TUI beside \(bad \$ITERM_SESSION_ID 'w0t0p0:A_B'.*\): run from tmux or iTerm2, or pass "
-             r"--split-from SESSION$", False),
+            *(
+                (None, None, environ, {}, self.NO_ANCHOR, False)
+                for environ in (
+                    {},
+                    {"ITERM_SESSION_ID": "w0t0p0"},
+                    {"ITERM_SESSION_ID": "w0t0p0:ABC"},
+                    {**ITERM, "TERM_PROGRAM": "Apple_Terminal"},
+                )
+            ),
+            (
+                None,
+                None,
+                {**ITERM, "ITERM_SESSION_ID": "w0t0p0:A_B"},
+                {},
+                r"^no pane to show the TUI beside \(bad \$ITERM_SESSION_ID 'w0t0p0:A_B'.*\): run from tmux or iTerm2, or pass "
+                r"--split-from SESSION$",
+                False,
+            ),
         ]
         for split, split_from, environ, fake, msg, no_calls in cases:
             with self.subTest(split=split, split_from=split_from, environ=environ, fake=fake):
@@ -104,21 +164,40 @@ class PrefixTest(unittest.TestCase):
                 self.assertEqual(attended.prefix(role, ID), f"{role}-{ID}")
 
     def test_a_name_outside_the_contract(self):
-        for role, ident in (("Engineer", ID), ("eng_x", ID), ("", ID), ("2pm", ID), ("engineer", "task-12"),
-                            ("engineer", "TASK-12 ")):
-            with self.subTest(role=role, ident=ident), self.assertRaisesRegex(ValueError, "TUI session prefix"):
+        for role, ident in (
+            ("Engineer", ID),
+            ("eng_x", ID),
+            ("", ID),
+            ("2pm", ID),
+            ("engineer", "task-12"),
+            ("engineer", "TASK-12 "),
+        ):
+            with (
+                self.subTest(role=role, ident=ident),
+                self.assertRaisesRegex(ValueError, "TUI session prefix"),
+            ):
                 attended.prefix(role, ident)
 
 
 class SessionsTest(unittest.TestCase):
-    OTHERS = ["engineer-TASK-1-aaaaaaaa", "Engineer-TASK-12-bbbbbbbb", "agent-pm-engineer-TASK-12",
-              "agent-pm-engineer-TASK-12345678", "engineer-0b6f2c1e", "engineer-TASK-12-0B6F2C1E",
-              "engineer-TASK-12-0b6f2c1", "engineer-task-12-0b6f2c1e", "mine"]
+    OTHERS = [
+        "engineer-TASK-1-aaaaaaaa",
+        "Engineer-TASK-12-bbbbbbbb",
+        "agent-pm-engineer-TASK-12",
+        "agent-pm-engineer-TASK-12345678",
+        "engineer-0b6f2c1e",
+        "engineer-TASK-12-0B6F2C1E",
+        "engineer-TASK-12-0b6f2c1",
+        "engineer-task-12-0b6f2c1e",
+        "mine",
+    ]
 
     def test_the_name_drive_gets_round_trips(self):
         name = drive.tui_session("engineer", SID, prefix=attended.prefix("engineer", ID))
         tmux = Tmux(live=[name])
-        self.assertEqual((attended.sessions(ID, proc=tmux), attended.issues(proc=tmux)), ([name], [ID]))
+        self.assertEqual(
+            (attended.sessions(ID, proc=tmux), attended.issues(proc=tmux)), ([name], [ID])
+        )
         self.assertEqual(tmux.calls, [["list-sessions", "-F", "#{session_name}"]] * 2)
 
     def test_found_by_name_only(self):
@@ -129,32 +208,57 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual(attended.issues(proc=tmux), ["TASK-1", ID])
 
     def test_no_server_means_none(self):
-        for err in (NO_SERVER[1], "error connecting to /private/tmp/tmux-501/default (No such file or directory)\n"):
+        for err in (
+            NO_SERVER[1],
+            "error connecting to /private/tmp/tmux-501/default (No such file or directory)\n",
+        ):
             with self.subTest(err=err):
                 tmux = Tmux(listing=(1, err))
-                self.assertEqual((attended.sessions(ID, proc=tmux), attended.issues(proc=tmux),
-                                  attended.close(ID, proc=tmux)), ([], [], []))
+                self.assertEqual(
+                    (
+                        attended.sessions(ID, proc=tmux),
+                        attended.issues(proc=tmux),
+                        attended.close(ID, proc=tmux),
+                    ),
+                    ([], [], []),
+                )
                 self.assertEqual(tmux.tmux_calls(), ["list-sessions"] * 3)
 
     def test_a_listing_failure(self):
         def oserror(argv, **kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")
-        for proc, want in ((Tmux(listing=(1, "error connecting to /tmp/x (Permission denied)\n")),
-                            "tmux: error connecting to /tmp/x (Permission denied)"),
-                           (oserror, "tmux: [Errno 2] No such file or directory: 'tmux'")):
+
+        for proc, want in (
+            (
+                Tmux(listing=(1, "error connecting to /tmp/x (Permission denied)\n")),
+                "tmux: error connecting to /tmp/x (Permission denied)",
+            ),
+            (oserror, "tmux: [Errno 2] No such file or directory: 'tmux'"),
+        ):
             with self.subTest(want=want):
-                for call in (lambda: attended.sessions(ID, proc=proc), lambda: attended.issues(proc=proc)):
+                for call in (
+                    lambda: attended.sessions(ID, proc=proc),
+                    lambda: attended.issues(proc=proc),
+                ):
                     with self.assertRaises(tmux_host.TuiError) as cm:
                         call()
                     self.assertEqual(str(cm.exception), want)
-                self.assertEqual(attended.close(ID, proc=proc), [attended.Closed("error", None, f"TuiError: {want}")])
+                self.assertEqual(
+                    attended.close(ID, proc=proc),
+                    [attended.Closed("error", None, f"TuiError: {want}")],
+                )
 
 
 class CloseTest(unittest.TestCase):
     def test_kills_each_by_exact_name(self):
         tmux = Tmux(live=[A, "engineer-TASK-1-aaaaaaaa", B, "agent-pm-engineer-TASK-12"])
-        self.assertEqual(attended.close(ID, proc=tmux), [attended.Closed("closed", B), attended.Closed("closed", A)])
-        self.assertEqual(tmux.calls[1:], [["kill-session", "-t", f"={B}"], ["kill-session", "-t", f"={A}"]])
+        self.assertEqual(
+            attended.close(ID, proc=tmux),
+            [attended.Closed("closed", B), attended.Closed("closed", A)],
+        )
+        self.assertEqual(
+            tmux.calls[1:], [["kill-session", "-t", f"={B}"], ["kill-session", "-t", f"={A}"]]
+        )
         self.assertEqual(list(tmux.live), ["engineer-TASK-1-aaaaaaaa", "agent-pm-engineer-TASK-12"])
 
     def test_a_failed_kill_is_an_error_and_the_rest_go_on(self):

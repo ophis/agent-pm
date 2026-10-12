@@ -1,3 +1,6 @@
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
+
 import contextlib
 import errno
 import fcntl
@@ -17,8 +20,6 @@ import uuid
 from types import MappingProxyType
 from unittest import mock
 
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
 import crew
 from clients.claude import ClaudeClient
 from clients.codex import CodexClient
@@ -34,7 +35,16 @@ ERROR = "Error: --session-id can only be used with --continue or --resume if --f
 DEAD_LINE = "Pane is dead (status 1, Wed Oct  7 19:54:08 2026)"
 DEAD_TEXT = f"{ERROR}\n" + "\n" * 40 + f"{DEAD_LINE}\n" + "\n" * 10
 DEAD_MSG = f"w1: claude exited 1 at once; its pane's last lines:\n{ERROR}\n{DEAD_LINE}"
-REFUSED = ("--resume", "-r", "--session-id", "--continue", "-c", "--fork-session", "--from-pr", "--teleport")
+REFUSED = (
+    "--resume",
+    "-r",
+    "--session-id",
+    "--continue",
+    "-c",
+    "--fork-session",
+    "--from-pr",
+    "--teleport",
+)
 CREW = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "crew.py")
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
 MARKERS = ("CLAUDECODE", "CODEX_THREAD_ID")
@@ -48,9 +58,15 @@ def executable(path, text):
 
 
 def isolate(case):
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM", *MARKERS)}
-    for p in (mock.patch.dict(os.environ, env, clear=True), contextlib.redirect_stderr(io.StringIO())):
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("TMUX", "TMUX_PANE", "ITERM_SESSION_ID", "TERM_PROGRAM", *MARKERS)
+    }
+    for p in (
+        mock.patch.dict(os.environ, env, clear=True),
+        contextlib.redirect_stderr(io.StringIO()),
+    ):
         p.__enter__()
         case.addCleanup(p.__exit__, None, None, None)
 
@@ -63,8 +79,10 @@ def no_sleep(case):
 
 @contextlib.contextmanager
 def spawned():
-    with mock.patch.object(tmux_host, "start") as start, \
-            mock.patch.object(tmux_host, "status", return_value=tmux_host.RUNNING):
+    with (
+        mock.patch.object(tmux_host, "start") as start,
+        mock.patch.object(tmux_host, "status", return_value=tmux_host.RUNNING),
+    ):
         yield start
 
 
@@ -98,8 +116,16 @@ class Alpha(clients.Client):
 
     def worker(self, spec):
         exe = spec.exe or os.path.abspath(shutil.which("alpha", path=spec.env["PATH"]))
-        return clients.WorkerCommand([exe, "--resume" if spec.resume else "--new", spec.sid, *spec.flags,
-                                      *([spec.prompt] if spec.prompt else [])], {"ALPHA_HOME": "/alpha"})
+        return clients.WorkerCommand(
+            [
+                exe,
+                "--resume" if spec.resume else "--new",
+                spec.sid,
+                *spec.flags,
+                *([spec.prompt] if spec.prompt else []),
+            ],
+            {"ALPHA_HOME": "/alpha"},
+        )
 
     def worker_reply(self, sid):
         return f"alpha's answer in {sid}"
@@ -114,9 +140,14 @@ class Beta(clients.Client):
 @contextlib.contextmanager
 def extra_clients():
     get, extra = clients.get, {"alpha": Alpha, "beta": Beta}
-    with mock.patch.object(clients, "loaded", return_value={"claude": ClaudeClient, **extra}), \
-            mock.patch.object(clients, "get", side_effect=lambda name, root: extra[name]({}) if name in extra
-                              else get(name, root)):
+    with (
+        mock.patch.object(clients, "loaded", return_value={"claude": ClaudeClient, **extra}),
+        mock.patch.object(
+            clients,
+            "get",
+            side_effect=lambda name, root: extra[name]({}) if name in extra else get(name, root),
+        ),
+    ):
         yield
 
 
@@ -126,7 +157,13 @@ class Fake:
         self.calls, self.kwargs = [], []
         self.store, self.respawn_rc, self.respawn_err = {}, 0, ""
         self.fail_set, self.oserror, self.handover = None, None, None
-        self.panes, self.spawned, self.text, self.history, self.clear_err = {}, RUNNING_PANE, "", "", ""
+        self.panes, self.spawned, self.text, self.history, self.clear_err = (
+            {},
+            RUNNING_PANE,
+            "",
+            "",
+            "",
+        )
         self.late = ""
 
     def __call__(self, argv, **kw):
@@ -194,8 +231,13 @@ class StartTest(unittest.TestCase):
         self.directory = os.path.join(self.dir, "m1")
         roster.ensure(self.directory)
         self.events = os.path.join(self.directory, "events")
-        self.env = {"PATH": self.bin, "CLAUDE_CONFIG_DIR": "/cfg", "CLAUDE_FOO": "1", "HOME": "/h",
-                    "CLAUDE_JOB_DIR": "/j"}
+        self.env = {
+            "PATH": self.bin,
+            "CLAUDE_CONFIG_DIR": "/cfg",
+            "CLAUDE_FOO": "1",
+            "HOME": "/h",
+            "CLAUDE_JOB_DIR": "/j",
+        }
         for k in ClaudeClient.command_env:
             self.env[k] = "x"
         spy = mock.patch.object(tmux_host, "start", wraps=tmux_host.start)
@@ -213,42 +255,70 @@ class StartTest(unittest.TestCase):
         return kw["split_from"], kw["split"]
 
     def test_tmux_host_in_process(self):
-        self.assertEqual(os.path.realpath(tmux_host.__file__), os.path.join(os.path.realpath(crew.CORE), "src",
-                                                                             "tmux_host.py"))
+        self.assertEqual(
+            os.path.realpath(tmux_host.__file__),
+            os.path.join(os.path.realpath(crew.CORE), "src", "tmux_host.py"),
+        )
         self.assertTrue(os.path.isfile(os.path.join(crew.CORE, ".claude-plugin", "plugin.json")))
 
     def test_tmux_host_call(self):
         fake = Fake()
         sid = self.start(fake, prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
-        argv = tmux_host.with_hooks([self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"],
-                                     self.events)
+        argv = tmux_host.with_hooks(
+            [self.claude, "--session-id", sid, "--name", "w1", "--model", "m", "--", "do it"],
+            self.events,
+        )
         env = {k: v for k, v in self.env.items() if k not in ClaudeClient.command_env}
-        self.tui.assert_called_once_with("w1", argv, cwd=self.dir, env=env, events=self.events, split=None,
-                                         split_from=None, per_column=None, retile=None, status_line=False,
-                                         claude_hooks=False, proc=fake)
+        self.tui.assert_called_once_with(
+            "w1",
+            argv,
+            cwd=self.dir,
+            env=env,
+            events=self.events,
+            split=None,
+            split_from=None,
+            per_column=None,
+            retile=None,
+            status_line=False,
+            claude_hooks=False,
+            proc=fake,
+        )
         self.assertEqual(fake.handover["argv"], argv)
 
     def test_resume(self):
         fake = Fake()
         sid = self.start(fake, resume=SID, prompt="p", flags=("--model", "m"))
         self.assertEqual(sid, SID)
-        self.assertEqual(self.tui.call_args.args[1], tmux_host.with_hooks(
-            [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"], self.events))
+        self.assertEqual(
+            self.tui.call_args.args[1],
+            tmux_host.with_hooks(
+                [self.claude, "--resume", SID, "--name", "w1", "--model", "m", "--", "p"],
+                self.events,
+            ),
+        )
         self.assertEqual(fake.handover["argv"][1:3], ["--settings", tmux_host.hooks(self.events)])
         self.assertEqual(fake.options()["@sid"], SID)
 
     def test_the_claude_argv_after_its_name(self):
         bare = ("--model=m", "--", *REFUSED, "--resume=x")
         tools = ("--allowedTools", "Read", "Grep")
-        cases = (({}, ()), ({"flags": ("--x",)}, ("--x",)), ({"flags": bare}, bare),
-                 *(({"prompt": p, "flags": tools}, (*tools, "--", p)) for p in ("-x --model", "plain")))
+        cases = (
+            ({}, ()),
+            ({"flags": ("--x",)}, ("--x",)),
+            ({"flags": bare}, bare),
+            *(({"prompt": p, "flags": tools}, (*tools, "--", p)) for p in ("-x --model", "plain")),
+        )
         for kw, tail in cases:
             with self.subTest(**kw):
                 fake = Fake()
                 sid = self.start(fake, **kw)
-                self.assertEqual(self.tui.call_args.args[1], tmux_host.with_hooks(
-                    [self.claude, "--session-id", sid, "--name", "w1", *tail], self.events))
+                self.assertEqual(
+                    self.tui.call_args.args[1],
+                    tmux_host.with_hooks(
+                        [self.claude, "--session-id", sid, "--name", "w1", *tail], self.events
+                    ),
+                )
                 self.assertEqual(json.loads(fake.options()["@flags"]), list(kw.get("flags", ())))
 
     def test_env_cwd_in_the_handover(self):
@@ -258,8 +328,10 @@ class StartTest(unittest.TestCase):
         env = fake.handover["env"]
         for k in (*ClaudeClient.command_env, "CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
             self.assertNotIn(k, env)
-        self.assertEqual({k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME", "PWD")},
-                         {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h", "PWD": self.dir})
+        self.assertEqual(
+            {k: env[k] for k in ("CLAUDE_FOO", "CLAUDE_CONFIG_DIR", "HOME", "PWD")},
+            {"CLAUDE_FOO": "1", "CLAUDE_CONFIG_DIR": "/cfg", "HOME": "/h", "PWD": self.dir},
+        )
         self.assertIn("CLAUDECODE", self.env)
 
     def test_relative_cwd_made_absolute(self):
@@ -275,7 +347,9 @@ class StartTest(unittest.TestCase):
         fake = Fake()
         sid = self.start(fake, flags=("--model", "m"), prompt="p")
         opts = fake.options()
-        self.assertEqual(set(opts), {"@sid", "@cwd", "@events", "@client", "@exe", "@flags", "@env", "status"})
+        self.assertEqual(
+            set(opts), {"@sid", "@cwd", "@events", "@client", "@exe", "@flags", "@env", "status"}
+        )
         self.assertEqual(opts["@sid"], sid)
         self.assertEqual(opts["@cwd"], self.dir)
         self.assertEqual(opts["@events"], self.events)
@@ -285,19 +359,28 @@ class StartTest(unittest.TestCase):
         for c in fake.calls:
             if c[1] == "set-option" and c[2] == "-t":
                 self.assertEqual(c[:4], ["tmux", "set-option", "-t", "=w1:"])
-        self.assertLess(fake.calls.index(fake.new_sessions()[0]), min(i for i, c in enumerate(fake.calls)
-                                                                    if c[1] == "set-option"))
+        self.assertLess(
+            fake.calls.index(fake.new_sessions()[0]),
+            min(i for i, c in enumerate(fake.calls) if c[1] == "set-option"),
+        )
 
     def test_a_failed_tmux_call_kills_the_session_before_any_watch(self):
         def oserror(*words):
             return lambda argv: all(w in argv for w in words)
+
         undone, lost = "set boom; start undone", "^tmux: .*No such file"
-        cases = {"@sid": ("@sid", None, undone, True), "@flags": ("@flags", None, undone, True),
-                 "@sid, the kill failing": ("@sid", oserror("kill-session"), undone, True),
-                 **{fail: (fail, None, "set boom", False) for fail in ("@events", "pane-died", "pane-border-format")},
-                 "new-session OSError": (None, oserror("new-session"), lost, False),
-                 "@events OSError": (None, oserror("set-option", "@events"), lost, False),
-                 "@sid OSError": (None, oserror("set-option", "@sid"), lost + ".*; start undone$", True)}
+        cases = {
+            "@sid": ("@sid", None, undone, True),
+            "@flags": ("@flags", None, undone, True),
+            "@sid, the kill failing": ("@sid", oserror("kill-session"), undone, True),
+            **{
+                fail: (fail, None, "set boom", False)
+                for fail in ("@events", "pane-died", "pane-border-format")
+            },
+            "new-session OSError": (None, oserror("new-session"), lost, False),
+            "@events OSError": (None, oserror("set-option", "@events"), lost, False),
+            "@sid OSError": (None, oserror("set-option", "@sid"), lost + ".*; start undone$", True),
+        }
         for why, (fail, err, regex, options) in cases.items():
             with self.subTest(why):
                 self.sleep.reset_mock()
@@ -324,14 +407,29 @@ class StartTest(unittest.TestCase):
     def assert_fails(self, fake, **kw):
         with self.assertRaises(crew.WorkersError) as cm:
             self.start(fake, **kw)
-        self.assertEqual([c for c in fake.calls if len(c) > 1 and c[1] in ("set-option", "set-hook")], [])
+        self.assertEqual(
+            [c for c in fake.calls if len(c) > 1 and c[1] in ("set-option", "set-hook")], []
+        )
         return str(cm.exception)
 
     def test_a_bad_name_split_from_or_resume_starts_nothing(self):
         bad = "bad name 'a b': use [A-Za-z0-9_-]+"
-        cases = (({"name": "a b"}, bad), ({"split_from": "a b"}, bad),
-                 *(({"resume": r}, f"--resume {r}: not a session id")
-                   for r in ("abc", SID.upper(), "", SID + "x", " " + SID, SID + "\n", SID.replace("-", ""))))
+        cases = (
+            ({"name": "a b"}, bad),
+            ({"split_from": "a b"}, bad),
+            *(
+                ({"resume": r}, f"--resume {r}: not a session id")
+                for r in (
+                    "abc",
+                    SID.upper(),
+                    "",
+                    SID + "x",
+                    " " + SID,
+                    SID + "\n",
+                    SID.replace("-", ""),
+                )
+            ),
+        )
         for kw, msg in cases:
             with self.subTest(**kw):
                 fake = Fake()
@@ -346,14 +444,18 @@ class StartTest(unittest.TestCase):
                     with self.subTest(resume=resume, given=given):
                         fake = Fake()
                         msg = self.assert_fails(fake, resume=resume, flags=("--model", "m", *given))
-                        self.assertEqual(msg, f"{flag}: crew.py picks the session; use start --resume <sid>")
+                        self.assertEqual(
+                            msg, f"{flag}: crew.py picks the session; use start --resume <sid>"
+                        )
                         self.assertEqual(fake.calls, [])
 
     def test_directory_missing(self):
         self.directory = os.path.join(self.dir, "nope")
         fake = Fake()
-        self.assertEqual(self.assert_fails(fake),
-                         f"manager directory {self.directory} not attached: run crew.py attach first")
+        self.assertEqual(
+            self.assert_fails(fake),
+            f"manager directory {self.directory} not attached: run crew.py attach first",
+        )
         self.assertEqual(fake.new_sessions(), [])
         self.assertFalse(os.path.exists(self.directory))
 
@@ -368,15 +470,28 @@ class StartTest(unittest.TestCase):
                 yield
             finally:
                 os.unlink(self.events)
+
         fifo = mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
         none = contextlib.nullcontext
-        cases = {"events a symlink": (symlinked(), {}, self.events),
-                 "events not owned": (mock.patch.object(crew.os, "getuid", return_value=os.getuid() + 1), {},
-                                      "owned"),
-                 "events not regular": (mock.patch.object(crew.os, "fstat", return_value=fifo), {}, "regular"),
-                 "claude not on PATH": (none(), {"env": {**self.env, "PATH": os.path.join(self.dir, "empty")}},
-                                        "claude not found on PATH"),
-                 "cwd missing": (none(), {"cwd": os.path.join(self.dir, "nope")}, "not a directory")}
+        cases = {
+            "events a symlink": (symlinked(), {}, self.events),
+            "events not owned": (
+                mock.patch.object(crew.os, "getuid", return_value=os.getuid() + 1),
+                {},
+                "owned",
+            ),
+            "events not regular": (
+                mock.patch.object(crew.os, "fstat", return_value=fifo),
+                {},
+                "regular",
+            ),
+            "claude not on PATH": (
+                none(),
+                {"env": {**self.env, "PATH": os.path.join(self.dir, "empty")}},
+                "claude not found on PATH",
+            ),
+            "cwd missing": (none(), {"cwd": os.path.join(self.dir, "nope")}, "not a directory"),
+        }
         for why, (context, kw, part) in cases.items():
             with self.subTest(why):
                 fake = Fake()
@@ -390,10 +505,16 @@ class StartTest(unittest.TestCase):
         self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=w1"])
 
     def test_status_line_per_column_and_retile_from_core_config(self):
-        for text, key, value, calls in (("status_line = true\n", "status_line", True,
-                                         [["tmux", "set-option", "-t", "=w1:", "status", "on"]]),
-                                        ("workers_per_column = 2\n", "per_column", 2, []),
-                                        ('grid_retile = "off"\n', "retile", "off", [])):
+        for text, key, value, calls in (
+            (
+                "status_line = true\n",
+                "status_line",
+                True,
+                [["tmux", "set-option", "-t", "=w1:", "status", "on"]],
+            ),
+            ("workers_per_column = 2\n", "per_column", 2, []),
+            ('grid_retile = "off"\n', "retile", "off", []),
+        ):
             with self.subTest(text):
                 local(self, text)
                 fake = Fake()
@@ -403,9 +524,11 @@ class StartTest(unittest.TestCase):
                     self.assertIn(call, fake.calls)
 
     def test_a_bad_core_config_starts_nothing(self):
-        for text, msg in (('status_line = "yes"\n', "status_line: want true or false"),
-                          ("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
-                          ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off")):
+        for text, msg in (
+            ('status_line = "yes"\n', "status_line: want true or false"),
+            ("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
+            ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off"),
+        ):
             with self.subTest(text):
                 local(self, text)
                 fake = Fake()
@@ -418,11 +541,18 @@ class StartTest(unittest.TestCase):
         fake, err = Fake(), io.StringIO()
         with contextlib.redirect_stderr(err):
             self.start(fake)
-        self.assertIn("clients: extra skipped: client 'extra' has no module clients.extra\n", err.getvalue())
+        self.assertIn(
+            "clients: extra skipped: client 'extra' has no module clients.extra\n", err.getvalue()
+        )
         self.assertEqual(fake.options()["@client"], "claude")
 
     def test_layout_passed_through(self):
-        for kw in ({}, {"split_from": "x"}, {"split": "below"}, {"split_from": "x", "split": "right"}):
+        for kw in (
+            {},
+            {"split_from": "x"},
+            {"split": "below"},
+            {"split_from": "x", "split": "right"},
+        ):
             with self.subTest(**kw):
                 fake = Fake()
                 self.start(fake, **kw)
@@ -447,7 +577,9 @@ class WorkerCase(unittest.TestCase):
         no_sleep(self)
 
     def started(self, fake, flags=("--model", "m c")):
-        return crew.start("w1", self.directory, own=None, cwd=self.dir, flags=flags, env=self.env, proc=fake)
+        return crew.start(
+            "w1", self.directory, own=None, cwd=self.dir, flags=flags, env=self.env, proc=fake
+        )
 
 
 class ContainerTest(WorkerCase):
@@ -458,24 +590,69 @@ class ContainerTest(WorkerCase):
         new = iter(["%5\n", "%6\n"])
 
         def sessions(argv):
-            shown = [(c[3][1:-1], c[5]) for c in fake.calls if c[1:3] == ["set-option", "-t"] and c[4] == "@pane"]
-            return "".join(f"${i}\t{name}\tcmd\t{pane}\t{sock}\n" for i, (name, pane) in enumerate(shown, 1))
-        fake = Fake(results={"display-message": lambda argv: "cmd\n", "list-sessions": sessions,
-                             "list-clients": lambda argv: f"100 /dev/pts/1 %0 0 {sock}\n",
-                             "list-panes": lambda argv: "%0\n%5\n" if argv[-1] == "#{pane_id}" else "0 /dev/pts/0 %0\n",
-                             "split-window": lambda argv: next(new)})
+            shown = [
+                (c[3][1:-1], c[5])
+                for c in fake.calls
+                if c[1:3] == ["set-option", "-t"] and c[4] == "@pane"
+            ]
+            return "".join(
+                f"${i}\t{name}\tcmd\t{pane}\t{sock}\n" for i, (name, pane) in enumerate(shown, 1)
+            )
+
+        fake = Fake(
+            results={
+                "display-message": lambda argv: "cmd\n",
+                "list-sessions": sessions,
+                "list-clients": lambda argv: f"100 /dev/pts/1 %0 0 {sock}\n",
+                "list-panes": lambda argv: (
+                    "%0\n%5\n" if argv[-1] == "#{pane_id}" else "0 /dev/pts/0 %0\n"
+                ),
+                "split-window": lambda argv: next(new),
+            }
+        )
         fake.oserror = lambda argv: argv[0] == "pgrep"
         err = io.StringIO()
-        with mock.patch.dict(os.environ, {"TMUX": f"{sock},42,0", "TMUX_PANE": "%0", "PATH": self.bin}, clear=True), \
-                contextlib.redirect_stderr(err):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"TMUX": f"{sock},42,0", "TMUX_PANE": "%0", "PATH": self.bin},
+                clear=True,
+            ),
+            contextlib.redirect_stderr(err),
+        ):
             for name in ("w1", "w2"):
                 crew.start(name, self.directory, own=None, cwd=self.dir, env=self.env, proc=fake)
-        self.assertEqual([c for c in fake.calls if c[1] == "split-window"], [
-            ["tmux", "split-window", "-d", flag, "-P", "-F", "#{pane_id}", "-t", pane,
-             "env", "-u", "TMUX", tmux, "-S", sock, "attach", "-t", f"={name}"]
-            for flag, pane, name in (("-h", "%0", "w1"), ("-v", "%5", "w2"))])
+        self.assertEqual(
+            [c for c in fake.calls if c[1] == "split-window"],
+            [
+                [
+                    "tmux",
+                    "split-window",
+                    "-d",
+                    flag,
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "-t",
+                    pane,
+                    "env",
+                    "-u",
+                    "TMUX",
+                    tmux,
+                    "-S",
+                    sock,
+                    "attach",
+                    "-t",
+                    f"={name}",
+                ]
+                for flag, pane, name in (("-h", "%0", "w1"), ("-v", "%5", "w2"))
+            ],
+        )
         self.assertNotIn("osascript", [c[0] for c in fake.calls])
-        self.assertEqual(err.getvalue(), "tui: session w1: tmux attach -t '=w1'\ntui: session w2: tmux attach -t '=w2'\n")
+        self.assertEqual(
+            err.getvalue(),
+            "tui: session w1: tmux attach -t '=w1'\ntui: session w2: tmux attach -t '=w2'\n",
+        )
 
 
 def status_call():
@@ -512,8 +689,10 @@ class EarlyDeathTest(WorkerCase):
         self.started(fake)
         last = max(i for i, c in enumerate(fake.calls) if c[1] == "set-option")
         self.assertEqual(fake.calls[last][:5], ["tmux", "set-option", "-t", "=w1:", "@env"])
-        self.assertEqual(fake.calls[last + 1:],
-                         [["tmux", "list-sessions", "-F", crew.LIVE], *[["sleep", 0.5], status_call()] * 10])
+        self.assertEqual(
+            fake.calls[last + 1 :],
+            [["tmux", "list-sessions", "-F", crew.LIVE], *[["sleep", 0.5], status_call()] * 10],
+        )
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
 
     def test_restart_watches_a_running_pane_for_5_s(self):
@@ -523,7 +702,7 @@ class EarlyDeathTest(WorkerCase):
         self.interleaved(fake)
         crew.restart("w1", env=self.env, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
-        self.assertEqual(fake.calls[at + 1:], [["sleep", 0.5], status_call()] * 10)
+        self.assertEqual(fake.calls[at + 1 :], [["sleep", 0.5], status_call()] * 10)
         self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 10)
 
     def test_an_early_death_raises_its_report(self):
@@ -533,18 +712,44 @@ class EarlyDeathTest(WorkerCase):
         exited = "w1: claude exited 1 at once; its pane's last lines:\n"
 
         def earlier(fake):
-            fake.history, fake.late = "an earlier run's line\n", "a line the earlier run printed late\n"
+            fake.history, fake.late = (
+                "an earlier run's line\n",
+                "a line the earlier run printed late\n",
+            )
             self.dead(fake)
-        cases = (("dead", self.RUNS, self.dead, DEAD_MSG, self.capture()),
-                 ("blank lines dropped, the last 20 kept", self.RUNS, lambda fake: self.dead(fake, text),
-                  exited + "\n".join(kept), self.capture()),
-                 ("fewer than 20 lines", ("start",), lambda fake: self.dead(fake, "\n\none\n\n\ntwo\n\n"),
-                  exited + "one\ntwo", self.capture()),
-                 ("a signal", ("start",), lambda fake: self.dead(fake, pane="1  9\n"),
-                  DEAD_MSG.replace("exited 1 ", "exited 137 "), self.capture()),
-                 ("no earlier run's lines", ("restart",), earlier, DEAD_MSG, self.capture()),
-                 ("gone", self.RUNS, lambda fake: setattr(fake, "spawned", ""), "w1: session ended at once",
-                  status_call()))
+
+        cases = (
+            ("dead", self.RUNS, self.dead, DEAD_MSG, self.capture()),
+            (
+                "blank lines dropped, the last 20 kept",
+                self.RUNS,
+                lambda fake: self.dead(fake, text),
+                exited + "\n".join(kept),
+                self.capture(),
+            ),
+            (
+                "fewer than 20 lines",
+                ("start",),
+                lambda fake: self.dead(fake, "\n\none\n\n\ntwo\n\n"),
+                exited + "one\ntwo",
+                self.capture(),
+            ),
+            (
+                "a signal",
+                ("start",),
+                lambda fake: self.dead(fake, pane="1  9\n"),
+                DEAD_MSG.replace("exited 1 ", "exited 137 "),
+                self.capture(),
+            ),
+            ("no earlier run's lines", ("restart",), earlier, DEAD_MSG, self.capture()),
+            (
+                "gone",
+                self.RUNS,
+                lambda fake: setattr(fake, "spawned", ""),
+                "w1: session ended at once",
+                status_call(),
+            ),
+        )
         for why, runs, setup, msg, last in cases:
             for run in runs:
                 with self.subTest(why, run=run):
@@ -563,8 +768,10 @@ class EarlyDeathTest(WorkerCase):
                     def die(secs):
                         if self.sleep.call_count == 3:
                             fake.panes["w1"] = DEAD_PANE
+
                     self.sleep.side_effect = die
                     fake.text = DEAD_TEXT
+
                 self.assertEqual(self.attempt(run, fake, setup), DEAD_MSG)
                 self.assertEqual(self.sleep.call_args_list, [mock.call(0.5)] * 3)
 
@@ -575,6 +782,7 @@ class EarlyDeathTest(WorkerCase):
         def capture(fake):
             self.dead(fake)
             fake.oserror = lambda argv: argv[1] == "capture-pane"
+
         for setup in (status, capture):
             for run in self.RUNS:
                 with self.subTest(setup.__name__, run=run):
@@ -585,18 +793,34 @@ class RestartTest(WorkerCase):
     def test_respawns_through_the_handover(self):
         fake = Fake()
         sid = self.started(fake)
-        caller = {"PATH": self.bin, "FOO": "1", "PWD": "/stale", **{k: "x" for k in ClaudeClient.command_env}}
+        caller = {
+            "PATH": self.bin,
+            "FOO": "1",
+            "PWD": "/stale",
+            **{k: "x" for k in ClaudeClient.command_env},
+        }
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             cmd = crew.restart("w1", env=caller, proc=fake)
         at = max(i for i, c in enumerate(fake.calls) if "respawn-pane" in c)
-        respawn = fake.calls[at][fake.calls[at].index("respawn-pane"):-1]
-        self.assertEqual(respawn, ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tmux_host.EXEC])
+        respawn = fake.calls[at][fake.calls[at].index("respawn-pane") : -1]
+        self.assertEqual(
+            respawn,
+            ["respawn-pane", "-k", "-t", "=w1:", sys.executable, "-I", "-c", tmux_host.EXEC],
+        )
         self.assertEqual(fake.kwargs[at]["stdin"], subprocess.DEVNULL)
-        resumed = tmux_host.with_hooks([self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events)
+        resumed = tmux_host.with_hooks(
+            [self.claude, "--resume", sid, "--name", "w1", "--model", "m c"], self.events
+        )
         self.assertEqual(resumed[1:3], ["--settings", tmux_host.hooks(self.events)])
-        self.assertEqual(fake.handover, {"argv": resumed, "cwd": self.dir,
-                                         "env": {"PATH": self.bin, "FOO": "1", "PWD": self.dir}})
+        self.assertEqual(
+            fake.handover,
+            {
+                "argv": resumed,
+                "cwd": self.dir,
+                "env": {"PATH": self.bin, "FOO": "1", "PWD": self.dir},
+            },
+        )
         self.assertEqual(shlex.split(cmd), resumed)
         self.assertEqual(err.getvalue(), cmd + "\n")
         for k in ("CLAUDE_JOB_DIR", "CLAUDE_CODE_CHILD_SESSION"):
@@ -624,10 +848,19 @@ class RestartTest(WorkerCase):
                 local(self, f"status_line = {status_line}\n")
                 n = len(fake.calls)
                 crew.restart("w1", env=self.env, proc=fake)
-                tail = [c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")]
-                self.assertEqual(tail[:-1], [*decorate_calls(self.events, status_line=status_line == "true"),
-                                             ["tmux", "set-option", "-t", "=w1:", "@state", ""]])
-                self.assertEqual(tail[-1][:6], ["tmux", "clear-history", "-t", "=w1:", ";", "respawn-pane"])
+                tail = [
+                    c for c in fake.calls[n:] if c[1] not in ("show-options", "display-message")
+                ]
+                self.assertEqual(
+                    tail[:-1],
+                    [
+                        *decorate_calls(self.events, status_line=status_line == "true"),
+                        ["tmux", "set-option", "-t", "=w1:", "@state", ""],
+                    ],
+                )
+                self.assertEqual(
+                    tail[-1][:6], ["tmux", "clear-history", "-t", "=w1:", ";", "respawn-pane"]
+                )
 
     def test_a_failure_raises_no_respawn_done(self):
         def settings(fake):
@@ -644,8 +877,14 @@ class RestartTest(WorkerCase):
 
         def oserror(fake):
             fake.oserror = lambda argv: "respawn-pane" in argv
-        for setup, regex in ((settings, "--settings"), (decoration, "set boom"), (clear_history, "can't find pane"),
-                             (respawn, "can't find pane"), (oserror, "No such file")):
+
+        for setup, regex in (
+            (settings, "--settings"),
+            (decoration, "set boom"),
+            (clear_history, "can't find pane"),
+            (respawn, "can't find pane"),
+            (oserror, "No such file"),
+        ):
             with self.subTest(setup.__name__):
                 fake = Fake()
                 self.started(fake)
@@ -656,9 +895,23 @@ class RestartTest(WorkerCase):
                 self.assertIsNone(fake.handover)
 
     def test_missing_or_corrupt_options_not_a_worker(self):
-        for key, bad in ((None, None), ("@flags", ""), ("@flags", "{}"), ("@flags", "[1]"), ("@flags", "null"),
-                         ("@sid", ""), ("@client", ""), ("@exe", ""), ("@exe", None), ("@cwd", ""), ("@events", ""),
-                         ("@env", ""), ("@env", None), ("@env", "[]"), ("@env", '{"NO_COLOR": 1}')):
+        for key, bad in (
+            (None, None),
+            ("@flags", ""),
+            ("@flags", "{}"),
+            ("@flags", "[1]"),
+            ("@flags", "null"),
+            ("@sid", ""),
+            ("@client", ""),
+            ("@exe", ""),
+            ("@exe", None),
+            ("@cwd", ""),
+            ("@events", ""),
+            ("@env", ""),
+            ("@env", None),
+            ("@env", "[]"),
+            ("@env", '{"NO_COLOR": 1}'),
+        ):
             with self.subTest(key=key, bad=bad):
                 fake = Fake()
                 self.started(fake)
@@ -689,8 +942,15 @@ class ClientTest(WorkerCase):
         self.addCleanup(p.__exit__, None, None, None)
 
     def start(self, fake, env=(), **kw):
-        return crew.start("w1", self.directory, own=None, cwd=self.dir, env={**self.env, **dict(env)}, proc=fake,
-                          **kw)
+        return crew.start(
+            "w1",
+            self.directory,
+            own=None,
+            cwd=self.dir,
+            env={**self.env, **dict(env)},
+            proc=fake,
+            **kw,
+        )
 
     def fails(self, fake, env=(), **kw):
         with self.assertRaises(crew.WorkersError) as cm:
@@ -698,9 +958,12 @@ class ClientTest(WorkerCase):
         return str(cm.exception)
 
     def test_the_default_is_the_callers_client_else_claude(self):
-        for env, client, exe in (({}, "claude", self.claude), ({"CLAUDECODE": "1"}, "claude", self.claude),
-                                 ({"ALPHA_SESSION": "a"}, "alpha", self.alpha),
-                                 ({"ALPHA_SESSION": ""}, "alpha", self.alpha)):
+        for env, client, exe in (
+            ({}, "claude", self.claude),
+            ({"CLAUDECODE": "1"}, "claude", self.claude),
+            ({"ALPHA_SESSION": "a"}, "alpha", self.alpha),
+            ({"ALPHA_SESSION": ""}, "alpha", self.alpha),
+        ):
             with self.subTest(env=env):
                 fake = Fake()
                 self.start(fake, env)
@@ -708,26 +971,34 @@ class ClientTest(WorkerCase):
                 self.assertEqual(fake.handover["argv"][0], exe)
 
     def test_client_overrides_the_default_both_ways(self):
-        for env, client, exe in (({"ALPHA_SESSION": "a"}, "claude", self.claude),
-                                 ({"CLAUDECODE": "1"}, "alpha", self.alpha),
-                                 ({"CLAUDECODE": "1", "ALPHA_SESSION": "a"}, "alpha", self.alpha)):
+        for env, client, exe in (
+            ({"ALPHA_SESSION": "a"}, "claude", self.claude),
+            ({"CLAUDECODE": "1"}, "alpha", self.alpha),
+            ({"CLAUDECODE": "1", "ALPHA_SESSION": "a"}, "alpha", self.alpha),
+        ):
             with self.subTest(env=env, client=client):
                 fake = Fake()
                 self.start(fake, env, client=client)
-                self.assertEqual((fake.options()["@client"], fake.handover["argv"][0]), (client, exe))
+                self.assertEqual(
+                    (fake.options()["@client"], fake.handover["argv"][0]), (client, exe)
+                )
 
     def test_two_markers_without_client_start_nothing(self):
         fake = Fake()
-        self.assertEqual(self.fails(fake, {"CLAUDECODE": "1", "ALPHA_SESSION": "a"}),
-                         "the caller runs inside more than one client's session (claude: CLAUDECODE, alpha: "
-                         "ALPHA_SESSION): pass --client")
+        self.assertEqual(
+            self.fails(fake, {"CLAUDECODE": "1", "ALPHA_SESSION": "a"}),
+            "the caller runs inside more than one client's session (claude: CLAUDECODE, alpha: "
+            "ALPHA_SESSION): pass --client",
+        )
         self.assertEqual(fake.calls, [])
 
     def test_an_unknown_inline_only_or_workerless_client_starts_nothing(self):
-        for env, kw, msg in (({}, {"client": "nope"}, "client 'nope' has no module clients.nope"),
-                             ({}, {"client": "skill"}, "SkillClient has no worker command"),
-                             ({}, {"client": "beta"}, "Beta has no worker command"),
-                             ({"BETA_SESSION": "b"}, {}, "Beta has no worker command")):
+        for env, kw, msg in (
+            ({}, {"client": "nope"}, "client 'nope' has no module clients.nope"),
+            ({}, {"client": "skill"}, "SkillClient has no worker command"),
+            ({}, {"client": "beta"}, "Beta has no worker command"),
+            ({"BETA_SESSION": "b"}, {}, "Beta has no worker command"),
+        ):
             with self.subTest(env=env, **kw):
                 fake = Fake()
                 self.assertEqual(self.fails(fake, env, **kw), msg)
@@ -735,40 +1006,64 @@ class ClientTest(WorkerCase):
 
     def test_every_clients_identity_keys_dropped_an_injected_default_only_with_its_marker(self):
         caller = {"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "cli", "ALPHA_ID": "i", "KEEP": "k"}
-        watched = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "ALPHA_SESSION", "ALPHA_ID", "BETA_SESSION", "NO_COLOR",
-                   "BETA_CI", "KEEP")
-        cases = (({"ALPHA_SESSION": "a", "NO_COLOR": "1", "BETA_CI": "1"}, {"BETA_CI": "1"}),
-                 ({"NO_COLOR": "1", "BETA_CI": "1"}, {"NO_COLOR": "1", "BETA_CI": "1"}),
-                 ({"ALPHA_SESSION": "a", "NO_COLOR": "0"}, {"NO_COLOR": "0"}),
-                 ({"BETA_SESSION": "b", "BETA_CI": "1", "NO_COLOR": "1"}, {"NO_COLOR": "1"}))
+        watched = (
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "ALPHA_SESSION",
+            "ALPHA_ID",
+            "BETA_SESSION",
+            "NO_COLOR",
+            "BETA_CI",
+            "KEEP",
+        )
+        cases = (
+            ({"ALPHA_SESSION": "a", "NO_COLOR": "1", "BETA_CI": "1"}, {"BETA_CI": "1"}),
+            ({"NO_COLOR": "1", "BETA_CI": "1"}, {"NO_COLOR": "1", "BETA_CI": "1"}),
+            ({"ALPHA_SESSION": "a", "NO_COLOR": "0"}, {"NO_COLOR": "0"}),
+            ({"BETA_SESSION": "b", "BETA_CI": "1", "NO_COLOR": "1"}, {"NO_COLOR": "1"}),
+        )
         for client in ("claude", "alpha"):
             for extra, kept in cases:
                 with self.subTest(client=client, env=extra):
                     fake = Fake()
                     self.start(fake, {**caller, **extra}, client=client)
                     env = fake.handover["env"]
-                    self.assertEqual({k: env[k] for k in watched if k in env}, {"KEEP": "k", **kept})
+                    self.assertEqual(
+                        {k: env[k] for k in watched if k in env}, {"KEEP": "k", **kept}
+                    )
                     self.assertEqual(env.get("ALPHA_HOME"), "/alpha" if client == "alpha" else None)
 
     def test_the_clients_env_then_the_overrides_after_the_policy(self):
         classes = {"claude": ClaudeClient, "alpha": Alpha}
         env = {"ALPHA_SESSION": "a", "NO_COLOR": "1", "CLAUDE_PID": "1", "KEEP": "k"}
-        self.assertEqual(crew._environment(env, classes, {"NO_COLOR": "c", "C": "c"}, {"NO_COLOR": "o"}),
-                         {"KEEP": "k", "C": "c", "NO_COLOR": "o"})
+        self.assertEqual(
+            crew._environment(env, classes, {"NO_COLOR": "c", "C": "c"}, {"NO_COLOR": "o"}),
+            {"KEEP": "k", "C": "c", "NO_COLOR": "o"},
+        )
 
     def test_env_sets_a_client_declared_default(self):
         fake = Fake()
-        self.start(fake, {"ALPHA_SESSION": "a", "NO_COLOR": "1"}, client="claude",
-                   overrides=("BETA_CI=", "NO_COLOR=0", "NO_COLOR=1"))
-        self.assertEqual({k: fake.handover["env"].get(k) for k in ("NO_COLOR", "BETA_CI")}, {"NO_COLOR": "1",
-                                                                                              "BETA_CI": ""})
+        self.start(
+            fake,
+            {"ALPHA_SESSION": "a", "NO_COLOR": "1"},
+            client="claude",
+            overrides=("BETA_CI=", "NO_COLOR=0", "NO_COLOR=1"),
+        )
+        self.assertEqual(
+            {k: fake.handover["env"].get(k) for k in ("NO_COLOR", "BETA_CI")},
+            {"NO_COLOR": "1", "BETA_CI": ""},
+        )
         self.assertEqual(json.loads(fake.options()["@env"]), {"BETA_CI": "", "NO_COLOR": "1"})
 
     def test_env_refuses_another_name_or_a_bad_value_starting_nothing(self):
         want = f"want NAME=VALUE, NAME one of {NAMES}"
-        for item, msg in (("HOME=x", f"--env HOME=x: {want}"), ("ALPHA_ID=1", f"--env ALPHA_ID=1: {want}"),
-                          ("NO_COLOR", f"--env NO_COLOR: {want}"), ("=1", f"--env =1: {want}"),
-                          ("NO_COLOR=a\nb", f"--env NO_COLOR: 'a\\nb': {UNPRINTABLE}")):
+        for item, msg in (
+            ("HOME=x", f"--env HOME=x: {want}"),
+            ("ALPHA_ID=1", f"--env ALPHA_ID=1: {want}"),
+            ("NO_COLOR", f"--env NO_COLOR: {want}"),
+            ("=1", f"--env =1: {want}"),
+            ("NO_COLOR=a\nb", f"--env NO_COLOR: 'a\\nb': {UNPRINTABLE}"),
+        ):
             with self.subTest(item=item):
                 fake = Fake()
                 self.assertEqual(self.fails(fake, overrides=(item,)), msg)
@@ -778,26 +1073,49 @@ class ClientTest(WorkerCase):
         fake = Fake()
         self.start(fake, client="alpha", flags=("--x", "y z"), overrides=("NO_COLOR=0",))
         opts = fake.options()
-        self.assertEqual({k: opts[k] for k in ("@client", "@exe", "@flags", "@env")},
-                         {"@client": "alpha", "@exe": self.alpha, "@flags": '["--x", "y z"]',
-                          "@env": '{"NO_COLOR": "0"}'})
+        self.assertEqual(
+            {k: opts[k] for k in ("@client", "@exe", "@flags", "@env")},
+            {
+                "@client": "alpha",
+                "@exe": self.alpha,
+                "@flags": '["--x", "y z"]',
+                "@env": '{"NO_COLOR": "0"}',
+            },
+        )
 
     def test_restart_replays_the_client_its_exe_flags_and_env(self):
         fake = Fake()
-        sid = self.start(fake, {"ALPHA_SESSION": "a"}, client="alpha", flags=("--x",), overrides=("NO_COLOR=0",))
-        caller = {"PATH": os.path.join(self.dir, "empty"), "ALPHA_SESSION": "a", "NO_COLOR": "1", "FOO": "1"}
+        sid = self.start(
+            fake, {"ALPHA_SESSION": "a"}, client="alpha", flags=("--x",), overrides=("NO_COLOR=0",)
+        )
+        caller = {
+            "PATH": os.path.join(self.dir, "empty"),
+            "ALPHA_SESSION": "a",
+            "NO_COLOR": "1",
+            "FOO": "1",
+        }
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             cmd = crew.restart("w1", env=caller, proc=fake)
         self.assertEqual(fake.handover["argv"], [self.alpha, "--resume", sid, "--x"])
-        self.assertEqual(fake.handover["env"], {"PATH": caller["PATH"], "FOO": "1", "ALPHA_HOME": "/alpha",
-                                                "NO_COLOR": "0", "PWD": self.dir})
+        self.assertEqual(
+            fake.handover["env"],
+            {
+                "PATH": caller["PATH"],
+                "FOO": "1",
+                "ALPHA_HOME": "/alpha",
+                "NO_COLOR": "0",
+                "PWD": self.dir,
+            },
+        )
         self.assertEqual((cmd, err.getvalue()), (shlex.join(fake.handover["argv"]), cmd + "\n"))
 
     def test_a_tampered_env_refused_on_restart(self):
-        for bad, msg in (('{"HOME": "/x"}', f"w1: @env: --env HOME=/x: want NAME=VALUE, NAME one of {NAMES}"),
-                         ('{"NO_COLOR": "a\\nb"}', f"w1: @env: --env NO_COLOR: 'a\\nb': {UNPRINTABLE}"),
-                         ('{"NO_COLOR": 1}', "w1: not a worker")):
+        for bad, msg in (
+            ('{"HOME": "/x"}', f"w1: @env: --env HOME=/x: want NAME=VALUE, NAME one of {NAMES}"),
+            ('{"NO_COLOR": "a\\nb"}', f"w1: @env: --env NO_COLOR: 'a\\nb': {UNPRINTABLE}"),
+            ('{"NO_COLOR": 1}', "w1: not a worker"),
+        ):
             with self.subTest(bad=bad):
                 fake = Fake()
                 self.start(fake, client="alpha")
@@ -814,8 +1132,12 @@ class ClientTest(WorkerCase):
             del fake.store[key]
         fake.store["@claude"] = self.claude
         crew.restart("w1", env={**self.env, "ALPHA_SESSION": "a", "NO_COLOR": "1"}, proc=fake)
-        self.assertEqual(fake.handover["argv"], tmux_host.with_hooks(
-            [self.claude, "--resume", sid, "--name", "w1", "--model", "m"], self.events))
+        self.assertEqual(
+            fake.handover["argv"],
+            tmux_host.with_hooks(
+                [self.claude, "--resume", sid, "--name", "w1", "--model", "m"], self.events
+            ),
+        )
         self.assertNotIn("NO_COLOR", fake.handover["env"])
         d = os.path.join(self.env["CLAUDE_CONFIG_DIR"], "projects", "-p")
         os.makedirs(d)
@@ -831,7 +1153,10 @@ class ClientTest(WorkerCase):
         fake = Fake()
         sid = self.start(fake, client="alpha")
         self.assertEqual(crew.reply("w1", proc=fake), f"alpha's answer in {sid}")
-        for client, msg in (("beta", "Beta has no worker reply"), ("nope", "client 'nope' has no module clients.nope")):
+        for client, msg in (
+            ("beta", "Beta has no worker reply"),
+            ("nope", "client 'nope' has no module clients.nope"),
+        ):
             with self.subTest(client=client):
                 fake.store["@client"] = client
                 with self.assertRaises(crew.WorkersError) as cm:
@@ -841,11 +1166,14 @@ class ClientTest(WorkerCase):
     def test_early_death_names_the_binary(self):
         fake = Fake()
         fake.spawned, fake.text = DEAD_PANE, DEAD_TEXT
-        self.assertEqual(self.fails(fake, client="alpha"), DEAD_MSG.replace("claude exited", "alpha exited"))
+        self.assertEqual(
+            self.fails(fake, client="alpha"), DEAD_MSG.replace("claude exited", "alpha exited")
+        )
 
     def test_a_dialog_on_the_screen_marks_the_pane_blocked(self):
         def display(argv):
             return {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")
+
         for run in ("start", "restart"):
             with self.subTest(run=run):
                 fake = Fake(results={"display-message": display})
@@ -855,22 +1183,39 @@ class ClientTest(WorkerCase):
                 fake.text = "Folder /w\n  Trust alpha? (y/n)\n"
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
-                    self.start(fake, client="alpha") if run == "start" else crew.restart("w1", env=self.env, proc=fake)
-                self.assertEqual(fake.calls[-4:-1], [["tmux", "capture-pane", "-p", "-J", "-t", "=w1:"],
-                                                     ["tmux", "display-message", "-p", "-t", "=w1:", "#{pane_id}"],
-                                                     ["tmux", "set-option", "-t", "%7", "@state", "blocked"]])
-                self.assertEqual(err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?")
+                    self.start(fake, client="alpha") if run == "start" else crew.restart(
+                        "w1", env=self.env, proc=fake
+                    )
+                self.assertEqual(
+                    fake.calls[-4:-1],
+                    [
+                        ["tmux", "capture-pane", "-p", "-J", "-t", "=w1:"],
+                        ["tmux", "display-message", "-p", "-t", "=w1:", "#{pane_id}"],
+                        ["tmux", "set-option", "-t", "%7", "@state", "blocked"],
+                    ],
+                )
+                self.assertEqual(
+                    err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?"
+                )
                 with open(self.events) as f:
                     self.assertRegex(f.read(), r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 blocked\n\Z")
 
     def test_a_dialog_text_matches_with_whitespace_collapsed(self):
-        fake = Fake(results={"display-message": lambda argv: {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(argv[-1], "")})
+        fake = Fake(
+            results={
+                "display-message": lambda argv: {"#{pane_id}": "%7\n", "#S": "w1\n"}.get(
+                    argv[-1], ""
+                )
+            }
+        )
         open(self.events, "w").close()
         fake.text = "Folder /w\n  Trust\n    alpha?  (y/n)\n"
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.start(fake, client="alpha")
-        self.assertEqual(err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?")
+        self.assertEqual(
+            err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?"
+        )
         self.assertIn(["tmux", "set-option", "-t", "%7", "@state", "blocked"], fake.calls)
 
     def test_no_dialog_marks_nothing(self):
@@ -880,13 +1225,30 @@ class ClientTest(WorkerCase):
                 fake.text = "Trust claude?\n"
                 self.start(fake, client=client)
                 self.assertNotIn("blocked", [c[-1] for c in fake.calls])
-                self.assertEqual(fake.calls[-1][1], "capture-pane" if client == "alpha" else "display-message")
+                self.assertEqual(
+                    fake.calls[-1][1], "capture-pane" if client == "alpha" else "display-message"
+                )
 
 
 class CodexWorkerTest(WorkerCase):
-    INJECTED = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
-    IDENTITY = {k: "x" for k in ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-                                 "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")}
+    INJECTED = {
+        "NO_COLOR": "1",
+        "CODEX_CI": "1",
+        "PAGER": "cat",
+        "GIT_PAGER": "cat",
+        "GH_PAGER": "cat",
+    }
+    IDENTITY = {
+        k: "x"
+        for k in (
+            "CODEX_THREAD_ID",
+            "CODEX_SESSION_ID",
+            "CODEX_VERSION",
+            "CODEX_SANDBOX",
+            "CODEX_SANDBOX_NETWORK_DISABLED",
+            "CODEX_PERMISSION_PROFILE",
+        )
+    }
 
     def setUp(self):
         super().setUp()
@@ -901,8 +1263,15 @@ class CodexWorkerTest(WorkerCase):
         os.mkdir(self.cwd)
 
     def start(self, fake, env=(), **kw):
-        return crew.start("w1", self.directory, own=None, cwd=self.cwd, env={**self.env, **dict(env)}, proc=fake,
-                          **kw)
+        return crew.start(
+            "w1",
+            self.directory,
+            own=None,
+            cwd=self.cwd,
+            env={**self.env, **dict(env)},
+            proc=fake,
+            **kw,
+        )
 
     def test_the_codex_marker_makes_a_codex_worker(self):
         fake = Fake()
@@ -910,37 +1279,60 @@ class CodexWorkerTest(WorkerCase):
         codex = os.path.join(self.bin, "codex")
         self.assertEqual((fake.options()["@client"], fake.options()["@exe"]), ("codex", codex))
         self.assertEqual(fake.handover["argv"][:4], [codex, "--no-daemon", "-C", self.cwd])
-        self.assertEqual(fake.handover["env"]["CODEX_HOME"], os.path.join(os.path.realpath(os.environ["HOME"]),
-                                                                          ".codex"))
+        self.assertEqual(
+            fake.handover["env"]["CODEX_HOME"],
+            os.path.join(os.path.realpath(os.environ["HOME"]), ".codex"),
+        )
 
     def test_both_markers_without_client_start_nothing(self):
         fake = Fake()
         with self.assertRaises(crew.WorkersError) as cm:
             self.start(fake, {"CLAUDECODE": "1", "CODEX_THREAD_ID": "t"})
-        self.assertEqual(str(cm.exception), "the caller runs inside more than one client's session (claude: "
-                                            "CLAUDECODE, codex: CODEX_THREAD_ID): pass --client")
+        self.assertEqual(
+            str(cm.exception),
+            "the caller runs inside more than one client's session (claude: "
+            "CLAUDECODE, codex: CODEX_THREAD_ID): pass --client",
+        )
         self.assertEqual(fake.calls, [])
 
     def test_a_claude_worker_drops_codex_context_its_defaults_only_with_the_marker(self):
         no_marker = {k: v for k, v in self.IDENTITY.items() if k != "CODEX_THREAD_ID"}
-        for env, kept in (({**self.IDENTITY, **self.INJECTED}, {}), ({**no_marker, **self.INJECTED}, self.INJECTED),
-                          ({**self.IDENTITY, "NO_COLOR": "0", "PAGER": "less"}, {"NO_COLOR": "0", "PAGER": "less"})):
+        for env, kept in (
+            ({**self.IDENTITY, **self.INJECTED}, {}),
+            ({**no_marker, **self.INJECTED}, self.INJECTED),
+            (
+                {**self.IDENTITY, "NO_COLOR": "0", "PAGER": "less"},
+                {"NO_COLOR": "0", "PAGER": "less"},
+            ),
+        ):
             with self.subTest(env=env):
                 fake = Fake()
                 self.start(fake, env, client="claude")
                 child = fake.handover["env"]
-                self.assertEqual({k: child[k] for k in (*self.IDENTITY, *self.INJECTED) if k in child}, kept)
+                self.assertEqual(
+                    {k: child[k] for k in (*self.IDENTITY, *self.INJECTED) if k in child}, kept
+                )
                 self.assertEqual(fake.options()["@client"], "claude")
 
     def test_env_may_set_codex_defaults(self):
         fake = Fake()
-        self.start(fake, {"CODEX_THREAD_ID": "t", **self.INJECTED}, client="claude", overrides=("NO_COLOR=1",))
-        self.assertEqual({k: fake.handover["env"].get(k) for k in self.INJECTED}, {**dict.fromkeys(self.INJECTED),
-                                                                                   "NO_COLOR": "1"})
+        self.start(
+            fake,
+            {"CODEX_THREAD_ID": "t", **self.INJECTED},
+            client="claude",
+            overrides=("NO_COLOR=1",),
+        )
+        self.assertEqual(
+            {k: fake.handover["env"].get(k) for k in self.INJECTED},
+            {**dict.fromkeys(self.INJECTED), "NO_COLOR": "1"},
+        )
         with self.assertRaises(crew.WorkersError) as cm:
             self.start(Fake(), overrides=("HOME=x",))
-        self.assertEqual(str(cm.exception), "--env HOME=x: want NAME=VALUE, NAME one of "
-                                            + ", ".join(sorted(k for k, v in CodexClient.command_env.items() if v)))
+        self.assertEqual(
+            str(cm.exception),
+            "--env HOME=x: want NAME=VALUE, NAME one of "
+            + ", ".join(sorted(k for k, v in CodexClient.command_env.items() if v)),
+        )
 
 
 def line(kind, *blocks, mid=None):
@@ -987,9 +1379,12 @@ class MainTest(WorkerCase):
 
     def run_main(self, argv, fake=None):
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(crew.subprocess, "run", fake or Fake()), \
-                mock.patch.dict(os.environ, self.env), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(crew.subprocess, "run", fake or Fake()),
+            mock.patch.dict(os.environ, self.env),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
             rc = crew.main(argv)
         return rc, out.getvalue(), err.getvalue()
 
@@ -1001,19 +1396,42 @@ class MainTest(WorkerCase):
         with open(os.path.join(self.agent_pm, "core.local.toml"), "w") as f:
             f.write('grid_retile = "x"\n')
         fake = Fake()
-        self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--prompt", "go"], fake),
-                         (1, "", "workers: core config: grid_retile: want one of all, open-close, off\n"))
+        self.assertEqual(
+            self.run_main(
+                ["start", "w1", "--manager", "m1", "--cwd", self.dir, "--prompt", "go"], fake
+            ),
+            (1, "", "workers: core config: grid_retile: want one of all, open-close, off\n"),
+        )
         self.assertEqual(fake.new_sessions(), [])
 
     def test_start(self):
         fake = Fake()
-        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--prompt", "go",
-                                      "--note", "check it", "--", "--model", "sonnet", "--permission-mode", "default"],
-                                     fake)
+        rc, out, err = self.run_main(
+            [
+                "start",
+                "w1",
+                "--manager",
+                "m1",
+                "--cwd",
+                self.dir,
+                "--prompt",
+                "go",
+                "--note",
+                "check it",
+                "--",
+                "--model",
+                "sonnet",
+                "--permission-mode",
+                "default",
+            ],
+            fake,
+        )
         self.assertEqual(rc, 0, err)
         sid = fake.store["@sid"]
         self.assertEqual(out, f"w1 {sid}\n")
-        self.assertEqual(json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"])
+        self.assertEqual(
+            json.loads(fake.store["@flags"]), ["--model", "sonnet", "--permission-mode", "default"]
+        )
         self.assertEqual(fake.handover["argv"][-1], "go")
         self.assertEqual(fake.store["@events"], self.default)
         e = self.entries()["w1"]
@@ -1022,14 +1440,34 @@ class MainTest(WorkerCase):
     def test_start_an_entry_write_failure_one_stderr_line_exit_0(self):
         fake = Fake()
         flags = ["--append-system-prompt", "a\nb"]
-        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--", *flags], fake)
+        rc, out, err = self.run_main(
+            ["start", "w1", "--manager", "m1", "--cwd", self.dir, "--", *flags], fake
+        )
         sid = fake.store["@sid"]
-        resume = [sys.executable, CREW, "start", "w1", "--manager", "m1", "--client", "claude", "--resume", sid,
-                  "--cwd", self.dir, "--", *flags]
+        resume = [
+            sys.executable,
+            CREW,
+            "start",
+            "w1",
+            "--manager",
+            "m1",
+            "--client",
+            "claude",
+            "--resume",
+            sid,
+            "--cwd",
+            self.dir,
+            "--",
+            *flags,
+        ]
         self.assertEqual((rc, out), (0, f"w1 {sid}\n"))
-        self.assertEqual([x for x in err.splitlines() if not x.startswith("tui: ")],
-                         [f"manager: entry w1 not written: entry: resume: {resume!r}: want a list of 2 or more "
-                          "printable strings"])
+        self.assertEqual(
+            [x for x in err.splitlines() if not x.startswith("tui: ")],
+            [
+                f"manager: entry w1 not written: entry: resume: {resume!r}: want a list of 2 or more "
+                "printable strings"
+            ],
+        )
         self.assertEqual(self.entries(), {})
         self.assertNotIn("kill-session", [c[1] for c in fake.calls])
 
@@ -1037,42 +1475,107 @@ class MainTest(WorkerCase):
         executable(os.path.join(self.bin, "alpha"), "#!/bin/sh\n")
         fake = Fake()
         with extra_clients():
-            rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--client", "alpha",
-                                          "--env", "NO_COLOR=0", "--env", "BETA_CI=", "--split", "below", "--",
-                                          "--x"], fake)
+            rc, out, err = self.run_main(
+                [
+                    "start",
+                    "w1",
+                    "--manager",
+                    "m1",
+                    "--cwd",
+                    self.dir,
+                    "--client",
+                    "alpha",
+                    "--env",
+                    "NO_COLOR=0",
+                    "--env",
+                    "BETA_CI=",
+                    "--split",
+                    "below",
+                    "--",
+                    "--x",
+                ],
+                fake,
+            )
         self.assertEqual(rc, 0, err)
         sid = fake.store["@sid"]
-        self.assertEqual((fake.store["@client"], json.loads(fake.store["@env"])),
-                         ("alpha", {"NO_COLOR": "0", "BETA_CI": ""}))
-        self.assertEqual(self.entries()["w1"]["resume"],
-                         [sys.executable, CREW, "start", "w1", "--manager", "m1", "--client", "alpha", "--resume", sid,
-                          "--cwd", self.dir, "--env", "NO_COLOR=0", "--env", "BETA_CI=", "--split", "below", "--",
-                          "--x"])
+        self.assertEqual(
+            (fake.store["@client"], json.loads(fake.store["@env"])),
+            ("alpha", {"NO_COLOR": "0", "BETA_CI": ""}),
+        )
+        self.assertEqual(
+            self.entries()["w1"]["resume"],
+            [
+                sys.executable,
+                CREW,
+                "start",
+                "w1",
+                "--manager",
+                "m1",
+                "--client",
+                "alpha",
+                "--resume",
+                sid,
+                "--cwd",
+                self.dir,
+                "--env",
+                "NO_COLOR=0",
+                "--env",
+                "BETA_CI=",
+                "--split",
+                "below",
+                "--",
+                "--x",
+            ],
+        )
 
     def test_start_bad_client_or_env_exit_1_starting_nothing(self):
-        for argv, msg in ((["--client", "nope"], "client 'nope' has no module clients.nope"),
-                          (["--client", "skill"], "SkillClient has no worker command"),
-                          (["--client", "beta"], "Beta has no worker command"),
-                          (["--env", "HOME=x"], f"--env HOME=x: want NAME=VALUE, NAME one of {NAMES}")):
+        for argv, msg in (
+            (["--client", "nope"], "client 'nope' has no module clients.nope"),
+            (["--client", "skill"], "SkillClient has no worker command"),
+            (["--client", "beta"], "Beta has no worker command"),
+            (["--env", "HOME=x"], f"--env HOME=x: want NAME=VALUE, NAME one of {NAMES}"),
+        ):
             with self.subTest(argv=argv):
                 fake = Fake()
                 with extra_clients():
-                    self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
-                                     (1, "", f"workers: {msg}\n"))
+                    self.assertEqual(
+                        self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
+                        (1, "", f"workers: {msg}\n"),
+                    )
                 self.assertEqual(fake.new_sessions(), [])
 
     def test_start_resume(self):
         fake = Fake()
-        rc, out, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--resume", SID,
-                                      "--", "--model", "m"], fake)
+        rc, out, err = self.run_main(
+            [
+                "start",
+                "w1",
+                "--manager",
+                "m1",
+                "--cwd",
+                self.dir,
+                "--resume",
+                SID,
+                "--",
+                "--model",
+                "m",
+            ],
+            fake,
+        )
         self.assertEqual((rc, out), (0, f"w1 {SID}\n"), err)
         self.assertEqual(fake.store["@sid"], SID)
-        self.assertEqual(fake.handover["argv"], tmux_host.with_hooks(
-            [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.default))
+        self.assertEqual(
+            fake.handover["argv"],
+            tmux_host.with_hooks(
+                [self.claude, "--resume", SID, "--name", "w1", "--model", "m"], self.default
+            ),
+        )
 
     def test_an_early_death_exits_1(self):
-        for argv, before in ((["start", "w1", "--manager", "m1", "--cwd", self.dir], lambda fake: None),
-                             (["restart", "w1"], self.started)):
+        for argv, before in (
+            (["start", "w1", "--manager", "m1", "--cwd", self.dir], lambda fake: None),
+            (["restart", "w1"], self.started),
+        ):
             with self.subTest(argv[0]):
                 fake = Fake()
                 before(fake)
@@ -1084,31 +1587,84 @@ class MainTest(WorkerCase):
 
     def test_start_refusals_exit_1_before_any_tmux_call(self):
         bad = "a b"
-        for argv, msg in ((["--resume", "abc"], "--resume abc: not a session id"),
-                          (["--", "--model", "m", "-c"], "-c: crew.py picks the session; use start --resume <sid>"),
-                          (["--resume", SID, "--", "--session-id=x"],
-                           "--session-id: crew.py picks the session; use start --resume <sid>"),
-                          (["--note", "x" * 501], "note: 501 characters: want at most 500"),
-                          (["--note", bad], f"note: {bad!r}: {UNPRINTABLE}")):
+        for argv, msg in (
+            (["--resume", "abc"], "--resume abc: not a session id"),
+            (
+                ["--", "--model", "m", "-c"],
+                "-c: crew.py picks the session; use start --resume <sid>",
+            ),
+            (
+                ["--resume", SID, "--", "--session-id=x"],
+                "--session-id: crew.py picks the session; use start --resume <sid>",
+            ),
+            (["--note", "x" * 501], "note: 501 characters: want at most 500"),
+            (["--note", bad], f"note: {bad!r}: {UNPRINTABLE}"),
+        ):
             with self.subTest(argv=argv):
                 fake = Fake()
-                self.assertEqual(self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
-                                 (1, "", f"workers: {msg}\n"))
+                self.assertEqual(
+                    self.run_main(["start", "w1", "--manager", "m1", *argv], fake),
+                    (1, "", f"workers: {msg}\n"),
+                )
                 self.assertEqual(fake.calls, [])
 
     def test_start_split_from_below_opens_under_its_pane(self):
         sock = "/tmp/tmux-1/default"
         tmux = os.path.join(self.bin, "tmux")
         executable(tmux, "#!/bin/sh\n")
-        fake = Fake(results={"list-clients": lambda argv: f"100 /dev/ttys009 %9 0 {sock}\n" if argv[3] == "=x" else "",
-                             "split-window": lambda argv: "%10\n"})
+        fake = Fake(
+            results={
+                "list-clients": lambda argv: (
+                    f"100 /dev/ttys009 %9 0 {sock}\n" if argv[3] == "=x" else ""
+                ),
+                "split-window": lambda argv: "%10\n",
+            }
+        )
         fake.oserror = lambda argv: argv[0] == "pgrep"
-        rc, _, err = self.run_main(["start", "w1", "--manager", "m1", "--cwd", self.dir, "--split-from", "x",
-                                    "--split", "below", "--", "--model", "m"], fake)
+        rc, _, err = self.run_main(
+            [
+                "start",
+                "w1",
+                "--manager",
+                "m1",
+                "--cwd",
+                self.dir,
+                "--split-from",
+                "x",
+                "--split",
+                "below",
+                "--",
+                "--model",
+                "m",
+            ],
+            fake,
+        )
         self.assertEqual(rc, 0, err)
-        self.assertEqual([c for c in fake.calls if c[1] == "split-window"],
-                         [["tmux", "split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", "%9",
-                           "env", "-u", "TMUX", tmux, "-S", sock, "attach", "-t", "=w1"]])
+        self.assertEqual(
+            [c for c in fake.calls if c[1] == "split-window"],
+            [
+                [
+                    "tmux",
+                    "split-window",
+                    "-d",
+                    "-v",
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                    "-t",
+                    "%9",
+                    "env",
+                    "-u",
+                    "TMUX",
+                    tmux,
+                    "-S",
+                    sock,
+                    "attach",
+                    "-t",
+                    "=w1",
+                ]
+            ],
+        )
         self.assertEqual(fake.store["@pane"], "%10")
         self.assertEqual(fake.handover["argv"][-2:], ["--model", "m"])
 
@@ -1162,10 +1718,16 @@ class ManagerDirTest(WorkerCase):
         env = {} if session is None else {"TMUX": "/tmp/tmux-1/default,1,0", "TMUX_PANE": "%3"}
         fake = Fake(results={"display-message": lambda argv: f"{session}\n"})
         err = io.StringIO()
-        with mock.patch.dict(os.environ, {**self.env, **env}), mock.patch.object(crew.subprocess, "run", fake), \
-                spawned() as start, \
-                mock.patch.object(crew, "next_event", return_value=(1, "10:00:01 w1 outcome done")) as nxt, \
-                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.dict(os.environ, {**self.env, **env}),
+            mock.patch.object(crew.subprocess, "run", fake),
+            spawned() as start,
+            mock.patch.object(
+                crew, "next_event", return_value=(1, "10:00:01 w1 outcome done")
+            ) as nxt,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(err),
+        ):
             rc = crew.main(argv)
         if argv[0] == "start":
             return rc, err.getvalue(), start.call_args.kwargs["events"] if start.called else None
@@ -1181,17 +1743,21 @@ class ManagerDirTest(WorkerCase):
         attached("--manager", "other", own="mgr")
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
-                self.assertEqual(self.run_main([cmd[0], "--manager", "other", *cmd[1:]], "mgr"),
-                                 (0, "", self.events_of("other")))
+                self.assertEqual(
+                    self.run_main([cmd[0], "--manager", "other", *cmd[1:]], "mgr"),
+                    (0, "", self.events_of("other")),
+                )
         self.assertEqual(os.listdir(self.managers), ["other"])
 
     def test_no_directory_or_a_bad_name_exit_1_making_nothing(self):
         outside = "workers: no manager directory: run inside tmux or give --manager <name>\n"
         manager_ = "workers: manager 'a/b': want [A-Za-z0-9_-]+\n"
         own = "workers: own tmux session 'a.b': want [A-Za-z0-9_-]+; give --manager <name>\n"
-        cases = (*((cmd, None, outside) for cmd in self.CMDS),
-                 *(([cmd[0], "--manager", "a/b", *cmd[1:]], "mgr", manager_) for cmd in self.CMDS),
-                 (["start", "w1"], "a.b", own))
+        cases = (
+            *((cmd, None, outside) for cmd in self.CMDS),
+            *(([cmd[0], "--manager", "a/b", *cmd[1:]], "mgr", manager_) for cmd in self.CMDS),
+            (["start", "w1"], "a.b", own),
+        )
         for argv, session, msg in cases:
             with self.subTest(argv=argv, session=session):
                 self.assertEqual(self.run_main(argv, session), (1, msg, None))
@@ -1199,8 +1765,11 @@ class ManagerDirTest(WorkerCase):
 
     def test_events_option_is_gone_exit_2(self):
         for cmd in self.CMDS:
-            with self.subTest(cmd=cmd[0]), mock.patch.object(crew, "start") as start, \
-                    mock.patch.object(crew, "next_event") as nxt:
+            with (
+                self.subTest(cmd=cmd[0]),
+                mock.patch.object(crew, "start") as start,
+                mock.patch.object(crew, "next_event") as nxt,
+            ):
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
                     crew.main([cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]])
                 self.assertEqual(cm.exception.code, 2)
@@ -1213,9 +1782,14 @@ class ManagerDirTest(WorkerCase):
         os.symlink(real, self.managers)
         for cmd in self.CMDS:
             with self.subTest(cmd=cmd[0]):
-                self.assertEqual(self.run_main([cmd[0], "--manager", "m1", *cmd[1:]]),
-                                 (1, f"workers: manager directory {self.managers}: not a directory owned by you\n",
-                                  None))
+                self.assertEqual(
+                    self.run_main([cmd[0], "--manager", "m1", *cmd[1:]]),
+                    (
+                        1,
+                        f"workers: manager directory {self.managers}: not a directory owned by you\n",
+                        None,
+                    ),
+                )
 
 
 def nl(*lines):
@@ -1244,12 +1818,16 @@ class NextEventTest(unittest.TestCase):
             if step is None:
                 raise AssertionError("next_event kept waiting")
             step()
+
         return mock.patch.object(crew.time, "sleep", side_effect=sleep)
 
     def run_main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(crew.subprocess, "run", Fake()), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(crew.subprocess, "run", Fake()),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
             rc = crew.main(["next-event", "--manager", "m1", *argv])
         return rc, out.getvalue(), err.getvalue()
 
@@ -1260,7 +1838,10 @@ class NextEventTest(unittest.TestCase):
         self.assertEqual(str(cm.exception), f"events file {path}: {reason}")
 
     def test_every_kind_is_an_event(self):
-        kinds = [f"10:00:0{i} w1 {k}" for i, k in enumerate(("done", "blocked", "dead", "outcome failed", "new x y"))]
+        kinds = [
+            f"10:00:0{i} w1 {k}"
+            for i, k in enumerate(("done", "blocked", "dead", "outcome failed", "new x y"))
+        ]
         self.append(nl(*kinds))
         with self.sleeping():
             for n, event in enumerate(kinds):
@@ -1268,26 +1849,47 @@ class NextEventTest(unittest.TestCase):
 
     def test_the_first_event_after_a_line_waited_for(self):
         A, B, C = self.A, self.B, self.C
-        junk = ["", "garbage", "1:00:01 w1 done", "10:00:01 w1", "10:00:01 w1 ", "10:00:01  w1 done",
-                " 10:00:01 w1 done"]
+        junk = [
+            "",
+            "garbage",
+            "1:00:01 w1 done",
+            "10:00:01 w1",
+            "10:00:01 w1 ",
+            "10:00:01  w1 done",
+            " 10:00:01 w1 done",
+        ]
         consumed = "0123456789abcdef\n"
 
         def rewrite():
             with open(self.path, "r+b") as f:
                 f.write(b"\n" * len(consumed))
+
         cases = {
             "end skips what is there": (nl(A, B), [nl(C)], None, (3, C)),
-            "end counts complete lines only": (nl(A) + "10:00:02 w1 do", ["ne\n"], None, (2, "10:00:02 w1 done")),
+            "end counts complete lines only": (
+                nl(A) + "10:00:02 w1 do",
+                ["ne\n"],
+                None,
+                (2, "10:00:02 w1 done"),
+            ),
             "end of a missing file is zero": (None, [nl(A)], None, (1, A)),
             "appended while waiting": (nl(A), [nl(B)], 1, (2, B)),
             "fewer lines than after": (nl(A), [nl(B), nl(C)], 2, (3, C)),
-            "a partial last line waits for its newline": (nl(A) + "10:00:02 w1 caf", [b"\xc3", b"\xa9\n"], 1,
-                                                          (2, "10:00:02 w1 café")),
+            "a partial last line waits for its newline": (
+                nl(A) + "10:00:02 w1 caf",
+                [b"\xc3", b"\xa9\n"],
+                1,
+                (2, "10:00:02 w1 café"),
+            ),
             "a missing file waited for": (None, [lambda: None, nl(A)], 0, (1, A)),
             "consumed bytes not read again": (consumed, [rewrite, nl(B)], 0, (2, B)),
             "malformed lines skipped but counted": (nl(A, *junk, B), [], 1, (len(junk) + 2, B)),
-            "decoded as UTF-8 with replacement": (b"10:00:01 w1 caf\xc3\xa9 \xff\n", [], 0,
-                                                  (1, "10:00:01 w1 café �")),
+            "decoded as UTF-8 with replacement": (
+                b"10:00:01 w1 caf\xc3\xa9 \xff\n",
+                [],
+                0,
+                (1, "10:00:01 w1 café �"),
+            ),
         }
         for why, (data, steps, after, want) in cases.items():
             with self.subTest(why):
@@ -1309,8 +1911,12 @@ class NextEventTest(unittest.TestCase):
             with open(self.path + ".new", "wb") as f:
                 f.write(nl(self.B, self.A).encode())
             os.replace(self.path + ".new", self.path)
-        for reason, steps, after, path in (("shrank", [shrink], 2, None), ("replaced", [replace], 2, None),
-                                           (os.strerror(errno.EISDIR), [], 0, self.tmp.name)):
+
+        for reason, steps, after, path in (
+            ("shrank", [shrink], 2, None),
+            ("replaced", [replace], 2, None),
+            (os.strerror(errno.EISDIR), [], 0, self.tmp.name),
+        ):
             with self.subTest(reason):
                 with open(self.path, "wb") as f:
                     f.write(nl(self.A, self.B).encode())
@@ -1324,19 +1930,31 @@ class NextEventTest(unittest.TestCase):
         with self.sleeping():
             self.assertEqual(self.run_main("--after", "1", "--gen", "0"), (0, f"2 {self.B}\n", ""))
         with self.sleeping(lambda: self.append(nl(self.C), path)):
-            self.assertEqual(self.run_main("--after", "end", "--gen", "0"), (0, f"3 {self.C}\n", ""))
+            self.assertEqual(
+                self.run_main("--after", "end", "--gen", "0"), (0, f"3 {self.C}\n", "")
+            )
 
     def test_main_error_exit(self):
         attached("--manager", "m1")
         err = crew.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
         with mock.patch.object(crew, "next_event", side_effect=err):
-            self.assertEqual(self.run_main("--after", "0", "--gen", "0"), (1, "", f"workers: {err}\n"))
+            self.assertEqual(
+                self.run_main("--after", "0", "--gen", "0"), (1, "", f"workers: {err}\n")
+            )
 
     def test_main_usage_error(self):
-        for argv in (*(["--after", bad, "--gen", "0"] for bad in ("-1", "x", "1.5", "")),
-                     *(["--after", "1", "--gen", bad] for bad in ("-1", "x", "end", "")),
-                     ["--after", "1"], ["--gen", "0"], []):
-            with self.sleeping(), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+        for argv in (
+            *(["--after", bad, "--gen", "0"] for bad in ("-1", "x", "1.5", "")),
+            *(["--after", "1", "--gen", bad] for bad in ("-1", "x", "end", "")),
+            ["--after", "1"],
+            ["--gen", "0"],
+            [],
+        ):
+            with (
+                self.sleeping(),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as cm,
+            ):
                 crew.main(["next-event", "--manager", "m1", *argv])
             self.assertEqual(cm.exception.code, 2, argv)
 
@@ -1367,8 +1985,12 @@ class NextEventContentTest(WorkerCase):
         with open(roster.events(roster.directory("m1"), create=False), "w") as f:
             f.write(event + "\n")
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(crew.subprocess, "run", fake), mock.patch.dict(os.environ, self.env), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(crew.subprocess, "run", fake),
+            mock.patch.dict(os.environ, self.env),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
             rc = crew.main(["next-event", "--manager", "m1", "--after", "0", "--gen", "0"])
         return rc, out.getvalue(), err.getvalue()
 
@@ -1382,20 +2004,27 @@ class NextEventContentTest(WorkerCase):
     def test_worker_done_prints_the_first_80_lines_of_its_reply(self):
         reply = [f"r{i}" for i in range(100)]
         fake = self.pane()
-        got = self.run_event("10:00:01 w1 done", fake, line("assistant", text("\n".join(reply)), mid="m1"))
+        got = self.run_event(
+            "10:00:01 w1 done", fake, line("assistant", text("\n".join(reply)), mid="m1")
+        )
         self.assertEqual(got, (0, nl("1 10:00:01 w1 done", *reply[:80]), ""))
         self.assertNotIn(self.CAPTURE, fake.calls)
 
     def test_role_run_done_prints_the_panes_last_40_lines(self):
         fake = self.pane(worker=False)
-        self.assertEqual(self.run_event("10:00:01 w1 done", fake), (0, nl("1 10:00:01 w1 done", *self.PANE[10:]), ""))
+        self.assertEqual(
+            self.run_event("10:00:01 w1 done", fake),
+            (0, nl("1 10:00:01 w1 done", *self.PANE[10:]), ""),
+        )
         self.assertEqual(fake.calls[-1], self.CAPTURE)
 
     def test_blocked_and_dead_print_the_panes_last_40_lines(self):
         for kind in ("blocked", "dead"):
             with self.subTest(kind=kind):
                 fake = self.pane()
-                got = self.run_event(f"10:00:01 w1 {kind}", fake, line("assistant", text("reply"), mid="m1"))
+                got = self.run_event(
+                    f"10:00:01 w1 {kind}", fake, line("assistant", text("reply"), mid="m1")
+                )
                 self.assertEqual(got, (0, nl(f"1 10:00:01 w1 {kind}", *self.PANE[10:]), ""))
                 self.assertEqual([c[1] for c in fake.calls], ["capture-pane"])
 
@@ -1408,18 +2037,27 @@ class NextEventContentTest(WorkerCase):
 
     def test_empty_reply_prints_nothing_more(self):
         fake = self.pane()
-        got = self.run_event("10:00:01 w1 done", fake, line("user", text("q")), line("assistant", TOOL, mid="m1"))
+        got = self.run_event(
+            "10:00:01 w1 done", fake, line("user", text("q")), line("assistant", TOOL, mid="m1")
+        )
         self.assertEqual(got, (0, nl("1 10:00:01 w1 done"), ""))
         self.assertNotIn(self.CAPTURE, fake.calls)
 
     def test_a_content_failure_is_printed_on_stdout_exit_0(self):
-        no_transcript = f"workers: no transcript for {SID}: started with a leaked Claude Code variable?"
+        no_transcript = (
+            f"workers: no transcript for {SID}: started with a leaked Claude Code variable?"
+        )
         gone = "workers: tmux: can't find session: w1"
-        for event, fake, msg in (("10:00:01 w1 done", self.pane(), no_transcript),
-                                 ("10:00:01 w1 done", self.pane(False, Gone()), gone),
-                                 ("10:00:01 w1 blocked", self.pane(False, Gone()), gone),
-                                 ("10:00:01 a.b dead", self.pane(), "workers: invalid session name 'a.b': want "
-                                                                    "[A-Za-z0-9_-]+")):
+        for event, fake, msg in (
+            ("10:00:01 w1 done", self.pane(), no_transcript),
+            ("10:00:01 w1 done", self.pane(False, Gone()), gone),
+            ("10:00:01 w1 blocked", self.pane(False, Gone()), gone),
+            (
+                "10:00:01 a.b dead",
+                self.pane(),
+                "workers: invalid session name 'a.b': want [A-Za-z0-9_-]+",
+            ),
+        ):
             with self.subTest(event=event, msg=msg):
                 self.assertEqual(self.run_event(event, fake), (0, nl(f"1 {event}", msg), ""))
 
@@ -1440,16 +2078,36 @@ def numbered(count, start=1):
 
 
 def tail(directory, n=0, gen=0, *backlog):
-    me, events = shlex.quote(os.path.abspath(crew.__file__)), shlex.quote(os.path.join(directory, "events"))
+    me, events = (
+        shlex.quote(os.path.abspath(crew.__file__)),
+        shlex.quote(os.path.join(directory, "events")),
+    )
     name = os.path.basename(directory)
-    return nl(*backlog, f"N={n} GEN={gen}", f"monitor: tail -n +{n + 1} -F {events}",
-              f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
-              f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}")
+    return nl(
+        *backlog,
+        f"N={n} GEN={gen}",
+        f"monitor: tail -n +{n + 1} -F {events}",
+        f"monitor expired: python3 {me} attach --manager {name} --after LINE --gen {gen} --resume",
+        f"next-event: python3 {me} next-event --manager {name} --after {n} --gen {gen}",
+    )
 
 
 def entry(kind="worker", **over):
-    return {"kind": kind, "sid": SID, "cwd": "/w", "resume": [PY, SCRIPT[kind], "--go"], "note": None, "opener": None,
-            "pane": None, "split": None, "split_from": None, "tui": None, "state": "working", "started": WHEN, **over}
+    return {
+        "kind": kind,
+        "sid": SID,
+        "cwd": "/w",
+        "resume": [PY, SCRIPT[kind], "--go"],
+        "note": None,
+        "opener": None,
+        "pane": None,
+        "split": None,
+        "split_from": None,
+        "tui": None,
+        "state": "working",
+        "started": WHEN,
+        **over,
+    }
 
 
 def opts(sid="", state="", pane="", opener=""):
@@ -1475,8 +2133,24 @@ def within(seconds=10):
 
 
 class Server:
-    def __init__(self, own="mgr", sessions=None, clients=None, panes="", fail=None, extra="", results=None, lock=None):
-        self.own, self.clients, self.panes, self.fail, self.extra = own, clients or {}, panes, fail or {}, extra
+    def __init__(
+        self,
+        own="mgr",
+        sessions=None,
+        clients=None,
+        panes="",
+        fail=None,
+        extra="",
+        results=None,
+        lock=None,
+    ):
+        self.own, self.clients, self.panes, self.fail, self.extra = (
+            own,
+            clients or {},
+            panes,
+            fail or {},
+            extra,
+        )
         self.sessions = {**({own: opts()} if own else {}), **(sessions or {})}
         self.results, self.lock = results or {}, lock
         self.calls, self.recoveries = [], []
@@ -1502,7 +2176,10 @@ class Server:
         elif cmd == "kill-session":
             rc = 0 if self.sessions.pop(argv[3][1:], None) is not None else 1
         elif cmd == "list-sessions":
-            out = "".join("\t".join((name, *o)) + "\n" for name, o in self.sessions.items()) + self.extra
+            out = (
+                "".join("\t".join((name, *o)) + "\n" for name, o in self.sessions.items())
+                + self.extra
+            )
         elif cmd == "list-clients":
             out = self.clients.get(argv[3][1:], "")
         elif cmd == "list-panes":
@@ -1518,8 +2195,12 @@ def attached(*argv, own=None):
     if own:
         env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
     err = io.StringIO()
-    with mock.patch.object(crew.subprocess, "run", Server(own)), mock.patch.dict(os.environ, env, clear=True), \
-            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+    with (
+        mock.patch.object(crew.subprocess, "run", Server(own)),
+        mock.patch.dict(os.environ, env, clear=True),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(err),
+    ):
         rc = crew.main(["attach", *argv])
     if rc:
         raise AssertionError(f"attach exited {rc}: {err.getvalue()}")
@@ -1540,7 +2221,10 @@ class RosterCase(WorkerCase):
     def seed(self, holder=None, cursor=0, gen=0, **entries):
         roster.ensure(self.mdir)
         with open(self.path, "w") as f:
-            json.dump({"version": 1, "holder": holder, "cursor": cursor, "gen": gen, "entries": entries}, f)
+            json.dump(
+                {"version": 1, "holder": holder, "cursor": cursor, "gen": gen, "entries": entries},
+                f,
+            )
         return self.bytes()
 
     def bytes(self):
@@ -1551,8 +2235,10 @@ class RosterCase(WorkerCase):
         return json.loads(self.bytes())["entries"]
 
     def held(self):
-        return (f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
-                "run crew.py release, or end that session\n")
+        return (
+            f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
+            "run crew.py release, or end that session\n"
+        )
 
     def not_attached(self):
         return f"workers: manager directory {self.mdir} not attached: run crew.py attach first\n"
@@ -1562,8 +2248,12 @@ class RosterCase(WorkerCase):
         if server.own:
             env.update(TMUX="/tmp/tmux-1/default,1,0", TMUX_PANE="%3")
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(crew.subprocess, "run", server), mock.patch.dict(os.environ, env), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(crew.subprocess, "run", server),
+            mock.patch.dict(os.environ, env),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
             rc = crew.main(list(argv))
         return rc, out.getvalue(), err.getvalue()
 
@@ -1600,10 +2290,14 @@ class AttachTest(RosterCase):
             self.assertEqual(self.synced(Server()), HEADER + tail(self.mdir))
         self.assertEqual(stat.S_IMODE(os.stat(self.mdir).st_mode), 0o700)
         for name in ("events", "roster.json", "roster.lock"):
-            self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.mdir, name)).st_mode), 0o600, name)
+            self.assertEqual(
+                stat.S_IMODE(os.stat(os.path.join(self.mdir, name)).st_mode), 0o600, name
+            )
         holder = {"session": "mgr", "since": WHEN}
-        self.assertEqual(json.loads(self.bytes()),
-                         {"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": {}})
+        self.assertEqual(
+            json.loads(self.bytes()),
+            {"version": 1, "holder": holder, "cursor": 0, "gen": 0, "entries": {}},
+        )
         with mock.patch.object(roster, "now", return_value="2026-10-10T00:00:00+00:00"):
             self.synced(Server())
         self.assertEqual(json.loads(self.bytes())["holder"], holder)
@@ -1626,17 +2320,24 @@ class AttachTest(RosterCase):
         for holder in (None, {"session": "old", "since": WHEN}):
             with self.subTest(holder=holder):
                 self.seed(holder=holder)
-                self.assertEqual(self.attach(Server(None), "--manager", "mgr"), (0, HEADER + tail(self.mdir), notice))
+                self.assertEqual(
+                    self.attach(Server(None), "--manager", "mgr"),
+                    (0, HEADER + tail(self.mdir), notice),
+                )
                 self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
     def test_outside_tmux_without_manager_exits_1_and_makes_nothing(self):
-        self.assertEqual(self.attach(Server(None)),
-                         (1, "", "workers: no manager directory: run inside tmux or give --manager <name>\n"))
+        self.assertEqual(
+            self.attach(Server(None)),
+            (1, "", "workers: no manager directory: run inside tmux or give --manager <name>\n"),
+        )
         self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_a_bad_core_config_exits_1_before_anything_is_made(self):
-        for text, msg in (("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
-                          ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off")):
+        for text, msg in (
+            ("workers_per_column = 0\n", "workers_per_column: want an integer from 1 to 9999"),
+            ('grid_retile = "x"\n', "grid_retile: want one of all, open-close, off"),
+        ):
             with self.subTest(text):
                 self.config(text)
                 self.assertEqual(self.attach(Server()), (1, "", f"workers: core config: {msg}\n"))
@@ -1646,13 +2347,17 @@ class AttachTest(RosterCase):
         old = entry(resume=[PY, SCRIPT["worker"], "start", "w1"], state="gone")
         self.seed(w1=old)
         self.synced(Server(sessions={"w9": opts(SID, "done", "%4", "mgr")}, clients={"w9": SHOWN}))
-        self.assertEqual(self.entries(), {"w9": {**old, "state": "done", "pane": "%4", "opener": "mgr"}})
+        self.assertEqual(
+            self.entries(), {"w9": {**old, "state": "done", "pane": "%4", "opener": "mgr"}}
+        )
 
     def test_no_rename_without_exactly_one_match_free_to_take(self):
-        cases = {"two sessions have its sid": ({"w8": opts(SID), "w9": opts(SID)}, {}),
-                 "the match is an entry": ({"w9": opts(SID)}, {"w9": entry("role", sid=SID2)}),
-                 "the match is not a NAME": ({"a.b": opts(SID)}, {}),
-                 "no session has its sid": ({"w9": opts(SID2)}, {})}
+        cases = {
+            "two sessions have its sid": ({"w8": opts(SID), "w9": opts(SID)}, {}),
+            "the match is an entry": ({"w9": opts(SID)}, {"w9": entry("role", sid=SID2)}),
+            "the match is not a NAME": ({"a.b": opts(SID)}, {}),
+            "no session has its sid": ({"w9": opts(SID2)}, {}),
+        }
         for why, (sessions, others) in cases.items():
             with self.subTest(why):
                 self.seed(w1=entry(), **others)
@@ -1661,10 +2366,21 @@ class AttachTest(RosterCase):
                 self.assertEqual(self.entries()["w1"]["state"], "gone")
 
     def test_only_a_worker_with_a_sid_is_renamed(self):
-        self.seed(r1=entry("role", cwd=self.dir), p1=entry("pipeline", sid=SID2, cwd=self.dir), w1=entry(sid=None))
-        self.synced(Server(sessions={"x1": opts(SID), "x2": opts(SID2), "x3": opts()},
-                           clients=dict.fromkeys(("x1", "x2", "x3"), SHOWN)))
-        self.assertEqual({n: e["state"] for n, e in self.entries().items()}, {"r1": "gone", "p1": "gone", "w1": "gone"})
+        self.seed(
+            r1=entry("role", cwd=self.dir),
+            p1=entry("pipeline", sid=SID2, cwd=self.dir),
+            w1=entry(sid=None),
+        )
+        self.synced(
+            Server(
+                sessions={"x1": opts(SID), "x2": opts(SID2), "x3": opts()},
+                clients=dict.fromkeys(("x1", "x2", "x3"), SHOWN),
+            )
+        )
+        self.assertEqual(
+            {n: e["state"] for n, e in self.entries().items()},
+            {"r1": "gone", "p1": "gone", "w1": "gone"},
+        )
 
     def test_a_short_row_is_not_live(self):
         self.seed(w1=entry())
@@ -1672,19 +2388,37 @@ class AttachTest(RosterCase):
         self.assertEqual(self.entries()["w1"]["state"], "gone")
 
     def test_a_live_workers_state_is_its_sessions_when_known_else_working(self):
-        states = {"working": "working", "done": "done", "blocked": "blocked", "dead": "dead", "": "working",
-                  "gone": "working", "finished": "working", "idle": "working", "Done": "working"}
+        states = {
+            "working": "working",
+            "done": "done",
+            "blocked": "blocked",
+            "dead": "dead",
+            "": "working",
+            "gone": "working",
+            "finished": "working",
+            "idle": "working",
+            "Done": "working",
+        }
         names = {f"w{i}": pair for i, pair in enumerate(states.items())}
         self.seed(**{name: entry(state="gone") for name in names})
-        self.synced(Server(sessions={name: opts(SID, have) for name, (have, _) in names.items()},
-                           clients=dict.fromkeys(names, SHOWN)))
-        self.assertEqual({n: e["state"] for n, e in self.entries().items()},
-                         {n: want for n, (_, want) in names.items()})
+        self.synced(
+            Server(
+                sessions={name: opts(SID, have) for name, (have, _) in names.items()},
+                clients=dict.fromkeys(names, SHOWN),
+            )
+        )
+        self.assertEqual(
+            {n: e["state"] for n, e in self.entries().items()},
+            {n: want for n, (_, want) in names.items()},
+        )
 
     def test_a_worker_without_a_session_is_gone(self):
         self.seed(w1=entry(state="blocked", pane="%4"))
-        self.assertEqual(self.synced(Server()), HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
-                                                         f"resume w1: {PY} /x/crew.py --go\n" + tail(self.mdir))
+        self.assertEqual(
+            self.synced(Server()),
+            HEADER + f"w1\tworker\t{SID}\tgone\t-\t/w\t%4\n"
+            f"resume w1: {PY} /x/crew.py --go\n" + tail(self.mdir),
+        )
         self.assertEqual(self.entries()["w1"]["state"], "gone")
         self.assertEqual(self.shows, [])
 
@@ -1698,43 +2432,73 @@ class AttachTest(RosterCase):
             entries[status] = entry(cwd=cwd)
         self.seed(**entries)
         out = self.synced(Server())
-        self.assertEqual({n: e["state"] for n, e in self.entries().items()}, dict.fromkeys(entries, "gone"))
-        self.assertEqual([line.split(":")[0] for line in out.splitlines() if line.startswith("resume ")],
-                         [f"resume {name}" for name in sorted(entries)])
+        self.assertEqual(
+            {n: e["state"] for n, e in self.entries().items()}, dict.fromkeys(entries, "gone")
+        )
+        self.assertEqual(
+            [line.split(":")[0] for line in out.splitlines() if line.startswith("resume ")],
+            [f"resume {name}" for name in sorted(entries)],
+        )
 
     def test_a_role_or_pipeline_is_live_by_its_driver_or_tui_session(self):
         for kind in ("role", "pipeline"):
             with self.subTest(kind=kind):
-                self.seed(d1=entry(kind, cwd=self.dir, state="gone", tui="t1", pane="%1"),
-                          d2=entry(kind, cwd=self.dir, state="done"),
-                          t3=entry(kind, cwd=self.dir, state="gone", tui="t3t"),
-                          b4=entry(kind, cwd=self.dir, state="gone", tui="t4"))
-                server = Server(sessions={"d1": opts(state="dead", pane="%7", opener="x"), "d2": opts(state="blocked"),
-                                          "t3t": opts(SID, "blocked", "%8", "mgr"), "b4": opts(state="dead"),
-                                          "t4": opts(state="done", pane="%6")},
-                                clients={"t3t": SHOWN, "t4": SHOWN})
+                self.seed(
+                    d1=entry(kind, cwd=self.dir, state="gone", tui="t1", pane="%1"),
+                    d2=entry(kind, cwd=self.dir, state="done"),
+                    t3=entry(kind, cwd=self.dir, state="gone", tui="t3t"),
+                    b4=entry(kind, cwd=self.dir, state="gone", tui="t4"),
+                )
+                server = Server(
+                    sessions={
+                        "d1": opts(state="dead", pane="%7", opener="x"),
+                        "d2": opts(state="blocked"),
+                        "t3t": opts(SID, "blocked", "%8", "mgr"),
+                        "b4": opts(state="dead"),
+                        "t4": opts(state="done", pane="%6"),
+                    },
+                    clients={"t3t": SHOWN, "t4": SHOWN},
+                )
                 self.synced(server)
-                self.assertEqual({n: (e["state"], e["pane"], e["opener"]) for n, e in self.entries().items()},
-                                 {"d1": ("working", "%1", None), "d2": ("working", None, None),
-                                  "t3": ("blocked", "%8", "mgr"), "b4": ("done", "%6", None)})
+                self.assertEqual(
+                    {n: (e["state"], e["pane"], e["opener"]) for n, e in self.entries().items()},
+                    {
+                        "d1": ("working", "%1", None),
+                        "d2": ("working", None, None),
+                        "t3": ("blocked", "%8", "mgr"),
+                        "b4": ("done", "%6", None),
+                    },
+                )
                 self.assertEqual([c[3] for c in server.ran("list-clients")], ["=t4", "=t3t"])
 
-    def test_a_role_or_pipeline_without_a_session_is_finished_waiting_or_gone_by_its_run_record(self):
-        done, failed, tail = result(outcome={"status": "done"}), result(outcome={"status": "failed"}), crew.RUN_TAIL
+    def test_a_role_or_pipeline_without_a_session_is_finished_waiting_or_gone_by_its_run_record(
+        self,
+    ):
+        done, failed, tail = (
+            result(outcome={"status": "done"}),
+            result(outcome={"status": "failed"}),
+            crew.RUN_TAIL,
+        )
         asking = result(outcome={"status": "needs_input"})
         pad = ("x" * 99 + "\n") * (tail // 100 + 1)
         cut = tail - len(done)
         records = {
-            "done": (done, "finished"), "failed": (failed, "finished"),
-            "later-lines-skipped": (done + '{"kind": "end"}\nnot json\n' + "[" * 200000 + '\n{"kind": "res',
-                                    "finished"),
+            "done": (done, "finished"),
+            "failed": (failed, "finished"),
+            "later-lines-skipped": (
+                done + '{"kind": "end"}\nnot json\n' + "[" * 200000 + '\n{"kind": "res',
+                "finished",
+            ),
             "last-result-wins": (done + result(error="stopped: KeyboardInterrupt"), "gone"),
             "failed-after-an-error": (result(error="boom") + failed, "finished"),
             "needs-input": (asking, "waiting"),
             "answered": (asking + done, "finished"),
             "asking-after-done": (done + asking, "waiting"),
             "needs-input-after-an-error": (result(error="boom") + asking, "waiting"),
-            "error-after-needs-input": (asking + result(error="stopped: KeyboardInterrupt"), "gone"),
+            "error-after-needs-input": (
+                asking + result(error="stopped: KeyboardInterrupt"),
+                "gone",
+            ),
             "error": (result(error="boom"), "gone"),
             "malformed": ("{\nnot json\n\udcff\n", "gone"),
             "empty": ("", "gone"),
@@ -1744,8 +2508,14 @@ class AttachTest(RosterCase):
             "status-an-object": (result(outcome={"status": {"needs_input": 1}}), "gone"),
             "status-other": (result(outcome={"status": "waiting"}), "gone"),
             "no-status": (result(outcome={}), "gone"),
-            "kind-outcome": (json.dumps({"kind": "outcome", "outcome": {"status": "done"}}) + "\n", "gone"),
-            "a-list-line": (json.dumps([{"kind": "result", "outcome": {"status": "done"}}]) + "\n", "gone"),
+            "kind-outcome": (
+                json.dumps({"kind": "outcome", "outcome": {"status": "done"}}) + "\n",
+                "gone",
+            ),
+            "a-list-line": (
+                json.dumps([{"kind": "result", "outcome": {"status": "done"}}]) + "\n",
+                "gone",
+            ),
             "beyond-the-tail": (done + pad, "gone"),
             "within-the-tail": (pad + done, "finished"),
             "cut-by-the-tail": ("x" + done + "p\n" * (cut // 2) + "p" * (cut % 2), "gone"),
@@ -1755,12 +2525,18 @@ class AttachTest(RosterCase):
         for i, (name, (text, state)) in enumerate(records.items()):
             cwd = os.path.join(self.dir, name)
             os.mkdir(cwd)
-            with open(os.path.join(cwd, "run.jsonl"), "w", encoding="utf-8", errors="surrogateescape") as f:
+            with open(
+                os.path.join(cwd, "run.jsonl"), "w", encoding="utf-8", errors="surrogateescape"
+            ) as f:
                 f.write(text)
             entries[name], want[name] = entry(("role", "pipeline")[i % 2], cwd=cwd), state
         done_cwd = os.path.join(self.dir, "done", "run.jsonl")
-        for name, make in (("missing", lambda path: None), ("symlink", lambda path: os.symlink(done_cwd, path)),
-                           ("fifo", os.mkfifo), ("directory", os.mkdir)):
+        for name, make in (
+            ("missing", lambda path: None),
+            ("symlink", lambda path: os.symlink(done_cwd, path)),
+            ("fifo", os.mkfifo),
+            ("directory", os.mkdir),
+        ):
             cwd = os.path.join(self.dir, name)
             os.mkdir(cwd)
             make(os.path.join(cwd, "run.jsonl"))
@@ -1771,31 +2547,79 @@ class AttachTest(RosterCase):
         self.assertEqual({n: e["state"] for n, e in self.entries().items()}, want)
 
     def test_a_live_sessions_pane_and_opener_are_synced_when_valid(self):
-        cases = {"w1": ("%7", "mgr", "%7", "mgr"),
-                 "w2": ("5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE", "5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE"),
-                 "w3": ("", "", "%1", "old"), "w4": ("%x", "a b", "%1", "old"), "w5": ("%8", "a.b", "%8", "old"),
-                 "w6": ("a b", "new", "%1", "new")}
+        cases = {
+            "w1": ("%7", "mgr", "%7", "mgr"),
+            "w2": ("5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE", "5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE"),
+            "w3": ("", "", "%1", "old"),
+            "w4": ("%x", "a b", "%1", "old"),
+            "w5": ("%8", "a.b", "%8", "old"),
+            "w6": ("a b", "new", "%1", "new"),
+        }
         self.seed(**{name: entry(pane="%1", opener="old") for name in cases})
-        self.synced(Server(sessions={n: opts(SID, "working", p, o) for n, (p, o, _, _) in cases.items()},
-                           clients=dict.fromkeys(cases, SHOWN)))
-        self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
-                         {n: (p, o) for n, (_, _, p, o) in cases.items()})
+        self.synced(
+            Server(
+                sessions={n: opts(SID, "working", p, o) for n, (p, o, _, _) in cases.items()},
+                clients=dict.fromkeys(cases, SHOWN),
+            )
+        )
+        self.assertEqual(
+            {n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+            {n: (p, o) for n, (_, _, p, o) in cases.items()},
+        )
 
     def test_a_live_session_no_client_shows_is_reopened_with_the_lock_free(self):
         self.config('workers_per_column = 2\ngrid_retile = "all"\n')
-        self.seed(w1=entry(split="below", split_from="mgr"), r1=entry("role", tui="r1-tui", split="right"),
-                  w2=entry(), w3=entry(sid=SID2), r2=entry("role", sid=SID2, cwd=self.dir, tui="r2-tui"))
-        server = Server(sessions={"w1": opts(SID), "r1-tui": opts(state="done"), "w2": opts(SID), "r2": opts()},
-                        clients={"w2": SHOWN})
+        self.seed(
+            w1=entry(split="below", split_from="mgr"),
+            r1=entry("role", tui="r1-tui", split="right"),
+            w2=entry(),
+            w3=entry(sid=SID2),
+            r2=entry("role", sid=SID2, cwd=self.dir, tui="r2-tui"),
+        )
+        server = Server(
+            sessions={"w1": opts(SID), "r1-tui": opts(state="done"), "w2": opts(SID), "r2": opts()},
+            clients={"w2": SHOWN},
+        )
         with mock.patch.object(roster, "locked", wraps=roster.locked) as locked:
             out = self.synced(server)
-        self.assertEqual(self.shows, [
-            ("r1-tui", {"split": "right", "split_from": None, "per_column": 2, "retile": "all", "proc": server}, True),
-            ("w1", {"split": "below", "split_from": "mgr", "per_column": 2, "retile": "all", "proc": server}, True)])
+        self.assertEqual(
+            self.shows,
+            [
+                (
+                    "r1-tui",
+                    {
+                        "split": "right",
+                        "split_from": None,
+                        "per_column": 2,
+                        "retile": "all",
+                        "proc": server,
+                    },
+                    True,
+                ),
+                (
+                    "w1",
+                    {
+                        "split": "below",
+                        "split_from": "mgr",
+                        "per_column": 2,
+                        "retile": "all",
+                        "proc": server,
+                    },
+                    True,
+                ),
+            ],
+        )
         self.assertEqual(locked.call_count, 2)
-        self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
-                         {"w1": ("%9", "mgr"), "r1": ("%9", "mgr"), "w2": (None, None), "w3": (None, None),
-                          "r2": (None, None)})
+        self.assertEqual(
+            {n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+            {
+                "w1": ("%9", "mgr"),
+                "r1": ("%9", "mgr"),
+                "w2": (None, None),
+                "w3": (None, None),
+                "r2": (None, None),
+            },
+        )
         self.assertIn(f"w1\tworker\t{SID}\tworking\t-\t/w\t%9\n", out)
 
     def test_no_reopen_no_second_roster_block(self):
@@ -1807,16 +2631,24 @@ class AttachTest(RosterCase):
     def test_the_default_per_column_and_retile(self):
         self.seed(w1=entry())
         self.synced(Server(sessions={"w1": opts(SID)}))
-        self.assertEqual([(kw["per_column"], kw["retile"]) for _, kw, _ in self.shows], [(None, None)])
+        self.assertEqual(
+            [(kw["per_column"], kw["retile"]) for _, kw, _ in self.shows], [(None, None)]
+        )
 
     def test_placement_is_recorded_only_for_an_entry_still_the_same(self):
         def drop():
             with roster.locked(self.mdir) as r:
                 roster.remove(r, "w1")
-        cases = {"same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
-                 "sid changed": (lambda: roster.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
-                 "kind changed": (lambda: roster.put(self.mdir, "w1", entry("pipeline")), entry("pipeline")),
-                 "removed": (drop, None)}
+
+        cases = {
+            "same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
+            "sid changed": (lambda: roster.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
+            "kind changed": (
+                lambda: roster.put(self.mdir, "w1", entry("pipeline")),
+                entry("pipeline"),
+            ),
+            "removed": (drop, None),
+        }
         for why, (then, want) in cases.items():
             with self.subTest(why):
                 self.seed(w1=entry())
@@ -1826,19 +2658,35 @@ class AttachTest(RosterCase):
 
     def test_a_shown_session_is_marked_by_its_most_recently_active_client(self):
         panes = "/dev/ttys001\tmgr\n/dev/ttys002\tother\n/dev/ttys003\ta.b\n\n"
-        cases = {"w1": ("100 /dev/ttys002\n300 /dev/ttys001\n200 /dev/ttys003\n", "mgr"),
-                 "w2": ("20 /dev/ttys001\n100 /dev/ttys002\n", "other"),
-                 "w3": ("300 /dev/ttys003\n100 /dev/ttys001\n", "a terminal"),
-                 "w4": ("9 /dev/ttys009\n", "a terminal")}
+        cases = {
+            "w1": ("100 /dev/ttys002\n300 /dev/ttys001\n200 /dev/ttys003\n", "mgr"),
+            "w2": ("20 /dev/ttys001\n100 /dev/ttys002\n", "other"),
+            "w3": ("300 /dev/ttys003\n100 /dev/ttys001\n", "a terminal"),
+            "w4": ("9 /dev/ttys009\n", "a terminal"),
+        }
         self.seed(**{name: entry() for name in cases})
-        server = Server(sessions={name: opts(SID) for name in cases}, clients={n: c for n, (c, _) in cases.items()},
-                        panes=panes)
-        self.assertEqual(self.synced(server), HEADER + "".join(
-            f"{n}\tworker\t{SID}\tworking\t-\t/w\t-\tshown in {where}\n" for n, (_, where) in cases.items())
-                         + tail(self.mdir))
-        self.assertEqual(server.ran("list-clients")[0], ["tmux", "list-clients", "-t", "=w1", "-F",
-                                                         "#{client_activity} #{client_tty}"])
-        self.assertEqual(server.ran("list-panes"), [["tmux", "list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]])
+        server = Server(
+            sessions={name: opts(SID) for name in cases},
+            clients={n: c for n, (c, _) in cases.items()},
+            panes=panes,
+        )
+        self.assertEqual(
+            self.synced(server),
+            HEADER
+            + "".join(
+                f"{n}\tworker\t{SID}\tworking\t-\t/w\t-\tshown in {where}\n"
+                for n, (_, where) in cases.items()
+            )
+            + tail(self.mdir),
+        )
+        self.assertEqual(
+            server.ran("list-clients")[0],
+            ["tmux", "list-clients", "-t", "=w1", "-F", "#{client_activity} #{client_tty}"],
+        )
+        self.assertEqual(
+            server.ran("list-panes"),
+            [["tmux", "list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]],
+        )
         self.assertEqual(self.shows, [])
 
     def test_table_and_recovery_commands_none_for_a_waiting_run(self):
@@ -1849,83 +2697,143 @@ class AttachTest(RosterCase):
             if status:
                 with open(os.path.join(d, "run.jsonl"), "w") as f:
                     f.write(result(outcome={"status": status}))
-        self.seed(b=entry(note="check the logs", pane="%4"),
-                  a=entry(sid=None, resume=[PY, "/x/crew.py", "; rm -rf ~"]),
-                  B=entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
-                  C=entry("role", sid=None, cwd=cwd),
-                  p1=entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--plan", "/p q"]),
-                  f1=entry("pipeline", cwd=finished), n1=entry("role", cwd=asking), n2=entry("pipeline", cwd=asking))
-        out = self.synced(Server(sessions={"b": opts(SID, "working", "%4")}, clients={"b": SHOWN},
-                                 panes="/dev/ttys001\tmgr\n"))
-        role = (f"cd {shlex.quote(cwd)} && {PY} /x/drive.py --role pm --sid {SID} --resume "
-                "--input 'Continue the unfinished task.'")
-        self.assertEqual(out, HEADER + nl(f"B\trole\t{SID}\tgone\t-\t{cwd}\t-",
-                                          f"C\trole\t-\tgone\t-\t{cwd}\t-",
-                                          "a\tworker\t-\tgone\t-\t/w\t-",
-                                          f"b\tworker\t{SID}\tworking\tcheck the logs\t/w\t%4\tshown in mgr",
-                                          f"f1\tpipeline\t{SID}\tfinished\t-\t{finished}\t-",
-                                          f"n1\trole\t{SID}\twaiting\t-\t{asking}\t-",
-                                          f"n2\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
-                                          f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
-                                          f"resume B: {role}",
-                                          "resume C: none (no sid)",
-                                          f"resume a: {PY} /x/crew.py '; rm -rf ~'",
-                                          f"resume p1: {PY} /x/router.py --plan '/p q'") + tail(self.mdir))
+        self.seed(
+            b=entry(note="check the logs", pane="%4"),
+            a=entry(sid=None, resume=[PY, "/x/crew.py", "; rm -rf ~"]),
+            B=entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
+            C=entry("role", sid=None, cwd=cwd),
+            p1=entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--plan", "/p q"]),
+            f1=entry("pipeline", cwd=finished),
+            n1=entry("role", cwd=asking),
+            n2=entry("pipeline", cwd=asking),
+        )
+        out = self.synced(
+            Server(
+                sessions={"b": opts(SID, "working", "%4")},
+                clients={"b": SHOWN},
+                panes="/dev/ttys001\tmgr\n",
+            )
+        )
+        role = (
+            f"cd {shlex.quote(cwd)} && {PY} /x/drive.py --role pm --sid {SID} --resume "
+            "--input 'Continue the unfinished task.'"
+        )
+        self.assertEqual(
+            out,
+            HEADER
+            + nl(
+                f"B\trole\t{SID}\tgone\t-\t{cwd}\t-",
+                f"C\trole\t-\tgone\t-\t{cwd}\t-",
+                "a\tworker\t-\tgone\t-\t/w\t-",
+                f"b\tworker\t{SID}\tworking\tcheck the logs\t/w\t%4\tshown in mgr",
+                f"f1\tpipeline\t{SID}\tfinished\t-\t{finished}\t-",
+                f"n1\trole\t{SID}\twaiting\t-\t{asking}\t-",
+                f"n2\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
+                f"p1\tpipeline\t{SID}\tgone\t-\t{cwd}\t-",
+                f"resume B: {role}",
+                "resume C: none (no sid)",
+                f"resume a: {PY} /x/crew.py '; rm -rf ~'",
+                f"resume p1: {PY} /x/router.py --plan '/p q'",
+            )
+            + tail(self.mdir),
+        )
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
-        self.assertEqual(shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/crew.py", "; rm -rf ~"])
+        self.assertEqual(
+            shlex.split(out.splitlines()[-6].split(": ", 1)[1]), [PY, "/x/crew.py", "; rm -rf ~"]
+        )
 
     def test_an_invalid_entry_is_skipped_with_one_stderr_line(self):
-        self.seed(w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/crew.py"]))
+        self.seed(
+            w1=entry(), bad=entry(sid="; rm -rf ~"), rel=entry(resume=["python3", "/x/crew.py"])
+        )
         rc, out, err = self.attach(Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}))
-        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
-                                     + tail(self.mdir)))
-        self.assertEqual(err, "manager: roster.json: entry 'bad': sid: '; rm -rf ~': want a session id or null\n"
-                              "manager: roster.json: entry 'rel': resume[0]: 'python3': want an absolute path\n")
+        self.assertEqual(
+            (rc, out),
+            (
+                0,
+                HEADER
+                + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
+                + tail(self.mdir),
+            ),
+        )
+        self.assertEqual(
+            err,
+            "manager: roster.json: entry 'bad': sid: '; rm -rf ~': want a session id or null\n"
+            "manager: roster.json: entry 'rel': resume[0]: 'python3': want an absolute path\n",
+        )
         self.assertEqual(set(self.entries()), {"w1"})
 
     def test_no_tmux_server_means_no_live_session(self):
-        for err in ("no server running on /tmp/tmux-501/default\n",
-                    "error connecting to /tmp/tmux-501/default (No such file or directory)\n"):
+        for err in (
+            "no server running on /tmp/tmux-501/default\n",
+            "error connecting to /tmp/tmux-501/default (No such file or directory)\n",
+        ):
             with self.subTest(err=err):
                 self.seed(w1=entry())
-                rc, out, _ = self.attach(Server(None, fail={"list-sessions": err}), "--manager", "mgr")
-                self.assertEqual((rc, out.splitlines()[1]), (0, f"w1\tworker\t{SID}\tgone\t-\t/w\t-"))
+                rc, out, _ = self.attach(
+                    Server(None, fail={"list-sessions": err}), "--manager", "mgr"
+                )
+                self.assertEqual(
+                    (rc, out.splitlines()[1]), (0, f"w1\tworker\t{SID}\tgone\t-\t/w\t-")
+                )
                 self.assertEqual(self.entries()["w1"]["state"], "gone")
 
     def test_any_other_list_sessions_failure_writes_nothing(self):
-        for fail, msg in (("boom\n", "tmux list-sessions: boom"),
-                          (OSError(errno.ENOENT, "No such file or directory"), "tmux: No such file or directory")):
+        for fail, msg in (
+            ("boom\n", "tmux list-sessions: boom"),
+            (OSError(errno.ENOENT, "No such file or directory"), "tmux: No such file or directory"),
+        ):
             with self.subTest(msg):
                 before = self.seed(w1=entry())
-                self.assertEqual(self.attach(Server(fail={"list-sessions": fail})), (1, "", f"workers: {msg}\n"))
+                self.assertEqual(
+                    self.attach(Server(fail={"list-sessions": fail})), (1, "", f"workers: {msg}\n")
+                )
                 self.assertEqual(self.bytes(), before)
         os.unlink(self.path)
         self.assertEqual(self.attach(Server(fail={"list-sessions": "boom\n"}))[0], 1)
         self.assertFalse(os.path.exists(self.path))
 
     def test_a_failed_list_clients_skips_that_entry(self):
-        for fail in ("can't find session: w1\n", OSError(errno.ENOENT, "No such file or directory")):
+        for fail in (
+            "can't find session: w1\n",
+            OSError(errno.ENOENT, "No such file or directory"),
+        ):
             with self.subTest(fail=fail):
                 self.shows = []
                 self.seed(w1=entry(), w2=entry(sid=SID2), w3=entry(sid=None))
-                server = Server(sessions={"w1": opts(), "w2": opts()}, fail={"list-clients -t =w1": fail})
-                self.assertEqual(self.synced(server), HEADER + nl(f"w1\tworker\t{SID}\tworking\t-\t/w\t-",
-                                                                  f"w2\tworker\t{SID2}\tworking\t-\t/w\t%9",
-                                                                  "w3\tworker\t-\tgone\t-\t/w\t-",
-                                                                  f"resume w3: {PY} /x/crew.py --go")
-                                 + tail(self.mdir))
+                server = Server(
+                    sessions={"w1": opts(), "w2": opts()}, fail={"list-clients -t =w1": fail}
+                )
+                self.assertEqual(
+                    self.synced(server),
+                    HEADER
+                    + nl(
+                        f"w1\tworker\t{SID}\tworking\t-\t/w\t-",
+                        f"w2\tworker\t{SID2}\tworking\t-\t/w\t%9",
+                        "w3\tworker\t-\tgone\t-\t/w\t-",
+                        f"resume w3: {PY} /x/crew.py --go",
+                    )
+                    + tail(self.mdir),
+                )
                 self.assertEqual([s for s, _, _ in self.shows], ["w2"])
-                self.assertEqual({n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
-                                 {"w1": (None, None), "w2": ("%9", "mgr"), "w3": (None, None)})
+                self.assertEqual(
+                    {n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
+                    {"w1": (None, None), "w2": ("%9", "mgr"), "w3": (None, None)},
+                )
 
     def test_a_failed_list_panes_is_shown_in_a_terminal(self):
         for fail in ("boom\n", OSError(errno.ENOENT, "No such file or directory")):
             with self.subTest(fail=fail):
                 self.seed(w1=entry())
-                server = Server(sessions={"w1": opts(SID)}, clients={"w1": SHOWN}, fail={"list-panes": fail})
-                self.assertEqual(self.synced(server),
-                                 HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
-                                 + tail(self.mdir))
+                server = Server(
+                    sessions={"w1": opts(SID)}, clients={"w1": SHOWN}, fail={"list-panes": fail}
+                )
+                self.assertEqual(
+                    self.synced(server),
+                    HEADER
+                    + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\tshown in a terminal\n"
+                    + tail(self.mdir),
+                )
 
     def test_a_reopen_outside_tmux_prints_shows_messages_on_stderr(self):
         executable(os.path.join(self.bin, "tmux"), "#!/bin/sh\n")
@@ -1933,10 +2841,15 @@ class AttachTest(RosterCase):
         with mock.patch.object(tmux_host, "show", SHOW):
             rc, out, err = self.attach(Server(None, sessions={"w1": opts(SID)}), "--manager", "mgr")
         cmd = tmux_host.attach_command("w1")
-        self.assertEqual((rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n" + tail(self.mdir)))
-        self.assertEqual(err, f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
-                              f"tui: session w1: {cmd}\n"
-                              f"tui: show: {tmux_host.NO_PANE.format('not in tmux')}; watch it with {cmd}\n")
+        self.assertEqual(
+            (rc, out), (0, HEADER + f"w1\tworker\t{SID}\tworking\t-\t/w\t-\n" + tail(self.mdir))
+        )
+        self.assertEqual(
+            err,
+            f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
+            f"tui: session w1: {cmd}\n"
+            f"tui: show: {tmux_host.NO_PANE.format('not in tmux')}; watch it with {cmd}\n",
+        )
 
 
 class LeaseTest(RosterCase):
@@ -1968,7 +2881,10 @@ class LeaseTest(RosterCase):
         for own in ("mgr", None):
             for cmd in self.CMDS:
                 with self.subTest(own=own, cmd=cmd[0]):
-                    self.assertEqual(self.ran(Server(own, sessions={"other": opts()}), cmd), (1, self.held(), False))
+                    self.assertEqual(
+                        self.ran(Server(own, sessions={"other": opts()}), cmd),
+                        (1, self.held(), False),
+                    )
                     self.assertEqual(self.bytes(), before)
 
     def test_refused_in_tmux_when_not_the_holder(self):
@@ -2014,38 +2930,68 @@ class StartEntryTest(RosterCase):
         self.seed(MGR)
 
     def start(self, fake=None, **kw):
-        return crew.start("w1", self.mdir, own="mgr", cwd=self.dir, env=self.env, proc=fake or Fake(), **kw)
+        return crew.start(
+            "w1", self.mdir, own="mgr", cwd=self.dir, env=self.env, proc=fake or Fake(), **kw
+        )
 
     def resume(self, sid, *rest):
-        return [sys.executable, CREW, "start", "w1", "--manager", "mgr", "--client", "claude", "--resume", sid,
-                "--cwd", self.dir, *rest]
+        return [
+            sys.executable,
+            CREW,
+            "start",
+            "w1",
+            "--manager",
+            "mgr",
+            "--client",
+            "claude",
+            "--resume",
+            sid,
+            "--cwd",
+            self.dir,
+            *rest,
+        ]
 
     def lines(self, err):
         return [x for x in err.getvalue().splitlines() if not x.startswith("tui: ")]
 
     def test_the_worker_entry_resumes_through_crew_py(self):
-        sid = self.start()
+        self.start()
         self.assertEqual(self.entries()["w1"]["resume"][1], CREW)
 
     def test_the_worker_entry(self):
-        cases = (({}, (), []),
-                 ({}, ("--permission-mode", "auto"), ["--", "--permission-mode", "auto"]),
-                 ({}, ("--model=m", "--", "-c"), ["--", "--model=m", "--", "-c"]),
-                 ({"split": "below"}, (), ["--split", "below"]),
-                 ({"split_from": "x"}, ("--model", "m"), ["--split-from", "x", "--", "--model", "m"]),
-                 ({"split": "right", "split_from": "x"}, (), ["--split", "right", "--split-from", "x"]))
+        cases = (
+            ({}, (), []),
+            ({}, ("--permission-mode", "auto"), ["--", "--permission-mode", "auto"]),
+            ({}, ("--model=m", "--", "-c"), ["--", "--model=m", "--", "-c"]),
+            ({"split": "below"}, (), ["--split", "below"]),
+            ({"split_from": "x"}, ("--model", "m"), ["--split-from", "x", "--", "--model", "m"]),
+            ({"split": "right", "split_from": "x"}, (), ["--split", "right", "--split-from", "x"]),
+        )
         for kw, flags, rest in cases:
             with self.subTest(**kw, flags=flags):
                 with mock.patch.object(roster, "now", return_value=WHEN):
                     sid = self.start(flags=flags, note="check it", **kw)
-                self.assertEqual(self.entries(), {"w1": entry(sid=sid, cwd=self.dir, resume=self.resume(sid, *rest),
-                                                              note="check it", **kw)})
+                self.assertEqual(
+                    self.entries(),
+                    {
+                        "w1": entry(
+                            sid=sid,
+                            cwd=self.dir,
+                            resume=self.resume(sid, *rest),
+                            note="check it",
+                            **kw,
+                        )
+                    },
+                )
 
     def test_opener_and_pane_from_the_session_options_each_only_when_valid(self):
-        cases = {"tmux": ("%5", "mgr", "%5", "mgr"),
-                 "iTerm2": ("5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE", "5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE"),
-                 "invalid pane": ("%x", "mgr", None, "mgr"), "invalid opener": ("%5", "a.b", "%5", None),
-                 "unset": ("", "", None, None)}
+        cases = {
+            "tmux": ("%5", "mgr", "%5", "mgr"),
+            "iTerm2": ("5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE", "5E1B-C0FFEE", "w0t0p0:5E1B-C0FFEE"),
+            "invalid pane": ("%x", "mgr", None, "mgr"),
+            "invalid opener": ("%5", "a.b", "%5", None),
+            "unset": ("", "", None, None),
+        }
         for why, (pane, opener, *want) in cases.items():
             with self.subTest(why):
                 rows = f"w2\t\t\t%1\tw2\nw1\t{SID}\t\t{pane}\t{opener}\n"
@@ -2056,8 +3002,10 @@ class StartEntryTest(RosterCase):
     def test_no_row_or_a_failing_list_sessions_places_nothing(self):
         failing = Fake()
         failing.oserror = lambda argv: argv[1] == "list-sessions"
-        for why, fake in (("no row", Fake(results={"list-sessions": lambda argv: "w2\t\t\t%1\tmgr\n"})),
-                          ("failing", failing)):
+        for why, fake in (
+            ("no row", Fake(results={"list-sessions": lambda argv: "w2\t\t\t%1\tmgr\n"})),
+            ("failing", failing),
+        ):
             with self.subTest(why):
                 self.start(fake)
                 e = self.entries()["w1"]
@@ -2069,8 +3017,12 @@ class StartEntryTest(RosterCase):
         with self.assertRaisesRegex(crew.WorkersError, "^w1: claude exited 1 at once"):
             self.start(fake)
         sid = fake.store["@sid"]
-        self.assertEqual((self.entries()["w1"]["sid"], self.entries()["w1"]["state"]), (sid, "working"))
-        rc, _, err = self.run_main(Server(sessions={"w1": opts(sid, "dead")}, clients={"w1": SHOWN}), "attach")
+        self.assertEqual(
+            (self.entries()["w1"]["sid"], self.entries()["w1"]["state"]), (sid, "working")
+        )
+        rc, _, err = self.run_main(
+            Server(sessions={"w1": opts(sid, "dead")}, clients={"w1": SHOWN}), "attach"
+        )
         self.assertEqual((rc, err, self.entries()["w1"]["state"]), (0, "", "dead"))
 
     def test_a_re_start_replaces_the_entry_keeping_its_note_only_for_the_same_sid(self):
@@ -2081,7 +3033,9 @@ class StartEntryTest(RosterCase):
         self.assertEqual(self.entries()["w1"]["note"], "new")
         second = self.start()
         self.assertNotEqual(second, first)
-        self.assertEqual({n: (e["sid"], e["note"]) for n, e in self.entries().items()}, {"w1": (second, None)})
+        self.assertEqual(
+            {n: (e["sid"], e["note"]) for n, e in self.entries().items()}, {"w1": (second, None)}
+        )
 
     def test_an_empty_note_is_none(self):
         self.start(note="")
@@ -2106,6 +3060,7 @@ class StartEntryTest(RosterCase):
             with roster.locked(self.mdir) as r:
                 r["holder"] = OTHER
             return ""
+
         fake = Fake(results={"list-sessions": take_over})
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -2136,9 +3091,11 @@ class RosterCommandsTest(RosterCase):
     CMDS = (["release"], ["note", "w1", "x"], ["forget", "w1"], ["stop", "w1"])
 
     def test_refused_without_the_lease_writing_nothing(self):
-        cases = {"another live holder": (OTHER, {"other": opts()}, self.held()),
-                 "no holder": (None, {}, self.not_attached()),
-                 "a dead other holder": (OTHER, {}, self.not_attached())}
+        cases = {
+            "another live holder": (OTHER, {"other": opts()}, self.held()),
+            "no holder": (None, {}, self.not_attached()),
+            "a dead other holder": (OTHER, {}, self.not_attached()),
+        }
         for why, (holder, sessions, msg) in cases.items():
             for cmd in self.CMDS:
                 with self.subTest(why, cmd=cmd[0]):
@@ -2152,19 +3109,28 @@ class RosterCommandsTest(RosterCase):
         for own in ("mgr", None):
             for cmd in self.CMDS:
                 with self.subTest(own=own, cmd=cmd[0]):
-                    self.assertEqual(self.run_main(Server(own), *cmd, "--manager", "mgr"), (1, "", self.not_attached()))
+                    self.assertEqual(
+                        self.run_main(Server(own), *cmd, "--manager", "mgr"),
+                        (1, "", self.not_attached()),
+                    )
                     self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_release_by_the_holder_keeps_the_cursor(self):
         self.seed(MGR, cursor=7, w1=entry())
-        self.assertEqual(self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", ""))
-        self.assertEqual(json.loads(self.bytes()),
-                         {"version": 1, "holder": None, "cursor": 7, "gen": 0, "entries": {"w1": entry()}})
+        self.assertEqual(
+            self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", "")
+        )
+        self.assertEqual(
+            json.loads(self.bytes()),
+            {"version": 1, "holder": None, "cursor": 7, "gen": 0, "entries": {"w1": entry()}},
+        )
 
     def test_release_outside_tmux_without_a_live_holder(self):
         self.seed(OTHER, cursor=7)
-        self.assertEqual(self.run_main(Server(None), "release", "--manager", "mgr"),
-                         (0, f"workers: released {self.mdir}\n", ""))
+        self.assertEqual(
+            self.run_main(Server(None), "release", "--manager", "mgr"),
+            (0, f"workers: released {self.mdir}\n", ""),
+        )
         r = json.loads(self.bytes())
         self.assertEqual((r["holder"], r["cursor"]), (None, 7))
 
@@ -2172,16 +3138,25 @@ class RosterCommandsTest(RosterCase):
         self.seed(MGR, w1=entry(), w2=entry(note="old"), w3=entry())
         for argv in (["w1", "check the logs"], ["w2", ""], ["w3", "x" * 500]):
             self.assertEqual(self.run_main(Server(), "note", *argv), (0, "", ""))
-        self.assertEqual(self.entries(),
-                         {"w1": entry(note="check the logs"), "w2": entry(), "w3": entry(note="x" * 500)})
+        self.assertEqual(
+            self.entries(),
+            {"w1": entry(note="check the logs"), "w2": entry(), "w3": entry(note="x" * 500)},
+        )
 
     def test_a_long_or_unprintable_note_is_refused_writing_nothing(self):
-        cases = {"x" * 501: "note: 501 characters: want at most 500",
-                 **{text: f"note: {text!r}: {UNPRINTABLE}" for text in ("a\nb", "a\x9fb", "a b", "\x7f", "a\tb")}}
+        cases = {
+            "x" * 501: "note: 501 characters: want at most 500",
+            **{
+                text: f"note: {text!r}: {UNPRINTABLE}"
+                for text in ("a\nb", "a\x9fb", "a b", "\x7f", "a\tb")
+            },
+        }
         for text, msg in cases.items():
             with self.subTest(msg):
                 before = self.seed(MGR, w1=entry())
-                self.assertEqual(self.run_main(Server(), "note", "w1", text), (1, "", f"workers: {msg}\n"))
+                self.assertEqual(
+                    self.run_main(Server(), "note", "w1", text), (1, "", f"workers: {msg}\n")
+                )
                 self.assertEqual(self.bytes(), before)
 
     def test_note_forget_and_stop_need_an_entry_killing_nothing(self):
@@ -2189,38 +3164,54 @@ class RosterCommandsTest(RosterCase):
             with self.subTest(cmd=cmd[0]):
                 before = self.seed(MGR, w1=entry())
                 server = Server(sessions={"w9": opts(), "w1": opts(SID)})
-                self.assertEqual(self.run_main(server, *cmd), (1, "", "workers: w9 not in roster\n"))
+                self.assertEqual(
+                    self.run_main(server, *cmd), (1, "", "workers: w9 not in roster\n")
+                )
                 self.assertEqual((self.bytes(), server.ran("kill-session")), (before, []))
 
     def test_note_forget_and_stop_check_the_name(self):
         for cmd in (["note", "a b", "x"], ["forget", "a b"], ["stop", "a b"]):
             with self.subTest(cmd=cmd[0]):
                 before = self.seed(MGR, w1=entry())
-                self.assertEqual(self.run_main(Server(), *cmd),
-                                 (1, "", "workers: bad name 'a b': use [A-Za-z0-9_-]+\n"))
+                self.assertEqual(
+                    self.run_main(Server(), *cmd),
+                    (1, "", "workers: bad name 'a b': use [A-Za-z0-9_-]+\n"),
+                )
                 self.assertEqual(self.bytes(), before)
 
     def test_forget_removes_an_entry_no_session_keeps(self):
         self.seed(MGR, w1=entry(state="gone"), r1=entry("role", tui="r1-tui"), w2=entry())
-        self.assertEqual(self.run_main(Server(sessions={"w2": opts()}), "forget", "w1"), (0, "", ""))
-        self.assertEqual(self.run_main(Server(sessions={"w2": opts()}), "forget", "r1"), (0, "", ""))
+        self.assertEqual(
+            self.run_main(Server(sessions={"w2": opts()}), "forget", "w1"), (0, "", "")
+        )
+        self.assertEqual(
+            self.run_main(Server(sessions={"w2": opts()}), "forget", "r1"), (0, "", "")
+        )
         self.assertEqual(self.entries(), {"w2": entry()})
 
     def test_forget_refuses_a_live_entry_writing_nothing(self):
-        entries = {"w1": entry(), "r1": entry("role", tui="r1-tui"), "r2": entry("role", tui="r2-tui"),
-                   "p1": entry("pipeline", tui="p1-tui")}
+        entries = {
+            "w1": entry(),
+            "r1": entry("role", tui="r1-tui"),
+            "r2": entry("role", tui="r2-tui"),
+            "p1": entry("pipeline", tui="p1-tui"),
+        }
         server = Server(sessions={"w1": opts(), "r1": opts(), "r2-tui": opts(), "p1-tui": opts()})
         for name, session in (("w1", "w1"), ("r1", "r1"), ("r2", "r2-tui"), ("p1", "p1-tui")):
             with self.subTest(name):
                 before = self.seed(MGR, **entries)
-                self.assertEqual(self.run_main(server, "forget", name),
-                                 (1, "", f"workers: {name}: session {session} is live\n"))
+                self.assertEqual(
+                    self.run_main(server, "forget", name),
+                    (1, "", f"workers: {name}: session {session} is live\n"),
+                )
                 self.assertEqual(self.bytes(), before)
 
     def test_forget_after_a_failed_list_sessions_writes_nothing(self):
         before = self.seed(MGR, w1=entry(state="gone"))
-        self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "forget", "w1"),
-                         (1, "", "workers: tmux list-sessions: boom\n"))
+        self.assertEqual(
+            self.run_main(Server(fail={"list-sessions": "boom\n"}), "forget", "w1"),
+            (1, "", "workers: tmux list-sessions: boom\n"),
+        )
         self.assertEqual(self.bytes(), before)
 
 
@@ -2241,22 +3232,34 @@ class StopTest(RosterCase):
                 with self.subTest(kind=kind, name=name):
                     self.seed(MGR, d1=entry(kind, tui="t1"), w1=entry())
                     server = Server(sessions={"d1": opts(), "t1": opts(), "w1": opts(SID)})
-                    self.assertEqual(self.stopped(server, name), ((0, "", ""), ["=d1", "=t1"], {"w1"}))
+                    self.assertEqual(
+                        self.stopped(server, name), ((0, "", ""), ["=d1", "=t1"], {"w1"})
+                    )
                     self.assertEqual(set(server.sessions), {"mgr", "w1"})
 
     def test_sessions_gone_already(self):
-        self.seed(MGR, w1=entry(state="gone"), d1=entry("role", tui="t1", state="finished"), d2=entry("role"),
-                  w2=entry())
-        for name, killed, left in (("w1", ["=w1"], {"d1", "d2", "w2"}), ("t1", ["=d1", "=t1"], {"d2", "w2"}),
-                                   ("d2", ["=d2"], {"w2"})):
+        self.seed(
+            MGR,
+            w1=entry(state="gone"),
+            d1=entry("role", tui="t1", state="finished"),
+            d2=entry("role"),
+            w2=entry(),
+        )
+        for name, killed, left in (
+            ("w1", ["=w1"], {"d1", "d2", "w2"}),
+            ("t1", ["=d1", "=t1"], {"d2", "w2"}),
+            ("d2", ["=d2"], {"w2"}),
+        ):
             with self.subTest(name=name):
                 self.assertEqual(self.stopped(Server(), name), ((0, "", ""), killed, left))
 
     def test_a_session_outliving_its_kill_exits_1_keeping_the_entry(self):
         before = self.seed(MGR, w1=entry())
         server = Server(sessions={"w1": opts(SID)}, fail={"kill-session": "boom\n"})
-        self.assertEqual(self.run_main(server, "stop", "w1"),
-                         (1, "", "workers: w1: session w1 still live after tmux kill-session\n"))
+        self.assertEqual(
+            self.run_main(server, "stop", "w1"),
+            (1, "", "workers: w1: session w1 still live after tmux kill-session\n"),
+        )
         self.assertEqual(self.bytes(), before)
 
     def test_outside_tmux_without_a_live_holder(self):
@@ -2264,12 +3267,16 @@ class StopTest(RosterCase):
             with self.subTest(holder=holder):
                 self.seed(holder, w1=entry(), w2=entry(sid=SID2))
                 server = Server(None, sessions={"w1": opts(SID)})
-                self.assertEqual(self.stopped(server, "w1", "--manager", "mgr"), ((0, "", ""), ["=w1"], {"w2"}))
+                self.assertEqual(
+                    self.stopped(server, "w1", "--manager", "mgr"), ((0, "", ""), ["=w1"], {"w2"})
+                )
                 self.assertEqual(json.loads(self.bytes())["holder"], holder)
 
     def test_a_stopped_entry_is_not_resumed(self):
         self.seed(MGR, w1=entry(), w2=entry(sid=SID2, resume=[PY, "/y/crew.py", "--go"]))
-        self.assertEqual(self.run_main(Server(sessions={"w1": opts(SID)}), "stop", "w1"), (0, "", ""))
+        self.assertEqual(
+            self.run_main(Server(sessions={"w1": opts(SID)}), "stop", "w1"), (0, "", "")
+        )
         server = Server()
         self.assertEqual(self.run_main(server, "attach", "--resume")[0], 0)
         self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/y/crew.py", "--go"]])
@@ -2277,71 +3284,132 @@ class StopTest(RosterCase):
 
 class StopAllTest(RosterCase):
     def test_selects_by_opener_recursively_deepest_first(self):
-        live = {"mgr": {"opener": ""}, "w1": {"opener": "mgr"}, "w2": {"opener": "mgr"}, "w3": {"opener": "w1"},
-                "w4": {"opener": "w3"}, "x": {"opener": "other"}, "y": {"opener": "x"}, "z": {"opener": ""},
-                "loop": {"opener": "loop"}, "back": {"opener": "w4"}}
+        live = {
+            "mgr": {"opener": ""},
+            "w1": {"opener": "mgr"},
+            "w2": {"opener": "mgr"},
+            "w3": {"opener": "w1"},
+            "w4": {"opener": "w3"},
+            "x": {"opener": "other"},
+            "y": {"opener": "x"},
+            "z": {"opener": ""},
+            "loop": {"opener": "loop"},
+            "back": {"opener": "w4"},
+        }
         self.assertEqual(crew.opened("mgr", live), ["back", "w4", "w3", "w1", "w2"])
-        self.assertEqual(crew.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(
+            crew.opened("mgr", {**live, "mgr": {"opener": "w1"}}), ["back", "w4", "w3", "w1", "w2"]
+        )
         self.assertEqual(crew.opened("nobody", live), [])
         entries = {"mgr": {"x": entry(), "w9": entry(tui="t9"), "w1": entry()}}
         live = {**live, "w9": {"opener": ""}, "t9": {"opener": "mgr"}}
-        self.assertEqual(crew.opened("mgr", live, lambda s: entries.get(s, {})),
-                         ["back", "w4", "w3", "t9", "w1", "w2", "w9"])
+        self.assertEqual(
+            crew.opened("mgr", live, lambda s: entries.get(s, {})),
+            ["back", "w4", "w3", "t9", "w1", "w2", "w9"],
+        )
 
     def sessions(self):
-        return {"w1": opts(SID, pane="%1", opener="mgr"), "w3": opts(pane="%2", opener="w1"),
-                "d1": opts(opener="mgr"), "t1": opts(pane="%3", opener="mgr"),
-                "agent-pm-engineer-TASK-1": opts(opener="mgr"), "o1": opts(pane="%4", opener="other")}
+        return {
+            "w1": opts(SID, pane="%1", opener="mgr"),
+            "w3": opts(pane="%2", opener="w1"),
+            "d1": opts(opener="mgr"),
+            "t1": opts(pane="%3", opener="mgr"),
+            "agent-pm-engineer-TASK-1": opts(opener="mgr"),
+            "o1": opts(pane="%4", opener="other"),
+        }
 
     def test_dry_run_lists_all_and_stops_nothing(self):
-        before = self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"),
-                           **{"agent-pm-engineer-TASK-1": entry("pipeline")})
+        before = self.seed(
+            MGR,
+            w1=entry(),
+            d1=entry("role", tui="t1"),
+            **{"agent-pm-engineer-TASK-1": entry("pipeline")},
+        )
         server = Server(sessions=self.sessions())
-        self.assertEqual(self.run_main(server, "stop-all", "--dry-run"), (0, nl(
-            "would stop w3", "would stop agent-pm-engineer-TASK-1; a scheduler may resume it", "would stop d1",
-            "would stop t1", "would stop w1"), ""))
+        self.assertEqual(
+            self.run_main(server, "stop-all", "--dry-run"),
+            (
+                0,
+                nl(
+                    "would stop w3",
+                    "would stop agent-pm-engineer-TASK-1; a scheduler may resume it",
+                    "would stop d1",
+                    "would stop t1",
+                    "would stop w1",
+                ),
+                "",
+            ),
+        )
         self.assertEqual((server.ran("kill-session"), self.bytes()), ([], before))
 
     def test_stops_them_by_exact_target_and_removes_their_entries(self):
-        self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"), gone=entry(state="gone"),
-                  **{"agent-pm-engineer-TASK-1": entry("pipeline")})
+        self.seed(
+            MGR,
+            w1=entry(),
+            d1=entry("role", tui="t1"),
+            gone=entry(state="gone"),
+            **{"agent-pm-engineer-TASK-1": entry("pipeline")},
+        )
         w1 = os.path.join(self.agent_pm, "managers", "w1")
         roster.ensure(w1)
         roster.put(w1, "w3", entry())
         server = Server(sessions=self.sessions())
-        self.assertEqual(self.run_main(server, "stop-all"), (0, nl(
-            "stopped w3", "stopped agent-pm-engineer-TASK-1; a scheduler may resume it", "stopped d1", "stopped t1",
-            "stopped w1"), ""))
-        self.assertEqual([c[3] for c in server.ran("kill-session")],
-                         ["=w3", "=agent-pm-engineer-TASK-1", "=d1", "=t1", "=w1"])
+        self.assertEqual(
+            self.run_main(server, "stop-all"),
+            (
+                0,
+                nl(
+                    "stopped w3",
+                    "stopped agent-pm-engineer-TASK-1; a scheduler may resume it",
+                    "stopped d1",
+                    "stopped t1",
+                    "stopped w1",
+                ),
+                "",
+            ),
+        )
+        self.assertEqual(
+            [c[3] for c in server.ran("kill-session")],
+            ["=w3", "=agent-pm-engineer-TASK-1", "=d1", "=t1", "=w1"],
+        )
         self.assertEqual((set(server.sessions), set(self.entries())), ({"mgr", "o1"}, {"gone"}))
         with roster.locked(w1, write=False) as r:
             self.assertEqual(r["entries"], {})
 
     def test_unshown_sessions_of_its_roster_too_an_entry_kept_while_its_key_lives(self):
         self.seed(MGR, w1=entry(), d1=entry("role", tui="t1"))
-        server = Server(sessions={"w1": opts(SID), "d1": opts(), "t1": opts()},
-                        fail={"kill-session -t =d1": "boom\n"})
+        server = Server(
+            sessions={"w1": opts(SID), "d1": opts(), "t1": opts()},
+            fail={"kill-session -t =d1": "boom\n"},
+        )
         live = "workers: stop-all: still live after tmux kill-session: d1\n"
         self.assertEqual(self.run_main(server, "stop-all"), (1, "stopped t1\nstopped w1\n", live))
         self.assertEqual(set(self.entries()), {"d1"})
 
     def test_nothing_to_stop(self):
-        self.assertEqual(self.run_main(Server(sessions={"o1": opts(opener="other")}), "stop-all"),
-                         (0, "workers: stop-all: nothing to stop\n", ""))
+        self.assertEqual(
+            self.run_main(Server(sessions={"o1": opts(opener="other")}), "stop-all"),
+            (0, "workers: stop-all: nothing to stop\n", ""),
+        )
 
     def test_a_session_outliving_its_kill_exits_1_keeping_its_entry(self):
         self.seed(MGR, w1=entry(), w2=entry())
-        server = Server(sessions={"w1": opts(opener="mgr"), "w2": opts(opener="mgr")},
-                        fail={"kill-session -t =w1": "boom\n"})
-        self.assertEqual(self.run_main(server, "stop-all"),
-                         (1, "stopped w2\n", "workers: stop-all: still live after tmux kill-session: w1\n"))
+        server = Server(
+            sessions={"w1": opts(opener="mgr"), "w2": opts(opener="mgr")},
+            fail={"kill-session -t =w1": "boom\n"},
+        )
+        self.assertEqual(
+            self.run_main(server, "stop-all"),
+            (1, "stopped w2\n", "workers: stop-all: still live after tmux kill-session: w1\n"),
+        )
         self.assertEqual(set(self.entries()), {"w1"})
 
     def test_outside_tmux_or_not_the_holder_stops_nothing(self):
         server = Server(None, sessions={"w1": opts(opener="mgr")})
-        self.assertEqual(self.run_main(server, "stop-all"),
-                         (1, "", "workers: stop-all: not in tmux: run it in the manager's tmux session\n"))
+        self.assertEqual(
+            self.run_main(server, "stop-all"),
+            (1, "", "workers: stop-all: not in tmux: run it in the manager's tmux session\n"),
+        )
         self.seed(OTHER, w1=entry())
         server = Server(sessions={"w1": opts(opener="mgr"), "other": opts()})
         self.assertEqual(self.run_main(server, "stop-all"), (1, "", self.held()))
@@ -2349,94 +3417,171 @@ class StopAllTest(RosterCase):
 
 
 class ResumeTest(RosterCase):
-    RUN = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "text": True,
-           "errors": "replace"}
+    RUN = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "errors": "replace",
+    }
 
-    def test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order(self):
+    def test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order(
+        self,
+    ):
         cwd, finished = os.path.join(self.dir, "it's a role"), os.path.join(self.dir, "finished")
         os.mkdir(finished)
         with open(os.path.join(finished, "run.jsonl"), "w") as f:
             f.write(result(outcome={"status": "done"}))
-        entries = {"b": entry(cwd="/w/b", resume=[PY, "/x/b/crew.py", "start", "b"]),
-                   "a": entry(cwd=cwd, resume=[PY, "/x/a/crew.py", "; rm -rf ~"]),
-                   "B": entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
-                   "p1": entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--issue", "TASK-1"]),
-                   "f1": entry("pipeline", cwd=finished), "live": entry(sid=SID2)}
+        entries = {
+            "b": entry(cwd="/w/b", resume=[PY, "/x/b/crew.py", "start", "b"]),
+            "a": entry(cwd=cwd, resume=[PY, "/x/a/crew.py", "; rm -rf ~"]),
+            "B": entry("role", cwd=cwd, resume=[PY, "/x/drive.py", "--role", "pm"]),
+            "p1": entry("pipeline", cwd=cwd, resume=[PY, "/x/router.py", "--issue", "TASK-1"]),
+            "f1": entry("pipeline", cwd=finished),
+            "live": entry(sid=SID2),
+        }
         self.seed(MGR, **entries)
-        results = {"/x/b/crew.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
-                   "/x/a/crew.py": (0, "  a \n\n  \n"), "/x/drive.py": (0, "drive.py: session x\n"),
-                   "/x/router.py": (0, "")}
+        results = {
+            "/x/b/crew.py": (0, f"tui: session b: tmux attach -t '=b'\nb {SID}\n"),
+            "/x/a/crew.py": (0, "  a \n\n  \n"),
+            "/x/drive.py": (0, "drive.py: session x\n"),
+            "/x/router.py": (0, ""),
+        }
         plain = Server(sessions={"live": opts(SID2)}, clients={"live": SHOWN})
         rc, listed, err = self.run_main(plain, "attach")
         self.assertEqual((rc, err, plain.recoveries), (0, "", []))
-        server = Server(sessions={"live": opts(SID2)}, clients={"live": SHOWN}, results=results, lock=self.lock)
-        self.assertEqual(self.run_main(server, "attach", "--resume"),
-                         (0, listed + nl("resumed B: exit 0: drive.py: session x", "resumed a: exit 0: a",
-                                         f"resumed b: exit 0: b {SID}", "resumed p1: exit 0"), ""))
+        server = Server(
+            sessions={"live": opts(SID2)}, clients={"live": SHOWN}, results=results, lock=self.lock
+        )
+        self.assertEqual(
+            self.run_main(server, "attach", "--resume"),
+            (
+                0,
+                listed
+                + nl(
+                    "resumed B: exit 0: drive.py: session x",
+                    "resumed a: exit 0: a",
+                    f"resumed b: exit 0: b {SID}",
+                    "resumed p1: exit 0",
+                ),
+                "",
+            ),
+        )
         ran = {name: roster.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
-        self.assertEqual(server.recoveries, [(argv, {"cwd": entries[name]["cwd"], **self.RUN}, True)
-                                             for name, argv in ran.items()])
-        printed = dict(line.removeprefix("resume ").split(": ", 1) for line in listed.splitlines()
-                       if line.startswith("resume "))
-        self.assertEqual({n: shlex.split(cmd) for n, cmd in printed.items()},
-                         {**ran, "B": ["cd", cwd, "&&", *ran["B"]]})
+        self.assertEqual(
+            server.recoveries,
+            [(argv, {"cwd": entries[name]["cwd"], **self.RUN}, True) for name, argv in ran.items()],
+        )
+        printed = dict(
+            line.removeprefix("resume ").split(": ", 1)
+            for line in listed.splitlines()
+            if line.startswith("resume ")
+        )
+        self.assertEqual(
+            {n: shlex.split(cmd) for n, cmd in printed.items()},
+            {**ran, "B": ["cd", cwd, "&&", *ran["B"]]},
+        )
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
-        self.seed(MGR, a1=entry(resume=[PY, "/x/a1/crew.py"]), a2=entry(resume=[PY, "/x/a2/crew.py"]),
-                  a3=entry("role", sid=None), a4=entry(resume=[PY, "/x/a4/crew.py"]),
-                  p1=entry("pipeline", resume=[PY, "/x/router.py"]), w1=entry(resume=[PY, "/x/w1/crew.py"]))
-        results = {"/x/a1/crew.py": (1, "workers: a1: session ended at once\n"),
-                   "/x/a2/crew.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
-                   "/x/a4/crew.py": ValueError("embedded null byte"),
-                   "/x/router.py": (1, refusal + "\n")}
+        self.seed(
+            MGR,
+            a1=entry(resume=[PY, "/x/a1/crew.py"]),
+            a2=entry(resume=[PY, "/x/a2/crew.py"]),
+            a3=entry("role", sid=None),
+            a4=entry(resume=[PY, "/x/a4/crew.py"]),
+            p1=entry("pipeline", resume=[PY, "/x/router.py"]),
+            w1=entry(resume=[PY, "/x/w1/crew.py"]),
+        )
+        results = {
+            "/x/a1/crew.py": (1, "workers: a1: session ended at once\n"),
+            "/x/a2/crew.py": FileNotFoundError(errno.ENOENT, "No such file or directory"),
+            "/x/a4/crew.py": ValueError("embedded null byte"),
+            "/x/router.py": (1, refusal + "\n"),
+        }
         server = Server(results=results)
         rc, out, err = self.run_main(server, "attach", "--resume")
         self.assertEqual((rc, err), (1, ""))
-        self.assertTrue(out.endswith(tail(self.mdir) + nl(
-            "resumed a1: exit 1: workers: a1: session ended at once",
-            "resumed a2: not run: No such file or directory",
-            "resumed a3: not run: no sid",
-            "resumed a4: not run: ValueError: embedded null byte",
-            f"resumed p1: exit 1: {refusal}",
-            "resumed w1: exit 0")), out)
-        self.assertEqual([argv[1] for argv, _, _ in server.recoveries],
-                         ["/x/a1/crew.py", "/x/a2/crew.py", "/x/a4/crew.py", "/x/router.py",
-                          "/x/w1/crew.py"])
+        self.assertTrue(
+            out.endswith(
+                tail(self.mdir)
+                + nl(
+                    "resumed a1: exit 1: workers: a1: session ended at once",
+                    "resumed a2: not run: No such file or directory",
+                    "resumed a3: not run: no sid",
+                    "resumed a4: not run: ValueError: embedded null byte",
+                    f"resumed p1: exit 1: {refusal}",
+                    "resumed w1: exit 0",
+                )
+            ),
+            out,
+        )
+        self.assertEqual(
+            [argv[1] for argv, _, _ in server.recoveries],
+            ["/x/a1/crew.py", "/x/a2/crew.py", "/x/a4/crew.py", "/x/router.py", "/x/w1/crew.py"],
+        )
 
     def test_one_failed_recovery_of_any_kind_exits_1(self):
-        cases = {"exit 1": ((1, "boom\n"), "exit 1: boom"), "exit 255": ((255, ""), "exit 255"),
-                 "an OSError": (PermissionError(errno.EACCES, "denied"), "not run: denied"),
-                 "a ValueError": (ValueError("embedded null byte"), "not run: ValueError: embedded null byte"),
-                 "a TypeError": (TypeError("bad argv"), "not run: TypeError: bad argv"),
-                 "no sid": (None, "not run: no sid")}
+        cases = {
+            "exit 1": ((1, "boom\n"), "exit 1: boom"),
+            "exit 255": ((255, ""), "exit 255"),
+            "an OSError": (PermissionError(errno.EACCES, "denied"), "not run: denied"),
+            "a ValueError": (
+                ValueError("embedded null byte"),
+                "not run: ValueError: embedded null byte",
+            ),
+            "a TypeError": (TypeError("bad argv"), "not run: TypeError: bad argv"),
+            "no sid": (None, "not run: no sid"),
+        }
         for why, (failure, line) in cases.items():
             with self.subTest(why):
-                bad = entry("role", sid=None) if failure is None else entry(resume=[PY, "/x/bad/crew.py"])
+                bad = (
+                    entry("role", sid=None)
+                    if failure is None
+                    else entry(resume=[PY, "/x/bad/crew.py"])
+                )
                 self.seed(MGR, bad=bad, ok=entry(resume=[PY, "/x/ok/crew.py"]))
                 server = Server(results={} if failure is None else {"/x/bad/crew.py": failure})
                 rc, out, err = self.run_main(server, "attach", "--resume")
                 self.assertEqual((rc, err), (1, ""))
-                self.assertTrue(out.endswith(tail(self.mdir) + nl(f"resumed bad: {line}", "resumed ok: exit 0")), out)
+                self.assertTrue(
+                    out.endswith(
+                        tail(self.mdir) + nl(f"resumed bad: {line}", "resumed ok: exit 0")
+                    ),
+                    out,
+                )
 
     def test_a_waiting_run_is_left_alone(self):
         asking = os.path.join(self.dir, "asking")
         os.mkdir(asking)
         with open(os.path.join(asking, "run.jsonl"), "w") as f:
             f.write(result(outcome={"status": "needs_input", "questions": ["Which?"]}))
-        self.seed(MGR, r1=entry("role", cwd=asking), p1=entry("pipeline", cwd=asking),
-                  w1=entry(cwd=asking, resume=[PY, "/x/w1/crew.py"]))
+        self.seed(
+            MGR,
+            r1=entry("role", cwd=asking),
+            p1=entry("pipeline", cwd=asking),
+            w1=entry(cwd=asking, resume=[PY, "/x/w1/crew.py"]),
+        )
         server = Server()
         rc, out, err = self.run_main(server, "attach", "--resume")
         self.assertEqual((rc, err), (0, ""))
-        self.assertEqual(out, HEADER + nl(f"p1\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
-                                          f"r1\trole\t{SID}\twaiting\t-\t{asking}\t-",
-                                          f"w1\tworker\t{SID}\tgone\t-\t{asking}\t-",
-                                          f"resume w1: {PY} /x/w1/crew.py") + tail(self.mdir)
-                         + "resumed w1: exit 0\n")
+        self.assertEqual(
+            out,
+            HEADER
+            + nl(
+                f"p1\tpipeline\t{SID}\twaiting\t-\t{asking}\t-",
+                f"r1\trole\t{SID}\twaiting\t-\t{asking}\t-",
+                f"w1\tworker\t{SID}\tgone\t-\t{asking}\t-",
+                f"resume w1: {PY} /x/w1/crew.py",
+            )
+            + tail(self.mdir)
+            + "resumed w1: exit 0\n",
+        )
         self.assertEqual([argv for argv, _, _ in server.recoveries], [[PY, "/x/w1/crew.py"]])
-        self.assertEqual({n: e["state"] for n, e in self.entries().items()},
-                         {"p1": "waiting", "r1": "waiting", "w1": "gone"})
+        self.assertEqual(
+            {n: e["state"] for n, e in self.entries().items()},
+            {"p1": "waiting", "r1": "waiting", "w1": "gone"},
+        )
 
 
 class CursorTest(RosterCase):
@@ -2480,52 +3625,106 @@ class CursorTest(RosterCase):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
         me = shlex.quote(os.path.abspath(crew.__file__))
-        self.assertEqual(self.attach(), (0, HEADER + nl(
-            f"4 {events[3]}", f"5 {events[4]}", "N=3 GEN=0", f"monitor: tail -n +4 -F {self.mevents}",
-            f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0 --resume",
-            f"next-event: python3 {me} next-event --manager mgr --after 3 --gen 0"), ""))
+        self.assertEqual(
+            self.attach(),
+            (
+                0,
+                HEADER
+                + nl(
+                    f"4 {events[3]}",
+                    f"5 {events[4]}",
+                    "N=3 GEN=0",
+                    f"monitor: tail -n +4 -F {self.mevents}",
+                    f"monitor expired: python3 {me} attach --manager mgr --after LINE --gen 0 --resume",
+                    f"next-event: python3 {me} next-event --manager mgr --after 3 --gen 0",
+                ),
+                "",
+            ),
+        )
         self.assertEqual(self.cursor(), (3, 0))
 
     def test_the_backlog_skips_a_non_event_line_but_counts_it(self):
-        self.fill(b"12:00:01 w1 done\ngarbage\n\n12:00:04 w1 caf\xc3\xa9 \xff\n12:00:05 w2 blocked\n12:00:06 w1 do",
-                  cursor=1)
-        self.assertEqual(self.attach(), (0, HEADER + tail(self.mdir, 1, 0, "4 12:00:04 w1 café �",
-                                                          "5 12:00:05 w2 blocked"), ""))
+        self.fill(
+            b"12:00:01 w1 done\ngarbage\n\n12:00:04 w1 caf\xc3\xa9 \xff\n12:00:05 w2 blocked\n12:00:06 w1 do",
+            cursor=1,
+        )
+        self.assertEqual(
+            self.attach(),
+            (
+                0,
+                HEADER + tail(self.mdir, 1, 0, "4 12:00:04 w1 café �", "5 12:00:05 w2 blocked"),
+                "",
+            ),
+        )
 
     def test_attach_names_crew_py(self):
         rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
         lines = out.splitlines()[-2:]
-        self.assertEqual([line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"])
+        self.assertEqual(
+            [line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"]
+        )
         self.assertEqual([shlex.split(line.split(": ", 1)[1])[1] for line in lines], [CREW, CREW])
 
     def test_attach_quotes_the_paths_it_prints(self):
         home = os.path.join(self.dir, "it's a home")
         os.mkdir(home)
         script = os.path.join(self.dir, "my scripts", "crew.py")
-        with mock.patch.dict(os.environ, {"HOME": home}), mock.patch.object(crew, "__file__", script):
+        with (
+            mock.patch.dict(os.environ, {"HOME": home}),
+            mock.patch.object(crew, "__file__", script),
+        ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
-        self.assertEqual([shlex.split(line.split(": ", 1)[1]) for line in out.splitlines()[-3:]],
-                         [["tail", "-n", "+1", "-F", os.path.join(home, ".agent-pm", "managers", "mgr", "events")],
-                          ["python3", script, "attach", "--manager", "mgr", "--after", "LINE", "--gen", "0", "--resume"],
-                          ["python3", script, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0"]])
+        self.assertEqual(
+            [shlex.split(line.split(": ", 1)[1]) for line in out.splitlines()[-3:]],
+            [
+                [
+                    "tail",
+                    "-n",
+                    "+1",
+                    "-F",
+                    os.path.join(home, ".agent-pm", "managers", "mgr", "events"),
+                ],
+                [
+                    "python3",
+                    script,
+                    "attach",
+                    "--manager",
+                    "mgr",
+                    "--after",
+                    "LINE",
+                    "--gen",
+                    "0",
+                    "--resume",
+                ],
+                ["python3", script, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0"],
+            ],
+        )
 
     def test_attach_after_records_the_cursor_which_only_moves_forward(self):
         lines = numbered(9).splitlines()
         self.fill(numbered(9))
-        self.assertEqual(self.attach("--after", "7", "--gen", "0"),
-                         (0, HEADER + tail(self.mdir, 7, 0, f"8 {lines[7]}", f"9 {lines[8]}"), ""))
+        self.assertEqual(
+            self.attach("--after", "7", "--gen", "0"),
+            (0, HEADER + tail(self.mdir, 7, 0, f"8 {lines[7]}", f"9 {lines[8]}"), ""),
+        )
         self.assertEqual(self.next_event(5), (0, "6 12:00:00 w1 outcome done\n", ""))
         self.assertEqual((self.cursor(), self.waits), ((7, 0), [(self.mevents, 5, 7)]))
         self.assertEqual(self.attach()[1].splitlines()[-4], "N=7 GEN=0")
         self.assertEqual(self.cursor(), (7, 0))
 
     def test_attach_refuses_stale_line_numbers_writing_nothing(self):
-        cases = {"an old gen": (["--after", "7", "--gen", "0"],
-                                "stale line numbers (gen 0, now 1): run crew.py attach"),
-                 "past the end": (["--after", "10", "--gen", "1"],
-                                  f"line 10 is past the end of {self.mevents} (9 lines): run crew.py attach")}
+        cases = {
+            "an old gen": (
+                ["--after", "7", "--gen", "0"],
+                "stale line numbers (gen 0, now 1): run crew.py attach",
+            ),
+            "past the end": (
+                ["--after", "10", "--gen", "1"],
+                f"line 10 is past the end of {self.mevents} (9 lines): run crew.py attach",
+            ),
+        }
         for why, (argv, msg) in cases.items():
             with self.subTest(why):
                 before = self.fill(numbered(9), cursor=2, gen=1)
@@ -2534,8 +3733,13 @@ class CursorTest(RosterCase):
 
     def test_attach_after_and_gen_go_together_as_numbers(self):
         alone = "crew.py: error: --after and --gen go together\n"
-        for argv, want in ((["--after", "3"], alone), (["--gen", "0"], alone), (["--after", "end", "--gen", "0"], None),
-                           (["--after", "-1", "--gen", "0"], None), (["--after", "1", "--gen", "x"], None)):
+        for argv, want in (
+            (["--after", "3"], alone),
+            (["--gen", "0"], alone),
+            (["--after", "end", "--gen", "0"], None),
+            (["--after", "-1", "--gen", "0"], None),
+            (["--after", "1", "--gen", "x"], None),
+        ):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
@@ -2548,37 +3752,53 @@ class CursorTest(RosterCase):
     def test_attach_rotates_keeping_the_lines_after_the_cursor(self):
         data = numbered(self.BIG)
         backlog = [f"{i} {line}" for i, line in enumerate(data.splitlines()[-3:], 1)]
-        cases = {"at the cursor": (self.BIG - 3, []),
-                 "--after below the cursor": (self.BIG - 3, ["--after", "5", "--gen", "0"]),
-                 "--after recorded first": (0, ["--after", str(self.BIG - 3), "--gen", "0"])}
+        cases = {
+            "at the cursor": (self.BIG - 3, []),
+            "--after below the cursor": (self.BIG - 3, ["--after", "5", "--gen", "0"]),
+            "--after recorded first": (0, ["--after", str(self.BIG - 3), "--gen", "0"]),
+        }
         for why, (cursor, argv) in cases.items():
             with self.subTest(why):
                 self.sleep.reset_mock()
                 self.fill(data, cursor)
                 ino = os.lstat(self.mevents).st_ino
-                self.assertEqual(self.attach(*argv), (0, HEADER + tail(self.mdir, 0, 1, *backlog), ""))
+                self.assertEqual(
+                    self.attach(*argv), (0, HEADER + tail(self.mdir, 0, 1, *backlog), "")
+                )
                 self.assertEqual(self.cursor(), (0, 1))
-                self.assertEqual((os.lstat(self.old).st_ino, self.read(self.old)), (ino, data.encode()))
+                self.assertEqual(
+                    (os.lstat(self.old).st_ino, self.read(self.old)), (ino, data.encode())
+                )
                 self.assertEqual(self.read(), "".join(data.splitlines(keepends=True)[-3:]).encode())
                 self.sleep.assert_called_once_with(roster.SETTLE)
         before = self.bytes()
-        self.assertEqual(self.attach("--after", "2", "--gen", "0"),
-                         (1, "", "workers: stale line numbers (gen 0, now 1): run crew.py attach\n"))
+        self.assertEqual(
+            self.attach("--after", "2", "--gen", "0"),
+            (1, "", "workers: stale line numbers (gen 0, now 1): run crew.py attach\n"),
+        )
         self.assertEqual(self.bytes(), before)
 
     def test_attach_refuses_a_symlinked_events_1_renaming_nothing(self):
         data = numbered(self.BIG).encode()
         before = self.fill(data, self.BIG - 3)
         os.symlink(os.path.join(self.dir, "target"), self.old)
-        self.assertEqual(self.attach(), (1, "", f"workers: {self.old}: not a regular file owned by you\n"))
-        self.assertEqual((self.bytes(), self.read(), os.path.islink(self.old)), (before, data, True))
+        self.assertEqual(
+            self.attach(), (1, "", f"workers: {self.old}: not a regular file owned by you\n")
+        )
+        self.assertEqual(
+            (self.bytes(), self.read(), os.path.islink(self.old)), (before, data, True)
+        )
 
     def test_a_failed_list_sessions_with_a_rotation_due_renames_nothing(self):
         data = numbered(self.BIG).encode()
         before = self.fill(data, self.BIG - 3)
-        self.assertEqual(self.run_main(Server(fail={"list-sessions": "boom\n"}), "attach"),
-                         (1, "", "workers: tmux list-sessions: boom\n"))
-        self.assertEqual((self.bytes(), self.read(), os.path.exists(self.old)), (before, data, False))
+        self.assertEqual(
+            self.run_main(Server(fail={"list-sessions": "boom\n"}), "attach"),
+            (1, "", "workers: tmux list-sessions: boom\n"),
+        )
+        self.assertEqual(
+            (self.bytes(), self.read(), os.path.exists(self.old)), (before, data, False)
+        )
 
     def test_attach_after_a_failed_copy_still_numbers_the_new_events(self):
         data = numbered(self.BIG).encode()
@@ -2593,8 +3813,11 @@ class CursorTest(RosterCase):
         with mock.patch("os.open", open_):
             rc, out, err = self.attach()
         self.assertEqual((rc, out), (0, HEADER + tail(self.mdir, 0, 1)))
-        self.assertEqual(err, f"manager: rotate: {self.mevents}: Input/output error: lines after {self.BIG - 3} of "
-                              f"{self.old} not copied\n")
+        self.assertEqual(
+            err,
+            f"manager: rotate: {self.mevents}: Input/output error: lines after {self.BIG - 3} of "
+            f"{self.old} not copied\n",
+        )
         self.assertEqual((self.cursor(), self.read(self.old), self.read()), ((0, 1), data, b""))
 
     def test_next_event_records_the_line_before_it_waits(self):
@@ -2604,8 +3827,14 @@ class CursorTest(RosterCase):
         self.assertEqual(self.waits, [(self.mevents, 3, 3), (self.mevents, 5, 5)])
 
     def test_next_event_refuses_stale_line_numbers_on_stdout_writing_nothing(self):
-        cases = {"past the end": (9, 2, f"line 9 is past the end of {self.mevents} (5 lines): run crew.py attach"),
-                 "an old gen": (3, 1, "stale line numbers (gen 1, now 2): run crew.py attach")}
+        cases = {
+            "past the end": (
+                9,
+                2,
+                f"line 9 is past the end of {self.mevents} (5 lines): run crew.py attach",
+            ),
+            "an old gen": (3, 1, "stale line numbers (gen 1, now 2): run crew.py attach"),
+        }
         for why, (after, gen, msg) in cases.items():
             with self.subTest(why):
                 before = self.fill(numbered(5), cursor=2, gen=2)
@@ -2617,8 +3846,10 @@ class CursorTest(RosterCase):
         data = numbered(self.BIG).encode()
         self.fill(data)
         self.assertEqual(self.next_event(self.BIG - 3), (1, self.ROTATE, ""))
-        self.assertEqual((self.cursor(), self.waits, self.read(), os.path.exists(self.old)),
-                         ((self.BIG - 3, 0), [], data, False))
+        self.assertEqual(
+            (self.cursor(), self.waits, self.read(), os.path.exists(self.old)),
+            ((self.BIG - 3, 0), [], data, False),
+        )
 
     def test_next_event_waits_on_exactly_events_max_bytes(self):
         self.fill(numbered(SPAN))
@@ -2642,16 +3873,23 @@ class CursorTest(RosterCase):
         before = self.seed(MGR)
         os.mkfifo(self.mevents)
         with within():
-            self.assertEqual(self.next_event(0), (1, "", f"workers: {self.mevents}: not a regular file owned by you\n"))
+            self.assertEqual(
+                self.next_event(0),
+                (1, "", f"workers: {self.mevents}: not a regular file owned by you\n"),
+            )
         self.assertEqual(self.bytes(), before)
 
     def test_an_interrupted_next_event_leaves_its_line_for_the_next_manager(self):
         data = numbered(15)
         self.fill(data)
-        with mock.patch.object(crew, "next_event", side_effect=KeyboardInterrupt), \
-                self.assertRaises(KeyboardInterrupt):
+        with (
+            mock.patch.object(crew, "next_event", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
             self.next_event(12)
-        self.assertEqual(self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", ""))
+        self.assertEqual(
+            self.run_main(Server(), "release"), (0, f"workers: released {self.mdir}\n", "")
+        )
         backlog = [f"{i} {line}" for i, line in enumerate(data.splitlines()[12:], 13)]
         self.assertEqual(self.attach(own="m2"), (0, HEADER + tail(self.mdir, 12, 0, *backlog), ""))
         self.assertEqual(json.loads(self.bytes())["holder"]["session"], "m2")

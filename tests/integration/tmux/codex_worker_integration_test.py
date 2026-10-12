@@ -1,3 +1,6 @@
+from tests.integration.core import fake_claude, fake_codex, live_tmux
+from tests.integration.tmux.crew_integration_test import CREW, MANAGER, Live, has_pair, is_event
+
 import json
 import os
 import re
@@ -6,13 +9,17 @@ import stat
 import sys
 import unittest
 
-from tests.integration.core import fake_claude, fake_codex, live_tmux
-from tests.integration.tmux.crew_integration_test import CREW, MANAGER, Live, has_pair, is_event
-import crew   # after crew_integration_test, which imports tests/hermetic.py first
+import crew  # after crew_integration_test, which imports tests/hermetic.py first
 
 NOTIFY = 'tui.notification_method="bel"'
 HOOKED = ("SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt")
-CODEX_TOOL_ENV = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
+CODEX_TOOL_ENV = {
+    "NO_COLOR": "1",
+    "CODEX_CI": "1",
+    "PAGER": "cat",
+    "GIT_PAGER": "cat",
+    "GH_PAGER": "cat",
+}
 GONE = ("CODEX_THREAD_ID", "CLAUDECODE", *CODEX_TOOL_ENV)
 CALLER = "26900000-0000-4000-8000-000000000009"
 
@@ -37,11 +44,32 @@ class CodexLive(Live):
             json.dump({"steps": steps, "turns": list(turns), "log": self.codex_log(name)}, f)
         return {fake_codex.ENV: self.scenario(name)}
 
-    def start_codex(self, name: str, *args: str, steps: list | None = None, turns: list | tuple = (),
-                    inside: str | None = MANAGER, **extra: str) -> str:
-        scenario = self.codex_scenario(name, [f"Hi from {name}."] if steps is None else steps, turns)
-        res = self.ok(self.workers("start", name, "--cwd", self.cwd, "--prompt", "hi", *args, inside=inside,
-                                   **scenario, **extra))
+    def start_codex(
+        self,
+        name: str,
+        *args: str,
+        steps: list | None = None,
+        turns: list | tuple = (),
+        inside: str | None = MANAGER,
+        **extra: str,
+    ) -> str:
+        scenario = self.codex_scenario(
+            name, [f"Hi from {name}."] if steps is None else steps, turns
+        )
+        res = self.ok(
+            self.workers(
+                "start",
+                name,
+                "--cwd",
+                self.cwd,
+                "--prompt",
+                "hi",
+                *args,
+                inside=inside,
+                **scenario,
+                **extra,
+            )
+        )
         m = re.fullmatch(rf"{re.escape(name)} ({crew.SESSION_ID.pattern})\n", res.stdout)
         self.assertIsNotNone(m, res.stdout)
         return m[1]
@@ -88,33 +116,80 @@ class CodexLive(Live):
 
 class CodexLifecycle(CodexLive):
     def test_start_blocked_done_reply_follow_up(self):
-        sid = self.start_codex("w1", "--client", "codex", "--", "-m", "gpt-test",
-                               steps=["Allow this command?", {"kind": "permission"}, "Hi from w1."],
-                               turns=[["Second."]])
+        sid = self.start_codex(
+            "w1",
+            "--client",
+            "codex",
+            "--",
+            "-m",
+            "gpt-test",
+            steps=["Allow this command?", {"kind": "permission"}, "Hi from w1."],
+            turns=[["Second."]],
+        )
         blocked, done = self.wait_event("w1", "done")
         self.assertTrue(is_event(blocked, "w1", "blocked"), blocked)
         (call,) = self.calls("w1")
         argv = call["argv"]
         self.assertEqual(argv[:5], ["--no-daemon", "-C", self.cwd, "-c", NOTIFY])
         self.assertEqual(argv[-4:], ["-m", "gpt-test", "--", "hi"])
-        self.assertEqual([w.partition("=")[0] for w in argv[6:-4:2]],
-                         [*(f"hooks.{e}" for e in HOOKED), "hooks.state"])
+        self.assertEqual(
+            [w.partition("=")[0] for w in argv[6:-4:2]],
+            [*(f"hooks.{e}" for e in HOOKED), "hooks.state"],
+        )
         self.assertEqual(call["env"]["CODEX_HOME"], self.codex_home)
         hooks = self.hooks_run("w1")
-        self.assertEqual([h["hook"] for h in hooks], ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"])
+        self.assertEqual(
+            [h["hook"] for h in hooks],
+            ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop"],
+        )
         self.assertEqual([(h["exit"], h["stdout"]) for h in hooks], [(0, "")] * 4)
         native = self.native("w1")
-        self.assertEqual(self.record(sid), {"version": 1, "sid": sid, "cwd": self.cwd, "codex_home": self.codex_home,
-                                            "native": native})
+        self.assertEqual(
+            self.record(sid),
+            {
+                "version": 1,
+                "sid": sid,
+                "cwd": self.cwd,
+                "codex_home": self.codex_home,
+                "native": native,
+            },
+        )
         for path in (f"{sid}.json", f"{sid}.reply"):
-            self.assertEqual(stat.S_IMODE(os.lstat(os.path.join(self.records, path)).st_mode), 0o600, path)
+            self.assertEqual(
+                stat.S_IMODE(os.lstat(os.path.join(self.records, path)).st_mode), 0o600, path
+            )
         options = ("sid", "cwd", "client", "exe", "flags", "env")
-        self.assertEqual({k: self.server.option("w1", f"@{k}") for k in options},
-                         {"sid": sid, "cwd": self.cwd, "client": "codex", "exe": os.path.join(self.server.bin, "codex"),
-                          "flags": '["-m", "gpt-test"]', "env": "{}"})
-        self.assertEqual(self.roster_entry("w1")["resume"],
-                         [sys.executable, CREW, "start", "w1", "--manager", MANAGER, "--client", "codex", "--resume",
-                          sid, "--cwd", self.cwd, "--", "-m", "gpt-test"])
+        self.assertEqual(
+            {k: self.server.option("w1", f"@{k}") for k in options},
+            {
+                "sid": sid,
+                "cwd": self.cwd,
+                "client": "codex",
+                "exe": os.path.join(self.server.bin, "codex"),
+                "flags": '["-m", "gpt-test"]',
+                "env": "{}",
+            },
+        )
+        self.assertEqual(
+            self.roster_entry("w1")["resume"],
+            [
+                sys.executable,
+                CREW,
+                "start",
+                "w1",
+                "--manager",
+                MANAGER,
+                "--client",
+                "codex",
+                "--resume",
+                sid,
+                "--cwd",
+                self.cwd,
+                "--",
+                "-m",
+                "gpt-test",
+            ],
+        )
         n, event, content = self.next_event(0)
         self.assertEqual((n, event), (1, blocked))
         self.assertIn("Allow this command?", content)
@@ -135,7 +210,9 @@ class CodexLifecycle(CodexLive):
         (first,) = self.calls("w1")
         self.ok(self.workers("restart", "w1", **self.codex_scenario("w1", ["Resumed."])))
         _, again = self.calls("w1")
-        self.assertEqual(again["argv"][:7], ["resume", native, "-C", self.cwd, "--no-daemon", "-c", NOTIFY])
+        self.assertEqual(
+            again["argv"][:7], ["resume", native, "-C", self.cwd, "--no-daemon", "-c", NOTIFY]
+        )
         self.assertEqual(again["argv"][7:], first["argv"][5:-2])
         self.ok(self.tui("send", "w1", "again"))
         self.wait_event("w1", "done", 2)
@@ -144,7 +221,9 @@ class CodexLifecycle(CodexLive):
         self.assertEqual(resumed[0]["payload"]["source"], "resume")
         self.assertEqual(self.native("w1"), native)
         self.ok(self.kill("w1"))
-        out = self.attach("--resume", CLAUDECODE="1", **self.codex_scenario("w1", ["Recovered."])).stdout
+        out = self.attach(
+            "--resume", CLAUDECODE="1", **self.codex_scenario("w1", ["Recovered."])
+        ).stdout
         self.assertRegex(out, rf"\nresumed w1: exit 0: w1 {sid}\n\Z")
         *_, recovered = self.calls("w1")
         self.assertEqual(recovered["argv"][:2], ["resume", native])
@@ -164,8 +243,10 @@ class CodexSession(CodexLive):
         dump = "import json, os, sys; open(sys.argv[1], 'a').write(json.dumps(dict(os.environ)) + '\\n')"
         python, q = sys.executable, shlex.quote
         with open(os.path.join(self.server.bin, "claude"), "w") as f:
-            f.write(f'#!/bin/sh\n{q(python)} -I -c {q(dump)} {q(path)}\n'
-                    f'exec {q(python)} {q(os.path.abspath(fake_claude.__file__))} "$@"\n')
+            f.write(
+                f"#!/bin/sh\n{q(python)} -I -c {q(dump)} {q(path)}\n"
+                f'exec {q(python)} {q(os.path.abspath(fake_claude.__file__))} "$@"\n'
+            )
         return path
 
     def test_a_codex_managers_marker_and_injected_defaults_stay_out_of_its_workers(self):
@@ -180,8 +261,20 @@ class CodexSession(CodexLive):
         env_log = self.claude_env_log()
         with open(self.scenario("c1"), "w") as f:
             json.dump({"steps": ["Hi from c1."], "log": self.log}, f)
-        self.ok(self.workers("start", "c1", "--client", "claude", "--cwd", self.cwd, "--prompt", "hi",
-                             **{fake_claude.ENV: self.scenario("c1")}, **session))
+        self.ok(
+            self.workers(
+                "start",
+                "c1",
+                "--client",
+                "claude",
+                "--cwd",
+                self.cwd,
+                "--prompt",
+                "hi",
+                **{fake_claude.ENV: self.scenario("c1")},
+                **session,
+            )
+        )
         self.assertEqual(self.server.option("c1", "@client"), "claude")
         with open(env_log) as f:
             (env,) = [json.loads(line) for line in f]
@@ -209,8 +302,10 @@ class CodexSession(CodexLive):
         self.attach(inside="w1")
         sid = self.start_codex("z1", inside="w1", **codex_session(self.native("w1")))
         inner = self.events_of("w1")
-        self.assertEqual({k: self.server.option("z1", k) for k in ("@client", "@events")},
-                         {"@client": "codex", "@events": inner})
+        self.assertEqual(
+            {k: self.server.option("z1", k) for k in ("@client", "@events")},
+            {"@client": "codex", "@events": inner},
+        )
         (call,) = self.calls("z1")
         self.no_session_env(call["env"])
         self.done_in(inner, "z1")

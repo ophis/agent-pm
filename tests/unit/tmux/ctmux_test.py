@@ -1,11 +1,11 @@
+from tests import ROOT
+
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
-
-from tests import ROOT
 
 CTMUX = os.path.join(ROOT, "core", "skills", "tmux", "scripts", "ctmux")
 FAKE = """#!{python}
@@ -14,9 +14,35 @@ with open(os.environ["CTMUX_LOG"], "a") as f:
     f.write(json.dumps([os.getcwd()] + sys.argv[1:]) + "\\n")
 sys.exit(int(os.environ["HAS_RC"]) if sys.argv[1] == "has" else 0)
 """
-START = ["start-server", ";", "set", "-g", "mouse", "on", ";", "set", "-g", "history-limit", "50000",
-         ";", "set", "-s", "extended-keys", "on", ";", "set", "-s", "terminal-features[99]", "xterm*:extkeys",
-         ";", "new", "-d", "-s", "s1", "-c"]
+START = [
+    "start-server",
+    ";",
+    "set",
+    "-g",
+    "mouse",
+    "on",
+    ";",
+    "set",
+    "-g",
+    "history-limit",
+    "50000",
+    ";",
+    "set",
+    "-s",
+    "extended-keys",
+    "on",
+    ";",
+    "set",
+    "-s",
+    "terminal-features[99]",
+    "xterm*:extkeys",
+    ";",
+    "new",
+    "-d",
+    "-s",
+    "s1",
+    "-c",
+]
 
 
 class CtmuxTest(unittest.TestCase):
@@ -36,8 +62,13 @@ class CtmuxTest(unittest.TestCase):
         self.env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": self.home, "CTMUX_LOG": self.log}
 
     def run_ctmux(self, *args, has_rc=1, script=CTMUX):
-        p = subprocess.run([script, *args], cwd=self.cwd, env={**self.env, "HAS_RC": str(has_rc)},
-                           capture_output=True, text=True)
+        p = subprocess.run(
+            [script, *args],
+            cwd=self.cwd,
+            env={**self.env, "HAS_RC": str(has_rc)},
+            capture_output=True,
+            text=True,
+        )
         calls = []
         if os.path.exists(self.log):
             with open(self.log) as f:
@@ -53,13 +84,17 @@ class CtmuxTest(unittest.TestCase):
     def test_existing_session_only_attaches(self):
         p, calls = self.run_ctmux("s1", has_rc=0)
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([c[1:] for c in calls], [["has", "-t", "=s1"], ["-CC", "attach", "-t", "=s1"]])
+        self.assertEqual(
+            [c[1:] for c in calls], [["has", "-t", "=s1"], ["-CC", "attach", "-t", "=s1"]]
+        )
 
     def test_new_session_in_cwd_then_attaches(self):
         p, calls = self.run_ctmux("s1")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual([c[1:] for c in calls],
-                         [["has", "-t", "=s1"], START + [self.cwd], ["-CC", "attach", "-t", "=s1"]])
+        self.assertEqual(
+            [c[1:] for c in calls],
+            [["has", "-t", "=s1"], START + [self.cwd], ["-CC", "attach", "-t", "=s1"]],
+        )
         self.assertEqual(calls[1][0], self.home)
 
     def test_install_copies_itself_to_agent_pm_bin(self):
