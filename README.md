@@ -2,9 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
-
-For local headless Codex role runs, use the [core Codex operating guide](core/CLAUDE.md#codex-headless).
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the orchestrator runs it from the board (Setup). Their code and local headless Codex role runs: `new/README.md`. Developers: `CLAUDE.md`.
 
 ```mermaid
 flowchart LR
@@ -22,7 +20,7 @@ flowchart TB
   subgraph EN[entry points]
     LD[launchd]
     HU[the user]
-    M["manager: /agent-pm:tmux"]
+    M["manager: /agent-pm:tmux (TASK-356)"]
   end
   subgraph L1[orchestration]
     subgraph OR[orchestrator/]
@@ -69,13 +67,12 @@ flowchart TB
 
 ## Install
 
-`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
+`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`new/core/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux`: start and direct other agent sessions (workers: Claude Code, Codex or another configured client) in iTerm2 or tmux panes, or run a core role in a pane or headless: `core/skills/tmux/SKILL.md`.
-- `/agent-pm:manage`: your guidelines for the commander session, the one you talk to, e.g. `ctmux`'s; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `core/skills/manage/SKILL.md`.
-- `ctmux <session>` in iTerm2: opens tmux session `<session>` (made in the current dir if missing) attached with `tmux -CC`, so worker panes are native iTerm2 splits in the same window; you start `claude` or `codex` in it yourself. Install: run the plugin's copy with `--install` (e.g. `~/.claude/plugins/marketplaces/agent-pm/core/skills/tmux/scripts/ctmux --install`), which copies it to `~/.agent-pm/bin/ctmux`, then add `alias ctmux=~/.agent-pm/bin/ctmux` to `~/.zshrc` (or `~/.bashrc`); rerun `--install` after a plugin update.
-- `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `core/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `core/config.toml`'s `team_dirs` comment; `core/src/drive.py --list` lists every role and task.
+- `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
+- `/agent-pm:manage`: your guidelines for the commander session, the one you talk to; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `new/core/skills/manage/SKILL.md`.
+- `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `new/core/skills/act-as/SKILL.md`.
+- Your own roles, tasks and templates, outside the plugin: `new/core/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`new/README.md` › Layout) lists every role and task.
 
 ## Setup
 
@@ -121,7 +118,7 @@ flowchart LR
 
 ### Task labels
 
-The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`core/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
+The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`new/core/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
 
 **Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `core.local.toml`'s `[roles.<role>.tasks.<task>]` to `[roles.<role>]` and of its `[clients.<name>.roles.<role>.tasks.<task>]` to `[clients.<name>.roles.<role>]` (e.g. `[clients.skill.roles.<role>.output]`), of `orchestrator.local.toml`'s `[core.roles.<role>.tasks.<task>]` to `[core.roles.<role>]`. Then do Operating's Upgrade too.
 
@@ -130,18 +127,14 @@ The issue's label in the `Tasks` label group names one of the assignee role's ta
 ```mermaid
 flowchart LR
     L[launchd] -->|every 30 min| R["router.py: claim or resume, render the input"] -->|"tmux, input as text"| I[run.py]
-    Y[you] -->|"--issue, --tui"| R
-    I --> D["drive.py: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
+    Y[you] -->|"--issue"| R
+    I --> D["Delegate: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
     L -->|every 5 min| P[promote.py] --> X[prune.py]
 ```
 
+The router's and promote's commands: `new/README.md` › Layout.
+
 ```bash
-python3 orchestrator/src/router.py --now --dry-run           # the next tick's plan and usage probe; changes nothing
-python3 orchestrator/src/router.py --now                     # a tick now, outside the schedule
-python3 orchestrator/src/router.py --issue TASK-12           # start that Todo issue or resume that In Progress one now
-python3 orchestrator/src/router.py --issue TASK-12 --dry-run # what --issue would do; changes nothing
-python3 orchestrator/src/promote.py --dry-run                # what Handoff and prune would do
-python3 orchestrator/src/promote.py --now                    # Handoff now, skipping the 10-minute undo window
 tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
 tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent run; = matches the exact name
 ```
@@ -163,9 +156,4 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-```bash
-python3 orchestrator/src/router.py --issue TASK-12 --tui [--split right|below] [--split-from <session>] [--events <file>] [--manager <name>]
-python3 orchestrator/src/router.py --now --tui [--split right|below] [--split-from <session>] [--events <file>] [--manager <name>]   # a tick
-```
-
-Watch an agent run in a TUI pane and step in: the same claim, input, write-back, session comment and log lines; launchd never passes `--tui`. `--tui` attends the agent run `--issue` (Operating) or a tick starts or resumes, and prints to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (live run and `max_runs` slot: `CLAUDE.md` › Architecture), whose pane opens as a worker's does (`core/skills/tmux/SKILL.md` › Start), you the opener, or, outside a tmux grid, where `--split`/`--split-from` say. No pane to split (pass `--split-from`) or a bad manager directory or events file → nothing claimed, exit 2. The events file (`--events`, else the manager directory's: `core/skills/tmux/SKILL.md` › Start 1; outside tmux with neither: none, with a stderr hint) gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session (in a manager's roster: `core/skills/tmux/SKILL.md` › Direct › Stop); the issue stays In Progress and Recover resumes it (`--issue`: at once). After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
+The old router's `--tui` is gone; the new router (`new/README.md` › Layout) gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
