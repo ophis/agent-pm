@@ -8,6 +8,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.driver.selection import select
 
 from new.tests.case import NEW, Case
 
@@ -42,11 +43,10 @@ class Base(Case):
                 ),
             )
         )
-        self.adapter = CodexAdapter(
-            {"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}, "shell_network": False}
-        )
+        self.adapter = CodexAdapter({"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}})
         self.common = self.adapter.common
         self.spec = Spec(
+            _select=lambda native, resume: select(native, resume, self.adapter.selection),
             workdir=str(self.work),
             sid="caller-id",
             tier=1,

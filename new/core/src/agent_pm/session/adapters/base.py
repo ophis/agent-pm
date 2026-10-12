@@ -3,14 +3,12 @@ Its Headless (a fresh one per session: launch may keep state for parse) or Tui t
 Launch whose env (last) and resume carry a role run's Access.env, and the runtime's output into the frozen event
 set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped
 at its next yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env.
-Access.dirs are granted write, Access.reads only read. Times are epoch seconds. Starts no process. role_policy=False
-(plain session): no role-run policy, flags unchanged, its env is Spec.env (per start, Driver-applied, allow-listed);
-temporary (TASK-356), as are session_env, identity_env and child_defaults."""
+Access.dirs are granted write, Access.reads only read. Spec.flags/env are caller-supplied for every Mode. Times are epoch seconds. Starts no process."""
 
 import json
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
@@ -75,7 +73,9 @@ class Spec:
     sid: str | None = None
     flags: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
-    role_policy: bool = True
+    _select: Callable[[str, bool], tuple[str, ...]] = field(
+        default=lambda native, resume: (), repr=False, compare=False
+    )
     name: str | None = None
     protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
 
@@ -99,12 +99,6 @@ class Spec:
         if not env_ok(self.env):
             raise ConfigError("env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
-        if type(self.role_policy) is not bool:
-            raise ConfigError("role_policy must be a bool")
-        if not self.role_policy and self.access.env:
-            raise ConfigError("access env: not for a plain session; use env")
-        if self.role_policy and self.env:
-            raise ConfigError("env: plain sessions only (role_policy=False)")
         if self.name is not None and not isinstance(self.name, str):
             raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
@@ -121,8 +115,11 @@ class Launch:
     resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
     project: bool | None = None
+    replay_env: bool = False
 
     def __post_init__(self):
+        if type(self.replay_env) is not bool:
+            raise ConfigError("launch: replay_env must be a bool")
         if self.project is not None and not isinstance(self.project, bool):
             raise ConfigError("launch: project must be a bool or None")
         env = self.env
@@ -224,6 +221,10 @@ class Key:
 
 
 class Adapter(ABC):
+    selection: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+    forbidden_selection: tuple[str, ...] = ()
+    valued_flags: tuple[str, ...] = ()
+    selection_uuid: bool = False
     keys: frozenset[str] = frozenset()
     runtime_note: str = ""
     session_env: str = ""

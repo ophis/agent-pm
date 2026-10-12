@@ -33,13 +33,14 @@ class CodexTui(Tui):
         self.native = ""
 
     def launch(self, prompt, spec, resume, hook):
-        refuse(spec.flags)
         common = self.adapter.common
         self.state = common.prepare(spec, resume, persist=False)
         snapshot = self.state.snapshot
+        saved_flags = tuple(snapshot["flags"])
+        refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.interactive_unset() if spec.role_policy else self.adapter.identity_env
+        unset = common.interactive_unset(snapshot)
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
         store = sessions.store_root()
@@ -59,7 +60,7 @@ class CodexTui(Tui):
             *(word for word in hook if os.path.isabs(word)),
             *spec.protect,
         ]
-        added = [] if spec.role_policy else added_dirs(spec.flags, snapshot["cwd"])
+        added = added_dirs(saved_flags, snapshot["cwd"])
         try:
             sessions.protect(self.state, dependencies, effective_env, added)
         except sessions.RecoveryError as exc:
@@ -92,7 +93,7 @@ class CodexTui(Tui):
         ]
         argv = [
             exe,
-            *(["resume", self.native] if resume else []),
+            *spec._select(self.native, resume),
             "--no-daemon",
             "-C",
             snapshot["cwd"],
@@ -100,14 +101,13 @@ class CodexTui(Tui):
             'tui.notification_method="bel"',
             *flags(snapshot, interactive=True),
             *hook_flags,
-            *spec.flags,
             *(["--", prompt] if prompt else []),
         ]
         data = {
             "argv": argv,
             "hook": list(hook),
             "commands": commands,
-            "hook_flags": [*hook_flags, *passed(spec.flags)],
+            "hook_flags": [*hook_flags, *passed(saved_flags)],
             "workdir": self.state.workdir,
             "sid": self.state.sid,
             "store": store,
@@ -125,6 +125,7 @@ class CodexTui(Tui):
             unset=unset,
             cwd=snapshot["cwd"],
             project=snapshot["project"],
+            replay_env=resume,
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )

@@ -7,9 +7,11 @@ import sys
 import uuid
 from dataclasses import dataclass, replace
 
+from agent_pm.config import CONFIG, LOCAL
 from agent_pm.role import composer
 from agent_pm.role.composer import RunConfig, RunParams, Team
 from agent_pm.session import api
+from agent_pm.utils.config_file import read_config
 from agent_pm.utils.paths import under
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
@@ -17,6 +19,23 @@ DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, withou
 
 class ConfigError(Exception):
     pass
+
+
+def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
+    try:
+        tables = read_config(CONFIG, LOCAL).get("policy", {})
+        if not isinstance(tables, dict):
+            raise ConfigError("policy must be a table")
+        value = tables.get(runtime, {})
+        if not isinstance(value, dict) or set(value) - {"flags", "env"}:
+            raise ConfigError(f"policy.{runtime} must contain only flags/env")
+        flags, env = value.get("flags", []), value.get("env", {})
+        if not isinstance(flags, list):
+            raise ConfigError(f"policy.{runtime}.flags must be a list of strings without NUL")
+        spec = api.Spec(workdir="/", flags=tuple(flags), env=env)
+        return spec.flags, dict(spec.env)
+    except (OSError, ValueError, api.ConfigError) as exc:
+        raise ConfigError(f"policy.{runtime}: {exc}") from None
 
 
 def _own(f):
@@ -130,7 +149,10 @@ def plan(
         reads=intent.reads,
         env=intent.env,
     )
-    spec = api.Spec(workdir=workdir, access=access, tier=run.tier, effort=run.effort)
+    flags, env = policy(runtime)
+    spec = api.Spec(
+        workdir=workdir, access=access, tier=run.tier, effort=run.effort, flags=flags, env=env
+    )
     _check_team_dirs(team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
     params = RunParams(
         input=input,

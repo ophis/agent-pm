@@ -84,7 +84,7 @@ type = "local"
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
 #                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
-#                 default danger-full-access can write there too (new/README.md › Codex sandbox). A dir also in write,
+#                 default danger-full-access can write there too (new/README.md › Runtime policy). A dir also in write,
 #                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
 #                 regardless
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
@@ -136,8 +136,7 @@ effort = "low"
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
-# [adapters.claude]  Claude Code (src/agent_pm/session/adapters/claude/); each key optional; a plain session
-#                    (src/agent_pm/session/adapters/base.py) gets neither flags nor allow
+# [adapters.claude]  Claude Code (src/agent_pm/session/adapters/claude/); each key optional
 #   flags            claude flags added to every session command; never --setting-sources (the Driver's)
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read rules
 #   env              variables added to every command's environment, over the adapter's defaults
@@ -146,7 +145,7 @@ effort = "low"
 #                            starting a run whose tier or effort has no entry here is a config error
 [adapters.claude]
 implementation = "adapters.claude:ClaudeAdapter"
-flags = ["--permission-mode", "auto", "--strict-mcp-config"]
+flags = ["--strict-mcp-config"]
 # allow = ["<rule>"]
 
 [adapters.claude.tiers]
@@ -164,10 +163,6 @@ max = "max"
 
 [adapters.codex]
 implementation = "adapters.codex:CodexAdapter"
-# danger-full-access (default) or workspace-write; both use on-request + auto_review approvals.
-# Full access disables shell_network, writable-root boundaries and team-dir protection; see new/README.md.
-sandbox = "danger-full-access"
-shell_network = false
 
 [adapters.codex.tiers]
 1 = "gpt-6-astra"
@@ -189,3 +184,10 @@ max = "max"
 #                          run hands the composed prompt back as the deliverable and starts no process; no other keys
 [adapters.print_prompt]
 implementation = "adapters.print_prompt:PrintPromptAdapter"
+
+# Role-run policy is supplied by Delegate; session workers receive no policy defaults.
+[policy.claude]
+flags = ["--permission-mode", "auto"]
+
+[policy.codex]
+flags = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']

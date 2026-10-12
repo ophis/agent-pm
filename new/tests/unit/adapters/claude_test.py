@@ -1,5 +1,5 @@
 """adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadless's launch and parse; ClaudeTui's launch (role run, plain session, session flags), hook payloads and
+ClaudeHeadless's launch and parse; ClaudeTui's launch with session flags, hook payloads and
 usage-limit screen; ClaudeAdapter's hooks and writable dirs; the committed [adapters.claude] table. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime
+from functools import partial
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -27,18 +28,29 @@ from agent_pm.session.adapters.base import (
     Reply,
     SessionBound,
     SessionStatus,
-    Spec,
     TurnEnd,
     Usage,
     Window,
+)
+from agent_pm.session.adapters.base import (
+    Spec as BaseSpec,
 )
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.driver import registry
+from agent_pm.session.driver.selection import select
 
 from new.tests.case import Case
+
+
+def Spec(**fields):
+    return BaseSpec(
+        _select=partial(select, syntax=ClaudeAdapter.selection, uuid=ClaudeAdapter.selection_uuid),
+        **fields,
+    )
+
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
@@ -333,9 +345,7 @@ class ArgvTest(Base):
             " " + SID,
         ):
             with self.subTest(bad=bad):
-                self.refused(
-                    lambda: self.launch(sid=bad), f"claude session ids are UUIDs, got {bad!r}"
-                )
+                self.refused(lambda: self.launch(sid=bad), f"session ids are UUIDs, got {bad!r}")
         self.refused(
             lambda: ClaudeCommon.uuid(SID + "\n"),
             f"claude session ids are UUIDs, got {SID + chr(10)!r}",
@@ -432,6 +442,13 @@ class EnvTest(Base):
         self.assertEqual(launch.unset, UNSET)
         self.assertEqual(ClaudeCommon.UNSET, UNSET)
         self.assertEqual(launch.cwd, "")
+
+    def test_headless_uses_session_flags_and_env(self):
+        flags = ("--permission-mode", "auto")
+        launch = self.launch(flags=flags, env={"K": "session", "CUSTOM": "value"})
+        self.assertEqual(launch.argv[-4:], (*flags, "--", "hi"))
+        self.assertEqual(dict(launch.env), {**CEILING, "K": "session", "CUSTOM": "value"})
+        self.assertIn("K=session CUSTOM=value claude", launch.resume)
 
     def test_the_session_env_wins_over_the_config_env(self):
         config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
@@ -1002,18 +1019,7 @@ TUI_HOOKS = {
     "UserPromptSubmit": [entry("UserPromptSubmit")],
 }
 TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": TUI_HOOKS})
-PLAIN_SETTINGS = json.dumps({"hooks": TUI_HOOKS})
 NAME = "w-1"
-REFUSED = (
-    "--resume",
-    "-r",
-    "--session-id",
-    "--continue",
-    "-c",
-    "--fork-session",
-    "--from-pr",
-    "--teleport",
-)
 WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 
@@ -1122,12 +1128,12 @@ class TuiArgvTest(Base):
         )
 
     def test_a_bad_sid_or_tier_is_refused(self):
-        self.refused(lambda: self.tui(sid="abc"), "claude session ids are UUIDs, got 'abc'")
+        self.refused(lambda: self.tui(sid="abc"), "session ids are UUIDs, got 'abc'")
         self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
 
     def test_the_flags_go_before_the_prompt_the_rest_unchanged(self):
         access = Access(dirs=("/d1",), commands=("ls",))
-        flags = ("--verbose", "--settings", "{}", "--add-dir", "/x")
+        flags = ("--verbose", "--add-dir", "/x")
         for prompt in ("do it", ""):
             with self.subTest(prompt=prompt):
                 base = self.tui(prompt, access=access).argv
@@ -1138,28 +1144,50 @@ class TuiArgvTest(Base):
                 )
 
 
-class PlainTuiTest(Base):
-    def plain(self, prompt="hi", flags=(), config=CONFIG, resume=False, **spec) -> Launch:
+class SessionTuiTest(Base):
+    def session(self, prompt="hi", flags=(), config=None, resume=False, **spec) -> Launch:
         return tui_launch(
-            self.work, prompt, config, resume, role_policy=False, name=NAME, flags=flags, **spec
+            self.work,
+            prompt,
+            {} if config is None else config,
+            resume,
+            name=NAME,
+            flags=flags,
+            **spec,
         )
 
     def settings(self, flags) -> tuple[dict, tuple[str, ...]]:
-        argv = self.plain(flags=flags).argv
-        self.assertEqual(argv[:6], ("claude", "--session-id", SID, "--name", NAME, "--settings"))
+        argv = self.session(flags=flags).argv
+        self.assertEqual(
+            argv[:6], ("claude", "--session-id", SID, "--setting-sources", "user", "--settings")
+        )
         return json.loads(argv[6]), argv[7:]
 
-    def test_new_and_resumed_only_the_wiring_then_the_flags(self):
+    def test_new_and_resumed_share_config_access_flags_and_env(self):
         cwd = os.path.join(self.tmp, "cwd")
         os.mkdir(cwd)
         with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
             f.write("{}")
-        access = Access(dirs=("/d1",), commands=("ls",), reads=("/r1",), cwd=cwd, project=True)
+        access = Access(
+            dirs=("/d1",),
+            commands=("ls",),
+            reads=("/r1",),
+            cwd=cwd,
+            project=True,
+            env={"K": "access", "S": "s"},
+        )
         flags = ("--permission-mode", "plan", "--add-dir", "/x")
         for resume, word in ((False, "--session-id"), (True, "--resume")):
             with self.subTest(resume=resume):
-                launch = self.plain(
-                    "do it", flags, resume=resume, tier=4, effort="low", access=access
+                launch = self.session(
+                    "do it",
+                    flags,
+                    config=CONFIG,
+                    resume=resume,
+                    tier=4,
+                    effort="low",
+                    access=access,
+                    env={"K": "spec"},
                 )
                 self.assertEqual(
                     launch.argv,
@@ -1171,10 +1199,21 @@ class PlainTuiTest(Base):
                         "haiku",
                         "--effort",
                         "lo",
-                        "--name",
-                        NAME,
+                        "--permission-mode",
+                        "auto",
+                        "--setting-sources",
+                        "user,project,local",
+                        "--mcp-config",
+                        os.path.join(cwd, ".mcp.json"),
                         "--settings",
-                        PLAIN_SETTINGS,
+                        TUI_SETTINGS,
+                        "--add-dir",
+                        "/d1",
+                        "--allowedTools",
+                        "Bash(ls)",
+                        "Read(//r1/**)",
+                        "Read",
+                        "Edit(/x)",
                         *flags,
                         "--",
                         "do it",
@@ -1183,31 +1222,33 @@ class PlainTuiTest(Base):
                 self.assertEqual(
                     (dict(launch.env), launch.unset, launch.cwd, launch.transcript, launch.resume),
                     (
-                        {"K": "v"},
+                        {**CEILING, "K": "spec", "S": "s"},
                         UNSET,
                         "",
                         ClaudeCommon({}).transcript(cwd, SID),
-                        f"cd {shlex.quote(cwd)} && claude --resume {SID}",
+                        f"cd {shlex.quote(cwd)} && K=spec S=s claude --resume {SID} --add-dir {shlex.quote(self.work)}",
                     ),
                 )
 
     def test_none_of_the_optional_parts(self):
-        launch = self.plain("", config={})
+        launch = self.session("")
         self.assertEqual(
             launch.argv,
-            ("claude", "--session-id", SID, "--name", NAME, "--settings", PLAIN_SETTINGS),
+            (
+                "claude",
+                "--session-id",
+                SID,
+                "--setting-sources",
+                "user",
+                "--settings",
+                TUI_SETTINGS,
+            ),
         )
         self.assertEqual(
             (dict(launch.env), launch.resume),
-            ({}, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
+            (CEILING, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
         )
-        self.assertEqual(self.plain("-p --help").argv[-2:], ("--", "-p --help"))
-
-    def test_an_access_env_is_refused(self):
-        self.refused(
-            lambda: self.plain(access=Access(env={"S": "s t"})),
-            "access env: not for a plain session; use env",
-        )
+        self.assertEqual(self.session("-p --help").argv[-2:], ("--", "-p --help"))
 
     def test_the_hooks_merge_into_the_users_settings_which_move_before_the_rest(self):
         mine = {"type": "command", "command": "mine"}
@@ -1225,13 +1266,19 @@ class PlainTuiTest(Base):
             ("--verbose", "--settings=" + json.dumps(own), "--x"),
         ):
             with self.subTest(flags=flags):
-                self.assertEqual(self.settings(flags), (merged, ("--verbose", "--x", "--", "hi")))
+                self.assertEqual(
+                    self.settings(flags),
+                    ({**ClaudeCommon.PLUGINS, **merged}, ("--verbose", "--x", "--", "hi")),
+                )
         self.assertEqual(
             self.settings(("--settings", '{"model": "x"}')),
-            ({"model": "x", "hooks": TUI_HOOKS}, ("--", "hi")),
+            ({**ClaudeCommon.PLUGINS, "model": "x", "hooks": TUI_HOOKS}, ("--", "hi")),
         )
         after = ("--", "--settings", "[]")
-        self.assertEqual(self.settings(after), ({"hooks": TUI_HOOKS}, (*after, "--", "hi")))
+        self.assertEqual(
+            self.settings(after),
+            ({**ClaudeCommon.PLUGINS, "hooks": TUI_HOOKS}, (*after, "--", "hi")),
+        )
 
     def test_a_malformed_settings_flag_is_refused(self):
         long = "x" * 100
@@ -1247,29 +1294,8 @@ class PlainTuiTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: self.plain(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
+                    lambda: self.session(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
                 )
-
-
-class SessionFlagTest(Base):
-    def test_each_is_refused_in_a_role_run_and_a_plain_session(self):
-        given = (*REFUSED, *(f"{word}=x" for word in REFUSED if word.startswith("--")))
-        for flag in given:
-            for role_policy in (True, False):
-                with self.subTest(flag=flag, role_policy=role_policy):
-                    self.refused(
-                        lambda: tui_launch(
-                            self.work, flags=("--verbose", flag, SID), role_policy=role_policy
-                        ),
-                        f"{flag.partition('=')[0]}: picks the session; use crew.py start --resume <sid>",
-                    )
-
-    def test_scanning_stops_at_the_separator_and_other_words_pass(self):
-        for role_policy in (True, False):
-            for flags in (("--", *REFUSED), ("--resumes", "--continued", "--teleport-x")):
-                with self.subTest(flags=flags, role_policy=role_policy):
-                    argv = tui_launch(self.work, flags=flags, role_policy=role_policy).argv
-                    self.assertEqual(argv[-len(flags) - 2 :], (*flags, "--", "hi"))
 
 
 def said(mid, *blocks) -> dict:
@@ -1644,7 +1670,7 @@ class WritableDirsTest(Base):
                     (self.work, self.added),
                 )
 
-    def test_a_plain_session_its_cwd_then_each_added_dir_in_its_flags(self):
+    def test_access_and_flag_dirs_are_combined_for_every_session(self):
         os.mkdir(os.path.join(self.cwd, "sub"))
         flags = (
             "--verbose",
@@ -1659,9 +1685,9 @@ class WritableDirsTest(Base):
         )
         for resume in (False, True):
             for cwd, given, dirs in (
-                ("", (), (self.work,)),
-                (self.cwd, (), (self.cwd,)),
-                (self.cwd, flags, (self.cwd, os.path.join(self.cwd, "sub"), self.added)),
+                ("", (), (self.work, self.tmp)),
+                (self.cwd, (), (self.cwd, self.tmp)),
+                (self.cwd, flags, (self.cwd, self.tmp, os.path.join(self.cwd, "sub"), self.added)),
             ):
                 with self.subTest(resume=resume, cwd=cwd, flags=given):
                     spec = Spec(
@@ -1669,7 +1695,6 @@ class WritableDirsTest(Base):
                         sid=SID,
                         access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
                         flags=given,
-                        role_policy=False,
                     )
                     self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec, resume), dirs)
 
@@ -1681,7 +1706,7 @@ class CommittedConfigTest(Base):
             tables["claude"],
             {
                 "implementation": "adapters.claude:ClaudeAdapter",
-                "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
+                "flags": ["--strict-mcp-config"],
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },
@@ -1695,14 +1720,12 @@ class CommittedConfigTest(Base):
             .argv
         )
         self.assertEqual(
-            argv[4:12],
+            argv[4:10],
             (
                 "--model",
                 "haiku",
                 "--effort",
                 "low",
-                "--permission-mode",
-                "auto",
                 "--strict-mcp-config",
                 "--setting-sources",
             ),

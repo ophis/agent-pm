@@ -27,7 +27,7 @@ class ClaudeHeadless(Headless):
             common.PLUGINS,
             ("-p",),
             ("--output-format", "stream-json", "--verbose"),
-            ("--", prompt),
+            (*spec.flags, "--", prompt),
         )
 
     def parse(self, record):

@@ -26,11 +26,6 @@ class SnapshotEnvTest(Base):
     def snapshot(self, **fields):
         return {**self.common.prepare(self.spec, False, persist=False).snapshot, **fields}
 
-    def test_a_snapshot_without_env_has_an_empty_one(self):
-        snapshot = self.snapshot()
-        del snapshot["env"]
-        self.assertEqual(validate_snapshot(snapshot)["env"], {})
-
     def test_keeps_an_env_access_env_accepts(self):
         for env in GOOD:
             with self.subTest(env=env):

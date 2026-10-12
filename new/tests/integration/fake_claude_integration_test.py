@@ -654,7 +654,12 @@ class ClaudeTuiLaunch(Case):
                 "efforts": {"high": "h"},
             }
         ).tui()
+        from agent_pm.session.driver.selection import select
+
         spec = Spec(
+            _select=lambda native, resume: select(
+                native, resume, ClaudeAdapter.selection, uuid=True
+            ),
             workdir=self.proj,
             sid=SID,
             tier=1,

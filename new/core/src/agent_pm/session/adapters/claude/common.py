@@ -1,7 +1,4 @@
-"""Claude Code configuration, launch metadata, usage and session inspection shared by both Modes. A launch's env and
-resume command carry a role run's Access.env. plain is a plain session's (adapters.base): the session id, tier, effort
-and --name, then --settings, `hooks` merged into the first --settings in spec.flags, then the rest of spec.flags; the
-config's env without ENV. refuse: a session flag before "--"."""
+"""Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
 
 import json
 import math
@@ -27,27 +24,10 @@ TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 NOT_LITERAL = "*?[]{}()\\,"
-REFUSED = (
-    "--resume",
-    "-r",
-    "--session-id",
-    "--continue",
-    "-c",
-    "--fork-session",
-    "--from-pr",
-    "--teleport",
-)
 
 
 def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
     return flags[: flags.index("--")] if "--" in flags else flags
-
-
-def refuse(flags: tuple[str, ...]) -> None:
-    for flag in _before_end(flags):
-        word = flag.partition("=")[0] if flag.startswith("--") else flag
-        if word in REFUSED:
-            raise ConfigError(f"{word}: picks the session; use crew.py start --resume <sid>")
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -261,7 +241,7 @@ class ClaudeCommon:
         tail: tuple[str, ...] = (),
     ) -> Launch:
         """Build a Claude command with configured settings, access grants and output arguments."""
-        sid = self.uuid(spec.sid)
+        sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd or spec.workdir
@@ -274,8 +254,7 @@ class ClaudeCommon:
         argv = (
             "claude",
             *head,
-            "--resume" if resume else "--session-id",
-            sid,
+            *spec._select(sid, resume),
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *self.flags,
@@ -291,36 +270,13 @@ class ClaudeCommon:
         )
         return Launch(
             argv,
-            env={**self.env(), **access.env},
+            env={**self.env(), **access.env, **spec.env},
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid, spec.workdir, access.env),
+            resume=self.resume(cwd, sid, spec.workdir, {**access.env, **spec.env}),
         )
 
-    def plain(self, spec: Spec, resume: bool, hooks: Mapping, tail: tuple[str, ...] = ()) -> Launch:
-        sid = self.uuid(spec.sid)
-        model, effort = self.model(spec.tier), self.effort(spec.effort)
-        settings, flags = _merged(spec.flags, hooks)
-        cwd = spec.access.cwd or spec.workdir
-        argv = (
-            "claude",
-            "--resume" if resume else "--session-id",
-            sid,
-            *(("--model", model) if model is not None else ()),
-            *(("--effort", effort) if effort is not None else ()),
-            *(("--name", spec.name) if spec.name is not None else ()),
-            "--settings",
-            json.dumps(settings),
-            *flags,
-            *tail,
-        )
-        return Launch(
-            argv,
-            env=dict(self.config_env),
-            unset=self.UNSET,
-            transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid),
-        )
+    merged = staticmethod(_merged)
 
     def probe(self) -> Launch:
         return Launch(self.PROBE, env=self.env(), unset=self.UNSET)

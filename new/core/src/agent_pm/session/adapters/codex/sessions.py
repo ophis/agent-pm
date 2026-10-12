@@ -16,6 +16,44 @@ from dataclasses import dataclass
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
+VALUED = {
+    "-c": "-c",
+    "--config": "-c",
+    "-C": "-C",
+    "--cd": "-C",
+    "-p": "-p",
+    "--profile": "-p",
+    "--enable": "--enable",
+    "--disable": "--disable",
+    "--add-dir": "--add-dir",
+}
+
+
+def options(flags):
+    i = 0
+    while i < len(flags) and flags[i] != "--":
+        flag = flags[i]
+        if flag.startswith("--"):
+            word, eq, value = flag.partition("=")
+        else:
+            word, value = flag[:2], flag[2:].removeprefix("=")
+            eq = flag[2:]
+        name = VALUED.get(word)
+        if name is None:
+            yield (word if flag.startswith("--") else flag), None, flag
+        elif eq:
+            yield name, value, flag
+        else:
+            i += 1
+            value = flags[i] if i < len(flags) else ""
+            yield name, value, f"{flag} {value}"
+        i += 1
+
+
+def added_dirs(flags, cwd: str) -> list[str]:
+    return [os.path.join(cwd, value) for name, value, _ in options(flags) if name == "--add-dir"]
+
+
 class RecoveryError(Exception):
     pass
 
@@ -29,7 +67,8 @@ def absolute_path(path: str, label: str) -> str:
 def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    value = {"sandbox": "workspace-write", "role_policy": True, "env": {}, **value}
+    if "flags" not in value:
+        raise RecoveryError("unsupported legacy Codex recovery snapshot: start a new session")
     if set(value) != {
         "cwd",
         "project",
@@ -37,10 +76,8 @@ def validate_snapshot(value: dict) -> dict:
         "commands",
         "model",
         "effort",
-        "network",
         "codex_home",
-        "sandbox",
-        "role_policy",
+        "flags",
         "env",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
@@ -50,10 +87,11 @@ def validate_snapshot(value: dict) -> dict:
         for k, v in env.items()
     ):
         raise RecoveryError("invalid Codex recovery snapshot env")
-    if value["sandbox"] not in ("danger-full-access", "workspace-write"):
-        raise RecoveryError("invalid Codex recovery snapshot sandbox")
+    flags = value["flags"]
+    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
+        raise RecoveryError("invalid Codex recovery snapshot flags")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
-    for key in ("project", "network", "role_policy"):
+    for key in ("project",):
         if type(value[key]) is not bool:
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
     for key in ("dirs", "commands"):
@@ -75,9 +113,7 @@ def validate_snapshot(value: dict) -> dict:
         "commands": commands.copy(),
         "model": value["model"],
         "effort": value["effort"],
-        "network": value["network"],
-        "sandbox": value["sandbox"],
-        "role_policy": value["role_policy"],
+        "flags": list(flags),
         "env": dict(env),
     }
     if validated != value:
@@ -201,9 +237,13 @@ class SessionState:
 
 def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
     snapshot = validate_snapshot(state.snapshot)
-    paths = [snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
-    if snapshot["role_policy"]:
-        paths.insert(0, state.workdir)
+    paths = [
+        state.workdir,
+        snapshot["cwd"],
+        snapshot["codex_home"],
+        *snapshot["dirs"],
+        *(absolute_path(path, "dir") for path in added_dirs(snapshot["flags"], snapshot["cwd"])),
+    ]
     check_writable_roots(store_root(root), paths)
     for path in paths:
         if not any(inside(path, grant) for grant in state.writable_roots):
@@ -459,7 +499,8 @@ def create_session(
 ) -> SessionState:
     root = store_root(root)
     workdir, sid = session_identity(workdir, sid)
-    grants = [workdir] if validate_snapshot(snapshot)["role_policy"] else []
+    validate_snapshot(snapshot)
+    grants = [workdir]
     state = _state(
         {
             "version": _SESSION_VERSION,

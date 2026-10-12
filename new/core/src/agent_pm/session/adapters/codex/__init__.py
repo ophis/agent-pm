@@ -8,7 +8,23 @@ from .tui import CodexTui
 
 
 class CodexAdapter(Adapter):
-    keys = frozenset({"tiers", "efforts", "shell_network", "sandbox", "env"})
+    selection = ((), ("resume",))
+    valued_flags = (
+        "-c",
+        "--config",
+        "-C",
+        "--cd",
+        "-p",
+        "--profile",
+        "--enable",
+        "--disable",
+        "--add-dir",
+        "-m",
+        "--model",
+        "-s",
+    )
+    forbidden_selection = ("resume", "fork", "--last")
+    keys = frozenset({"tiers", "efforts", "env"})
     runtime_note = (
         "Run each shell call separately. Command approvals follow Codex automatic review."
     )

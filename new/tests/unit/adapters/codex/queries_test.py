@@ -54,9 +54,7 @@ class UsageTest(Case):
                 "subprocess.Popen", side_effect=AssertionError("usage parser started a process")
             )
         )
-        self.adapter = CodexAdapter(
-            {"shell_network": False, "env": {"PAGER": "configured", "ADDED": "value"}}
-        )
+        self.adapter = CodexAdapter({"env": {"PAGER": "configured", "ADDED": "value"}})
         self.five = {"usedPercent": 62, "windowDurationMins": 300, "resetsAt": 2000}
         self.weekly = {"usedPercent": 41, "windowDurationMins": 10080, "resetsAt": 4000}
 

@@ -97,7 +97,14 @@ def main():
                     "resume_id": resume,
                     "env": {
                         key: os.environ.get(key)
-                        for key in (*MARKERS, *DEFAULTS, "CODEX_HOME", "PWD", "TMPDIR")
+                        for key in (
+                            *MARKERS,
+                            *DEFAULTS,
+                            "CODEX_HOME",
+                            "PWD",
+                            "TMPDIR",
+                            "NEW_POLICY_KEY",
+                        )
                     },
                 }
             )
