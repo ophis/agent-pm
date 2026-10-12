@@ -67,7 +67,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
             access=Access(
                 cwd=str(self.cwd),
                 project=True,
-                dirs=(str(self.extra), str(self.tasks)),
+                dirs=(str(self.extra),),
+                reads=(str(self.tasks),),
                 commands=("git status",),
             ),
         )
@@ -154,7 +155,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
             )
         args.extend(["-m", "gpt-test", "-c", "model_reasoning_effort=low"])
         if sandbox == "workspace-write":
-            args.extend(["--add-dir", str(self.extra), "--add-dir", str(self.tasks)])
+            args.extend(["--add-dir", str(self.extra)])
         return [
             *args,
             *(["resume", NATIVE] if resume else []),
@@ -373,7 +374,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
             [first["prompt"], second["prompt"]],
         )
 
-    def test_add_dir_order_and_tasks_prompt_survive_resume(self):
+    def test_add_dir_order_survives_resume_and_the_tasks_dir_is_read_unadded(self):
         self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
         registry.configure(self.config)
         prompt = f"Read `{self.tasks}`."
@@ -402,7 +403,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
                     for i, arg in enumerate(entry["argv"])
                     if arg == "--add-dir"
                 ]
-                self.assertEqual(dirs, [str(self.extra), str(self.tasks)])
+                self.assertEqual(dirs, [str(self.extra)])
+                self.assertNotIn(str(self.tasks), dirs)
                 self.assertIn(f"`{self.tasks}`", entry["prompt"])
                 self.assertFalse((self.work / "tasks").exists())
 

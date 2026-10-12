@@ -11,6 +11,7 @@ Aliases expand to exact test identities:
 | U | `new.tests.unit.adapters.codex.common_test.CommonTest` |
 | T | `new.tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
 | K | `new.tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |
+| D | `new.tests.integration.delegate.team_dirs_integration_test` |
 
 All integration processes are fakes. T and K use private tmux servers through `new/tests/live_tmux.py`; caller HOME and scratch live under `AGENT_PM_TEST_TMP` (CI fallback: `new/`). With `workspace-write`, the caller's protected recovery store stays outside explicit and native implicit writable roots; configured runtime HOME may be under workdir or an add-dir grant. See [Codex sandbox](../../../../README.md#codex-sandbox) for default `danger-full-access` limitations. No filesystem guards are patched. H preserves headless/probe defaults; T verifies interactive defaults, configured overrides and independent native identities.
 
@@ -40,10 +41,10 @@ Old module: `tests.integration.core.team_dirs_integration_test`.
 
 | Exact old identity | Exact new identity | Coverage and remaining assertions |
 |---|---|---|
-| `CodexTeamDirs.test_a_codex_run_and_its_resume_add_its_tasks_dir` | `H.test_add_dir_order_and_tasks_prompt_survive_resume` | Supplied task-dir prompt retained, ordered add-dir grants replayed even when current access dirs change, no workdir task copy. Team selection, task-dir discovery and generated prompt remain unported: Composer, TASK-315. |
-| `CodexTeamDirs.test_a_read_dir_holding_the_team_dir_is_refused` | None | No Adapter equivalent for team/read-dir overlap policy. Unported: Composer/access planning, TASK-315. |
+| `CodexTeamDirs.test_a_codex_run_and_its_resume_add_its_tasks_dir` | `D.CodexTeamDirs.test_a_codex_run_and_its_resume_read_its_tasks_dir_unadded`; `H.test_add_dir_order_survives_resume_and_the_tasks_dir_is_read_unadded` | Inverted on purpose: the tasks dir is read-only, never added. D: team selection, task-dir prompt, run and resume through the Delegate, no workdir task copy. H: ordered add-dir grants replayed even when current access dirs change, supplied task-dir prompt retained. |
+| `CodexTeamDirs.test_a_read_dir_holding_the_team_dir_is_refused` | `D.CodexTeamDirs.test_a_read_dir_holding_the_team_dir_runs_unadded`; `D.CodexTeamDirs.test_a_write_dir_holding_the_team_dir_is_refused` | Inverted on purpose: a read dir is read-only, so one holding the team dir runs, unadded; a write dir keeps the refusal. |
 
-The same file's `TeamDirs.test_a_dry_run`, `TeamDirs.test_list` and `TeamDirs.test_a_headless_run_reads_its_task_from_its_tasks_dir` exercise Claude and Composer, outside the replaced Codex path.
+The same file's `TeamDirs.*` (Claude and Composer, outside the replaced Codex path) are ported in D's `TeamDirs`.
 
 ## Worker behavior
 
