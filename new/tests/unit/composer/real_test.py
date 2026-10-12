@@ -1,6 +1,6 @@
-"""On the real new/core/team/ and new/core/config.toml: every built-in role × task composes with no reference error, the
-neutral Return and Parameters, the FR-31 destinations, the package API, the schema left as on main, and the shipped
-text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
+"""On the real team root (composer.TEAM) and new/core/config.toml: every built-in role × task composes with no reference
+error, the neutral Return and Parameters, the FR-31 destinations, the package API, the schema left as on main, and the
+shipped text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
 
 import functools
@@ -184,9 +184,9 @@ def parameter_names(role, task=None, **changes):
 
 
 def team_texts():
-    """{path relative to the team root: text} of each text file of the real team root."""
+    """{path relative to the team root: text} of each .md file of the real team root (its tools/ are code)."""
     out = {}
-    for path in glob.glob(os.path.join(composer.TEAM, "**", "*.*"), recursive=True):
+    for path in glob.glob(os.path.join(composer.TEAM, "**", "*.md"), recursive=True):
         with open(path) as f:
             out[os.path.relpath(path, composer.TEAM)] = f.read()
     return out
@@ -230,15 +230,12 @@ class Acceptance(Case):
                 self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
                 self.assertNotRegex(block, RUNTIME)
 
-    def test_each_requested_command_runs_the_repo_module_from_the_import_root(self):
-        self.assertTrue(
-            os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "agent_tools", "repo.py"))
-        )
+    def test_each_requested_command_runs_the_teams_repo_tool(self):
+        self.assertTrue(os.path.isfile(os.path.join(composer.TEAM, "tools", "repo.py")))
         for role in roles():
             for command in composed(role)[1].commands:
                 self.assertTrue(
-                    command.startswith("python3 -P -m agent_pm.agent_tools.repo "),
-                    (role, command),
+                    command.startswith("python3 -P {{team}}/tools/repo.py "), (role, command)
                 )
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
@@ -330,7 +327,8 @@ class Shipped(Case):
         texts = team_texts() | {
             f"{role} {task}": words(composed(role, task)[0]) for role, task in runs()
         }
-        for path in [CONFIG, *glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))]:
+        composer_py = glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))
+        for path in [CONFIG, composer.SCHEMA, *composer_py]:
             with open(path) as f:
                 texts[path] = f.read()
         for label, text in texts.items():
@@ -660,7 +658,7 @@ class RealCore(Case):
                 "`ophis/private_docs`",
             ),
             lambda run: (run.tier, run.effort, run.read),
-            (2, "high", ["{{methods}}"]),
+            (2, "high", ["{{team}}"]),
         )
         for role, task, literals, got, want in (
             (
@@ -690,32 +688,30 @@ class RealCore(Case):
 
     def test_each_roles_parameters_follow_what_its_texts_use(self):
         base, out = (
-            ["<Workdir>", "<tasks>"],
+            ["<Workdir>", "<tasks>", "<team>"],
             ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
         )
         want = {
             "engineer": base,
             "pm": [*base, *out],
-            "researcher": [*base, "<methods>", "<gate>", *out],
+            "researcher": [*base, "<gate>", *out],
         }
         for role, task in [(r, None) for r in want] + [
             (r, t) for r, t in role_tasks() if r in want
         ]:
             self.assertEqual(parameter_names(role, task), want[role], (role, task))
         self.assertEqual(
-            parameter_names("researcher", output={"type": "local"}), [*base, "<methods>", "<gate>"]
+            parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"]
         )
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
-        self.assertEqual(
-            parameters(prompt)["<methods>"], f"`{os.path.join(composer.TEAM, 'methods')}`"
-        )
+        self.assertEqual(parameters(prompt)["<team>"], f"`{composer.TEAM}`")
         for name in ("deep-research", "ultracode"):
             self.assertTrue(
                 os.path.isfile(os.path.join(composer.TEAM, "methods", f"{name}.md")), name
             )
-            self.assertIn(f"`<methods>/{name}.md`", prompt)
+            self.assertIn(f"`<team>/methods/{name}.md`", prompt)
         for phrase in (
             "No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",
             "per the ultracode method ([Researcher › Methods](#methods))",
@@ -730,7 +726,8 @@ class RealCore(Case):
             prompt, run = composed(role)
             prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = fill(cmd, {"workdir": RUN.workdir}, role).removesuffix(" *")
+                cmd = fill(cmd, {"workdir": RUN.workdir, "team": composer.TEAM}, role)
+                cmd = cmd.removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
 
     def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
@@ -738,7 +735,7 @@ class RealCore(Case):
             prompt, _ = composed(role, task)
             for value in (RUN.workdir, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
-            self.assertNotIn(IMPORT_ROOT, prompt, (role, task))
+            self.assertNotIn(IMPORT_ROOT, prompt.replace(composer.TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
     def test_every_repo_command_takes_the_inputs_checkout(self):
@@ -747,7 +744,7 @@ class RealCore(Case):
             prompt, _ = composed(role)
             text = prompt + "".join(task_text(t) for t in catalog()[role])
             cmds = re.findall(
-                r"`python3 -P -m agent_pm\.agent_tools\.repo (worktree|status) ([^`]*)`", text
+                r"`python3 -P <team>/tools/repo\.py (worktree|status) ([^`]*)`", text
             )
             self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]
@@ -865,19 +862,19 @@ class RealCore(Case):
             merge,
         )
 
-    def test_the_pull_request_destination_reads_pr_from_agent_tools_repo_status(self):
+    def test_the_pull_request_destination_reads_pr_from_repo_status(self):
         self.assertIn(
-            "3. By `agent_tools.repo status`'s `pr`: null → `gh pr create", composed("engineer")[0]
+            "3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0]
         )
 
-    def test_a_run_reads_the_methods_dir_its_text_names(self):
+    def test_a_run_reads_the_team_root_when_its_text_names_a_method(self):
         named = []
         for role in roles():
             with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
                 text = f.read() + "".join(task_text(t) for t in catalog()[role])
-            if "<methods>" in text:
+            if "<team>/methods/" in text:
                 named.append(role)
-                self.assertIn("{{methods}}", composer.resolve(role).read, role)
+                self.assertIn("{{team}}", composer.resolve(role).read, role)
         self.assertEqual(named, ["researcher"])
 
     def test_every_researcher_run_names_the_gate_default_none(self):

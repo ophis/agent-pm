@@ -519,7 +519,7 @@ class Access(Fake):
         super().setUp()
         self.work = os.path.join(self.tmp, "work")
         self.repo = os.path.join(self.tmp, "repo")
-        self.tasks, self.methods = (os.path.join(self.root, d) for d in ("tasks", "methods"))
+        self.tasks = os.path.join(self.root, "tasks")
 
     def intent(self, cwd=None, project=False, repo_dir=None, found=None, **kw):
         run = RunConfig(
@@ -544,7 +544,7 @@ class Access(Fake):
     def test_dirs_reads_writes_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
         env = {"PYTHONPATH": IMPORT_ROOT}
-        out = os.path.join(self.methods, "out")
+        out = os.path.join(self.root, "out")
         for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
             (
                 "gate",
@@ -571,6 +571,17 @@ class Access(Fake):
                 env,
             ),
             (
+                "team fills commands",
+                {"commands": ["python3 -P {{team}}/tools/x.py --dir {{workdir}}/src *"]},
+                None,
+                [],
+                [self.tasks],
+                [],
+                [f"python3 -P {self.root}/tools/x.py --dir {self.work}/src *"],
+                "",
+                env,
+            ),
+            (
                 "no repo dir drops the repo entry",
                 {"read": ["repo"], "write": ["repo", "~/w", "~/w"]},
                 None,
@@ -583,22 +594,22 @@ class Access(Fake):
             ),
             (
                 "read dirs after the tasks dir, deduped",
-                {"read": ["{{methods}}", "repo", self.tasks, "{{methods}}"]},
+                {"read": ["{{team}}", "repo", self.tasks, "{{team}}"]},
                 self.repo,
                 [],
-                [self.tasks, self.methods, self.repo],
+                [self.tasks, self.root, self.repo],
                 [],
                 [],
                 "",
                 {},
             ),
             (
-                "methods fills read and write, deduped, write wins",
-                {"read": ["{{methods}}", self.tasks], "write": ["{{methods}}/out", "{{methods}}"]},
+                "team fills read and write, deduped, write wins",
+                {"read": ["{{team}}", self.tasks], "write": ["{{team}}/out", "{{team}}"]},
                 None,
-                [out, self.methods],
+                [out, self.root],
                 [self.tasks],
-                [out, self.methods],
+                [out, self.root],
                 [],
                 "",
                 {},

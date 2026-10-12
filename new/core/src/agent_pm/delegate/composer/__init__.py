@@ -9,8 +9,8 @@ Formats of roles/, tasks/ and templates/ files, the team root's and a team dir's
   dir (a team dir's role: that team dir's tasks/, else the team root's).
 - tasks/<task>.md: a `# ` heading, exactly one `[agent-pm-progress:start] <what to report>` line (a progress mark,
   PROGRESS) and a `## Resume` section outside code fences.
-- Text only: no front matter (---), no {{…}} placeholder; each `<methods>/<m>.md` named is a file of the team root's
-  methods/.
+- Text only: no front matter (---), no {{…}} placeholder; each `<team>/methods/<m>.md` named is a file of the team
+  root's methods/.
 A role's index is checked whenever it is read, a team dir file whenever it is looked up; a defect raises ConfigError
 naming the file.
 """

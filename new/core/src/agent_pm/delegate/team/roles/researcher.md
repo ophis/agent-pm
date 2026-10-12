@@ -26,7 +26,7 @@ Read the input; decide its type ([Researcher › Type and target](#type-and-targ
 
 ## Methods
 
-- Read-only: the **deep-research method** `<methods>/deep-research.md`, the **ultracode method** `<methods>/ultracode.md`.
+- Read-only: the **deep-research method** `<team>/methods/deep-research.md`, the **ultracode method** `<team>/methods/ultracode.md`.
 - **Brake**, before a second round: the gate is `<gate>`; unless `none`, run it. Nonzero exit → skip that round, its output under Gaps.
 
 ## Failure

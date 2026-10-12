@@ -507,16 +507,16 @@ class TeamDirs(Fake):
                 f"{task}: has no ## Resume section",
             ),
             (
-                VERSE + "\nUse `<methods>/nope.md`.\n",
+                VERSE + "\nUse `<team>/methods/nope.md`.\n",
                 POET,
-                f"{task}: names <methods>/nope.md, which core has no file for",
+                f"{task}: names <team>/methods/nope.md, which core has no file for",
             ),
         ):
             with self.subTest(msg=msg):
                 found = self.with_dir({"roles/poet.md": poet, "tasks/verse.md": verse})
                 self.assertEqual(self.refused(self.tasks_of, "poet", found), msg)
         found = self.with_dir(
-            {"roles/poet.md": POET, "tasks/verse.md": VERSE + "\nUse `<methods>/deep.md`.\n"}
+            {"roles/poet.md": POET, "tasks/verse.md": VERSE + "\nUse `<team>/methods/deep.md`.\n"}
         )
         self.assertEqual(self.tasks_of("poet", found), {"verse": "a verse; always; light."})
 

@@ -1,4 +1,4 @@
-"""delegate/runner.py over the fake runtime (new/tests/fake_adapter/, registered in-process): callbacks and replies
+"""delegate/engine/runner.py over the fake runtime (new/tests/fake_adapter/, registered in-process): callbacks and replies
 (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21), idle (FR-22), a usage limit (FR-58), and main's
 drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines. The tui
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
@@ -32,10 +32,10 @@ from agent_pm.delegate import (
     Result,
     composer,
     run,
-    runner,
 )
+from agent_pm.delegate.engine import runner
+from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.event.outcome import save
-from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
@@ -836,7 +836,7 @@ LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 
 class TuiPolicy(Base):
-    """The tui policy over a FakeHandle (session.api.start patched as delegate.runner sees it)."""
+    """The tui policy over a FakeHandle (session.api.start patched as delegate.engine.runner sees it)."""
 
     def setUp(self):
         super().setUp()

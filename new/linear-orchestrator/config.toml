@@ -36,8 +36,8 @@
 # local: build = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
-# A role to orchestrate. Its tasks are its charter's index (core/team/roles/<role>.md › Tasks). A role added in
-# linear-new.local.toml is orchestrated too.
+# A role to orchestrate. Its tasks are its charter's index (core/src/agent_pm/delegate/team/roles/<role>.md › Tasks).
+# A role added in linear-new.local.toml is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
 #   key                   local, required: Keychain service of that account's API key
 #   next                  the role promote hands this role's Handoff issues to; unset → the last stage

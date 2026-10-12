@@ -74,7 +74,9 @@ class Team:
             raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
         for m in METHOD.findall(text):
             if not os.path.isfile(os.path.join(self.root, "methods", f"{m}.md")):
-                raise ConfigError(f"{path}: names <methods>/{m}.md, which core has no file for")
+                raise ConfigError(
+                    f"{path}: names <team>/methods/{m}.md, which core has no file for"
+                )
         if kind == "roles":
             title_of(text, path)
         elif kind == "tasks":

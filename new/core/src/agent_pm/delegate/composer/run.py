@@ -200,10 +200,10 @@ def access(
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
-    methods, paths = os.path.join(team.root, "methods"), {"read": [], "write": []}
+    paths = {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
-            p = bind(fill(entry, {"methods": methods}, key), repo_dir)
+            p = bind(fill(entry, {"team": team.root}, key), repo_dir)
             if p and p not in paths[key]:
                 paths[key].append(p)
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
@@ -213,7 +213,9 @@ def access(
         if (real := os.path.realpath(p)) not in seen:
             seen.add(real)
             reads.append(p)
-    commands = tuple(fill(c, {"workdir": workdir}, "commands") for c in run.commands)
+    commands = tuple(
+        fill(c, {"workdir": workdir, "team": team.root}, "commands") for c in run.commands
+    )
     return Intent(
         dirs=tuple(dirs),
         reads=tuple(reads),

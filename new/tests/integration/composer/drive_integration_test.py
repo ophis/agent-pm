@@ -9,7 +9,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from new.tests.case import NEW
 from new.tests.integration.composer import child
 
-TASKS = os.path.join(NEW, "core", "team", "tasks")
+TASKS = os.path.join(NEW, "core", "src", "agent_pm", "delegate", "team", "tasks")
 
 
 class NewRun(child.Case):

@@ -41,7 +41,7 @@ IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
-TMP = "tmp"  # core/team/principles.md: an agent run's temp files
+TMP = "tmp"  # delegate/team/principles.md: an agent run's temp files
 
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = (

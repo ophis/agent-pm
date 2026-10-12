@@ -293,14 +293,14 @@ class LayerImports(Sample):
                 f"{PKG}/delegate/x.py": "from api import start\nimport composer\n"
                 "from utils.paths import under\n",
                 f"{PKG}/x.py": "import repo\ndef f():\n    __import__('adapters.base')\n",
-                f"{PKG}/agent_tools/x.py": "import agent_tools\n",
+                f"{PKG}/delegate/team/tools/x.py": "import tools\n",
                 f"{PKG}/session/modes/x.py": "import repository\nimport apis\nimport types\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/agent_tools/x.py: bare import agent_tools",
+                f"{PKG}/delegate/team/tools/x.py: bare import tools",
                 f"{PKG}/delegate/x.py: bare import api.start",
                 f"{PKG}/delegate/x.py: bare import composer",
                 f"{PKG}/delegate/x.py: bare import utils.paths",
@@ -346,8 +346,8 @@ class LayerImports(Sample):
                 f"{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n",
                 f"{PKG}/delegate/event/outcome.py": "from agent_pm.delegate.composer import SCHEMA\n",
                 f"{PKG}/delegate/composer/teams.py": "from agent_pm.delegate.event import PROGRESS\n"
-                "from agent_pm.delegate import plan\n",
-                f"{PKG}/delegate/plan.py": "from agent_pm.delegate.event.outcome import Outcome\n"
+                "from agent_pm.delegate.engine import plan\n",
+                f"{PKG}/delegate/engine/plan.py": "from agent_pm.delegate.event.outcome import Outcome\n"
                 "from agent_pm.manager import roster\n",
                 f"{PKG}/session/adapters/print_prompt/in_process.py": "from agent_pm.delegate.event.reply import OUTCOME\n",
                 f"{PKG}/session/adapters/x.py": "from agent_pm.delegate.event import PROGRESS\n",
@@ -356,9 +356,9 @@ class LayerImports(Sample):
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/delegate/composer/teams.py: delegate.composer imports agent_pm.delegate.plan",
+                f"{PKG}/delegate/composer/teams.py: delegate.composer imports agent_pm.delegate.engine.plan",
+                f"{PKG}/delegate/engine/plan.py: delegate imports agent_pm.manager.roster",
                 f"{PKG}/delegate/event/reply.py: outside the layers imports agent_pm.delegate.composer.RunConfig",
-                f"{PKG}/delegate/plan.py: delegate imports agent_pm.manager.roster",
                 f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.delegate.event.PROGRESS",
             ],
         )
@@ -386,13 +386,13 @@ class PureUtils(Sample):
                 f"{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n"
                 "from agent_pm.utils.markdown import fenced\n",
                 f"{PKG}/delegate/event/outcome.py": "from agent_pm.delegate.composer import SCHEMA\n"
-                "from agent_pm.delegate import plan\n",
+                "from agent_pm.delegate.engine import plan\n",
             }
         )
         self.assertEqual(
             guards.pure_utils(root),
             [
-                f"{PKG}/delegate/event/outcome.py: delegate.event.outcome imports agent_pm.delegate.plan",
+                f"{PKG}/delegate/event/outcome.py: delegate.event.outcome imports agent_pm.delegate.engine.plan",
                 f"{PKG}/delegate/event/reply.py: delegate.event imports agent_pm.delegate.composer.RunConfig",
             ],
         )
@@ -437,15 +437,15 @@ class LayerCommands(Sample):
                 'os.spawnl(os.P_WAIT, "/bin/agent-pm-y", f"agent-pm-{n}")\n',
                 f"{self.SESSION}/c.py": 'import subprocess as sp\nsp.run(["agent-pm-session"])\n'
                 'sp.call(["agent-pm-role"])\n',
-                f"core/{PKG}/agent_tools/d.py": 'import subprocess\nsubprocess.run(["agent-pm-x"])\n',
+                f"{self.DELEGATE}/team/tools/d.py": 'import subprocess\nsubprocess.run(["agent-pm-x"])\n',
             }
         )
         self.assertEqual(
             guards.layer_commands(root),
             [
-                f'core/{PKG}/agent_tools/d.py:2: runs "agent-pm-x"',
                 f'{self.DELEGATE}/a.py:2: runs "agent-pm-session"',
                 f'{self.DELEGATE}/a.py:3: runs "agent-pm-role"',
+                f'{self.DELEGATE}/team/tools/d.py:2: runs "agent-pm-x"',
                 f'{self.SESSION}/c.py:3: runs "agent-pm-role"',
                 f'{self.LINEAR}/b.py:3: runs "agent-pm-issue"',
                 f'{self.LINEAR}/b.py:4: runs "agent-pm-x"',
@@ -811,16 +811,20 @@ class ImportHygiene(Sample):
 
 
 class PythonCommands(Sample):
-    def test_a_python_command_other_than_p_m_agent_pm(self):
+    def test_a_python_command_other_than_p_m_agent_pm_or_a_team_tool(self):
+        team = f"core/{PKG}/delegate/team"
         root = self.tree(
             {
                 "core/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n'
-                "# python3 -P -m agent_pm.agent_tools.repo\n",
+                "# python3 -P {{team}}/tools/repo.py\n"
+                'gate = "python3 -P {{team}}/x.py"\n',
                 "linear-orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "core/skills/a/SKILL.md": "Run `python3.11 x.py`.\n"
                 "- Bash(python -P -m agent_pm.delegate.cli --list)\n",
-                "core/team/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
-                "3. `env PYTHONPATH=x python3 -P -m agent_pm_linear.run`\n",
+                f"{team}/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
+                "3. `env PYTHONPATH=x python3 -P -m agent_pm_linear.run`\n"
+                "4. `python3 -P <team>/tools/repo.py status --dir x`\n"
+                "5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n",
             }
         )
         self.assertEqual(
@@ -828,9 +832,12 @@ class PythonCommands(Sample):
             [
                 'core/config.toml:1: python command "python3 -m agent_pm.x"',
                 'core/config.toml:1: python command "python3 x.py"',
+                'core/config.toml:3: python command "python3 -P {{team}}/x.py"',
                 'core/skills/a/SKILL.md:1: python command "python3.11 x.py"',
-                'core/team/roles/r.md:1: python command "python3 -P agent_pm.x"',
-                'core/team/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
+                f'{team}/roles/r.md:1: python command "python3 -P agent_pm.x"',
+                f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
+                f'{team}/roles/r.md:5: python command "python3 -P <team>/tools/../repo.py"',
+                f'{team}/roles/r.md:6: python command "python3 -P <team>/tools/repo.pyc"',
                 'linear-orchestrator/config.toml:1: python command "python3 -P -m agent_pmx.y"',
             ],
         )
@@ -838,7 +845,7 @@ class PythonCommands(Sample):
     def test_other_words_and_files_are_clean(self):
         root = self.tree(
             {
-                "core/team/a.md": "pythonic, my_python3 x.py, Python 3.11\n",
+                f"core/{PKG}/delegate/team/a.md": "pythonic, my_python3 x.py, Python 3.11\n",
                 "core/skills/a/notes.txt": "python3 x.py\n",
                 "core/README.md": "python3 x.py\n",
                 "linear-orchestrator/other.toml": 'x = "python3 x.py"\n',
@@ -853,9 +860,9 @@ class OrchestratorImports(Sample):
         root = self.tree(
             {
                 f"{OPKG}/a.py": "import agent_pm.session.adapters\nfrom agent_pm.session.modes import x\n"
-                "from agent_pm.session.hosts.tmux import tmux_host\nimport agent_pm.agent_tools.repo\n",
-                f"{OPKG}/b.py": "from agent_pm.delegate import runner\n"
-                "from agent_pm.delegate.plan import Plan\nimport core\nimport agent_pm\n",
+                "from agent_pm.session.hosts.tmux import tmux_host\nimport agent_pm.delegate.team.tools.repo\n",
+                f"{OPKG}/b.py": "from agent_pm.delegate.engine import runner\n"
+                "from agent_pm.delegate.engine.plan import Plan\nimport core\nimport agent_pm\n",
                 f"{OPKG}/run.py": "from agent_pm.delegate.composer import resolve\nfrom agent_pm.delegate import composer\n",
             }
         )
@@ -865,9 +872,9 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/a.py:1: imports agent_pm.session.adapters",
                 f"{OPKG}/a.py:2: imports agent_pm.session.modes.x",
                 f"{OPKG}/a.py:3: imports agent_pm.session.hosts.tmux.tmux_host",
-                f"{OPKG}/a.py:4: imports agent_pm.agent_tools.repo",
-                f"{OPKG}/b.py:1: imports agent_pm.delegate.runner",
-                f"{OPKG}/b.py:2: imports agent_pm.delegate.plan.Plan",
+                f"{OPKG}/a.py:4: imports agent_pm.delegate.team.tools.repo",
+                f"{OPKG}/b.py:1: imports agent_pm.delegate.engine.runner",
+                f"{OPKG}/b.py:2: imports agent_pm.delegate.engine.plan.Plan",
                 f"{OPKG}/b.py:3: imports core",
                 f"{OPKG}/b.py:4: imports agent_pm",
                 f"{OPKG}/run.py:1: imports agent_pm.delegate.composer.resolve",
@@ -898,9 +905,9 @@ class OrchestratorImports(Sample):
     def test_submodules_by_attribute_and_other_forms(self):
         root = self.tree(
             {
-                f"{OPKG}/a.py": "from agent_pm import delegate as d\nd.runner.run()\n"
+                f"{OPKG}/a.py": "from agent_pm import delegate as d\nd.engine.runner.run()\n"
                 "import agent_pm.session.api\nimport third_party\n__import__('agent_pm.session.adapters.base')\n"
-                "import agent_pm.delegate\nagent_pm.delegate.detach.x\n"
+                "import agent_pm.delegate\nagent_pm.delegate.engine.detach.x\n"
                 "from agent_pm.session.api import start\n",
                 f"{OPKG}/config.py": "from agent_pm.delegate import composer\ncomposer.run.resolve()\n",
             }
@@ -908,11 +915,11 @@ class OrchestratorImports(Sample):
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                f"{OPKG}/a.py:2: uses agent_pm.delegate.runner",
+                f"{OPKG}/a.py:2: uses agent_pm.delegate.engine",
                 f"{OPKG}/a.py:3: imports agent_pm.session.api",
                 f"{OPKG}/a.py:4: imports third_party",
                 f"{OPKG}/a.py:5: imports agent_pm.session.adapters.base",
-                f"{OPKG}/a.py:7: uses agent_pm.delegate.detach",
+                f"{OPKG}/a.py:7: uses agent_pm.delegate.engine",
                 f"{OPKG}/a.py:8: imports agent_pm.session.api.start",
                 f"{OPKG}/config.py:2: uses agent_pm.delegate.composer.run",
             ],
@@ -938,14 +945,14 @@ class OrchestratorImports(Sample):
         root = self.tree(
             {
                 f"{OPKG}/a.py": "from agent_pm.delegate import run, plan\nfrom agent_pm.delegate import event\n"
-                "from agent_pm.delegate.event.outcome import Outcome\nfrom agent_pm.delegate import runner\n"
+                "from agent_pm.delegate.event.outcome import Outcome\nfrom agent_pm.delegate import engine\n"
                 "from agent_pm.delegate import composer\n",
             }
         )
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                f"{OPKG}/a.py:4: imports agent_pm.delegate.runner",
+                f"{OPKG}/a.py:4: imports agent_pm.delegate.engine",
                 f"{OPKG}/a.py:5: imports agent_pm.delegate.composer",
             ],
         )

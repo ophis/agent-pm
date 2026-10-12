@@ -14,7 +14,7 @@ from agent_pm.delegate.composer import OUTCOME, RunConfig, Team
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import marks, outcome_block
-from agent_pm.delegate.plan import ConfigError, Plan, plan
+from agent_pm.delegate.engine.plan import ConfigError, Plan, plan
 from agent_pm.session import api
 from agent_pm.utils.files import save
 from agent_pm.utils.text import printable

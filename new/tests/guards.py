@@ -74,7 +74,7 @@ ALLOWED = {
 SHARED = ("utils", "config", "delegate.event")
 # until TASK-366 (356-5) deletes print_prompt
 UPWARD = {("session.adapters.print_prompt.in_process", "delegate.event")}
-TOOLS = "agent_tools"
+TOOLS = "delegate.team.tools"
 UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
@@ -87,7 +87,7 @@ BARE = (
     *GROUPS,
     *(n for n in (u.rpartition(".")[2] for u in LAYERS) if n not in sys.stdlib_module_names),
     "utils",
-    "agent_tools",
+    TOOLS.rpartition(".")[2],
     "repo",
 )
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
@@ -118,7 +118,6 @@ STATUS_LOG_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
 COMMAND_SRC = (
     SESSION_SRC,
     f"{CORE_TOP}delegate/",
-    f"{CORE_TOP}{TOOLS}/",
     f"{ROOTS[1][0]}/{ORCH_SRC}",
 )
 COMMAND = "agent-pm-"
@@ -136,9 +135,12 @@ LOAD_HELPERS = ("runnable", "run_config", "docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}issues.py"
 COMMAND_FILES = ("core/config.toml", "linear-orchestrator/config.toml")
-COMMAND_DOCS = ("core/skills/", "core/team/")
+COMMAND_DOCS = ("core/skills/", f"{CORE_TOP}delegate/team/")
 PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
-PYTHON_OK = re.compile(rf"\S+[ \t]+-P[ \t]+-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w")
+PYTHON_OK = re.compile(
+    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w"
+    r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
+)
 
 
 def layer_imports(core: str) -> list[str]:

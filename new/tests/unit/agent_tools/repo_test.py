@@ -1,6 +1,8 @@
-"""new/core/src/agent_pm/agent_tools/repo.py, ported from the old core's tests (its tmux display helpers dropped; its
-config, path, shell, git and repo spec helpers' cases: unit/utils/)."""
+"""new/core/src/agent_pm/delegate/team/tools/repo.py, loaded by file path as agent runs run it, ported from the old
+core's tests (its tmux display helpers dropped; its config, path, shell, git and repo spec helpers' cases:
+unit/utils/)."""
 
+import importlib.util
 import io
 import json
 import os
@@ -11,7 +13,7 @@ import threading
 import unittest
 import unittest.mock
 
-from agent_pm.agent_tools import repo
+from agent_pm.delegate.composer import TEAM
 from agent_pm.utils import repos
 from agent_pm.utils.repos import git as git_utils
 from agent_pm.utils.repos import shell
@@ -21,6 +23,9 @@ from new.tests.case import Case
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
+SPEC = importlib.util.spec_from_file_location("repo", os.path.join(TEAM, "tools", "repo.py"))
+repo = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(repo)
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 
 

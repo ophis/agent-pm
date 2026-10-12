@@ -22,27 +22,29 @@ class UtilsImportsTest(Case):
     def test_real_utils_have_only_standard_library_imports(self):
         self.assertEqual(guards.pure_utils(CORE), [])
 
-    def test_no_module_imports_agent_tools(self):
-        tools = "agent_pm.agent_tools"
+    def test_no_module_imports_the_team_tools(self):
+        tools = "agent_pm.delegate.team.tools"
         files = {
             f"{PKG}/{layer.replace('.', '/')}/x.py": f"import {tools}.repo\n"
             for layer in guards.LAYERS
         }
         files[f"{PKG}/x.py"] = f"from {tools}.repo import read_config\n"
         files[f"{PKG}/delegate/composer/w.py"] = (
-            "from ...agent_tools import repo\nimport repository\n"
+            "from ..team.tools.repo import main\nimport repository\n"
         )
         files[f"{PKG}/utils/z.py"] = f"def f():\n    __import__('{tools}.repo')\n"
-        files[f"{PKG}/utils/y.py"] = "import agent_tools.repo\n"
-        files[f"{PKG}/agent_tools/x.py"] = "from agent_pm import agent_tools\nfrom . import y\n"
+        files[f"{PKG}/utils/y.py"] = "import tools.repo\n"
+        files[f"{PKG}/delegate/team/tools/x.py"] = (
+            "from agent_pm.delegate.team import tools\nfrom .y import z\n"
+        )
         root = self.tree(files)
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/agent_tools/x.py: outside the layers imports {tools}",
-                f"{PKG}/agent_tools/x.py: outside the layers imports {tools}.y",
                 f"{PKG}/delegate/composer/w.py: delegate.composer imports {tools}.repo",
                 f"{PKG}/delegate/composer/x.py: delegate.composer imports {tools}.repo",
+                f"{PKG}/delegate/team/tools/x.py: outside the layers imports {tools}",
+                f"{PKG}/delegate/team/tools/x.py: outside the layers imports {tools}.y",
                 f"{PKG}/delegate/x.py: delegate imports {tools}.repo",
                 f"{PKG}/session/adapters/x.py: session.adapters imports {tools}.repo",
                 f"{PKG}/session/api/x.py: session.api imports {tools}.repo",
@@ -51,31 +53,32 @@ class UtilsImportsTest(Case):
                 f"{PKG}/session/records/x.py: session.records imports {tools}.repo",
                 f"{PKG}/session/selection/x.py: session.selection imports {tools}.repo",
                 f"{PKG}/session/types/x.py: session.types imports {tools}.repo",
-                f"{PKG}/utils/y.py: bare import agent_tools.repo",
+                f"{PKG}/utils/y.py: bare import tools.repo",
                 f"{PKG}/utils/z.py: outside the layers imports {tools}.repo",
                 f"{PKG}/x.py: outside the layers imports {tools}.repo",
             ],
         )
 
-    def test_agent_tools_import_only_the_standard_library_and_utils(self):
+    def test_team_tools_import_only_the_standard_library_utils_and_config(self):
+        tools = f"{PKG}/delegate/team/tools"
         root = self.tree(
             {
-                f"{PKG}/agent_tools/x.py": "import json\nfrom agent_pm.utils.paths import under\n"
-                "from ..utils import args\n",
-                f"{PKG}/agent_tools/y.py": "import agent_pm.session.api\nimport third_party\n"
+                f"{tools}/x.py": "import json\nfrom agent_pm.utils.paths import under\n"
+                "from ....utils import args\nfrom agent_pm.config import CONFIG\n",
+                f"{tools}/y.py": "import agent_pm.session.api\nimport third_party\n"
                 "from agent_pm.delegate.composer import run\n",
             }
         )
         self.assertEqual(
             guards.pure_utils(root),
             [
-                f"{PKG}/agent_tools/y.py: agent_tools imports agent_pm.delegate.composer.run",
-                f"{PKG}/agent_tools/y.py: agent_tools imports agent_pm.session.api",
-                f"{PKG}/agent_tools/y.py: agent_tools imports third_party",
+                f"{tools}/y.py: delegate.team.tools imports agent_pm.delegate.composer.run",
+                f"{tools}/y.py: delegate.team.tools imports agent_pm.session.api",
+                f"{tools}/y.py: delegate.team.tools imports third_party",
             ],
         )
 
-    def test_production_tree_does_not_import_agent_tools_as_a_library(self):
+    def test_production_tree_does_not_import_the_team_tools_as_a_library(self):
         self.assertEqual(guards.layer_imports(CORE), [])
 
     def test_every_layer_may_import_utils(self):
@@ -108,7 +111,7 @@ class UtilsImportsTest(Case):
                 f"{PKG}/utils/x.py": "import agent_pm.session.api\nimport third_party\n"
                 "def f():\n    import importlib\n    importlib.import_module('agent_pm.session.adapters.base')\n"
                 "    __import__('agent_pm.delegate.composer')\n",
-                f"{PKG}/utils/y.py": "from ..session import modes\nimport agent_pm.agent_tools.repo\nimport utils.paths\n",
+                f"{PKG}/utils/y.py": "from ..session import modes\nimport agent_pm.delegate.team.tools.repo\nimport utils.paths\n",
                 f"{PKG}/session/modes/x.py": "import third_party\n",
             }
         )
@@ -119,7 +122,7 @@ class UtilsImportsTest(Case):
                 f"{PKG}/utils/x.py: utils imports agent_pm.session.adapters.base",
                 f"{PKG}/utils/x.py: utils imports agent_pm.session.api",
                 f"{PKG}/utils/x.py: utils imports third_party",
-                f"{PKG}/utils/y.py: utils imports agent_pm.agent_tools.repo",
+                f"{PKG}/utils/y.py: utils imports agent_pm.delegate.team.tools.repo",
                 f"{PKG}/utils/y.py: utils imports agent_pm.session.modes",
                 f"{PKG}/utils/y.py: utils imports utils.paths",
             ],

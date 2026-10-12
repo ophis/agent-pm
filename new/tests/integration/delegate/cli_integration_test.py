@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.runner import FIX
+from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 

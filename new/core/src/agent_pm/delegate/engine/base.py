@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.event.outcome import Outcome
-from agent_pm.delegate.runner import Begun, Finished, Progress, Result
+from agent_pm.delegate.engine.runner import Begun, Finished, Progress, Result
 from agent_pm.session import Host, Session, Usage, api
 from agent_pm.utils.record import Display, Record, Status
 

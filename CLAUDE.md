@@ -27,12 +27,12 @@ The core's and the Linear orchestrator's modules, entries and import rules: `new
 ## Roles, tasks, rules
 
 - Config and test isolation: `new/README.md` › Layout.
-- Core owns roles, tasks, methods, principles and templates (`new/core/team/`, `new/core/config.toml`); `new/linear-orchestrator/config.toml` adds what core must not know, plus the overlay.
-- Where a rule goes: every role → `new/core/team/principles.md`; every task of one role → `new/core/team/roles/<role>.md`; a document format → `new/core/team/templates/`; a method → `new/core/team/methods/`; one task (claiming, failure, hand-off, resume) → `new/core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `new/core/team/guide.md`.
+- Core owns roles, tasks, methods, principles and templates (the team root `new/core/src/agent_pm/delegate/team/`, `new/core/config.toml`); `new/linear-orchestrator/config.toml` adds what core must not know, plus the overlay.
+- Where a rule goes, paths in the team root: every role → `principles.md`; every task of one role → `roles/<role>.md`; a document format → `templates/`; a method → `methods/`; one task (claiming, failure, hand-off, resume) → `tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: the team root's `guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
 - No em dashes (U+2014): use a colon, semicolon, comma or parentheses.
 - Every task has a `## Resume` section; shared text: `agent_pm.delegate.composer.prompt.RESUME`, then the charter's Resume item, if any (engineer: **Resume** in `## Repo`).
-- Add a task to a role: `new/core/team/tasks/<task>.md`, its line `` - `<task>` (`<tasks>/<task>.md`): … `` in the role's task index (format: `index` in `new/core/src/agent_pm/delegate/composer/teams.py`), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
+- Add a task to a role: the team root's `tasks/<task>.md`, its line `` - `<task>` (`<tasks>/<task>.md`): … `` in the role's task index (format: `index` in `new/core/src/agent_pm/delegate/composer/teams.py`), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
 
 ## Gotchas
 

@@ -11,9 +11,10 @@ from new.tests.case import CORE, Case
 
 class Paths(Case):
     def test_team_root_schema_and_config_and_no_src(self):
-        self.assertEqual(base.TEAM, os.path.join(CORE, "team"))
+        delegate = os.path.join(CORE, "src", "agent_pm", "delegate")
+        self.assertEqual(base.TEAM, os.path.join(delegate, "team"))
         self.assertTrue(os.path.isfile(os.path.join(base.TEAM, "guide.md")))
-        self.assertEqual(base.SCHEMA, os.path.join(base.TEAM, "output", "outcome.schema.json"))
+        self.assertEqual(base.SCHEMA, os.path.join(delegate, "event", "outcome.schema.json"))
         self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertFalse(hasattr(base, "SRC"))
         self.assertEqual(base.CONFIG, agent_pm.config.CONFIG)

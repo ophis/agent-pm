@@ -6,19 +6,19 @@ from collections.abc import Mapping
 
 from agent_pm.config import CONFIG as CONFIG
 from agent_pm.utils import markdown
-from agent_pm.utils.paths import CORE
 
-TEAM = os.path.join(CORE, "team")
+DELEGATE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEAM = os.path.join(DELEGATE, "team")
 OUTPUT = "output"
-SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")
+SCHEMA = os.path.join(DELEGATE, "event", "outcome.schema.json")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")
-METHOD = re.compile(r"<methods>/([\w-]+)\.md")
+METHOD = re.compile(r"<team>/methods/([\w-]+)\.md")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")
 BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
 ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
-FILE_REF = re.compile(r"`<(tasks|methods)>/(<task>|[\w-]+)\.md`")
+FILE_REF = re.compile(r"`(?:<(tasks)>|<team>/(methods))/(<task>|[\w-]+)\.md`")
 PAREN = re.compile(r"\(([^()]*)\)")
 SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
 

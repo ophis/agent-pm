@@ -1,4 +1,4 @@
-"""delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
+"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
 dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included, read
 dirs (the tasks dir among them) never added nor counted."""
 
@@ -18,7 +18,7 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.plan import place
+from agent_pm.delegate.engine.plan import place
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
@@ -29,7 +29,6 @@ from new.tests.unit.composer.team_test import POET, VERSE
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")
-METHODS = os.path.join(composer.TEAM, "methods")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 TEAM_FILES = {"roles/poet.md": POET, "tasks/verse.md": VERSE}
 # A custom team dir must lie outside every temp dir (check_team_dirs): under the repo's gitignored work/.
@@ -268,7 +267,7 @@ class Refusals(Base):
 
 
 class Planned(Base):
-    KEYS = {"read": ["{{methods}}"], "commands": ["x --dir {{workdir}}/src *"]}
+    KEYS = {"read": ["{{team}}"], "commands": ["x --dir {{workdir}}/src *"]}
 
     def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
         command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
@@ -287,7 +286,7 @@ class Planned(Base):
                         commands=commands,
                         cwd=self.work,
                         project=False,
-                        reads=(TASKS, METHODS),
+                        reads=(TASKS, composer.TEAM),
                         env=want,
                     ),
                 )
@@ -297,7 +296,7 @@ class Planned(Base):
         access = got.spec.access
         self.assertEqual(
             (access.cwd, access.project, access.dirs, access.reads),
-            (os.getcwd(), False, (self.work,), (TASKS, METHODS)),
+            (os.getcwd(), False, (self.work,), (TASKS, composer.TEAM)),
         )
         self.assertEqual(err, notice(os.getcwd()))
 

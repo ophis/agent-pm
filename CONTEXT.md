@@ -13,7 +13,7 @@ One job a role can do (deep research, light research, product design, build, lig
 _Avoid_: skill, job
 
 **Principles**:
-Rules every role follows; precedence: `new/core/team/guide.md`.
+Rules every role follows; precedence: `new/core/src/agent_pm/delegate/team/guide.md`.
 
 **Charter**:
 A role's text: its task index and the rules shared by all of that role's tasks.

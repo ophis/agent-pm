@@ -2,7 +2,7 @@ import dataclasses
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate.plan import ConfigError, policy
+from agent_pm.delegate.engine.plan import ConfigError, policy
 from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
@@ -15,7 +15,7 @@ from new.tests.unit.adapters.codex.support import NATIVE, Base
 class PolicyTest(Base):
     def test_selected_policy_is_declarative(self):
         config = {"policy": {"codex": {"flags": ["-s", "workspace-write"], "env": {"K": "v"}}}}
-        with mock.patch("agent_pm.delegate.plan.read_config", return_value=config):
+        with mock.patch("agent_pm.delegate.engine.plan.read_config", return_value=config):
             self.assertEqual(policy("codex"), (("-s", "workspace-write"), {"K": "v"}))
             self.assertEqual(policy("fake"), ((), {}))
 
@@ -24,7 +24,7 @@ class PolicyTest(Base):
             with (
                 self.subTest(value=value),
                 mock.patch(
-                    "agent_pm.delegate.plan.read_config",
+                    "agent_pm.delegate.engine.plan.read_config",
                     return_value={"policy": {"codex": value}},
                 ),
                 self.assertRaises(ConfigError),

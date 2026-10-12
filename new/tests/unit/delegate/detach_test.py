@@ -1,4 +1,4 @@
-"""delegate/detach.py: names; detach's call of api.detach (argv, env, cwd, opener), its refusals with nothing started
+"""delegate/engine/detach.py: names; detach's call of api.detach (argv, env, cwd, opener), its refusals with nothing started
 and the Driver's errors; outcome's line and its write errors."""
 
 import errno
@@ -10,7 +10,8 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, detach
+from agent_pm.delegate import ConfigError
+from agent_pm.delegate.engine import detach
 from agent_pm.session import api
 from agent_pm.utils.paths import IMPORT_ROOT
 

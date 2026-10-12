@@ -269,18 +269,18 @@ class Prompt(Fake):
         self.write(
             {
                 "principles.md": "# Principles\n\nRun `<Workdir>/x.py`; tasks in `<tasks>`.\n",
-                "roles/writer.md": WRITER + "\nKnow `<methods>` and `<tasks>/short-note.md`.\n",
+                "roles/writer.md": WRITER + "\nKnow `<team>` and `<tasks>/short-note.md`.\n",
             }
         )
         prompt, _ = self.compose()
         self.assertIn("Run `<Workdir>/x.py`; tasks in `<tasks>`.", prompt)
-        self.assertIn("Know `<methods>` and `<tasks>/short-note.md`.", prompt)
+        self.assertIn("Know `<team>` and `<tasks>/short-note.md`.", prompt)
         self.assertEqual(
             parameters(prompt),
             {
                 "<Workdir>": "`/w`",
                 "<tasks>": f"`{self.root}/tasks`",
-                "<methods>": f"`{self.root}/methods`",
+                "<team>": f"`{self.root}`",
             },
         )
 
@@ -317,7 +317,7 @@ class Prompt(Fake):
             "tool",
             "scripts",
             "tasks",
-            "methods",
+            "team",
             "gate",
             "repo",
             "branch",
@@ -439,7 +439,7 @@ class Parameters(Fake):
             [
                 "<Workdir>",
                 "<tasks>",
-                "<methods>",
+                "<team>",
                 "<gate>",
                 "<out-repo>",
                 "<out-branch>",
@@ -470,11 +470,11 @@ class Parameters(Fake):
             "(output.repo is not set)",
         )
 
-    def test_methods_used_by_name_in_the_role(self):
-        self.write({"roles/writer.md": WRITER + "\nKnow `<methods>`.\n"})
+    def test_team_used_by_name_in_the_role(self):
+        self.write({"roles/writer.md": WRITER + "\nKnow `<team>`.\n"})
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>"])
-        self.assertEqual(names["<methods>"], f"`{self.root}/methods`")
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<team>"])
+        self.assertEqual(names["<team>"], f"`{self.root}`")
 
     def test_gate_used_by_name_in_an_indexed_task_file_only(self):
         self.write({"tasks/short-note.md": "# Short Note\n\nRun `<gate>` first.\n"})
@@ -487,14 +487,14 @@ class Parameters(Fake):
     def test_gate_used_in_a_method_file_a_text_names(self):
         self.write(
             {
-                "tasks/long-note.md": "# Long Note\n\nFollow `<methods>/m.md`, `<methods>/gone.md`.\n",
+                "tasks/long-note.md": "# Long Note\n\nFollow `<team>/methods/m.md`, `<team>/methods/gone.md`.\n",
                 "methods/m.md": "# M\n\nRun `<gate>`.\n",
                 "methods/other.md": "# O\n\n`<out-dir>`\n",
             }
         )
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>", "<gate>"])
-        self.write({"tasks/long-note.md": "# Long Note\n\nFollow `{{methods}}/m.md`.\n"})
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<team>", "<gate>"])
+        self.write({"tasks/long-note.md": "# Long Note\n\nFollow `{{team}}/methods/m.md`.\n"})
         self.assertNotIn("<gate>", parameters(self.compose()[0]))
 
     def test_github_output_its_used_keys(self):
@@ -736,11 +736,11 @@ class References(Case):
     def test_a_method_file_path_must_exist_in_that_method_file(self):
         methods = {"methods/a.md": "# A\n\n## Rules\n\n- **Voting**: x\n"}
         for text, want in (
-            ("`<methods>/a.md` › Rules › Voting", True),
-            ("`<methods>/a.md` › Rules", True),
-            ("`<methods>/a.md` › Rules › Nope", False),
-            ("`<methods>/b.md` › Rules", False),
-            ("`<methods>/<task>.md` › Rules", False),
+            ("`<team>/methods/a.md` › Rules › Voting", True),
+            ("`<team>/methods/a.md` › Rules", True),
+            ("`<team>/methods/a.md` › Rules › Nope", False),
+            ("`<team>/methods/b.md` › Rules", False),
+            ("`<team>/methods/<task>.md` › Rules", False),
         ):
             self.assertEqual(reference_errors("# R\n", {}, methods | {"m": text}) == [], want, text)
 
@@ -795,7 +795,7 @@ class Methods(Case):
                 m,
             )
         self.assertEqual(
-            rule(deep, "Voting"), ["- **Voting**: `<methods>/ultracode.md` › Rules › Voting."]
+            rule(deep, "Voting"), ["- **Voting**: `<team>/methods/ultracode.md` › Rules › Voting."]
         )
         self.assertTrue(
             rule(ultra, "Pipeline")[0].endswith(

@@ -46,7 +46,7 @@ RULE = (
 PARAMETERS = {
     "<Workdir>": "workdir",
     "<tasks>": "tasks",
-    "<methods>": "methods",
+    "<team>": "team",
     "<gate>": "gate",
     "<out-repo>": "output.repo",
     "<out-branch>": "output.branch",
@@ -142,11 +142,11 @@ def reference_errors(
                 pos = m.end()
                 if not (ref := FILE_REF.fullmatch(m[0])) or not line.startswith(" › ", pos):
                     continue
-                kind = ref[1]
+                kind = ref[1] or ref[2]
                 names = (
                     [(kind, n) for n in named[kind]]
-                    if ref[2] == "<task>"
-                    else [(kind, ref[2] if kind == "tasks" else f"methods/{ref[2]}.md")]
+                    if ref[3] == "<task>"
+                    else [(kind, ref[3] if kind == "tasks" else f"methods/{ref[3]}.md")]
                 )
                 found = names and all(n in inside for n in names)
                 best = (
@@ -245,7 +245,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
         "tasks": _code(tasks_path(run.role, team)),
-        "methods": _code(os.path.join(team.root, "methods")),
+        "team": _code(team.root),
         "gate": _code(run.gate or "none"),
     }
     values |= {

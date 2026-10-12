@@ -19,9 +19,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import Begun, Outcome, Result, cli, composer, runner
+from agent_pm.delegate import Begun, Outcome, Result, cli, composer
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.runner import STOP_LIMIT
+from agent_pm.delegate.engine import runner
+from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.session import api
 from agent_pm.session.adapters import base, registry
 

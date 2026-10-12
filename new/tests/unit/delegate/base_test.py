@@ -1,4 +1,4 @@
-"""delegate/base.py: the Delegate ABC, its constructor convention and delegate/__init__.py's new exports."""
+"""delegate/engine/base.py: the Delegate ABC, its constructor convention and delegate/__init__.py's new exports."""
 
 import inspect
 import unittest

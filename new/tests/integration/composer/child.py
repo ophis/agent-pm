@@ -27,7 +27,9 @@ try:
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
                       "files": [composer.__file__, sys.modules["agent_pm.utils.config_file"].__file__,
                                 sys.modules["agent_pm.utils.paths"].__file__],
-                      "repo_imported": "agent_pm.agent_tools.repo" in sys.modules}))
+                      "repo_imported": any(os.path.dirname(getattr(m, "__file__", None) or "")
+                                           == os.path.join(composer.TEAM, "tools")
+                                           for m in list(sys.modules.values()))}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

@@ -1050,7 +1050,7 @@ class Checkout(Case):
                 )
                 for cmd in ("worktree", "status"):
                     self.assertIn(
-                        f"python3 -P -m agent_pm.agent_tools.repo {cmd} --dir <Workdir>/src --branch <branch> "
+                        f"python3 -P <team>/tools/repo.py {cmd} --dir <Workdir>/src --branch <branch> "
                         "[--name <checkout>] [--base <Base:>] <repo>`",
                         prompt,
                     )
