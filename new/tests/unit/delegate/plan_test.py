@@ -1,7 +1,7 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
-dir checks (TeamRuns), for a custom team and for the configured team dirs."""
+dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included."""
 
-from new.tests import NEW, hermetic
+from new.tests import NEW, fake_adapter, hermetic
 from new.tests.unit.composer.team_test import POET, VERSE
 
 import io
@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 import uuid
@@ -22,7 +23,7 @@ from composer.base import SRC
 from composer.prompt import RESUME
 from delegate import ConfigError, plan
 from delegate.plan import place
-from driver import api
+from driver import api, registry
 from utils.paths import temp_dirs, under
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -50,7 +51,8 @@ def write_team(top, files=TEAM_FILES):
 
 
 class Base(unittest.TestCase):
-    """A real temp dir for the workdir `work` (not made) and a HOME of the test's own (self.agent_pm)."""
+    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and the registry's
+    adapters: the core config's and the fake runtime."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -59,10 +61,16 @@ class Base(unittest.TestCase):
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
         self.agent_pm = hermetic.home(self)
+        self.enterContext(mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter}))
+        self.addCleanup(registry.reset)
+        self.local("")
 
     def local(self, text):
+        """The local config `text`, the registry's adapters re-read with it."""
         with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write(text)
+        fake = {"implementation": "adapters.fake:FakeAdapter"}
+        registry.configure({"adapters": registry.tables() | {"fake": fake}})
 
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
@@ -370,6 +378,24 @@ class ConfiguredTeamDirs(Base):
                     f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
                 )
 
+    def test_one_overlapping_codex_home_is_refused(self):
+        for home in (os.path.join(self.team, "codex"), self.tmp):
+            with self.subTest(home=home), mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+                self.assertEqual(
+                    self.refused(runtime="codex"),
+                    f"team_dirs: {self.team} overlaps a dir codex can write {home}: the agent "
+                    "run can write there",
+                )
+
+    def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
+        with mock.patch.object(api, "writable_dirs", return_value=()) as asked:
+            got = self.planned(resume=SID)[0]
+            asked.assert_called_once_with("fake", got.spec, SID)
+            asked.reset_mock()
+            self.local("")
+            self.planned(runtime="codex")
+            asked.assert_not_called()
+
     def test_a_symlink_in_one_is_checked_by_its_real_path(self):
         tasks, moved = os.path.join(self.team, "tasks"), os.path.join(self.work, "team-tasks")
         os.makedirs(self.work)
@@ -413,9 +439,12 @@ class CustomTeam(Base):
         self.found = composer.team(composer.TEAM, [self.team])
 
     def test_the_roles_own_tasks_dir_is_an_added_dir_exempt_from_the_check(self):
-        got, _ = self.planned("poet", "verse", team=self.found)
-        self.assertIn(self.tasks, got.spec.access.dirs)
-        self.assertEqual(TASKS_PARAM.search(got.prompt)[1], self.tasks)
+        home = os.path.join(self.tmp, "codex")
+        for runtime in ("fake", "codex"):
+            with self.subTest(runtime=runtime), mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+                got, _ = self.planned("poet", "verse", team=self.found, runtime=runtime)
+                self.assertIn(self.tasks, got.spec.access.dirs)
+                self.assertEqual(TASKS_PARAM.search(got.prompt)[1], self.tasks)
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
         inside, top = os.path.join(self.team, "w"), os.path.dirname(self.team)
@@ -432,6 +461,23 @@ class CustomTeam(Base):
                     self.refused(role, task, team=self.found, **kw),
                     f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
                 )
+
+    def test_one_overlapping_a_dir_codex_can_write_is_refused(self):
+        inside, top = os.path.join(self.team, "codex"), os.path.dirname(self.team)
+        tmpdir = f"[adapters.codex.env]\nTMPDIR = {json.dumps(top)}\n"
+        for home, local, what in (
+            (inside, "", inside),
+            (top, "", top),
+            (os.path.join(self.tmp, "codex"), tmpdir, top),
+        ):
+            with self.subTest(home=home, local=local):
+                self.local(local)
+                with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+                    self.assertEqual(
+                        self.refused("poet", "verse", team=self.found, runtime="codex"),
+                        f"team_dirs: {self.team} overlaps a dir codex can write {what}: the "
+                        "agent run can write there",
+                    )
 
 
 if __name__ == "__main__":

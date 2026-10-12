@@ -211,6 +211,66 @@ class CommonTest(Base):
             )
 
 
+class WritableDirsTest(Base):
+    def new_launch(self, adapter, home):
+        roots = [str(path) for path in (self.work, self.cwd, home, self.extra)]
+        dirs = adapter.writable_dirs(self.spec, False)
+        self.assertFalse((self.home / ".agent-pm").exists())
+        self.assertEqual(list(dirs[:4]), roots)
+        self.assertEqual(len(set(dirs)), len(dirs))
+        launch = adapter.headless().launch("hi", self.spec, False)
+        self.assertEqual(launch.env["CODEX_HOME"], str(home))
+        self.assertEqual(adapter.common.load(str(self.work), self.spec.sid).writable_roots, roots)
+
+    def test_config_codex_home(self):
+        home = self.root / "config-codex"
+        self.new_launch(
+            CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
+        )
+
+    def test_environment_codex_home_real_path(self):
+        home = self.root / "user-codex"
+        home.mkdir()
+        (self.root / "codex-link").symlink_to(home)
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.root / "codex-link")}):
+            self.new_launch(self.adapter, home)
+
+    def test_tilde_codex_home_under_patched_home(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "~/user-codex"}):
+            self.new_launch(self.adapter, self.home / "user-codex")
+
+    def test_a_resume_reads_the_saved_roots(self):
+        saved = self.prepare().writable_roots
+        record = self.record().read_bytes()
+        elsewhere = str(self.root / "elsewhere")
+        other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
+        spec = dataclasses.replace(self.spec, access=Access(project=True))
+        self.assertIn(elsewhere, other.writable_dirs(spec, False))
+        dirs = other.writable_dirs(spec, True)
+        self.assertEqual(list(dirs[: len(saved)]), saved)
+        self.assertNotIn(elsewhere, dirs)
+        self.assertEqual(self.record().read_bytes(), record)
+
+    def test_a_resume_without_saved_state_is_refused(self):
+        with self.assertRaisesRegex(
+            ConfigError, "missing Codex recovery state for run ID 'caller-id'"
+        ):
+            self.adapter.writable_dirs(self.spec, True)
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_a_configured_tmpdir_new_and_resumed(self):
+        target = self.root / "config-tmp"
+        target.mkdir()
+        (self.root / "tmp-link").symlink_to(target)
+        adapter = CodexAdapter(
+            self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
+        )
+        self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, False))
+        self.assertIn(str(target), adapter.writable_dirs(self.spec, False))
+        adapter.common.prepare(self.spec, False)
+        self.assertIn(str(target), adapter.writable_dirs(self.spec, True))
+
+
 class InspectionTest(Base):
     def bound(self):
         state = self.prepare()

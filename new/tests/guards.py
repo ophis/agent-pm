@@ -25,7 +25,7 @@ ALLOWED = {
     ("driver", "adapters"),
     (OUTSIDE, "driver"),
 }
-RUNTIME = re.compile(r"claude|codex", re.I)
+RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
