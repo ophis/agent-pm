@@ -1,16 +1,16 @@
 """Codex account usage and Driver inspection queries."""
 
-from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
-
 import json
 import os
 import sys
-import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import Launch, SessionStatus, Usage, Window
-from adapters.codex import CodexAdapter
+from agent_pm.adapters.base import Launch, SessionStatus, Usage, Window
+from agent_pm.adapters.codex import CodexAdapter
+
+from new.tests.case import Case
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
@@ -47,7 +47,7 @@ class InspectionTest(Base):
         self.assertEqual(self.adapter.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
 
-class UsageTest(unittest.TestCase):
+class UsageTest(Case):
     def setUp(self):
         self.enterContext(
             mock.patch(

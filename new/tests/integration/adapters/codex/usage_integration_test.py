@@ -1,26 +1,25 @@
 """Codex Driver usage queries and environment isolation through a fake app-server."""
 
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_app_server
-
 import json
 import os
 import shlex
 import sys
 import tempfile
 import time
-import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import Usage, Window
-from adapters.codex import CodexAdapter
-from driver import api, registry
+from agent_pm.adapters.base import Usage, Window
+from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.driver import api, registry
+
+from new.tests.case import NEW, Case
+from new.tests.integration.adapters.codex import fake_app_server
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
-class UsageIntegrationTest(unittest.TestCase):
+class UsageIntegrationTest(Case):
     def test_fixture_preserves_filesystem_checks_outside_its_scratch(self):
         self.assertTrue(os.path.lexists(__file__))
 
@@ -56,7 +55,6 @@ class UsageIntegrationTest(unittest.TestCase):
                 },
             )
         )
-        self.addCleanup(registry.reset)
 
     def probe(self, case="normal", **env):
         registry.configure(

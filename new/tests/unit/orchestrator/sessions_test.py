@@ -1,8 +1,6 @@
 """orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id, numbered
 `#<seq>`, repaired at the end after a late write; the resume command is the Driver's session_info."""
 
-from new.tests import hermetic  # noqa: F401
-
 import functools
 import subprocess
 import threading
@@ -11,10 +9,11 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-import linear
-import sessions
-from delegate import Outcome
-from driver import api
+from agent_pm.delegate import Outcome
+from agent_pm.driver import api
+from agent_pm_orchestrator import linear, sessions
+
+from new.tests import case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
@@ -117,7 +116,7 @@ def bounded(limit):
     return mock.patch.object(sessions, "write", functools.partial(sessions.write, limit=limit))
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
         patch = mock.patch.multiple(api, session=mock.DEFAULT, session_info=mock.DEFAULT)
         mocks = patch.start()

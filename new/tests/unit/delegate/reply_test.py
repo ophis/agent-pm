@@ -1,14 +1,14 @@
 """delegate/reply.py: progress mark lines and the outcome block of a reply (FR-18)."""
 
-from new.tests import SRC  # noqa: F401
-
 import unittest
 
-from composer import PROGRESS
-from delegate.reply import MARK, marks, outcome_block
+from agent_pm.composer import PROGRESS
+from agent_pm.delegate.reply import MARK, marks, outcome_block
+
+from new.tests.case import Case
 
 
-class Marks(unittest.TestCase):
+class Marks(Case):
     def test_a_mark_line_amid_body_text_is_one_mark(self):
         text = "Reading the task.\n[agent-pm-progress:start] first build of the PRD\nNow the spec."
         self.assertEqual(marks(text), [("start", "first build of the PRD")])
@@ -74,7 +74,7 @@ class Marks(unittest.TestCase):
         self.assertTrue(MARK.match(f"[{PROGRESS}:start] x"))
 
 
-class OutcomeBlock(unittest.TestCase):
+class OutcomeBlock(Case):
     def test_the_last_of_several_blocks(self):
         text = '```agent-pm-outcome\n{"a": 1}\n```\nthen\n~~~agent-pm-outcome\n{"b": 2}\n~~~\n'
         self.assertEqual(outcome_block(text), '{"b": 2}')

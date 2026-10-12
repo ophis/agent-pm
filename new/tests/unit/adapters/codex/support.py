@@ -1,22 +1,21 @@
 """Isolated Codex unit fixtures with recovery records and native session files."""
 
-from new.tests import NEW
-
 import json
 import os
 import tempfile
-import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import Access, Spec
-from adapters.codex import CodexAdapter
+from agent_pm.adapters.base import Access, Spec
+from agent_pm.adapters.codex import CodexAdapter
+
+from new.tests.case import NEW, Case
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)

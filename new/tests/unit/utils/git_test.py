@@ -1,6 +1,4 @@
-"""new/core/src/utils/git.py: common_dir over real git worktrees."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/git.py: common_dir over real git worktrees."""
 
 import os
 import subprocess
@@ -8,14 +6,16 @@ import tempfile
 import unittest
 import unittest.mock
 
-from utils.git import common_dir
+from agent_pm.utils.git import common_dir
+
+from new.tests.case import Case
 
 
 def git(*argv):
     return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
 
 
-class CommonDir(unittest.TestCase):
+class CommonDir(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

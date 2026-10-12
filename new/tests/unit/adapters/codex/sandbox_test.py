@@ -1,14 +1,14 @@
 """Codex sandbox policy, protected recovery paths and writable-root guards."""
 
-from new.tests.unit.adapters.codex.support import NATIVE, Base
-
 import dataclasses
 import json
 import sys
 from unittest import mock
 
-from adapters.base import ConfigError
-from adapters.codex import CodexAdapter
+from agent_pm.adapters.base import ConfigError
+from agent_pm.adapters.codex import CodexAdapter
+
+from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 

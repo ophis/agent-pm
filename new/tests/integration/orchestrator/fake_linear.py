@@ -1,10 +1,6 @@
 """Linear's GraphQL API as the orchestrator's queries use it, in memory, served over HTTP for the AGENT_PM_LINEAR
 seam: each exact query text is an op (OPS), its answer projected to the query's selection."""
 
-from new.tests.unit.orchestrator.board_ids import STATES, TEAM
-
-import config
-
 import functools
 import hashlib
 import io
@@ -21,11 +17,9 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import issues
-import linear
-import promote
-import sessions
-import writeback
+from agent_pm_orchestrator import config, issues, linear, promote, sessions, writeback
+
+from new.tests.unit.orchestrator.board_ids import STATES, TEAM
 
 KEY = "TASK"
 BACKLOG = "00000000-0000-4000-8000-000000000017"
@@ -42,7 +36,7 @@ TYPES = {
 NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
-MODULES = {m.__name__: m for m in (linear, issues, sessions, writeback, promote)}
+MODULES = {m.__name__.rpartition(".")[2]: m for m in (linear, issues, sessions, writeback, promote)}
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}
 COMPARATORS = {
     "eq": lambda x, a: x == a,

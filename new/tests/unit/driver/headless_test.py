@@ -1,7 +1,5 @@
-"""new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
+"""driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
-
-from new.tests import hermetic  # noqa: F401
 
 import json
 import os
@@ -15,10 +13,12 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, Headless, Launch, Reply, Stderr
-from driver.errors import DriverError
-from driver.modes import headless
-from driver.modes.headless import HeadlessMode
+from agent_pm.adapters.base import Adapter, Headless, Launch, Reply, Stderr
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes import headless
+from agent_pm.driver.modes.headless import HeadlessMode
+
+from new.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2  # probe()'s timeout where it must pass, in seconds
@@ -92,7 +92,7 @@ class StubRun(Headless):
             yield Reply(record["text"])
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -306,7 +306,7 @@ class Returncode(Base):
         self.assertIsNone(self.promptly(lambda: self.mode.returncode(0)))
 
 
-class Probe(unittest.TestCase):
+class Probe(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

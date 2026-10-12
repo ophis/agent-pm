@@ -2,10 +2,6 @@
 Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral Return, the resume prefix, and
 reference_errors and the method files on the real team (its References and Methods tests)."""
 
-from new.tests import SRC, hermetic
-from new.tests.unit.composer.run_test import CONFIG
-from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
-
 import inspect
 import os
 import re
@@ -13,10 +9,22 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from composer.base import METHOD, TEAM, ConfigError, outline
-from composer.prompt import OUTCOME, PARAMETERS, RESUME, RETURN, RULE, reference_errors, render
-from composer.run import RunParams, resolve
-from composer.teams import index, team
+from agent_pm.composer.base import METHOD, TEAM, ConfigError, outline
+from agent_pm.composer.prompt import (
+    OUTCOME,
+    PARAMETERS,
+    RESUME,
+    RETURN,
+    RULE,
+    reference_errors,
+    render,
+)
+from agent_pm.composer.run import RunParams, resolve
+from agent_pm.composer.teams import index, team
+
+from new.tests.case import Case
+from new.tests.unit.composer.run_test import CONFIG
+from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 
 TEXTS = {
     "guide.md": (
@@ -92,8 +100,8 @@ def item(text, name):
     return m.group(1) if m else ""
 
 
-class Fake(unittest.TestCase):
-    """A team root and config file in a temp dir; a HOME of the test's own for the local config and team dirs."""
+class Fake(Case):
+    """A team root, config and local file in a temp dir; a HOME of the test's own for team dirs."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -101,10 +109,10 @@ class Fake(unittest.TestCase):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "team")
         self.config = os.path.join(self.tmp, "config.toml")
+        self.local_file = os.path.join(self.tmp, "local.toml")
         self.write(FILES | TEXTS)
         with open(self.config, "w") as f:
             f.write(CONFIG)
-        self.home = hermetic.home(self)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -118,11 +126,18 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(self.local_file, "w") as f:
             f.write(text)
 
     def run_of(self, role="writer", task=None, overlays=(), found=None):
-        return resolve(role, task, overlays=overlays, team=self.found(found), config=self.config)
+        return resolve(
+            role,
+            task,
+            overlays=overlays,
+            team=self.found(found),
+            config=self.config,
+            local=self.local_file,
+        )
 
     def found(self, given=None):
         return given if given is not None else team(self.root)
@@ -253,18 +268,17 @@ class Prompt(Fake):
     def test_texts_keep_the_names_and_parameters_give_the_composers_paths(self):
         self.write(
             {
-                "principles.md": "# Principles\n\nRun `<scripts>/x.py`; tasks in `<tasks>`.\n",
+                "principles.md": "# Principles\n\nRun `<Workdir>/x.py`; tasks in `<tasks>`.\n",
                 "roles/writer.md": WRITER + "\nKnow `<methods>` and `<tasks>/short-note.md`.\n",
             }
         )
         prompt, _ = self.compose()
-        self.assertIn("Run `<scripts>/x.py`; tasks in `<tasks>`.", prompt)
+        self.assertIn("Run `<Workdir>/x.py`; tasks in `<tasks>`.", prompt)
         self.assertIn("Know `<methods>` and `<tasks>/short-note.md`.", prompt)
         self.assertEqual(
             parameters(prompt),
             {
                 "<Workdir>": "`/w`",
-                "<scripts>": f"`{SRC}`",
                 "<tasks>": f"`{self.root}/tasks`",
                 "<methods>": f"`{self.root}/methods`",
             },
@@ -424,7 +438,6 @@ class Parameters(Fake):
             list(PARAMETERS),
             [
                 "<Workdir>",
-                "<scripts>",
                 "<tasks>",
                 "<methods>",
                 "<gate>",
@@ -435,13 +448,19 @@ class Parameters(Fake):
             ],
         )
 
-    def test_the_rule_opens_the_section_then_the_workdir_scripts_and_tasks(self):
+    def test_the_rule_opens_the_section_then_the_workdir_and_tasks(self):
         prompt = self.compose()[0]
         self.assertIn(f"\n# Parameters\n\n{RULE}\n\n- `<Workdir>`: `/w`\n", prompt)
         self.assertEqual(
             list(parameters(prompt).items()),
-            [("<Workdir>", "`/w`"), ("<scripts>", f"`{SRC}`"), ("<tasks>", f"`{self.root}/tasks`")],
+            [("<Workdir>", "`/w`"), ("<tasks>", f"`{self.root}/tasks`")],
         )
+
+    def test_scripts_is_no_name(self):
+        self.write({"principles.md": "# Principles\n\nRun `<scripts>/x.py`.\n"})
+        prompt = self.compose()[0]
+        self.assertIn("Run `<scripts>/x.py`.", prompt)
+        self.assertEqual(list(parameters(prompt)), ["<Workdir>", "<tasks>"])
 
     def test_a_task_file_using_a_name_its_run_cannot_define(self):
         self.write({"tasks/long-note.md": "# Long Note\n\nOpen `<out-repo>`.\n"})
@@ -454,7 +473,7 @@ class Parameters(Fake):
     def test_methods_used_by_name_in_the_role(self):
         self.write({"roles/writer.md": WRITER + "\nKnow `<methods>`.\n"})
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>"])
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>"])
         self.assertEqual(names["<methods>"], f"`{self.root}/methods`")
 
     def test_gate_used_by_name_in_an_indexed_task_file_only(self):
@@ -474,14 +493,14 @@ class Parameters(Fake):
             }
         )
         names = parameters(self.compose()[0])
-        self.assertEqual(list(names), ["<Workdir>", "<scripts>", "<tasks>", "<methods>", "<gate>"])
+        self.assertEqual(list(names), ["<Workdir>", "<tasks>", "<methods>", "<gate>"])
         self.write({"tasks/long-note.md": "# Long Note\n\nFollow `{{methods}}/m.md`.\n"})
         self.assertNotIn("<gate>", parameters(self.compose()[0]))
 
     def test_github_output_its_used_keys(self):
         names = parameters(self.compose("editor")[0])
         self.assertEqual(
-            list(names.items())[3:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")]
+            list(names.items())[2:], [("<out-repo>", "`o/docs`"), ("<out-branch>", "`main`")]
         )
 
     def test_an_unset_host_is_github_com(self):
@@ -544,13 +563,13 @@ class TeamDirs(Fake):
     """Team dirs under the test's HOME, passed as a Team."""
 
     def with_dir(self, files, name="team"):
-        """The Team of the team root and one team dir of `files`, <home>/<name>."""
-        top = os.path.realpath(os.path.join(self.home, name))
+        """The Team of the team root and one team dir of `files`, ~/.agent-pm/<name>."""
+        top = os.path.realpath(os.path.join(self.agent_pm, name))
         self.write(files, top)
         return team(self.root, (top,))
 
     def path(self, rel, name="team"):
-        return os.path.join(os.path.realpath(os.path.join(self.home, name)), rel)
+        return os.path.join(os.path.realpath(os.path.join(self.agent_pm, name)), rel)
 
     def test_a_new_roles_charter_and_its_tasks_dir(self):
         found = self.with_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
@@ -636,14 +655,14 @@ class TeamDirs(Fake):
             {"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"}
         )
         for role in ("writer", "editor"):
-            for task in (None, *index(role, team(self.root), self.config)):
+            for task in (None, *index(role, team(self.root), self.config, self.local_file)):
                 with self.subTest(role=role, task=task):
                     self.assertEqual(
                         self.compose(role, task, found=other)[0], self.compose(role, task)[0]
                     )
 
 
-class References(unittest.TestCase):
+class References(Case):
     def errors(self, text):
         """The errors in `text` as a method file beside the real engineer prompt and task files."""
         own, tasks, methods = role_sources("engineer")
@@ -762,7 +781,7 @@ class References(unittest.TestCase):
         )
 
 
-class Methods(unittest.TestCase):
+class Methods(Case):
     def test_voting_has_its_home_in_ultracode_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
         for m, text in zip(METHOD_NAMES, (deep, ultra), strict=False):

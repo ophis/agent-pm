@@ -1,4 +1,23 @@
-from tests import hermetic  # noqa: F401  (first: config reads HOME at import)
+import contextlib
+import copy
+import json
+import os
+import re
+import subprocess
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
+
+import attended
+import config
+import drive
+import linear
+import roster
+import router
+import sessions
+
+from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
@@ -12,26 +31,6 @@ from tests.integration.orchestrator.flow_fixtures import (
     fake_linear,
     live_tmux,
 )
-
-import config
-
-import contextlib
-import copy
-import json
-import os
-import re
-import subprocess
-import time
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
-
-import attended
-import drive
-import linear
-import roster
-import router
-import sessions
 
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}

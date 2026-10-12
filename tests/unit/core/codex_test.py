@@ -1,6 +1,3 @@
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
-
 import contextlib
 import fcntl
 import hashlib
@@ -21,6 +18,9 @@ from clients import _codex_worker, codex
 from clients.base import Client, SessionInfo, WorkerSpec
 from clients.claude import ClaudeClient
 from compose import ConfigError
+
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
 
 
 class Store(unittest.TestCase):

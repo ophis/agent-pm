@@ -1,12 +1,11 @@
-"""new/core/src/driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
-usage(), session_info() and writable_dirs(), over the fake adapter and test adapters registered in-process (sys.modules)
-with [adapters.<name>] tables given to registry.configure. Wherever nothing may start, subprocess.Popen is patched to
-fail; usage()'s probe is headless.probe patched, but for a spawn error. An in_process start over the in_process-only
-fake, SPAWNS patched to fail during its run; claude and codex, from the committed config, refuse it. The Mode protocol,
-and a Handle over a scripted Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions,
-close, show, layout, attach_command, detach) over tmux_host autospecced (no tmux runs)."""
-
-from new.tests import fake_adapter, hermetic
+"""driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
+session_info() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
+fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
+registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
+patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
+run; claude and codex, from the committed config, refuse it. The Mode protocol, and a Handle over a scripted Mode on a
+fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
+detach) over tmux_host autospecced (no tmux runs)."""
 
 import contextlib
 import dataclasses
@@ -25,10 +24,14 @@ import unittest
 import uuid
 from unittest import mock
 
-from adapters import base
-from adapters.base import Access, Launch
-from driver import api, errors, records, registry, tmux_host
-from driver.modes import headless, in_process, tui
+from agent_pm.adapters import base
+from agent_pm.adapters.base import Access, Launch
+from agent_pm.driver import api, errors, records, registry, tmux_host
+from agent_pm.driver.modes import headless, in_process, tui
+from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -101,9 +104,29 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return base.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
 
 
+class EnvAdapter(ProbeAdapter):
+    """The probe adapter whose session launches carry spec.access.env, as claude's and codex's do."""
+
+    def headless(self):
+        return EnvRun(self)
+
+    def tui(self):
+        return EnvTui(self)
+
+
+class EnvRun(fake_adapter.FakeHeadless):
+    def launch(self, prompt, spec, resume):
+        return dataclasses.replace(super().launch(prompt, spec, resume), env=spec.access.env)
+
+
+class EnvTui(fake_adapter.FakeTui):
+    def launch(self, prompt, spec, resume, hook):
+        return dataclasses.replace(super().launch(prompt, spec, resume, hook), env=spec.access.env)
+
+
 def package(name, cls) -> types.ModuleType:
-    """An in-memory module adapters.<name> holding `cls`."""
-    module = types.ModuleType(f"adapters.{name}")
+    """An in-memory module agent_pm.adapters.<name> holding `cls`."""
+    module = types.ModuleType(f"agent_pm.adapters.{name}")
     setattr(module, cls.__name__, cls)
     return module
 
@@ -118,14 +141,15 @@ PACKAGES = {
             ("quiet", QuietAdapter),
             ("probe", ProbeAdapter),
             ("checked", CheckedAdapter),
+            ("env", EnvAdapter),
         )
     },
 }
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.probe_dir = os.path.join(hermetic.home(self), "probe")
+        self.probe_dir = os.path.join(self.agent_pm, "probe")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -134,11 +158,10 @@ class Base(unittest.TestCase):
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
         patch = mock.patch.dict(
-            sys.modules, {f"adapters.{name}": m for name, m in PACKAGES.items()}
+            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in PACKAGES.items()}
         )
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(registry.reset)
         self.configure()
 
     def steps(self, *steps):
@@ -415,7 +438,7 @@ class HandleTest(Base):
     def test_usage_is_its_runtimes(self):
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         handle = self.start(runtime="probe")
-        with mock.patch("driver.modes.headless.probe", return_value="7") as probe:
+        with mock.patch.object(headless, "probe", return_value="7") as probe:
             self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         probe.assert_called_once()
         self.assertEqual(self.drain(handle), [api.Exited(0)])
@@ -571,7 +594,7 @@ class InProcessTest(Base):
                 )
 
     def test_claude_and_codex_do_not_support_it(self):
-        registry.configure({"adapters": registry.tables()})
+        registry.configure({"adapters": registry.tables(registry.CONFIG, os.devnull)})
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 self.refused(
@@ -604,7 +627,7 @@ class InProcessTest(Base):
         self.assertFalse(os.path.exists(self.log))
 
 
-class ModeTest(unittest.TestCase):
+class ModeTest(Case):
     def test_the_protocols_methods_and_the_headless_and_in_process_modes_have_each_with_its_parameters(
         self,
     ):
@@ -670,7 +693,7 @@ class StubMode:
         self.calls.append(("stop",))
 
 
-class HandleOverAModeTest(unittest.TestCase):
+class HandleOverAModeTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -812,13 +835,11 @@ class UsageTest(Base):
         """api.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x") unless given) and
         headless.probe patched to give `out`; its result and the patch's mock."""
         self.configure("probe", probe={"argv": ("probe-cmd", "-x"), **launch})
-        with mock.patch("driver.modes.headless.probe", return_value=out) as probe:
+        with mock.patch.object(headless, "probe", return_value=out) as probe:
             return api.usage("probe"), probe
 
     def test_no_probe_is_none_and_runs_nothing(self):
-        with mock.patch(
-            "driver.modes.headless.probe", side_effect=AssertionError("probed")
-        ) as probe:
+        with mock.patch.object(headless, "probe", side_effect=AssertionError("probed")) as probe:
             self.assertIsNone(api.usage("fake"))
         probe.assert_not_called()
         self.assertFalse(os.path.exists(self.probe_dir))
@@ -1201,6 +1222,28 @@ class TuiStartTest(TuiBase):
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
 
+class SessionEnvTest(TuiBase):
+    def setUp(self):
+        super().setUp()
+        self.configure("env", probe={"argv": ("probe-cmd",)})
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
+        self.access = Access(commands=("git",), env={"PYTHONPATH": IMPORT_ROOT})
+
+    def test_a_headless_session_gets_it_and_its_usage_probe_does_not(self):
+        handle, _ = self.run_once(runtime="env", spec=self.spec(access=self.access))
+        with open(self.log, encoding="utf-8") as f:
+            (entry,) = [json.loads(line) for line in f]
+        self.assertEqual(entry["env"]["PYTHONPATH"], IMPORT_ROOT)
+        with mock.patch.object(headless, "probe", return_value="7") as probe:
+            self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
+        self.assertEqual(probe.call_args.kwargs["env"]["PYTHONPATH"], "/parent")
+
+    def test_a_tui_session_gets_it(self):
+        self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
+        (call,) = self.host.start.call_args_list
+        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], IMPORT_ROOT)
+
+
 class AttachTest(TuiBase):
     def started(self, *hooked) -> None:
         """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label, payload) in `hooked`,
@@ -1547,7 +1590,7 @@ class DetachTest(TuiBase):
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
 
-class ExportsTest(unittest.TestCase):
+class ExportsTest(Case):
     def test_reexports_and_constants(self):
         for name in (
             "Access",

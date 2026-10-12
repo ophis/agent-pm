@@ -1,6 +1,11 @@
 """promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its client id), related,
 the source Done; a failed move or a Linear outage is retried without a second child."""
 
+import unittest
+from datetime import UTC, datetime, timedelta
+
+from agent_pm_orchestrator import promote
+
 from new.tests.integration.orchestrator import fake_linear
 from new.tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
@@ -9,11 +14,6 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     PROJECT,
     Flow,
 )
-
-import unittest
-from datetime import UTC, datetime, timedelta
-
-import promote
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."

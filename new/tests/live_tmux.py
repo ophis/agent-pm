@@ -1,8 +1,6 @@
 """Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE, ITERM_SESSION_ID or
 TERM_PROGRAM. No tmux: the test skips."""
 
-from new.tests import fake_claude
-
 import os
 import resource
 import select
@@ -13,6 +11,8 @@ import tempfile
 import threading
 import time
 from typing import NamedTuple
+
+from new.tests import fake_claude
 
 # two words: tmux execs them, not the user's login shell (and its rc files)
 IDLE = ("cat", "-")

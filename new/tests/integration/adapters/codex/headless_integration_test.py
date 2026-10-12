@@ -1,8 +1,5 @@
 """Codex headless Driver sessions and recovery through fake native processes."""
 
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_codex
-
 import dataclasses
 import json
 import os
@@ -11,11 +8,10 @@ import subprocess
 import sys
 import tempfile
 import threading
-import unittest
 from pathlib import Path
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Access,
     Activity,
     ConfigError,
@@ -27,15 +23,18 @@ from adapters.base import (
     Stderr,
     TurnEnd,
 )
-from adapters.codex import CodexAdapter
-from driver import api, records, registry
+from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.driver import api, records, registry
+
+from new.tests.case import NEW, Case
+from new.tests.integration.adapters.codex import fake_codex
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "Hello.\n"}
 
 
-class HeadlessIntegrationTest(unittest.TestCase):
+class HeadlessIntegrationTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)
@@ -91,7 +90,6 @@ class HeadlessIntegrationTest(unittest.TestCase):
             )
         )
         registry.configure(self.config)
-        self.addCleanup(registry.reset)
 
     def scene(self, steps=None, **fields):
         if steps is not None:

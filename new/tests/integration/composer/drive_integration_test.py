@@ -1,13 +1,13 @@
 """A headless session's prompt and access intent, composed in a child process (child.Case) as its caller would for a new
 run and a resume."""
 
-from new.tests import NEW
-from new.tests.integration.composer import child
-
 import os
 import unittest
 
-from composer.prompt import RESUME
+from agent_pm.composer.prompt import RESUME
+
+from new.tests.case import NEW
+from new.tests.integration.composer import child
 
 TASKS = os.path.join(NEW, "core", "team", "tasks")
 
@@ -28,6 +28,7 @@ class NewRun(child.Case):
                 "writes": [],
                 "commands": [],
                 "gate": "",
+                "env": {},
                 "cwd": self.proj,
                 "project": False,
             },

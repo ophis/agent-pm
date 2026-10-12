@@ -3,7 +3,26 @@ neutral Return and Parameters, the FR-31 destinations, the package API, the root
 text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
 
-from new.tests import CORE, NEW, hermetic
+import functools
+import glob
+import hashlib
+import os
+import re
+import subprocess
+import tempfile
+import tomllib
+import types
+import unittest
+
+from agent_pm import composer
+from agent_pm.composer.base import CONFIG, anchor, fill, outline
+from agent_pm.composer.prompt import RETURN, RULE, reference_errors
+from agent_pm.composer.run import check_old_keys
+from agent_pm.composer.teams import START
+from agent_pm.utils.markdown import unfenced
+from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.case import CORE, NEW, Case
 from new.tests.unit.composer.prompt_test import (
     RUN,
     composed,
@@ -17,27 +36,6 @@ from new.tests.unit.composer.prompt_test import (
 )
 from new.tests.unit.composer.team_test import INTRO
 
-import glob
-import hashlib
-import os
-import re
-import subprocess
-import tempfile
-import tomllib
-import types
-import unittest
-
-import composer
-from composer.base import CONFIG, SRC, anchor, fill, outline
-from composer.prompt import RETURN, RULE, reference_errors
-from composer.run import check_old_keys
-from composer.teams import START
-from utils.markdown import unfenced
-
-CATALOG = composer.catalog()
-ROLES = list(CATALOG)
-ALL = [(r, t) for r in ROLES for t in CATALOG[r]]
-RUNS = [(r, None) for r in ROLES] + ALL  # each role given no task, then each role and task
 TASKS = os.path.join(composer.TEAM, "tasks")
 ROOT = os.path.dirname(NEW)
 # outcome.schema.json at main 3e5f9f3
@@ -128,6 +126,25 @@ COMMANDS_RULE = (
 )
 
 
+@functools.cache
+def catalog() -> dict[str, dict[str, str]]:
+    """The built-in team's catalog with the shipped config alone."""
+    return composer.catalog(config=CONFIG, local=os.devnull)
+
+
+def roles() -> list[str]:
+    return list(catalog())
+
+
+def role_tasks() -> list[tuple[str, str]]:
+    return [(r, t) for r in roles() for t in catalog()[r]]
+
+
+def runs() -> list[tuple[str, str | None]]:
+    """Each role given no task, then each role and task."""
+    return [(r, None) for r in roles()] + role_tasks()
+
+
 def tickets(root):
     """{path relative to `root`: its ticket ids beyond TICKET_EXAMPLES} of each file under `root`."""
     found = {}
@@ -176,7 +193,7 @@ def team_texts():
     return out
 
 
-class Package(unittest.TestCase):
+class Package(Case):
     def test_the_api_is_the_modules_names(self):
         self.assertEqual(composer.__all__, API)
         self.assertEqual([name for name in DROPPED if hasattr(composer, name)], [])
@@ -191,18 +208,18 @@ class Package(unittest.TestCase):
         )
 
 
-class Acceptance(unittest.TestCase):
+class Acceptance(Case):
     """The shipped config alone (no local file)."""
 
     def test_every_role_and_task_composes_with_no_reference_error(self):
-        self.assertEqual(ROLES, ["researcher", "pm", "engineer", "dummy-tester"])
-        for role, task in RUNS:
+        self.assertEqual(roles(), ["researcher", "pm", "engineer", "dummy-tester"])
+        for role, task in runs():
             with self.subTest(role=role, task=task):
                 self.assertEqual(reference_errors(*role_sources(role, task)), [])
 
     def test_each_prompt_returns_in_replies_with_neutral_return_and_parameters(self):
         self.assertNotRegex(RETURN, RUNTIME)
-        for role, task in RUNS:
+        for role, task in runs():
             with self.subTest(role=role, task=task):
                 prompt = words(composed(role, task)[0])
                 self.assertIn("agent-pm-outcome", prompt)
@@ -214,10 +231,15 @@ class Acceptance(unittest.TestCase):
                 self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
                 self.assertNotRegex(block, RUNTIME)
 
-    def test_scripts_holds_repo_py(self):
-        for role in ROLES:
-            scripts = parameters(composed(role)[0])["<scripts>"].strip("`")
-            self.assertTrue(os.path.isfile(os.path.join(scripts, "repo.py")), role)
+    def test_each_requested_command_runs_the_repo_module_from_the_import_root(self):
+        self.assertTrue(
+            os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "agent_tools", "repo.py"))
+        )
+        for role in roles():
+            for command in composed(role)[1].commands:
+                self.assertTrue(
+                    command.startswith("python3 -P -m agent_pm.agent_tools.repo "), (role, command)
+                )
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
         for dest in ("local", "orchestrator"):
@@ -271,15 +293,15 @@ class Acceptance(unittest.TestCase):
             config = os.path.join(tmp, "config.toml")
             with open(config, "w") as f:
                 f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
-            for role in ROLES:
-                run = composer.resolve(role, config=config)
+            for role in roles():
+                run = composer.resolve(role, config=config, local=os.devnull)
                 prompt = composer.render(run, RUN)
                 self.assertEqual(run.language, "", role)
                 self.assertNotIn(LANGUAGE_RULE, prompt, role)
                 self.assertNotIn("are in English", prompt, role)
 
 
-class Shipped(unittest.TestCase):
+class Shipped(Case):
     """The team's text, the core config's comments and the composer's strings."""
 
     def test_tickets_finds_an_id_beyond_the_examples(self):
@@ -310,7 +332,7 @@ class Shipped(unittest.TestCase):
                 self.assertEqual(text.count(example), 1, (rel, example))
         with open(CONFIG) as f:
             self.assertEqual(TICKET.findall(f.read()), [])
-        for role, task in RUNS:
+        for role, task in runs():
             prompt = words(composed(role, task)[0])
             self.assertEqual(
                 TICKET.findall(prompt.replace("(e.g. `TASK-142`)", "", 1)), [], (role, task)
@@ -318,9 +340,9 @@ class Shipped(unittest.TestCase):
 
     def test_no_orchestration_or_tracker_words(self):
         texts = team_texts() | {
-            f"{role} {task}": words(composed(role, task)[0]) for role, task in RUNS
+            f"{role} {task}": words(composed(role, task)[0]) for role, task in runs()
         }
-        for path in [CONFIG, *glob.glob(os.path.join(SRC, "composer", "*.py"))]:
+        for path in [CONFIG, *glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))]:
             with open(path) as f:
                 texts[path] = f.read()
         for label, text in texts.items():
@@ -373,19 +395,20 @@ class Shipped(unittest.TestCase):
             "engineer": "build",
             "dummy-tester": "echo",
         }
-        self.assertEqual(set(ROLES), set(defaults))
+        self.assertEqual(set(roles()), set(defaults))
         for role, default in defaults.items():
             with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
                 text = f.read()
             self.assertTrue(
                 text.split("\n## ")[1].startswith(f"Tasks\n\n{INTRO.format(default)}- `"), role
             )
-            self.assertIn(default, CATALOG[role], role)
-            for t, line in CATALOG[role].items():
+            self.assertIn(default, catalog()[role], role)
+            for t, line in catalog()[role].items():
                 self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", text, role)
                 self.assertRegex(line, r"; (light|heavy)\.$", role)
         self.assertEqual(
-            sorted(t for _, t in ALL), sorted(f.removesuffix(".md") for f in os.listdir(TASKS))
+            sorted(t for _, t in role_tasks()),
+            sorted(f.removesuffix(".md") for f in os.listdir(TASKS)),
         )
 
     def test_task_files_have_no_frontmatter_and_no_placeholder(self):
@@ -397,7 +420,7 @@ class Shipped(unittest.TestCase):
 
     def test_engineers_tasks_name_their_skill_by_slash_command(self):
         for t in ("build", "light-build"):
-            self.assertIn(f" with `/autopilot:{t}` (", CATALOG["engineer"][t])
+            self.assertIn(f" with `/autopilot:{t}` (", catalog()["engineer"][t])
             self.assertIn(f"`/autopilot:{t}`", task_text(t))
             self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
@@ -458,7 +481,7 @@ class Shipped(unittest.TestCase):
         self.assertIn(
             "(a task list in its state file, implementation, verification, a light review, no spec or plan "
             "docs)",
-            CATALOG["engineer"]["light-build"],
+            catalog()["engineer"]["light-build"],
         )
 
     def test_light_research_prepares_before_its_start_mark(self):
@@ -466,19 +489,18 @@ class Shipped(unittest.TestCase):
         self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
 
-class RealCore(unittest.TestCase):
+class RealCore(Case):
     """The real core with FIXTURE as the local file."""
 
     def setUp(self):
-        self.home = hermetic.home(self)
         self.local(FIXTURE)
 
     def local(self, text):
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write(text)
 
     def test_the_config_renders_the_language_and_progress_rules_once(self):
-        for role in ROLES:
+        for role in roles():
             prompt, run = composed(role)
             self.assertEqual(run.language, "Chinese")
             self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
@@ -491,11 +513,11 @@ class RealCore(unittest.TestCase):
             "a template or task is X in Chinese.",
             composed("researcher")[0],
         )
-        for role, task in ALL:
+        for role, task in role_tasks():
             text = composed(role, task)[0]
             for literal in ("`Check:`", "Check:", "Confidence:", "`Light Research. Angles: "):
                 self.assertNotIn(literal, text, (role, task, literal))
-        for role, task in RUNS:
+        for role, task in runs():
             self.assertIn(
                 "Its headings are fixed apart from their language ([Principles › Writing](#writing))",
                 guide(composed(role, task)[0]),
@@ -503,7 +525,7 @@ class RealCore(unittest.TestCase):
             )
 
     def test_writing_has_the_one_gloss_and_diagram_rules_and_no_length_cap(self):
-        for role, task in RUNS:
+        for role, task in runs():
             prompt = composed(role, task)[0]
             writing = section(prompt, "Writing")
             self.assertNotIn("the first mention adds the", prompt, (role, task))
@@ -572,23 +594,23 @@ class RealCore(unittest.TestCase):
             'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\nworkers_per_column = 2\n'
             'grid_retile = "off"\n'
         )
-        for role, task in ALL:
+        for role, task in role_tasks():
             run = composer.resolve(role, task)
             self.assertEqual((run.task, run.show), (task, ""))
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
-        for role, task in RUNS:
+        for role, task in runs():
             self.assertEqual(reference_errors(*role_sources(role, task)), [], (role, task))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
-        for role, task in RUNS:
+        for role, task in runs():
             anchors = heading_anchors(composed(role, task)[0])
             self.assertEqual(len(anchors), len(set(anchors)), (role, task))
 
     def test_every_run_composes_without_placeholders_and_opens_with_the_guide_listing_parameters_first_input_last(
         self,
     ):
-        for role, task in RUNS:
+        for role, task in runs():
             with self.subTest(role=role, task=task):
                 prompt, run = composed(role, task)
                 self.assertNotIn("{{", prompt)
@@ -628,9 +650,9 @@ class RealCore(unittest.TestCase):
         self.assertNotIn("light-research", picked)
 
     def test_a_prompt_has_its_roles_index_and_no_task_steps(self):
-        for role, task in RUNS:
+        for role, task in runs():
             prompt, _ = composed(role, task)
-            for t, line in CATALOG[role].items():
+            for t, line in catalog()[role].items():
                 self.assertIn(f"\n- `{t}` (`<tasks>/{t}.md`): {line}\n", prompt, (role, task))
                 for step in task_text(t).splitlines():
                     if len(step.strip()) >= 30 and not step.startswith("#"):
@@ -680,7 +702,7 @@ class RealCore(unittest.TestCase):
 
     def test_each_roles_parameters_follow_what_its_texts_use(self):
         base, out = (
-            ["<Workdir>", "<scripts>", "<tasks>"],
+            ["<Workdir>", "<tasks>"],
             ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
         )
         want = {
@@ -688,7 +710,9 @@ class RealCore(unittest.TestCase):
             "pm": [*base, *out],
             "researcher": [*base, "<methods>", "<gate>", *out],
         }
-        for role, task in [(r, None) for r in want] + [(r, t) for r, t in ALL if r in want]:
+        for role, task in [(r, None) for r in want] + [
+            (r, t) for r, t in role_tasks() if r in want
+        ]:
             self.assertEqual(parameter_names(role, task), want[role], (role, task))
         self.assertEqual(
             parameter_names("researcher", output={"type": "local"}), [*base, "<methods>", "<gate>"]
@@ -714,26 +738,30 @@ class RealCore(unittest.TestCase):
             self.assertIn(phrase, task_text("deep-research"))
 
     def test_names_written_as_their_values_each_requested_command_starts_a_command(self):
-        for role in ROLES:
+        for role in roles():
             prompt, run = composed(role)
             prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = fill(cmd, {"scripts": SRC, "workdir": RUN.workdir}, role).removesuffix(" *")
+                cmd = fill(cmd, {"workdir": RUN.workdir}, role).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
 
     def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
-        for role, task in RUNS:
+        for role, task in runs():
             prompt, _ = composed(role, task)
-            for value in (RUN.workdir, SRC, RULE):
+            for value in (RUN.workdir, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
+            self.assertNotIn(IMPORT_ROOT, prompt, (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
-    def test_every_repo_py_command_takes_the_inputs_checkout(self):
+    def test_every_repo_command_takes_the_inputs_checkout(self):
         found = {}
-        for role in ROLES:
+        for role in roles():
             prompt, _ = composed(role)
-            text = prompt + "".join(task_text(t) for t in CATALOG[role])
-            cmds = re.findall(r"`python3 \S+/repo\.py (worktree|status) ([^`]*)`", text)
+            text = prompt + "".join(task_text(t) for t in catalog()[role])
+            cmds = re.findall(
+                r"`python3 -P -m agent_pm\.agent_tools\.repo (worktree|status) ([^`]*)`", text
+            )
+            self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]
             for cmd, args in cmds:
                 self.assertEqual(args, REPO_ARGS[cmd], role)
@@ -749,8 +777,8 @@ class RealCore(unittest.TestCase):
         )
 
     def test_every_repo_named_by_url_may_be_a_local_clone_path(self):
-        for role in ROLES:
-            text = composed(role)[0] + "".join(task_text(t) for t in CATALOG[role])
+        for role in roles():
+            text = composed(role)[0] + "".join(task_text(t) for t in catalog()[role])
             self.assertIn("repo URL", text, role)
             self.assertEqual(
                 text.count("repo URL"),
@@ -849,16 +877,16 @@ class RealCore(unittest.TestCase):
             merge,
         )
 
-    def test_the_pull_request_destination_reads_pr_from_repo_py_status(self):
+    def test_the_pull_request_destination_reads_pr_from_agent_tools_repo_status(self):
         self.assertIn(
-            "3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0]
+            "3. By `agent_tools.repo status`'s `pr`: null → `gh pr create", composed("engineer")[0]
         )
 
     def test_a_run_reads_the_methods_dir_its_text_names(self):
         named = []
-        for role in ROLES:
+        for role in roles():
             with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
-                text = f.read() + "".join(task_text(t) for t in CATALOG[role])
+                text = f.read() + "".join(task_text(t) for t in catalog()[role])
             if "<methods>" in text:
                 named.append(role)
                 self.assertIn("{{methods}}", composer.resolve(role).read, role)

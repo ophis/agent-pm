@@ -1,21 +1,78 @@
-"""Codex isolated startup trust, launch validation and process cleanup."""
-
-from new.tests.unit.adapters.codex.support import Base
+"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts' sibling loading."""
 
 import ast
 import copy
+import dataclasses
 import json
+import os
 import pathlib
+import runpy
 import subprocess
 import sys
+import types
 from unittest import mock
 
-from adapters.codex import tui_hook, tui_start
+from agent_pm.adapters.codex import tui_hook, tui_start
+from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.case import Case
+from new.tests.unit.adapters.codex.support import Base
+
+DIRECTORY = pathlib.Path(tui_start.__file__).parent
+SCRIPTS = ("tui_hook.py", "tui_start.py")
+SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
+LOADED = """import json, runpy, sys
+before = list(sys.path)
+runpy.run_path(sys.argv[1])
+names = sorted(n for n in sys.modules if n.endswith(("sessions", "hook_schema")))
+print(json.dumps([names, sys.path == before]))
+"""
+
+
+class SiblingTest(Case):
+    def test_run_isolated_each_script_loads_its_siblings_by_path_under_private_names_only(self):
+        for name in SCRIPTS:
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", LOADED, str(DIRECTORY / name)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(json.loads(result.stdout), [SIBLINGS, True])
+
+    def test_a_private_name_holding_another_file_is_refused(self):
+        foreign = types.ModuleType(SIBLINGS[1])
+        foreign.__file__ = os.path.join(self.home, "sessions.py")
+        for name in SCRIPTS:
+            with (
+                self.subTest(name=name),
+                mock.patch.dict(sys.modules, {SIBLINGS[1]: foreign}),
+                self.assertRaisesRegex(ImportError, SIBLINGS[1]),
+            ):
+                runpy.run_path(str(DIRECTORY / name))
+
+    def test_both_scripts_share_the_registered_siblings(self):
+        self.assertIs(tui_start.sessions, tui_hook.sessions)
+        self.assertIs(sys.modules[SIBLINGS[1]], tui_start.sessions)
+        self.assertEqual(tui_start.sessions.__file__, str(DIRECTORY / "sessions.py"))
+
+    def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
+        result = subprocess.run(
+            [sys.executable, "-I", tui_start.__file__, "not-json"], capture_output=True, text=True
+        )
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr),
+            (1, "", "codex tui: Codex tui launch: malformed launch data\n"),
+        )
+
+    def test_its_protected_core_root_is_the_import_root(self):
+        self.assertEqual(tui_start.IMPORT_ROOT, IMPORT_ROOT)
 
 
 class StartTest(Base):
     def test_shared_schema_preserves_hooks_in_isolated_scripts_and_adapter(self):
-        from adapters.codex import hook_schema
+        from agent_pm.adapters.codex import hook_schema
 
         expected = (
             ("SessionStart", "sessionStart", "activity"),
@@ -34,9 +91,8 @@ class StartTest(Base):
                 sys.executable,
                 "-I",
                 "-c",
-                "import json, sys; sys.path.insert(0, sys.argv[1]); "
-                "import hook_schema; print(json.dumps(hook_schema.HOOKS))",
-                str(pathlib.Path(tui_start.__file__).parent),
+                "import json, runpy, sys; print(json.dumps(runpy.run_path(sys.argv[1])['HOOKS']))",
+                str(pathlib.Path(tui_start.__file__).parent / "hook_schema.py"),
             ],
             capture_output=True,
             text=True,
@@ -132,12 +188,16 @@ class StartTest(Base):
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
                         self.assertFalse(
-                            (node.module or "").startswith(("adapters", "driver", "utils", "core"))
+                            (node.module or "").startswith(
+                                ("agent_pm", "adapters", "driver", "utils", "core")
+                            )
                         )
                     if isinstance(node, ast.Import):
                         self.assertFalse(
                             any(
-                                n.name.startswith(("adapters", "driver", "utils", "core"))
+                                n.name.startswith(
+                                    ("agent_pm", "adapters", "driver", "utils", "core")
+                                )
                                 for n in node.names
                             )
                         )
@@ -163,6 +223,22 @@ class StartTest(Base):
         self.assertEqual(
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
+
+    def test_start_passes_the_session_env_to_codex(self):
+        access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
+        spec = dataclasses.replace(self.spec, access=access)
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = self.adapter.tui().launch(
+                "prompt", spec, False, (sys.executable, "-I", "/protected/hook.py")
+            )
+        with (
+            mock.patch.dict(os.environ, launch.env),
+            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}"),
+            mock.patch("os.chdir"),
+            mock.patch("os.execve") as execute,
+        ):
+            tui_start.main([launch.argv[-1]])
+        self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
         proc = mock.Mock()

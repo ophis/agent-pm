@@ -1,8 +1,3 @@
-from tests import ROOT, hermetic
-from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
-
-import config
-
 import json
 import os
 import re
@@ -16,10 +11,14 @@ import unittest
 from unittest import mock
 
 import clients
+import config
 import drive
 import repo
 from clients import claude as claude_client
 from clients.claude import ClaudeClient
+
+from tests import ROOT, hermetic
+from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
 
 BASE = (
     HEADER

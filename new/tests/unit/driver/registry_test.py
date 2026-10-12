@@ -1,9 +1,7 @@
-"""new/core/src/driver/registry.py: the [adapters.<name>] tables and the tui settings, their per-process cache and
+"""driver/registry.py: the [adapters.<name>] tables and the tui settings, their per-process cache and
 Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
-
-from new.tests import SRC, fake_adapter, hermetic
 
 import importlib.abc
 import importlib.util
@@ -15,9 +13,13 @@ import types
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, ConfigError
-from adapters.print_prompt import PrintPromptAdapter
-from driver import registry
+import agent_pm
+from agent_pm.adapters.base import Adapter, ConfigError
+from agent_pm.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.driver import registry
+
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
@@ -37,8 +39,8 @@ def odd_adapter():
 
 
 def package(name, **names) -> types.ModuleType:
-    """An in-memory module adapters.<name> holding `names`."""
-    module = types.ModuleType(f"adapters.{name}")
+    """An in-memory module agent_pm.adapters.<name> holding `names`."""
+    module = types.ModuleType(f"agent_pm.adapters.{name}")
     vars(module).update(names)
     return module
 
@@ -59,13 +61,11 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         exec(self.source, vars(module))
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.home = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.addCleanup(registry.reset)
 
     def write(self, name, content) -> str:
         path = os.path.join(self.dir, name)
@@ -75,7 +75,7 @@ class Base(unittest.TestCase):
 
     def local(self, text):
         """`text` as this test's ~/.agent-pm/core-new.local.toml."""
-        with open(os.path.join(self.home, "core-new.local.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def configure(self, text):
@@ -83,8 +83,10 @@ class Base(unittest.TestCase):
         registry.configure(tomllib.loads(text))
 
     def register(self, **modules):
-        """Each name's module as sys.modules["adapters.<name>"] for the rest of the test."""
-        patch = mock.patch.dict(sys.modules, {f"adapters.{name}": m for name, m in modules.items()})
+        """Each name's module as sys.modules["agent_pm.adapters.<name>"] for the rest of the test."""
+        patch = mock.patch.dict(
+            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in modules.items()}
+        )
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -96,25 +98,39 @@ class Base(unittest.TestCase):
 
 class TablesTest(Base):
     def test_committed_config_has_its_tables(self):
-        self.assertEqual(list(registry.tables()), ["claude", "codex", "print_prompt"])
+        self.assertEqual(
+            list(registry.tables(registry.CONFIG, os.devnull)), ["claude", "codex", "print_prompt"]
+        )
         self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
 
     def test_committed_config_has_no_destination_key_and_builds_print_prompt(self):
-        for name, table in registry.tables().items():
+        for name, table in registry.tables(registry.CONFIG, os.devnull).items():
             with self.subTest(name=name):
                 self.assertEqual({"roles", "output"} & set(table), set())
         self.assertIs(type(registry.adapter("print_prompt")), PrintPromptAdapter)
 
     def test_the_merged_tables_and_their_sorted_names(self):
         path = self.write("config.toml", "[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n")
-        self.local("[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
-        self.assertEqual(registry.tables(path), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}})
+        local = self.write("local.toml", "[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
+        self.assertEqual(
+            registry.tables(path, local), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}}
+        )
+
+    def test_read_takes_both_paths_and_reads_only_those(self):
+        self.local("x = \n")
+        path = self.write("config.toml", "[adapters.a]\nk = 1\n")
+        local = self.write("local.toml", "[adapters.a]\nk = 2\n")
+        self.assertEqual(registry.read(path, local)["adapters"], {"a": {"k": 2}})
+        self.assertEqual(registry.read(path, os.devnull)["adapters"], {"a": {"k": 1}})
+        for args in ((), (path,)):
+            with self.subTest(args=args), self.assertRaises(TypeError):
+                registry.read(*args)
 
     def test_no_tables_when_absent_or_not_a_table(self):
         for text in ("x = 1\n", "adapters = 1\n", 'adapters = ["fake"]\n'):
             with self.subTest(text=text):
                 path = self.write("config.toml", text)
-                self.assertEqual(registry.tables(path), {})
+                self.assertEqual(registry.tables(path, os.devnull), {})
 
     def config_error(self, path, local):
         with self.assertRaises(ConfigError) as caught:
@@ -249,6 +265,7 @@ class AdapterTest(Base):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
         built = registry.adapter("fake")
+        self.assertEqual(registry.PACKAGE, agent_pm.__name__)
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
 
@@ -294,11 +311,8 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_parent_package(self):
         self.configure(FAKE)
-        with (
-            mock.patch.dict(sys.modules),
-            mock.patch.object(sys, "path", [p for p in sys.path if p != SRC]),
-        ):
-            del sys.modules[Adapter.__module__.partition(".")[0]]
+        with mock.patch.dict(sys.modules), mock.patch.object(agent_pm, "__path__", []):
+            del sys.modules[Adapter.__module__.rpartition(".")[0]]
             self.refused(
                 "adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake")
             )
@@ -307,7 +321,7 @@ class AdapterTest(Base):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
         for source, shown in (
             ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
-            ("from adapters.base import Absent\n", "cannot import name 'Absent'"),
+            ("from agent_pm.adapters.base import Absent\n", "cannot import name 'Absent'"),
             ("raise OSError('disk gone')\n", "disk gone"),
             ("def broken(:\n", "invalid syntax"),
         ):
@@ -315,7 +329,9 @@ class AdapterTest(Base):
                 self.subTest(source=source),
                 mock.patch.dict(sys.modules),
                 mock.patch.object(
-                    sys, "meta_path", [SourceFinder("adapters.broken", source), *sys.meta_path]
+                    sys,
+                    "meta_path",
+                    [SourceFinder("agent_pm.adapters.broken", source), *sys.meta_path],
                 ),
             ):
                 with self.assertRaises(ConfigError) as caught:

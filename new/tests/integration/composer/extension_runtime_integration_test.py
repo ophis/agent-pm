@@ -1,13 +1,13 @@
 """A new runtime is a config value to the Composer: a local `runtime` and its [adapters.<name>] table, with no package
 for it, resolve, compose and list the catalog in a child process (child.Case); no runtime text in the prompt."""
 
-from new.tests import SRC
-from new.tests.integration.composer import child
-
 import os
 import unittest
 
-from composer.prompt import RETURN
+from agent_pm.composer.prompt import RETURN
+
+from new.tests.case import ROOT
+from new.tests.integration.composer import child
 
 BANNER = "Extension handover."
 LOCAL = (
@@ -22,7 +22,7 @@ class ExtensionRuntime(child.Case):
         got = self.compose("dummy-tester", "echo")
         self.assertFalse(got["repo_imported"])
         for path in got["files"]:
-            self.assertTrue(path.startswith(SRC + os.sep), path)
+            self.assertTrue(path.startswith(ROOT + os.sep), path)
         self.assertEqual(
             (got["run"]["runtime"], got["run"]["tier"], got["run"]["effort"]),
             ("extension", 3, "low"),

@@ -3,6 +3,10 @@ headless mode of the team dir's role, its tasks dir a read rule, never added; ov
 reading the tasks dir unadded, a read dir holding the team dir run unadded, a write dir or CODEX_HOME overlapping it
 refused. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's part."""
 
+import json
+import os
+import unittest
+
 from new.tests.integration.composer.team_dirs_integration_test import (
     CORE_TASKS,
     IN_TEMP,
@@ -12,11 +16,6 @@ from new.tests.integration.composer.team_dirs_integration_test import (
 from new.tests.integration.delegate import codex_integration_test
 from new.tests.integration.delegate.cli_integration_test import CLI, Integration, mark
 from new.tests.unit.delegate.runner_test import block
-
-import json
-import os
-import sys
-import unittest
 
 DONE = {"status": "done", "title": "note", "summary": "A note.", "deliverable": "A note.\n"}
 
@@ -48,7 +47,7 @@ class TeamDirs(Integration):
         self.assertEqual(self.calls(), [])
 
     def test_list(self):
-        res = self.drive([], argv=[sys.executable, CLI, "--list"])
+        res = self.drive([], argv=[*CLI, "--list"])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(
             f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"

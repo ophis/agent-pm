@@ -1,13 +1,13 @@
-from tests import hermetic
-from tests.integration.core.drive_integration_test import DONE, Integration, prompt
-from tests.unit.core.drive_test import SID, outcome, progress
-
 import contextlib
 import os
 import signal
 import unittest
 
 import compose
+
+from tests import hermetic
+from tests.integration.core.drive_integration_test import DONE, Integration, prompt
+from tests.unit.core.drive_test import SID, outcome, progress
 
 ASKING = {
     "status": "needs_input",

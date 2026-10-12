@@ -1,3 +1,7 @@
+import os
+import signal
+import unittest
+
 from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator.flow_fixtures import (
     ENGINEER,
@@ -8,10 +12,6 @@ from tests.integration.orchestrator.flow_fixtures import (
     Flow,
     live_tmux,
 )
-
-import os
-import signal
-import unittest
 
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
 PR = "https://github.com/acme/widgets/pull/1"
