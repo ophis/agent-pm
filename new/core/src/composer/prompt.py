@@ -13,28 +13,11 @@ import os
 import re
 from collections.abc import Mapping
 
-from composer.base import (
-    CODE_SPAN,
-    FILE_REF,
-    LINK,
-    METHOD,
-    OUTPUT,
-    PAREN,
-    SCHEME,
-    SRC,
-    ConfigError,
-    _code,
-    _fence,
-    _read,
-    _text,
-    _without,
-    anchor,
-    fill,
-    outline,
-    unfenced,
-)
+from composer.base import (CODE_SPAN, FILE_REF, LINK, METHOD, OUTPUT, PAREN, SCHEME, SRC, ConfigError, anchor, fill,
+                           outline, read_text)
 from composer.run import RunConfig, RunParams
-from composer.teams import PROGRESS, Team, _team, index, tasks_path
+from composer.teams import PROGRESS, Team, index, tasks_path, team_or_default
+from utils.markdown import unfenced
 
 OUTCOME = "agent-pm-outcome"
 RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "
@@ -58,7 +41,7 @@ RETURN = ("## Return\n\nYour replies carry your reports:\n\n"
 
 
 def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> str:
-    team = _team(team)
+    team = team_or_default(team)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
     if not (charter := team.charter(run.role)):
@@ -148,13 +131,13 @@ def _task_path(after: str, paths) -> str | None:
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
     used = team.used(run.role, run.templates)
     paths = {t: team.lookup("tasks", t) for t in index(run.role, team)}
-    tasks = {t: _text(p) for t, p in paths.items()}
+    tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))
     methods = {}
     for m in named:
         if os.path.isfile(path := os.path.join(team.root, "methods", f"{m}.md")):
-            methods[f"methods/{m}.md"] = _text(path)
+            methods[f"methods/{m}.md"] = read_text(path)
     errors = reference_errors(own, tasks, methods, texts=parts, labels=labels)
     if not errors:
         return
@@ -191,6 +174,28 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
         if where or name in ("<Workdir>", "<scripts>", "<tasks>"):
             lines.append(f"- `{name}`: {values[source]}\n")
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
+
+
+def _read(root: str, rel: str) -> str:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        raise ConfigError(f"missing file {rel}")
+    with open(path) as f:
+        return f.read().strip() + "\n"
+
+
+def _without(text: str, placeholder: str) -> str:
+    return "".join(line for line in text.splitlines(True) if placeholder not in line)
+
+
+def _fence(text: str, least: int = 3) -> str:
+    ticks = max([len(r) + 1 for r in re.findall(r"`+", text)] + [least])
+    return "`" * ticks
+
+
+def _code(value: str) -> str:
+    f, pad = _fence(value, 1), " " if "`" in value else ""
+    return f"{f}{pad}{value}{pad}{f}"
 
 
 def _unique(text: str) -> str:

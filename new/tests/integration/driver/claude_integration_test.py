@@ -2,8 +2,6 @@
 registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
-from new.tests import SRC, fake_claude, hermetic
-
 import json
 import os
 import shlex
@@ -18,17 +16,9 @@ import unittest
 import uuid
 from unittest import mock
 
-from adapters.base import (
-    Activity,
-    Exited,
-    LimitHit,
-    Reply,
-    SessionBound,
-    SessionStatus,
-    Stderr,
-    TurnEnd,
-    Usage,
-)
+from new.tests import SRC, fake_claude, hermetic
+from adapters.base import (Activity, Exited, LimitHit, Reply, SessionBound, SessionStatus, Stderr, TurnEnd, Usage,
+                           Window)
 from driver import api, registry
 
 WAIT = 20    # upper bound on any wait, in seconds
@@ -302,9 +292,9 @@ class InterruptTest(Base):
 class UsageTest(Base):
     def test_the_probes_rate_limit_info_is_the_usage(self):
         self.scenario(rate_limit={"status": "allowed", "resetsAt": RESETS,
-                                  "unifiedWindows": {"five_hour": {"utilization": 0.25},
-                                                     "seven_day": {"utilization": 1.0}}})
-        self.assertEqual(api.usage("claude"), Usage(25.0, True, RESETS))
+                                  "unifiedWindows": {"five_hour": {"utilization": 0.25, "resetsAt": RESETS},
+                                                     "seven_day": {"utilization": 1.0, "resetsAt": RESETS + 1}}})
+        self.assertEqual(api.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1)))
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], PROBE)
         probe = os.path.join(self.agent_pm, "probe")
@@ -312,8 +302,12 @@ class UsageTest(Base):
         self.assertEqual(stat.S_IMODE(os.lstat(probe).st_mode), 0o700)
         self.assertEqual(self.written(), [])
 
+    def test_a_reading_without_windows_has_none(self):
+        self.scenario(rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": "high"}})
+        self.assertEqual(api.usage("claude"), Usage(None, None))
+
     def test_unknown_is_none(self):
-        for name, fields in (("no event", {}), ("garbage", {"rate_limit": {"unifiedWindows": {"five_hour": "high"}}}),
+        for name, fields in (("no event", {}),
                              ("no claude", {"rate_limit": {"unifiedWindows": {"five_hour": {"utilization": 0.25}}}})):
             with self.subTest(name), mock.patch.dict(os.environ):
                 self.scenario(**fields)

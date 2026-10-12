@@ -1,7 +1,9 @@
-"""Claude Code's Adapter, runtime `claude`: headless mode only (headless_run.py); the rest is ClaudeCommon's."""
+"""Claude Code's Adapter, runtime `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the rest is
+ClaudeCommon's."""
 from adapters.base import Adapter
 from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless_run import ClaudeHeadlessRun
+from adapters.claude.headless import ClaudeHeadless
+from adapters.claude.tui import ClaudeTui
 
 
 class ClaudeAdapter(Adapter):
@@ -12,11 +14,11 @@ class ClaudeAdapter(Adapter):
         super().__init__(config)
         self.common = ClaudeCommon(self.config)
 
-    def headless_run(self):
-        return ClaudeHeadlessRun(self)
+    def headless(self):
+        return ClaudeHeadless(self)
 
-    def tui_run(self):
-        return None
+    def tui(self):
+        return ClaudeTui(self)
 
     def usage_probe(self):
         return self.common.probe()

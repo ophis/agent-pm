@@ -8,8 +8,10 @@ import sys
 import time
 from unittest import mock
 
-from adapters.base import Usage
+from adapters.base import Usage, Window
 from driver import api, registry
+
+FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
 class UsageIntegrationTest(Base):
@@ -40,7 +42,7 @@ class UsageIntegrationTest(Base):
         return result
 
     def test_one_light_probe_matches_ids_and_maps_window_duration(self):
-        self.assertEqual(self.probe(), Usage(62, False, 2000))
+        self.assertEqual(self.probe(), Usage(FIVE, WEEK))
         rows = [json.loads(line) for line in self.log.read_text().splitlines()]
         self.assertEqual(rows[0]["argv"], ["app-server"])
         self.assertIsNone(rows[0]["marker"])
@@ -50,9 +52,10 @@ class UsageIntegrationTest(Base):
         self.assertEqual(rows[3]["id"], 2)
 
     def test_fallback_null_and_weekly_windows(self):
-        for case, expected in (("fallback", Usage(62, False, 2000)), ("five-first", Usage(62, False, 2000)),
-                               ("weekly-full", Usage(62, True, 4000)), ("weekly-only", None),
-                               ("null", None), ("invalid-window", None), ("huge-number", None)):
+        for case, expected in (("fallback", Usage(FIVE, WEEK)), ("five-first", Usage(FIVE, WEEK)),
+                               ("weekly-full", Usage(FIVE, Window(100, 4000))), ("weekly-only", Usage(None, WEEK)),
+                               ("null", Usage(None, None)), ("invalid-window", Usage(None, None)),
+                               ("huge-number", Usage(None, None)), ("empty", None)):
             with self.subTest(case=case):
                 self.log.unlink(missing_ok=True)
                 self.assertEqual(self.probe(case), expected)
@@ -61,7 +64,7 @@ class UsageIntegrationTest(Base):
         for case in ("error", "init-error", "malformed", "oversize", "exit", "null-result", "stderr", "ignore-term"):
             with self.subTest(case=case):
                 self.log.unlink(missing_ok=True)
-                expected = Usage(62, False, 2000) if case == "ignore-term" else None
+                expected = Usage(FIVE, WEEK) if case == "ignore-term" else None
                 self.assertEqual(self.probe(case), expected)
         self.log.unlink(missing_ok=True)
         self.assertIsNone(self.probe(PATH=str(self.work)))
@@ -71,7 +74,7 @@ class UsageIntegrationTest(Base):
         self.assertIsNone(self.probe("silent"))
 
     def test_driver_account_query_uses_factory_and_does_not_start_model(self):
-        self.assertEqual(self.probe(), Usage(62, False, 2000))
+        self.assertEqual(self.probe(), Usage(FIVE, WEEK))
         row = json.loads(self.log.read_text().splitlines()[0])
         self.assertNotEqual(row["ppid"], os.getpid())
         self.assertEqual(row["cwd"], str(self.home / ".agent-pm" / "probe"))
@@ -82,7 +85,7 @@ class UsageIntegrationTest(Base):
         common = self.common
         inherited = {key: "inherited" for key in (*common.unset, *common.defaults)}
         with mock.patch.dict(os.environ, inherited):
-            self.assertEqual(self.probe(FAKE_ADDITION="configured", PAGER="configured"), Usage(62, False, 2000))
+            self.assertEqual(self.probe(FAKE_ADDITION="configured", PAGER="configured"), Usage(FIVE, WEEK))
         env = json.loads(self.log.read_text().splitlines()[0])["env"]
         for key in common.unset:
             self.assertIsNone(env[key], key)

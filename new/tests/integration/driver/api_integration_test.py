@@ -1,10 +1,9 @@
 """driver.api.start() end to end over the real fake runtime (new/tests/fake_adapter/runtime.py): the frozen event set
 streamed to the Driver's Exited and the run records (acceptance), the idle timer (FR-11), exits, stop(), failures, and
-the launch's environment; then stop() of a process group and a process that outlives its pipes. The fake adapter, a
-subclass whose launch takes env, unset and cwd from its config, and one whose runtime is this Python running its
-config's script are registered in-process (sys.modules) with their tables given to registry.configure."""
-from new.tests import fake_adapter, hermetic
-
+the launch's environment; then stop() of a process group and a process that outlives its pipes; the fake's own limit
+record and resume steps. The fake adapter, a subclass whose launch takes env, unset and cwd from its config, and one
+whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
+given to registry.configure."""
 import dataclasses
 import io
 import json
@@ -20,17 +19,8 @@ import types
 import unittest
 from unittest import mock
 
-from adapters.base import (
-    Access,
-    Activity,
-    Blocked,
-    Exited,
-    Launch,
-    Reply,
-    SessionBound,
-    Stderr,
-    TurnEnd,
-)
+from new.tests import fake_adapter, hermetic
+from adapters.base import Access, Activity, Blocked, Exited, Launch, LimitHit, Reply, SessionBound, Stderr, TurnEnd
 from driver import api, records, registry
 
 WAIT = 20      # upper bound on any wait, in seconds
@@ -44,11 +34,11 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose launch also takes its env, unset and cwd from its config."""
     keys = fake_adapter.FakeAdapter.keys | {"env", "unset", "cwd"}
 
-    def headless_run(self):
+    def headless(self):
         return LaunchingRun(self)
 
 
-class LaunchingRun(fake_adapter.FakeHeadlessRun):
+class LaunchingRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         config = self.adapter.config
         return dataclasses.replace(super().launch(prompt, spec, resume), env=config.get("env", {}),
@@ -63,11 +53,11 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose runtime is this Python running its config's `script`."""
     keys = fake_adapter.FakeAdapter.keys | {"script"}
 
-    def headless_run(self):
+    def headless(self):
         return ScriptRun(self)
 
 
-class ScriptRun(fake_adapter.FakeHeadlessRun):
+class ScriptRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
@@ -216,7 +206,7 @@ class IdleTest(Base):
         self.assertEqual({e for _, e in idles}, {api.IdleTimeout(IDLE)})
         self.assertEqual(alive, [True] * len(idles))
         times = [marks[0][0]] + [at for at, _ in idles]
-        for before, after in zip(times, times[1:], strict=False):
+        for before, after in zip(times, times[1:]):
             self.assertGreaterEqual(after - before, IDLE - 0.01)
 
     def test_none_after_blocked(self):
@@ -359,6 +349,27 @@ class LaunchEnvironmentTest(Base):
                 self.assertEqual((entry["cwd"], entry["env"]["PWD"]), (want, want))
                 self.assertEqual(handle.info().cwd, want)
                 self.assertEqual(self.written()[-1]["cwd"], want)
+
+
+class FakeTest(Base):
+    def scenario_object(self, **scenario):
+        with open(self.scenario, "w", encoding="utf-8") as f:
+            json.dump(scenario, f)
+
+    def test_a_limit_record_is_a_limit_hit(self):
+        self.steps(out("limit", resets_at=1.5), out("limit", resets_at=None), out("limit"))
+        self.assertEqual(self.drain(self.start()), [LimitHit(1.5), LimitHit(None), LimitHit(None), Exited(0)])
+
+    def test_resume_steps_run_only_on_a_resume(self):
+        self.scenario_object(steps=[out("message", text="first")], resume=[out("message", text="again")])
+        first = self.start()
+        self.assertEqual(self.drain(first), [Reply("first"), Exited(0)])
+        self.assertEqual(self.drain(self.start(resume=first.sid)), [Reply("again"), Exited(0)])
+        self.assertEqual(["--resume" in entry["argv"] for entry in self.logged()], [False, True])
+
+    def test_an_object_without_resume_steps_runs_its_steps_on_a_resume(self):
+        self.scenario_object(steps=[out("message", text="first")])
+        self.assertEqual(self.drain(self.start(resume="r1")), [Reply("first"), Exited(0)])
 
 
 if __name__ == "__main__":

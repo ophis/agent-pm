@@ -1,13 +1,15 @@
 """The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)  imports go one way (new/README.md), none imports repo; reads nested, relative and literal
-                     import_module/__import__ imports
-runtime_names(core)  no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
-                     Adapter
-old_core(new)        no import of top-level `core`, no string constant naming the old core's source dir (OLD)
-adapters_key(core)   no string constant "adapters" outside src/driver/
-syntax_311(new)      every .py parses as Python 3.11
-pure_utils(core)     src/utils/ imports only the standard library
+layer_imports(core)   imports go one way (new/README.md), none imports repo, nested, relative or import_module'd
+runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/ but a .toml's comments and Adapter lines
+old_core(new)         no `core` import, no string constant naming OLD
+adapters_key(core)    no string constant "adapters" outside src/driver/
+syntax_311(new)       every .py parses as Python 3.11
+pure_utils(core)      src/utils/ imports only the standard library
+private_imports(root) no other module's _name
+modes_import_api(core) src/driver/modes/ never imports driver.api
+tmux_calls(core)      "tmux" only in TMUX_HOST
+syntax_39(core)       STANDALONE files parse as Python 3.9
 """
 import ast
 import os
@@ -25,6 +27,9 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))   # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
+TMUX_HOST = "src/driver/tmux_host.py"
+TUI_HOOK = "src/driver/modes/tui_hook.py"
+STANDALONE = (TMUX_HOST, TUI_HOOK)
 
 
 def layer_imports(core: str) -> list[str]:
@@ -90,6 +95,68 @@ def syntax_311(new: str) -> list[str]:
         except SyntaxError as e:
             found.append(f"{rel}: {e}")
     return sorted(found)
+
+
+def modes_import_api(core: str) -> list[str]:
+    found = set()
+    for rel, names, tree in _src_modules(core):
+        if names[:2] == ["driver", "modes"]:
+            found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
+                         if m.split(".")[:2] == ["driver", "api"])
+    return sorted(found)
+
+
+def tmux_calls(core: str) -> list[str]:
+    found = set()
+    for rel, text in _files(core, ".py"):
+        if rel != TMUX_HOST:
+            found.update(f'{rel}:{line}: str constant "tmux"' for line, s in _strings(ast.parse(text, rel))
+                         if s == "tmux")
+    return sorted(found)
+
+
+def syntax_39(core: str) -> list[str]:
+    found = []
+    for rel, text in _files(core, ".py"):
+        if rel in STANDALONE:
+            try:
+                ast.parse(text, rel, feature_version=(3, 9))
+            except SyntaxError as e:
+                found.append(f"{rel}: {e}")
+    return sorted(found)
+
+
+def private_imports(root: str) -> list[str]:
+    found = set()
+    for rel, text in _files(root, ".py"):
+        tree = ast.parse(text, rel)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(a.asname or a.name for a in node.names)
+                module = "." * node.level + (f"{node.module}." if node.module else "")
+                found.update(f"{rel}:{node.lineno}: private {module}{a.name}" for a in node.names if _private(a.name))
+            elif isinstance(node, ast.Import):
+                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _private(node.attr):
+                chain, base = [node.attr], node.value
+                while isinstance(base, ast.Attribute):
+                    chain.append(base.attr)
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in imported:
+                    found.add(f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}")
+    return sorted(found)
+
+
+def _private(name):
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
+def _src_modules(core):
+    for rel, text in _files(core, ".py"):
+        if rel.startswith("src/"):
+            yield rel, rel[len("src/"):-3].split("/"), ast.parse(text, rel)
 
 
 def _files(root, suffixes, skip=None):

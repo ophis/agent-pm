@@ -1,7 +1,5 @@
-"""new/core/src/driver/modes/headless_run.py: a HeadlessRun's command on pipes, its process group's kill, bounded waits
-and probe(), over real Python children."""
-from new.tests import hermetic  # noqa: F401
-
+"""new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
+bounded waits, send and screen refused, and probe(), over real Python children."""
 import json
 import os
 import signal
@@ -14,9 +12,11 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, HeadlessRun, Launch, Reply, Stderr
-from driver.modes import headless_run
-from driver.modes.headless_run import HeadlessMode
+from new.tests import hermetic  # noqa: F401
+from adapters.base import Adapter, Headless, Launch, Reply, Stderr
+from driver.errors import DriverError
+from driver.modes import headless
+from driver.modes.headless import HeadlessMode
 
 WAIT = 10           # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2   # probe()'s timeout where it must pass, in seconds
@@ -64,14 +64,14 @@ def until(check) -> bool:
 
 
 class StubAdapter(Adapter):
-    def headless_run(self):
+    def headless(self):
         return StubRun(self)
 
-    def tui_run(self):
+    def tui(self):
         return None
 
 
-class StubRun(HeadlessRun):
+class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
     def launch(self, prompt, spec, resume):
@@ -91,7 +91,7 @@ class Base(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.mode = HeadlessMode(StubAdapter({}).headless_run())
+        self.mode = HeadlessMode(StubAdapter({}).headless())
 
     def begin(self, code: str, env: dict | None = None, **kwargs):
         argv = (sys.executable, "-I", "-c", textwrap.dedent(code))
@@ -166,7 +166,7 @@ class Streams(Base):
         self.assertIs(calls[0]["stdin"], subprocess.DEVNULL)
         self.assertEqual(calls[0]["process_group"], 0)
         self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 3)
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         self.mode.stop()
         self.assertEqual(self.mode.returncode(0), 3)
 
@@ -198,9 +198,9 @@ class Streams(Base):
 class Stop(Base):
     def test_kills_a_sleeping_child_whose_pipes_then_end(self):
         self.begin("import time; time.sleep(60)")
-        self.assertTrue(self.mode.alive())
+        self.assertEqual(self.mode.state(), "live")
         self.promptly(self.mode.stop)
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         self.assertLess(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
         self.assertEqual(self.drain(), [])
         self.promptly(self.mode.stop)
@@ -221,7 +221,7 @@ class Stop(Base):
     def test_falls_back_to_killing_the_process_when_killpg_fails(self):
         for error in (ProcessLookupError, PermissionError):
             with self.subTest(error=error.__name__):
-                self.mode = HeadlessMode(StubAdapter({}).headless_run())
+                self.mode = HeadlessMode(StubAdapter({}).headless())
                 self.begin(SLEEPER)
                 with mock.patch("os.killpg", side_effect=error) as killpg:
                     self.promptly(self.mode.stop)
@@ -232,12 +232,12 @@ class Stop(Base):
         self.begin(SLEEPER)
         with (mock.patch("os.killpg", side_effect=ProcessLookupError),
               mock.patch.object(self.mode.proc, "kill", side_effect=ProcessLookupError) as killed,
-              mock.patch.object(headless_run, "STOP_WAIT", 0.3)):
+              mock.patch.object(headless, "STOP_WAIT", 0.3)):
             began = time.monotonic()
             self.promptly(self.mode.stop)
             self.assertGreaterEqual(time.monotonic() - began, 0.3)
         killed.assert_called_once_with()
-        self.assertTrue(self.mode.alive())
+        self.assertEqual(self.mode.state(), "live")
 
     def test_skips_killpg_once_the_child_is_reaped_and_both_pipes_ended(self):
         self.begin("pass")
@@ -250,11 +250,24 @@ class Stop(Base):
 
     def test_is_a_no_op_before_begin_and_after_a_failed_begin(self):
         self.mode.stop()
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
         with self.assertRaises(FileNotFoundError):
             self.mode.begin((sys.executable, "-c", ""), cwd=os.path.join(self.dir, "missing"), env=dict(os.environ))
         self.mode.stop()
-        self.assertFalse(self.mode.alive())
+        self.assertEqual(self.mode.state(), "absent")
+
+
+class TuiOnly(Base):
+    def test_send_and_screen_raise_driver_error_before_and_after_begin(self):
+        for when in ("before", "after"):
+            if when == "after":
+                self.begin(SLEEPER)
+            for call, message in ((lambda: self.mode.send("x"), "send: tui mode only"),
+                                  (self.mode.screen, "screen: tui mode only"),
+                                  (lambda: self.mode.screen(5), "screen: tui mode only")):
+                with self.subTest(when=when, message=message), self.assertRaises(DriverError) as caught:
+                    call()
+                self.assertEqual(str(caught.exception), message)
 
 
 class Returncode(Base):
@@ -273,14 +286,14 @@ class Probe(unittest.TestCase):
         self.dir = tmp.name
 
     def probe(self, argv, timeout=WAIT, env=None):
-        """headless_run.probe(argv) in self.dir, the Popen call's mock and the processes it made."""
+        """headless.probe(argv) in self.dir, the Popen call's mock and the processes it made."""
         made, real = [], subprocess.Popen
 
         def popen(*args, **kwargs):
             made.append(real(*args, **kwargs))
             return made[-1]
         with mock.patch("subprocess.Popen", side_effect=popen) as spy:
-            out = headless_run.probe(argv, cwd=self.dir, env={**os.environ, **(env or {})}, timeout=timeout)
+            out = headless.probe(argv, cwd=self.dir, env={**os.environ, **(env or {})}, timeout=timeout)
         return out, spy, made
 
     def test_its_stdout_alone_run_in_cwd_with_env_leading_its_own_group(self):

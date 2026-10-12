@@ -31,8 +31,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from utils.config_file import merge as merge
-from utils.config_file import read_config as _read_config
+from utils.args import Once
+from utils.config_file import CONFIG, read_config
 from utils.paths import real_dirs, temp_dirs, under
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
@@ -48,21 +48,12 @@ BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 SHORT, LONG = 60, 600
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
-CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.toml")
-LOCAL = "~/.agent-pm/core-new.local.toml"
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
 class Invalid(Exception):
     pass
-
-
-class Once(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if getattr(namespace, self.dest) is not None:
-            parser.error(f"{option_string} given twice")
-        setattr(namespace, self.dest, values)
 
 
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
@@ -107,10 +98,6 @@ def redact(text: str) -> str:
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
-
-
-def read_config(path: str, local: str = LOCAL) -> dict:
-    return _read_config(path, local)
 
 
 def trusted_dirs(cfg: dict) -> frozenset[str]:

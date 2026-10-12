@@ -1,26 +1,16 @@
 """composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
 TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
-from new.tests import hermetic
-
 import os
 import re
 import tempfile
 import unittest
 from unittest import mock
 
-import repo
+from new.tests import hermetic
 from composer.base import TEAM, ConfigError
-from composer.teams import (
-    catalog,
-    check_overlap,
-    check_team_dirs,
-    index,
-    roles,
-    tasks_path,
-    team,
-    team_dirs,
-    team_paths,
-)
+from composer.teams import (catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team, team_dirs,
+                            team_paths)
+from utils import config_file
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = ("# Writer\n\nWrite well.\n\n## Tasks\n\n" + INTRO.format("short-note") +
@@ -91,7 +81,7 @@ class Fake(unittest.TestCase):
             f.write(text)
 
     def cfg(self):
-        return repo.read_config(self.config)
+        return config_file.read_config(self.config)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""

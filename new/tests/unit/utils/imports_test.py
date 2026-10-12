@@ -23,11 +23,15 @@ class UtilsImportsTest(unittest.TestCase):
     def test_no_layer_or_outer_module_imports_repo(self):
         files = {f"src/{layer}/x.py": "import repo\n" for layer in guards.LAYERS}
         files["src/x.py"] = "from repo import read_config\n"
+        files["src/composer/w.py"] = "from .. import repo\nimport repository\n"
+        files["src/utils/z.py"] = "def f():\n    __import__('repo')\n"
         root = self.tree(files)
         self.assertEqual(guards.layer_imports(root), ["src/adapters/x.py: adapters imports repo",
+                                                     "src/composer/w.py: composer imports repo",
                                                      "src/composer/x.py: composer imports repo",
                                                      "src/delegate/x.py: delegate imports repo",
                                                      "src/driver/x.py: driver imports repo",
+                                                     "src/utils/z.py: outside the layers imports repo",
                                                      "src/x.py: outside the layers imports repo.read_config"])
 
     def test_production_tree_does_not_import_repo_as_a_library(self):
@@ -44,8 +48,12 @@ class UtilsImportsTest(unittest.TestCase):
     def test_utils_reject_layer_external_and_literal_imports(self):
         root = self.tree({"src/utils/x.py": "import driver.api\nimport third_party\n"
                          "def f():\n    import importlib\n    importlib.import_module('adapters.base')\n"
-                         "    __import__('composer')\n"})
+                         "    __import__('composer')\n",
+                          "src/utils/y.py": "from .. import driver\nimport repo\n",
+                          "src/driver/x.py": "import third_party\n"})
         self.assertEqual(guards.pure_utils(root), ["src/utils/x.py: utils imports adapters.base",
                                                   "src/utils/x.py: utils imports composer",
                                                   "src/utils/x.py: utils imports driver.api",
-                                                  "src/utils/x.py: utils imports third_party"])
+                                                  "src/utils/x.py: utils imports third_party",
+                                                  "src/utils/y.py: utils imports driver",
+                                                  "src/utils/y.py: utils imports repo"])

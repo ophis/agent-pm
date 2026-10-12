@@ -147,7 +147,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
     def direct_launch(self, prompt, resume=False):
         adapter = CodexAdapter({key: value for key, value in self.config["adapters"]["codex"].items()
                                 if key != "implementation"})
-        run = adapter.headless_run()
+        run = adapter.headless()
         launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume)
         env = {key: value for key, value in os.environ.items() if key not in launch.unset}
         result = subprocess.run(launch.argv, cwd=launch.cwd, env={**env, **launch.env, "PWD": launch.cwd},
@@ -280,6 +280,15 @@ class HeadlessIntegrationTest(unittest.TestCase):
         self.assertEqual(self.logged()[-1]["resume_id"], NATIVE)
         self.assertEqual([entry["client_id"] for entry in self.written() if entry["kind"] == "client_session"],
                          [NATIVE, NATIVE])
+
+    def test_the_fakes_resume_steps_run_only_on_resume(self):
+        self.scene([fake_codex.message("first"), {"out": {"type": "turn.completed"}}],
+                   resume=[fake_codex.message("again"), {"out": {"type": "turn.completed"}}])
+        for resume, said in ((False, "first"), (True, "again")):
+            with self.subTest(resume=resume):
+                found = self.drain(api.start("codex", "headless", "hello", self.spec,
+                                             resume=self.sid if resume else None, sid=self.sid))
+                self.assertEqual(found[1:], [Reply(said), TurnEnd(said), Exited(0)])
 
     def test_different_native_id_on_resume_is_not_published_or_saved(self):
         self.drain(api.start("codex", "headless", "first", self.spec, sid=self.sid))

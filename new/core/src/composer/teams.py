@@ -8,20 +8,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from utils.config_file import read_config
+from composer.base import CONFIG, METHOD, PLACEHOLDER, TEAM, ConfigError, read_text, title_of
+from utils.config_file import LOCAL, read_config
+from utils.markdown import unfenced
 from utils.paths import temp_dirs, under
-
-from composer.base import (
-    CONFIG,
-    LOCAL,
-    METHOD,
-    PLACEHOLDER,
-    TEAM,
-    ConfigError,
-    _text,
-    _title,
-    unfenced,
-)
 
 PROGRESS = "agent-pm-progress"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
@@ -59,10 +49,10 @@ class Team:
     def read(self, kind: str, name: str) -> tuple[str, str]:
         if not (path := self.lookup(kind, name)):
             raise self.misnamed_error(kind, name) or ConfigError(f"missing file {kind}/{name}.md")
-        return _text(path), self.label(kind, name, path)
+        return read_text(path), self.label(kind, name, path)
 
     def check_file(self, kind: str, path: str) -> None:
-        text = _text(path)
+        text = read_text(path)
         if text.split("\n", 1)[0].strip() == "---":
             raise ConfigError(f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
                               f"{LOCAL}")
@@ -72,7 +62,7 @@ class Team:
             if not os.path.isfile(os.path.join(self.root, "methods", f"{m}.md")):
                 raise ConfigError(f"{path}: names <methods>/{m}.md, which core has no file for")
         if kind == "roles":
-            _title(text, path)
+            title_of(text, path)
         elif kind == "tasks":
             if not text.startswith("# "):
                 raise ConfigError(f"{path}: must start with a '# ' heading")
@@ -84,7 +74,7 @@ class Team:
     def charter(self, role: str) -> tuple[str, str] | None:
         if not (path := self.lookup("roles", role)):
             return None
-        return _text(path), self.label("roles", role, path)
+        return read_text(path), self.label("roles", role, path)
 
     def tasks_dir(self, role: str) -> str | None:
         path = self.lookup("roles", role)
@@ -163,7 +153,7 @@ def tasks_path(role: str, team: Team) -> str:
 def roles(team: Team, cfg: Mapping) -> list[str]:
     for role in cfg.get("roles", {}):
         if not team.lookup("roles", role):
-            raise _no_charter(role)
+            raise no_charter(role)
     charters = {name: paths for (kind, name), paths in team.files.items() if kind == "roles"}
     core = [name for name, paths in charters.items() if not team.custom(paths[0])]
     out = [r for r in cfg.get("roles", {}) if r in core] + sorted(r for r in core if r not in cfg.get("roles", {}))
@@ -174,9 +164,9 @@ def roles(team: Team, cfg: Mapping) -> list[str]:
 
 
 def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str, str]:
-    team = _team(team)
+    team = team_or_default(team)
     if not (charter := team.charter(role)):
-        raise _no_charter(role, read_config(config, LOCAL), team)
+        raise no_charter(role, read_config(config, LOCAL), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -201,12 +191,12 @@ def index(role: str, team: Team | None = None, config: str = CONFIG) -> dict[str
 
 
 def catalog(team: Team | None = None, config: str = CONFIG) -> dict[str, dict[str, str]]:
-    team = _team(team)
-    _roles(config)
+    team = team_or_default(team)
+    role_tables(config)
     return {role: index(role, team, config) for role in roles(team, read_config(config, LOCAL))}
 
 
-def _roles(config: str) -> Mapping:
+def role_tables(config: str) -> Mapping:
     if not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
     roles = read_config(config, LOCAL).get("roles")
@@ -218,11 +208,11 @@ def _roles(config: str) -> Mapping:
     return roles
 
 
-def _team(given: Team | None) -> Team:
+def team_or_default(given: Team | None) -> Team:
     return given if given is not None else team()
 
 
-def _no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
+def no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
     if team is not None and (e := team.misnamed_error("roles", role)):
         return e
     if cfg is not None and role not in cfg.get("roles", {}):

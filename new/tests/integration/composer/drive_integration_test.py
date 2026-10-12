@@ -1,12 +1,11 @@
-"""A headless run's prompt and access intent, composed in a child process (child.Case) as its caller would for a new run
-and a resume."""
-from new.tests import NEW
-from new.tests.integration.composer import child
-
+"""A headless session's prompt and access intent, composed in a child process (child.Case) as its caller would for a new
+run and a resume."""
 import os
 import unittest
 
 from composer.prompt import RESUME
+from new.tests import NEW
+from new.tests.integration.composer import child
 
 TASKS = os.path.join(NEW, "core", "team", "tasks")
 
@@ -17,8 +16,8 @@ class NewRun(child.Case):
         self.assertFalse(got["prompt"].startswith(RESUME))
         self.assertTrue(got["prompt"].endswith("\n# Input\n\nHello.\n"))
         self.assertEqual(got["trusted"], [], "no trusted_dirs: the caller loads no project settings")
-        self.assertEqual(got["intent"], {"dirs": [self.work, TASKS], "commands": [], "gate": "", "cwd": self.proj,
-                                         "project": False})
+        self.assertEqual(got["intent"], {"dirs": [self.work, TASKS], "writes": [], "commands": [], "gate": "",
+                                         "cwd": self.proj, "project": False})
         self.assertEqual(os.listdir(self.work), [])
 
 
