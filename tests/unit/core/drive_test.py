@@ -337,7 +337,7 @@ class Claude(Base):
                     f"Bash(python3 {CORE}/src/repo.py {cmd} --dir {self.work}/src *)" for cmd in cmds]
                     + [f"Bash({self.report()} *)"])
                 self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> "
-                              "[--name <checkout>] <repo>`", argv[2])
+                              "[--name <checkout>] [--base <Base:>] <repo>`", argv[2])
 
     def test_the_gate_is_pre_approved_verbatim(self):
         gate = "python3 /u/usage.py --below 80"
@@ -1411,7 +1411,7 @@ class Skill(Base):
         self.assertTrue(text.startswith("# Guide"))
         self.assertIn(f"\n- `<scripts>`: `{CORE}/src`\n", text)
         self.assertIn("`python3 <scripts>/repo.py worktree --dir <Workdir>/src --branch <branch> [--name <checkout>] "
-                      "<repo>`", text)
+                      "[--base <Base:>] <repo>`", text)
         for placeholder in ("${CLAUDE_SKILL_DIR}", "$ARGUMENTS", "{{"):
             self.assertNotIn(placeholder, text)
         self.assertIn(f"\n# Parameters\n\n{compose.RULE}{SkillClient({}).approval()}\n\n- `<Workdir>`: the dir `mktemp -d` prints, run once at the "
