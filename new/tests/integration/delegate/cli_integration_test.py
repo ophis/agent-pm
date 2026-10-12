@@ -502,8 +502,8 @@ class ConfigErrors(Integration):
                 "--input, --out and --workdir are required",
             ),
             "a runtime without tui": (
-                self.argv("--runtime", "codex", "--mode", "tui"),
-                "runtime 'codex' does not support tui mode",
+                self.argv("--runtime", "print_prompt", "--mode", "tui"),
+                "runtime 'print_prompt' does not support tui mode",
             ),
         }
         for name, (argv, said) in cases.items():

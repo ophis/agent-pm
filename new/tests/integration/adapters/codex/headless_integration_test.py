@@ -548,9 +548,10 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(found[-1], Exited(0))
 
-    def test_tui_is_rejected_without_spawn(self):
-        with self.assertRaisesRegex(ConfigError, "does not support tui"):
-            api.start("codex", "tui", "hello", self.spec, sid=self.sid)
+    def test_tui_factory_is_supported_without_starting_a_process(self):
+        with mock.patch("subprocess.Popen") as spawn:
+            self.assertIsNotNone(registry.adapter("codex").tui())
+        spawn.assert_not_called()
         self.assertEqual(self.logged(), [])
         self.assertFalse((self.work / "run.jsonl").exists())
 
