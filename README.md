@@ -11,59 +11,70 @@ flowchart LR
     T[router.py] -.->|claims Todo issues| R & P & E
 ```
 
-### Core architecture (planned)
+### Core architecture
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. Not drawn: `utils/` (shared stdlib-only tools any layer may import; it imports no layer), the config files, and `agent_tools/` (run by the agent). `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The Delegate hands a task to an agent through the Driver, or to the InstructionDriver for instructions only (act-as; it replaces the `print_prompt` adapter in [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356)). The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+The rebuilt code under `new/`, by package; paths are relative to `new/`, modules in `new/README.md` › Layout, terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
   subgraph EN[entry points]
     LD[launchd]
     HU[the user]
-    M["manager: /agent-pm:tmux (TASK-356)"]
   end
-  subgraph L1[orchestration]
-    subgraph OR[orchestrator/]
-      R["router.py<br>pick · usage gate · detach"]
-      RU["run.py<br>one run · write-back"]
-      PP["promote.py → prune.py"]
+  subgraph LO["agent_pm_linear (linear-orchestrator/)"]
+    R["router.py<br>pick · usage gate"]
+    RU["run.py<br>one run · write-back"]
+    PP["promote.py → prune.py"]
+    LC["config.py<br>[core] overlay"]
+  end
+  subgraph AP["agent_pm (core/src/)"]
+    subgraph MG[manager/]
+      W[crew.py] --> RS[roster.py]
     end
-    W[crew.py]
-  end
-  subgraph L2["role runs (role · task)"]
-    D["delegate/<br>API · CLI · outcome check"]
-    C["composer/<br>prompt · run spec"]
-    ID["InstructionDriver (TASK-356)<br>hands the prompt back"]
-    T["core/team/<br>roles · tasks · templates"]
-  end
-  subgraph L3[sessions]
-    DR["driver/<br>modes: headless · tui · in_process<br>tmux_host"]
-    subgraph AD[adapters/]
-      CL[Claude adapter]
-      CX[Codex adapter]
+    subgraph RO[role/]
+      D["delegate/<br>API · CLI · outcome check"]
+      C["composer/<br>prompt · run spec"]
+      CT[contract/]
+      RP[repos/]
+      AT[agent_tools/]
     end
+    subgraph SE[session/]
+      DR["driver/<br>modes: headless · tui · in_process<br>tmux_host"]
+      subgraph AD[adapters/]
+        CL[claude]
+        CX[codex]
+        PR[print_prompt]
+      end
+    end
+    U[utils/]
+    CF["config.py<br>config paths"]
   end
+  T["core/team/<br>roles · tasks · templates"]
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
   end
-  EN --> R
-  EN --> D
-  LD --> PP
-  M --> W
-  W -->|"start · show · sessions"| DR
-  RU <==>|"delegate.run · events, outcome"| D
-  OR -->|"session chores"| DR
+  LD -.-> R & PP
+  HU -.->|"--issue"| R
+  HU -.->|"act-as · CLI"| D
+  HU -.-> W
+  R -.->|detached session| RU
+  RU -->|"delegate.__all__"| D
+  LC -->|"composer.__all__"| C
+  LO -->|"driver.api · session chores"| DR
+  MG -->|driver.api| DR
   D --> C
+  D -->|"session.__all__"| SE
   C -->|reads| T
-  D -->|instructions| ID
-  D <==>|"agent: start · events, replies"| DR
-  DR -->|loads| AD
-  CL --> P1
-  CX --> P2
-  R ~~~ RU
-  C ~~~ DR
+  DR --> AD
+  CL -.-> P1
+  CX -.-> P2
+  RT -.-> AT
+  classDef shared stroke-dasharray: 4 3
+  class CT,RP,U,CF shared
 ```
+
+Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `driver.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `new/README.md`'s import paragraph, checked by `new/tests/guards.py`.
 
 ## Install
 

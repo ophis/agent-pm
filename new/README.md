@@ -1,6 +1,6 @@
 # new/
 
-The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the Linear orchestrator ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)), under construction; they replaced the old root `core/` and `orchestrator/` code and move to the root at cutover ([TASK-334](https://linear.app/ophis-workgroup/issue/TASK-334)). Terms: root `CONTEXT.md`; diagram: root `README.md` › Core architecture (planned). Paths below are relative to `new/`; commands run from the repo root. Each module's docstring states its behaviour.
+The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the Linear orchestrator ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)), under construction; they replaced the old root `core/` and `orchestrator/` code and move to the root at cutover ([TASK-334](https://linear.app/ophis-workgroup/issue/TASK-334)). Terms: root `CONTEXT.md`; diagram: root `README.md` › Core architecture. Paths below are relative to `new/`; commands run from the repo root. Each module's docstring states its behaviour.
 
 ## Layout
 
