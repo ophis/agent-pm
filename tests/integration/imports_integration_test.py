@@ -1,0 +1,55 @@
+"""Every module of agent_pm, agent_pm_linear and tests imported alone in a fresh child, an empty temp dir
+its HOME and cwd, with only the import roots it needs (EXTRA): it exits 0, leaving the dir empty and sys.path
+unchanged."""
+
+import os
+import subprocess
+import tempfile
+import unittest
+
+from tests.case import ORCH_ROOT, PY, REPO, ROOT, Case, child_env
+
+EXTRA = {"agent_pm": (), "agent_pm_linear": (ORCH_ROOT,), "tests": (ORCH_ROOT, REPO)}
+CHILD = """import importlib, sys
+path = list(sys.path)
+importlib.import_module(sys.argv[1])
+sys.exit(sys.path != path and f"sys.path {path} became {sys.path}")
+"""
+
+
+def modules(root: str, package: str) -> list[str]:
+    found = []
+    for top, dirs, files in os.walk(os.path.join(root, *package.split("."))):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in sorted(f for f in files if f.endswith(".py")):
+            parts = os.path.relpath(os.path.join(top, name), root)[:-3].split(os.sep)
+            found.append(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return found
+
+
+class ImportsAlone(Case):
+    def test_each_module(self):
+        names = (
+            modules(ROOT, "agent_pm")
+            + modules(ORCH_ROOT, "agent_pm_linear")
+            + modules(REPO, "tests")
+        )
+        self.assertIn("agent_pm.session.engine.api", names)
+        self.assertIn("agent_pm_linear.run", names)
+        self.assertIn("tests.case", names)
+        for name in names:
+            with self.subTest(name), tempfile.TemporaryDirectory() as home:
+                res = subprocess.run(
+                    [*PY, "-c", CHILD, name],
+                    cwd=home,
+                    env={**child_env(None, *EXTRA[name.split(".")[0]]), "HOME": home},
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual((res.returncode, os.listdir(home)), (0, []), res.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

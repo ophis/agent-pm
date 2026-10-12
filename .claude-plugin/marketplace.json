@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "agent-pm",
-      "source": "./new/core",
+      "source": "./core",
       "description": "commander guidelines and agent-pm's core roles and tasks"
     }
   ]

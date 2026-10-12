@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/core/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/core/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -69,7 +69,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Unit tests
-        run: python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
+        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
 
   integration:
     name: Integration ${{ matrix.job }} v2.0 (Python 3.11)
@@ -80,7 +80,7 @@ jobs:
       matrix:
         job: ["driver", "adapters", "delegate-composer", "orchestrator", "crew-1", "crew-2", "crew-3", "shared"]
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/core/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7

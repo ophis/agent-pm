@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRECTORY = "new/tests/integration"
+DIRECTORY = "tests/integration"
 WORKFLOW = ROOT / ".github/workflows/test.yml"
 JOBS = {
     "driver": ["driver/"],
