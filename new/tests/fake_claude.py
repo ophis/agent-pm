@@ -1,20 +1,16 @@
-"""A stand-in `claude` for the integration tests, in print mode (`-p --output-format stream-json --verbose`) or
-interactive mode (neither); install() puts it on PATH. Stdlib only. An option src/adapters/claude/ never emits exits 2.
-
-Interactive mode: turn 1 runs at once with a PROMPT, else on the first stdin line; each later stdin line runs the next
-of [steps, *turns]. A turn runs the UserPromptSubmit hooks, its steps, then the Stop hooks. Stdin's end exits `exit`;
-orphaned, or HANG_CAP s without a line, exits 1. A hook is a --settings command hook whose matcher is absent, "", "*" or
-a regex found in the payload's tool_name; it runs by /bin/sh -c with the payload JSON on stdin.
+"""A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose` (print) or neither
+(interactive); install() puts it on PATH. An option src/adapters/claude/ never emits exits 2.
+Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs the next of [steps, *turns] between the
+UserPromptSubmit and Stop hooks. Stdin's end exits `exit`; orphaned or HANG_CAP s idle, 1.
 
 Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
   steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use (interactive: then PostToolUse);
-              print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then the assistant text LIMIT with
-              error "rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
-              interactive: {"kind": "limit", "text": S}: prints S, ends the turn without Stop; {"kind": "hook",
-              "event": E, ...}: runs E's hooks; {"kind": "dialog", "text": S}: prints S, takes a stdin line;
-              {"kind": "sleep", "seconds": X}
+              print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then LIMIT with error
+              "rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
+              interactive: {"kind": "limit"|"dialog", "text": S}: prints S, then ends the turn without Stop or reads a
+              line; {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}
   turns       interactive: the steps of turn 2 on
-  background  interactive: how many background_tasks each Stop payload lists
+  background  interactive: background_tasks per Stop
   resume      print: steps run instead of `steps` on --resume
   rate_limit  print: a rate_limit_info, printed after init
   exit        the exit code
@@ -158,17 +154,16 @@ def run_hooks(hooks, event: str, payload: dict, field: str) -> None:
 
 
 class Stranded(Exception):
-    """Orphaned, or HANG_CAP s without a stdin line."""
+    """Orphaned, or idle HANG_CAP s."""
 
 
 class Stdin:
-    """Stdin's lines, by os.read: select can't see what a buffered reader already holds."""
+    """By os.read: select can't see what a buffered reader holds."""
 
     def __init__(self, parent: int):
         self.parent, self.buf, self.eof = parent, b"", False
 
     def line(self) -> str:
-        """The next line; EOFError at stdin's end, Stranded when orphaned or after HANG_CAP s."""
         until = time.monotonic() + HANG_CAP
         while b"\n" not in self.buf and not self.eof:
             if os.getppid() != self.parent or time.monotonic() > until:
@@ -186,7 +181,6 @@ class Stdin:
 
 
 def interactive(s: dict, turns: list, hooks, base: dict, keep, stdin: Stdin, prompt: str | None) -> int:
-    """Interactive mode's turns (the module's docstring); returns the exit code."""
 
     def hook(event: str, fields: dict) -> None:
         payload = {**base, "hook_event_name": event, **fields}

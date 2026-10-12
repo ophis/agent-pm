@@ -1,9 +1,8 @@
 """The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
-starts it in its Mode (modes/headless.py, or modes/tui.py: a named tmux session) and returns its Handle.
-Handle.events() streams its events, Stderr and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own
-Exited, recording `client_session` and `stderr`. usage(), session_info() and session() give a runtime's Usage, a
-session's SessionStatus and its record. attach(), sessions(), show() (where: layout()) and close() reach a tui session
-by name; detach() runs a command in a tmux session of its own. A session name must match [A-Za-z0-9_-]+."""
+starts it in its Mode and returns its Handle. Handle.events() streams its events, Stderr and IdleTimeout (none while
+Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and `stderr`. usage(),
+session_info() and session() give a runtime's Usage, a session's SessionStatus and its record. attach(), sessions(),
+show() and close() reach a tui session by name; detach() runs a command in a tmux session of its own."""
 import logging
 import os
 import signal
@@ -51,7 +50,7 @@ class Sessions:
     names: tuple[str, ...] | None
 
     def state(self, name: str) -> str:
-        """One of STATES; a name without the prefix is a ValueError."""
+        """One of STATES."""
         if not isinstance(name, str) or not name.startswith(self.prefix):
             raise ValueError(f"{name!r:.80} does not start with {self.prefix!r}")
         return "unknown" if self.names is None else "live" if name in self.names else "absent"
@@ -80,7 +79,6 @@ class Mode(Protocol):
 
 
 class Handle:
-    """One session start() began, over its Mode; `name` is a tui session's, None in headless mode."""
 
     def __init__(self, sid: str, runtime: str, mode: str, *, host: Mode, workdir: str, info: SessionInfo,
                  idle_timeout: float | None, name: str | None = None, reply: str | None = None):
@@ -169,8 +167,8 @@ def _child_env(launch: Launch, cwd: str) -> dict[str, str]:
 def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None = None,
           idle_timeout: float | None = None, name: str | None = None, sid: str | None = None,
           events: str | None = None) -> Handle:
-    """tui: tmux session `name`, else <runtime>-<sid[:8]>, a running one refused (DriverError) before the record;
-    `events` gets its done, blocked and dead lines; no pane opens."""
+    """tui: tmux session `name`, else <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and
+    dead lines."""
     if mode not in MODES:
         raise ConfigError(f"mode must be headless or tui, got {mode!r}")
     _idle(idle_timeout)
@@ -229,7 +227,6 @@ def _name(name) -> str:
 
 
 def _events(events) -> str | None:
-    """The tui events file, made by tmux_host.events_file."""
     if events is None:
         return None
     if not isinstance(events, str) or not events.isprintable():
@@ -241,7 +238,6 @@ def _events(events) -> str | None:
 
 
 def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.HeadlessMode:
-    """The headless Mode running launch.argv in cwd with _child_env's environment; a failed spawn is a DriverError."""
     host = headless.HeadlessMode(run)
     try:
         host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
@@ -251,8 +247,7 @@ def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.Headles
 
 
 def attach(name: str, idle_timeout: float | None = None) -> Handle:
-    """Tui session `name`'s Handle in any process: its reply the last turn's, its events() from the next hook record.
-    Refusals: a bad name or idle_timeout (ConfigError); no such tui session or its runtime's tui (DriverError)."""
+    """Tui session `name`'s Handle from any process: its reply the last turn's, its events from the next hook record."""
     _name(name)
     _idle(idle_timeout)
     state = tui.read_state(name)
@@ -269,7 +264,6 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
 
 
 def sessions(prefix: str = "") -> Sessions:
-    """The tmux sessions named `prefix`… (tmux_host.sessions); a prefix not matching [A-Za-z0-9_-]* is a ConfigError."""
     if not isinstance(prefix, str) or prefix and not tmux_host.NAME.fullmatch(prefix):
         raise ConfigError(f"prefix must match [A-Za-z0-9_-]*, got {prefix!r:.80}")
     found = tmux_host.sessions(prefix)
@@ -277,7 +271,7 @@ def sessions(prefix: str = "") -> Sessions:
 
 
 def close(name: str) -> None:
-    """Ends tui session `name`: kills it (absent is fine), then removes its session dir."""
+    """Kills tui session `name` (absent is fine), then removes its session dir."""
     tui.close(_name(name))
 
 
@@ -291,9 +285,8 @@ def _placement(split, split_from, opener=None) -> None:
 
 
 def show(name: str, split: str | None = None, split_from: str | None = None, opener: str | None = None) -> str | None:
-    """Opens a pane on tmux session `name` (tmux_host.open_pane, the tui settings' grid): None, else the reason is
-    logged and attach_command(name) returned. Refusals: a bad argument or setting (ConfigError), no session
-    (DriverError)."""
+    """Opens a pane on session `name` per the tui settings; None, else logs the reason and returns
+    attach_command(name)."""
     _name(name)
     _placement(split, split_from, opener)
     settings = registry.tui()
@@ -309,7 +302,7 @@ def show(name: str, split: str | None = None, split_from: str | None = None, ope
 
 def layout(split: str | None = None, split_from: str | None = None) -> str | None:
     """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found; None only with
-    split_from. Refusals: a bad split or split_from (ConfigError), no pane (DriverError)."""
+    split_from."""
     _placement(split, split_from)
     if split_from is not None and tmux_host.status(split_from) is None:
         raise ConfigError(f"no tmux session {split_from}")
@@ -331,8 +324,7 @@ def attach_command(name: str) -> str:
 
 
 def detach(name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None) -> None:
-    """Runs argv in new tmux session `name`, in cwd with env as given, SIGNALS blocked until argv unblocks them, opener
-    its @opener; returns once argv runs. Refusals: a bad argument (ConfigError), tmux's (DriverError)."""
+    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv runs."""
     _name(name)
     if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
         raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")

@@ -1,17 +1,15 @@
 """The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), none imports repo; reads nested, relative and literal
-                      import_module/__import__ imports
-runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
-                      Adapter
-old_core(new)         no import of top-level `core`, no string constant naming the old core's source dir (OLD)
+layer_imports(core)   imports go one way (new/README.md), none imports repo, nested, relative or import_module'd
+runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/ but a .toml's comments and Adapter lines
+old_core(new)         no `core` import, no string constant naming OLD
 adapters_key(core)    no string constant "adapters" outside src/driver/
 syntax_311(new)       every .py parses as Python 3.11
 pure_utils(core)      src/utils/ imports only the standard library
 private_imports(root) no other module's _name
-modes_import_api(core) no module under src/driver/modes/ imports driver.api
-tmux_calls(core)      no str constant "tmux" outside TMUX_HOST, the only module that calls tmux
-syntax_39(core)       each STANDALONE file parses as Python 3.9
+modes_import_api(core) src/driver/modes/ never imports driver.api
+tmux_calls(core)      "tmux" only in TMUX_HOST
+syntax_39(core)       STANDALONE files parse as Python 3.9
 """
 import ast
 import os
@@ -31,7 +29,7 @@ OLD = "/".join(("core", "src"))   # built at run time, so this file never names 
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
 TMUX_HOST = "src/driver/tmux_host.py"
 TUI_HOOK = "src/driver/modes/tui_hook.py"
-STANDALONE = (TMUX_HOST, TUI_HOOK)   # run with -I as files of their own, under the system's Python 3.9 too
+STANDALONE = (TMUX_HOST, TUI_HOOK)
 
 
 def layer_imports(core: str) -> list[str]:

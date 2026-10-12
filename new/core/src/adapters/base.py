@@ -2,7 +2,7 @@
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. It also gives a usage probe's Launch,
 reads its stdout as Usage, and gives a session's SessionStatus. A spec type raises ConfigError on a bad value; times
-are epoch seconds. Starts no process; names no runtime's hook."""
+are epoch seconds. Starts no process."""
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -141,8 +141,8 @@ RESUMABLE = ("yes", "no", "unknown")
 @dataclass(frozen=True)
 class Window:
     """One usage limit window."""
-    used_percent: float       # percent used, 0-100 (may exceed 100)
-    resets_at: float | None   # when it resets, epoch seconds; None: not given
+    used_percent: float       # may exceed 100
+    resets_at: float | None   # None: not given
 
 
 @dataclass(frozen=True)
@@ -250,7 +250,6 @@ class Tui(ABC):
         return ""
 
     def session_id(self, payload: dict) -> str:
-        """The runtime's session id in a hook's payload: its session_id when a str, else ""."""
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 

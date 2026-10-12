@@ -1,5 +1,6 @@
-"""A local `team_dirs` read by delegate/cli.py as a subprocess over the fake `claude`: a dry run, --list, a headless run
-of the team dir's role. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's part."""
+"""A local `team_dirs` read by delegate/cli.py as a subprocess over the fake `claude`: a dry run, --list, a run in
+headless mode of the team dir's role. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's
+part."""
 import json
 import os
 import sys
@@ -39,7 +40,7 @@ class TeamDirs(Integration):
         self.assertIn(f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"
                       f"  note: a short note; always; light.  [{os.path.join(self.tasks, 'note.md')}]\n", res.stdout)
 
-    def test_a_headless_run_reads_its_task_from_its_tasks_dir(self):
+    def test_a_run_in_headless_mode_reads_its_task_from_its_tasks_dir(self):
         res = self.drive([mark("start", "noting"), block(DONE)], "--task", "note")
         self.assertEqual(res.returncode, 0, res.stderr)
         for line in ("Progress (start): noting", "delegate: status done"):

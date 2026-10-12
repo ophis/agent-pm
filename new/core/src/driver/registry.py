@@ -1,7 +1,6 @@
-"""The adapter registry, the only reader of the core config's [adapters] tables and tui keys (TUI_KEYS) (config.toml,
-LOCAL merged on top), read once per process and cached (a failed read is not); configure() sets the cache instead,
-reset() drops it. adapter(name) builds the class [adapters.<name>].implementation names from the table's other keys.
-Every failure is a ConfigError."""
+"""The adapter registry, the only reader of the core config's [adapters] tables and TUI_KEYS (config.toml, LOCAL
+merged on top), read once per process and cached (a failed read is not); configure() sets the cache instead, reset()
+drops it. adapter(name) builds the class [adapters.<name>].implementation names. Every failure is a ConfigError."""
 import importlib
 import inspect
 import re
@@ -15,14 +14,14 @@ from utils.config_file import CONFIG, LOCAL, read_config
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
-TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")   # global keys
+TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 _lock = threading.Lock()
 _cache: dict | None = None
 
 
 @dataclass(frozen=True)
 class TuiSettings:
-    """The tui display settings: tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
+    """tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
     status_line: bool = False
     per_column: int | None = None
     retile: str | None = None
@@ -69,7 +68,6 @@ def configured() -> list[str]:
 
 
 def tui() -> TuiSettings:
-    """The cached tui keys; a value of the wrong type or range is a ConfigError naming its key."""
     line, per, retile = (_config().get(k) for k in TUI_KEYS)
     if line is not None and not isinstance(line, bool):
         raise ConfigError("status_line: want true or false")

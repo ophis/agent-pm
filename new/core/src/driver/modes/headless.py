@@ -1,7 +1,6 @@
 """The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two daemon threads pump
 its events and Stderr lines into one queue, and the session ends at both pipes' EOF. stop() kills the whole group, so a
-grandchild holding the pipes dies too; every wait is bounded. send and screen are tui only. probe() runs a short command
-for its stdout."""
+grandchild holding the pipes dies too; every wait is bounded. probe() runs a short command for its stdout."""
 import os
 import queue
 import signal

@@ -1,5 +1,4 @@
-"""Pure TOML file loading and table merging; the core config's pair: config.toml (CONFIG) with this machine's
-~/.agent-pm/core-new.local.toml (LOCAL) merged on top. Each reader reads only its own keys (config.toml's header)."""
+"""Pure TOML file loading and table merging."""
 import os
 import tomllib
 
@@ -8,7 +7,7 @@ LOCAL = "~/.agent-pm/core-new.local.toml"
 
 
 def merge(base: dict, over: dict) -> dict:
-    """`base` with `over` on top: tables merge key by key; any other value of `over` replaces base's."""
+    """`over` on `base`: tables merge key by key; any other value replaces base's."""
     out = dict(base)
     for k, v in over.items():
         out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
@@ -16,7 +15,7 @@ def merge(base: dict, over: dict) -> dict:
 
 
 def read_config(path: str = CONFIG, local: str = LOCAL) -> dict:
-    """TOML file `path`, with TOML file `local` (~ expanded) merged on top when it exists (merge())."""
+    """`path`, with `local` (~ expanded) merged on top when it exists."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     local = os.path.expanduser(local)

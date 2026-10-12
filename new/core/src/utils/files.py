@@ -1,12 +1,11 @@
-"""Reads of files another process may control: read_regular never follows a symlink and never waits on a FIFO."""
 import os
 import stat
 
 
 def read_regular(path: str | os.PathLike, *, offset: int = 0, limit: int | None = None,
                  tail: bool = False) -> bytes | None:
-    """The regular file at `path` from byte `offset`: to its end, else its first `limit` bytes (its last with `tail`).
-    None: a symlink, no regular file, any OSError."""
+    """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a symlink, no regular
+    file, an OSError. Never waits on a FIFO."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:

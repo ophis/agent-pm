@@ -20,7 +20,7 @@ from utils.files import read_regular
 
 TUI_DIR = "~/.agent-pm/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
-SLICE = 0.1   # seconds: the longest sleep between two reads of hooks.jsonl
+SLICE = 0.1
 
 
 def session_dir(name: str) -> str:
@@ -32,7 +32,7 @@ def hook_argv(folder: str) -> tuple[str, ...]:
 
 
 def read_state(name: str) -> dict:
-    """session.json via tui_hook.read_state, the one reader; missing or invalid: DriverError."""
+    """session.json via tui_hook.read_state; missing or invalid: DriverError."""
     try:
         return tui_hook.read_state(os.path.join(session_dir(name), tui_hook.STATE))
     except tui_hook.HookError as e:
@@ -92,7 +92,7 @@ def _exit(status) -> int | None:
 
 
 class TuiMode:
-    """One tui session, driver.api's Mode: prepare then begin, or attach; bound to its session's pane."""
+    """One tui session, driver.api's Mode, bound to its session's pane."""
 
     def __init__(self, name: str, run: Tui, sid: str, events: str | None):
         self.name, self.run, self.sid, self.events = name, run, sid, events
@@ -161,8 +161,7 @@ class TuiMode:
 
     @classmethod
     def attach(cls, name: str, state: dict, run: Tui) -> "TuiMode":
-        """read_state's session if tagged with its sid, bound to its pane; reply: its last TURN_END's; events from its
-        next record."""
+        """read_state's session if tagged with its sid; reply: its last TURN_END's; events from its next record."""
         try:
             tagged, pane = tmux_host.option(name, "@sid"), tmux_host.pane(name)
         except tmux_host.TuiError:
@@ -183,8 +182,8 @@ class TuiMode:
         return mode
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """New records' events; none: ended (last records, True), else a pane scan, else waits `timeout` s for one.
-        Ended at once after stop() or once another pane holds the name."""
+        """New records' events, else a pane scan, else a wait of `timeout` s; ended at once after stop() or once another
+        pane holds the name."""
         found = self._read()
         if not found and not self._gone:
             status = tmux_host.status(self.name)
@@ -204,7 +203,7 @@ class TuiMode:
         return found, self._gone
 
     def _holder(self) -> str | None:
-        """The pane under the name (None: absent, UNKNOWN: tmux failed); another than its own ends this Mode."""
+        """The pane under the name (None: absent, UNKNOWN: tmux failed)."""
         try:
             holder = tmux_host.pane(self.name)
         except tmux_host.TuiError:
@@ -214,7 +213,7 @@ class TuiMode:
         return holder
 
     def _own(self, status):
-        """The name's status as its own session's: None unless its pane holds the name (UNKNOWN: tmux failed)."""
+        """None unless its own pane holds the name."""
         if status is None or status == tmux_host.UNKNOWN:
             return status
         holder = self._holder()
@@ -301,8 +300,7 @@ class TuiMode:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """close() once begun or attached, unless another pane holds the name; then ends (returncode: the code seen,
-        else -SIGHUP)."""
+        """close() unless another pane holds the name; then ends (returncode: the code seen, else -SIGHUP)."""
         if self._live and self._holder() in (self._pane, None, tmux_host.UNKNOWN):
             close(self.name)
         self._live = False

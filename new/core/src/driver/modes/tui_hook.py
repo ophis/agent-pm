@@ -1,10 +1,7 @@
-"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the hook's JSON payload
-on stdin. Checks the dir's session.json (SESSION_STATE), appends one hook record {"ts", "label", "payload"} to its
-hooks.jsonl, then marks the pane with the label's word (tmux_host.mark: done and blocked lines only when the events
-file is set; a label with no word marks nothing). The reading process maps records to events through its adapter. Each
-payload str is cut to CUT chars unless the label's word is done. Never prints on stdout and always exits 0 (a runtime
-may read a hook's stdout or exit status); each error is one stderr line. Python 3.9, stdlib only, standalone:
-driver/tmux_host.py is loaded by its path, nothing joins sys.path."""
+"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the payload JSON on
+stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
+word (tmux_host.mark). Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and always
+exits 0 (a runtime may read both). Python 3.9, stdlib only, standalone."""
 from __future__ import annotations
 
 import fcntl
@@ -69,8 +66,7 @@ def main(argv: list[str], stdin) -> None:
 
 
 def read_payload(stream) -> dict:
-    """stdin's JSON object, read to its end (the writer never stalls); {} and a stderr line when it is over PAYLOAD_MAX
-    bytes or not one."""
+    """stdin's JSON object, read to its end (the writer never stalls); {} when over PAYLOAD_MAX bytes or not one."""
     chunks, size = [], 0
     while True:
         chunk = stream.read(BLOCK)
@@ -93,8 +89,8 @@ def read_payload(stream) -> dict:
 
 
 def read_state(path: str) -> dict:
-    """session.json, a regular file (never followed) holding a JSON object of at most STATE_MAX bytes whose fields pass
-    SESSION_STATE (any same-user process may have changed it); else HookError."""
+    """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing SESSION_STATE; else
+    HookError."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
@@ -121,7 +117,6 @@ def read_state(path: str) -> dict:
 
 
 def cut(value):
-    """value with each str in it (dict keys aside) cut to CUT chars."""
     if isinstance(value, str):
         return value[:CUT]
     if isinstance(value, list):
@@ -132,8 +127,7 @@ def cut(value):
 
 
 def append(path: str, record: dict) -> None:
-    """record as one line, in one write under an exclusive flock, to path: a regular file, created 0600, never
-    followed."""
+    """One write under an exclusive flock to a regular file, created 0600, never followed."""
     line = (json.dumps(record) + "\n").encode()
     try:
         # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
@@ -152,7 +146,7 @@ def append(path: str, record: dict) -> None:
 
 
 def load_tmux_host():
-    """driver/tmux_host.py loaded by its path: nothing joins sys.path or sys.modules."""
+    """By path: nothing joins sys.path or sys.modules."""
     spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

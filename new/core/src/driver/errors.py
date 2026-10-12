@@ -1,5 +1,4 @@
-"""The Driver's own error, DriverError: here so the Modes (modes/) raise it without importing driver.api, which
-re-exports it (api → modes stays one-way)."""
+"""DriverError, here so the Modes raise it without importing driver.api, which re-exports it."""
 
 
 class DriverError(Exception):
