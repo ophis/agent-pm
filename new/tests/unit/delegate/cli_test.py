@@ -14,10 +14,11 @@ from datetime import datetime
 from unittest import mock
 
 from new.tests import fake_adapter, hermetic
-from new.tests.unit.delegate.runner_test import DONE, START, block, limit, said
+from new.tests.unit.delegate.runner_test import DONE, START, STOP, FakeHandle, block, limit, said, turn
 import composer
 from composer.prompt import RESUME
-from delegate import Outcome, Result, cli
+from delegate import Outcome, Result, cli, runner
+from delegate.runner import STOP_LIMIT
 from driver import registry
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -140,16 +141,14 @@ class Usage(Base):
         cases = [("an unknown role", {"role": "ghost", "task": None}, "", "unknown role 'ghost'"),
                  ("a task off the index", {"role": "engineer", "task": "deep-research"}, "",
                   "task 'deep-research' is not one of engineer's tasks (build, light-build)"),
-                 ("tui", {"mode": "tui"}, "", "tui mode is not available yet"),
                  ("a bad team_dirs", {}, 'team_dirs = "x"\n', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
                  ("a bad tier", {}, "[roles.dummy-tester]\ntier = 9\n", "tier must be an integer 1–4, got 9"),
                  ("an unknown runtime", {"runtime": "nope"}, "", "no [adapters.nope] table")]
         for name, kw, local, want in cases:
             self.local(local)
-            mode = ("--mode", kw.pop("mode")) if "mode" in kw else ()
             for dry in ((), ("--dry-run",)) if name != "an unknown runtime" else ((),):
                 with self.subTest(name, dry=dry):
-                    code, out, err = self.runs(*mode, *dry, **kw)
+                    code, out, err = self.runs(*dry, **kw)
                     self.assertEqual((code, out), (2, ""), err)
                     self.assertTrue(err.splitlines()[-1].startswith(f"delegate: {want}"), err)
                     self.assertFalse(os.path.exists(self.work))
@@ -260,6 +259,27 @@ class Exits(Base):
                                     "delegate: status done")):
             with self.subTest(want=want), mock.patch.object(cli, "run", return_value=result):
                 self.assertEqual(self.runs(), (want, "", f"{line}\n"))
+
+
+class Tui(Base):
+    def test_tui_mode_runs_the_tui_policy_in_the_drivers_default_session_a_give_up_exiting_1(self):
+        for events, want, last in (([turn(START, block(DONE))], 0, "delegate: status done"),
+                                   ([STOP] * (1 + STOP_LIMIT), 1, "delegate: the agent run returned no outcome")):
+            with self.subTest(want=want):
+                handle = FakeHandle(events)
+                with mock.patch.object(runner.api, "start", side_effect=handle.start) as start:
+                    code, out, err = self.runs("--mode", "tui")
+                self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
+                kw = start.call_args.kwargs
+                self.assertEqual((start.call_args.args[:2], kw["name"], kw["events"]), (("fake", "tui"), None, None))
+
+    def test_a_runtime_without_tui_exits_2_and_a_dry_run_plans_it(self):
+        code, out, err = self.runs("--mode", "tui")
+        self.assertEqual((code, out), (2, ""))
+        self.assertEqual(err.splitlines()[-1], "delegate: runtime 'fake' does not support tui mode")
+        self.assertFalse(os.path.exists(self.work))
+        code, out, _ = self.runs("--mode", "tui", "--dry-run")
+        self.assertEqual((code, json.loads(out)["mode"], self.launches()), (0, "tui", []))
 
 
 if __name__ == "__main__":

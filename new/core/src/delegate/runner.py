@@ -1,6 +1,7 @@
 """One role's run to its Result: the Driver session's events handled as they come; an invalid outcome gets one fix
-resume of the same session, a usage limit ends the run; the deliverable is saved to `out`. Records go to
-<workdir>/run.jsonl; `result` and `end` however the run ends. A Mode's policy (POLICIES) starts the session."""
+of the same session, a usage limit ends the run; the deliverable is saved to `out`. Records go to <workdir>/run.jsonl;
+`result` and `end` however the run ends. A Mode's policy (POLICIES) starts the session, sends the fix and answers each
+turn end and IdleTimeout: go on (None), END the attempt or GiveUp."""
 import os
 import sys
 from collections.abc import Callable
@@ -16,8 +17,12 @@ from delegate.reply import marks, outcome_block
 from driver import api
 
 IDLE_TIMEOUT = 2 * 60 * 60   # seconds
+STOP_LIMIT = 3
 FIX = ("The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
        f"{OUTCOME} block; change nothing else.")
+NUDGE = (f"Finish your task, then end your last reply with your outcome block (`{OUTCOME}`), as your instructions' "
+         "Return says. If you are waiting for background work, wait for it first.")
+END = "end"
 
 
 @dataclass(frozen=True)
@@ -53,16 +58,72 @@ class Finished:
 Event = Begun | Progress | Finished
 
 
+@dataclass(frozen=True)
+class GiveUp:
+    reason: str
+
+
 class Headless:
-    def start(self, p: Plan) -> api.Handle:
+    def __init__(self, note: Callable[..., None]):
+        self.note = note
+
+    def start(self, p: Plan, **tui) -> api.Handle:
         return api.start(p.runtime, p.mode, p.prompt, p.spec, resume=p.sid if p.resume else None,
-                         sid=None if p.resume else p.sid, idle_timeout=IDLE_TIMEOUT)
+                         sid=None if p.resume else p.sid, idle_timeout=IDLE_TIMEOUT, **tui)
 
     def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
         return api.start(p.runtime, p.mode, text, p.spec, resume=p.sid, idle_timeout=IDLE_TIMEOUT)
 
+    def turn_end(self, handle: api.Handle, reply: str, pending: int) -> str | GiveUp | None:
+        return None
 
-POLICIES = {"headless": Headless}
+    def progress(self) -> None:
+        pass
+
+    def idle(self, seconds: float) -> str | GiveUp | None:
+        return None
+
+
+class Tui(Headless):
+    """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a progress mark resets
+    that count; a turn end with work pending is ignored. FR-24: an IdleTimeout gives up. The session is left open."""
+    def __init__(self, note: Callable[..., None]):
+        super().__init__(note)
+        self.nudged, self.count = False, 0
+
+    def start(self, p: Plan) -> api.Handle:
+        handle = super().start(p, name=p.name, events=p.events)
+        _say(f"delegate: tui session {handle.name}: {api.attach_command(handle.name)}")
+        return handle
+
+    def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
+        handle.send(text)
+        return handle
+
+    def turn_end(self, handle: api.Handle, reply: str, pending: int) -> str | GiveUp | None:
+        if outcome_block(reply) is not None:
+            return END
+        if pending:
+            return None
+        if not self.nudged:
+            self.nudged = True
+            try:
+                handle.send(NUDGE)
+            except api.DriverError as e:
+                _say(f"delegate: tui: {e}")
+            self.note("nudge")
+            return None
+        self.count += 1
+        return GiveUp(f"no outcome after {self.count} turn ends") if self.count >= STOP_LIMIT else None
+
+    def progress(self) -> None:
+        self.count = 0
+
+    def idle(self, seconds: float) -> str | GiveUp | None:
+        return GiveUp(f"no event for {seconds / 3600:g} h")
+
+
+POLICIES = {"headless": Headless, "tui": Tui}
 
 
 def printable(text: str) -> str:
@@ -108,7 +169,7 @@ def _resets(at: float | None) -> str:
 
 class _Attempts:
     def __init__(self, p: Plan, on_event: Callable[[Event], None]):
-        self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.mode]()
+        self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.mode](self.note)
         self.channel = api.records.path(p.spec.workdir)
         self.seen: set[str] = set()
         self.refused = False   # the Driver refused the start: nothing to close
@@ -179,23 +240,37 @@ class _Attempts:
         return ""
 
     def attempt(self, handle: api.Handle) -> tuple[int, str | None, Limit | None]:
-        rc = last = limit = None
+        """rc 0 when the policy ended it, the session running on."""
+        rc = last = limit = replied = None
         for event in handle.events():
+            answer = None
             if isinstance(event, api.Reply):
-                last = self.reply(event.text)
-            elif isinstance(event, api.TurnEnd) and event.reply and event.reply != last:
-                last = self.reply(event.reply)
+                last = replied = self.reply(event.text)
+            elif isinstance(event, api.TurnEnd):
+                if event.reply and event.reply != replied:   # a headless turn's Reply comes again at its end
+                    last = self.reply(event.reply)
+                replied = None
+                if not limit:
+                    answer = self.policy.turn_end(handle, last or "", event.pending)
             elif isinstance(event, api.Stderr):
                 _say(event.text)
             elif isinstance(event, api.IdleTimeout):
                 self.note("idle", seconds=event.seconds)
+                if not limit:
+                    answer = self.policy.idle(event.seconds)
             elif isinstance(event, api.LimitHit):
                 self.note("limit", resets_at=event.resets_at)
                 handle.stop()
                 limit = Limit(event.resets_at)
             elif isinstance(event, api.Exited):
                 rc = event.returncode
-        return rc, last, limit
+            if isinstance(answer, GiveUp):
+                self.note("give_up", reason=answer.reason)
+                _say(f"delegate: {answer.reason}; session {handle.name} left open: {api.attach_command(handle.name)}")
+                return 0, None, None
+            if answer == END:
+                break
+        return rc or 0, last, limit
 
     def reply(self, text: str) -> str:
         for line in text.splitlines():
@@ -206,6 +281,7 @@ class _Attempts:
             _say(f"Progress ({name}): {said}")
             self.seen.add(name)
             self.on_event(Progress(name, said))
+            self.policy.progress()
         return text
 
     def finish(self, outcome: Outcome, rc: int) -> Result:
