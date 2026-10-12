@@ -1,8 +1,9 @@
-"""Claude Code's tui Mode, interactive `claude`: ClaudeTui. launch: ClaudeCommon's, with a command hook per label in
---settings (Notification's on the types waiting on the user) and the prompt after "--" unless empty. reply:
-last_assistant_message, else the last assistant message's text in transcript_path's last 4 MiB. limit: Claude's
-usage-limit message, reset at the `resets <when>` after it (WHEN), the next such time when undated, next year's
-when year-less and over a day past, local time without a known zone."""
+"""Claude Code's tui Mode, interactive `claude`: ClaudeTui. launch: ClaudeCommon's with a command hook per label in
+--settings (Notification's on the types waiting on the user), then spec.flags and the prompt after "--" unless empty;
+ClaudeCommon.plain's for a plain session; a session flag refused. reply: last_assistant_message, else the last assistant
+message's text in transcript_path's last 4 MiB. limit: Claude's usage-limit message, reset at the `resets <when>` after
+it (WHEN), the next such time when undated, next year's when year-less and over a day past, local time without a known
+zone."""
 
 import json
 import re
@@ -14,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from utils.files import read_regular
 
 from adapters.base import ACTIVITY, BLOCKED, TURN_END, LimitHit, Tui
+from adapters.claude.common import refuse
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
@@ -54,6 +56,7 @@ class ClaudeTui(Tui):
     dialogs = ("Quick safety check",)
 
     def launch(self, prompt, spec, resume, hook):
+        refuse(spec.flags)
         common = self.adapter.common
         hooks = {
             label: [
@@ -64,8 +67,11 @@ class ClaudeTui(Tui):
             ]
             for label in self.hooks
         }
+        tail = ("--", prompt) if prompt else ()
+        if not spec.role_policy:
+            return common.plain(spec, resume, hooks, tail)
         return common.launch(
-            spec, resume, {**common.PLUGINS, "hooks": hooks}, tail=("--", prompt) if prompt else ()
+            spec, resume, {**common.PLUGINS, "hooks": hooks}, tail=(*spec.flags, *tail)
         )
 
     def reply(self, payload):

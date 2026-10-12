@@ -1,7 +1,7 @@
 """new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
-ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks and
-writable dirs; the committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a
-process."""
+ClaudeHeadless's launch and parse; ClaudeTui's launch (role run, plain session, session flags), hook payloads and
+usage-limit screen; ClaudeAdapter's hooks and writable dirs; the committed [adapters.claude] table. HOME and
+CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
 from new.tests import hermetic
 
@@ -953,24 +953,37 @@ def entry(label) -> dict:
     return {"hooks": [{"type": "command", "command": shlex.join((*HOOK, label))}]}
 
 
-TUI_SETTINGS = json.dumps(
-    {
-        "enabledPlugins": {"agent-pm@agent-pm": False},
-        "hooks": {
-            "Stop": [entry("Stop")],
-            "PermissionRequest": [entry("PermissionRequest")],
-            "Notification": [{"matcher": MATCHER, **entry("Notification")}],
-            "PostToolUse": [entry("PostToolUse")],
-            "UserPromptSubmit": [entry("UserPromptSubmit")],
-        },
-    }
+TUI_HOOKS = {
+    "Stop": [entry("Stop")],
+    "PermissionRequest": [entry("PermissionRequest")],
+    "Notification": [{"matcher": MATCHER, **entry("Notification")}],
+    "PostToolUse": [entry("PostToolUse")],
+    "UserPromptSubmit": [entry("UserPromptSubmit")],
+}
+TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": TUI_HOOKS})
+PLAIN_SETTINGS = json.dumps({"hooks": TUI_HOOKS})
+NAME = "w-1"
+REFUSED = (
+    "--resume",
+    "-r",
+    "--session-id",
+    "--continue",
+    "-c",
+    "--fork-session",
+    "--from-pr",
+    "--teleport",
 )
+WANT_SETTINGS = "want a JSON object with a list of hooks per event"
+
+
+def tui_launch(work, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
+    spec = Spec(**{"workdir": work, "sid": SID, **spec})
+    return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
 
 
 class TuiArgvTest(Base):
     def tui(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
-        spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+        return tui_launch(self.work, prompt, config, resume, **spec)
 
     def test_a_new_session_with_every_part(self):
         access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
@@ -1070,6 +1083,146 @@ class TuiArgvTest(Base):
     def test_a_bad_sid_or_tier_is_refused(self):
         self.refused(lambda: self.tui(sid="abc"), "claude session ids are UUIDs, got 'abc'")
         self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
+
+    def test_the_flags_go_before_the_prompt_the_rest_unchanged(self):
+        access = Access(dirs=("/d1",), commands=("ls",))
+        flags = ("--verbose", "--settings", "{}", "--add-dir", "/x")
+        for prompt in ("do it", ""):
+            with self.subTest(prompt=prompt):
+                base = self.tui(prompt, access=access).argv
+                cut = len(base) - 2 if prompt else len(base)
+                self.assertEqual(
+                    self.tui(prompt, access=access, flags=flags, name=NAME).argv,
+                    (*base[:cut], *flags, *base[cut:]),
+                )
+
+
+class PlainTuiTest(Base):
+    def plain(self, prompt="hi", flags=(), config=CONFIG, resume=False, **spec) -> Launch:
+        return tui_launch(
+            self.work, prompt, config, resume, role_policy=False, name=NAME, flags=flags, **spec
+        )
+
+    def settings(self, flags) -> tuple[dict, tuple[str, ...]]:
+        argv = self.plain(flags=flags).argv
+        self.assertEqual(argv[:6], ("claude", "--session-id", SID, "--name", NAME, "--settings"))
+        return json.loads(argv[6]), argv[7:]
+
+    def test_new_and_resumed_only_the_wiring_then_the_flags(self):
+        cwd = os.path.join(self.tmp, "cwd")
+        os.mkdir(cwd)
+        with open(os.path.join(cwd, ".mcp.json"), "w", encoding="utf-8") as f:
+            f.write("{}")
+        access = Access(dirs=("/d1",), commands=("ls",), reads=("/r1",), cwd=cwd, project=True)
+        flags = ("--permission-mode", "plan", "--add-dir", "/x")
+        for resume, word in ((False, "--session-id"), (True, "--resume")):
+            with self.subTest(resume=resume):
+                launch = self.plain(
+                    "do it", flags, resume=resume, tier=4, effort="low", access=access
+                )
+                self.assertEqual(
+                    launch.argv,
+                    (
+                        "claude",
+                        word,
+                        SID,
+                        "--model",
+                        "haiku",
+                        "--effort",
+                        "lo",
+                        "--name",
+                        NAME,
+                        "--settings",
+                        PLAIN_SETTINGS,
+                        *flags,
+                        "--",
+                        "do it",
+                    ),
+                )
+                self.assertEqual(
+                    (dict(launch.env), launch.unset, launch.cwd, launch.transcript, launch.resume),
+                    (
+                        {"K": "v"},
+                        UNSET,
+                        "",
+                        ClaudeCommon({}).transcript(cwd, SID),
+                        f"cd {shlex.quote(cwd)} && claude --resume {SID}",
+                    ),
+                )
+
+    def test_none_of_the_optional_parts(self):
+        launch = self.plain("", config={})
+        self.assertEqual(
+            launch.argv,
+            ("claude", "--session-id", SID, "--name", NAME, "--settings", PLAIN_SETTINGS),
+        )
+        self.assertEqual(
+            (dict(launch.env), launch.resume),
+            ({}, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
+        )
+        self.assertEqual(self.plain("-p --help").argv[-2:], ("--", "-p --help"))
+
+    def test_the_hooks_merge_into_the_users_settings_which_move_before_the_rest(self):
+        mine = {"type": "command", "command": "mine"}
+        own = {"model": "x", "hooks": {"PostToolUse": [mine], "SessionStart": [mine]}}
+        merged = {
+            "model": "x",
+            "hooks": {
+                **TUI_HOOKS,
+                "PostToolUse": [mine, *TUI_HOOKS["PostToolUse"]],
+                "SessionStart": [mine],
+            },
+        }
+        for flags in (
+            ("--verbose", "--settings", json.dumps(own), "--x"),
+            ("--verbose", "--settings=" + json.dumps(own), "--x"),
+        ):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.settings(flags), (merged, ("--verbose", "--x", "--", "hi")))
+        self.assertEqual(
+            self.settings(("--settings", '{"model": "x"}')),
+            ({"model": "x", "hooks": TUI_HOOKS}, ("--", "hi")),
+        )
+        after = ("--", "--settings", "[]")
+        self.assertEqual(self.settings(after), ({"hooks": TUI_HOOKS}, (*after, "--", "hi")))
+
+    def test_a_malformed_settings_flag_is_refused(self):
+        long = "x" * 100
+        for flags, value in (
+            (("--settings",), ""),
+            (("--settings", "--"), "--"),
+            (("--settings", "/a/settings.json"), "/a/settings.json"),
+            (("--settings=[]",), "[]"),
+            (("--settings", '{"hooks": null}'), '{"hooks": null}'),
+            (("--settings", '{"hooks": []}'), '{"hooks": []}'),
+            (("--settings", '{"hooks": {"Stop": {}}}'), '{"hooks": {"Stop": {}}}'),
+            (("--settings", long), long),
+        ):
+            with self.subTest(flags=flags):
+                self.refused(
+                    lambda: self.plain(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
+                )
+
+
+class SessionFlagTest(Base):
+    def test_each_is_refused_in_a_role_run_and_a_plain_session(self):
+        given = (*REFUSED, *(f"{word}=x" for word in REFUSED if word.startswith("--")))
+        for flag in given:
+            for role_policy in (True, False):
+                with self.subTest(flag=flag, role_policy=role_policy):
+                    self.refused(
+                        lambda: tui_launch(
+                            self.work, flags=("--verbose", flag, SID), role_policy=role_policy
+                        ),
+                        f"{flag.partition('=')[0]}: picks the session; use crew.py start --resume <sid>",
+                    )
+
+    def test_scanning_stops_at_the_separator_and_other_words_pass(self):
+        for role_policy in (True, False):
+            for flags in (("--", *REFUSED), ("--resumes", "--continued", "--teleport-x")):
+                with self.subTest(flags=flags, role_policy=role_policy):
+                    argv = tui_launch(self.work, flags=flags, role_policy=role_policy).argv
+                    self.assertEqual(argv[-len(flags) - 2 :], (*flags, "--", "hi"))
 
 
 def said(mid, *blocks) -> dict:
@@ -1443,6 +1596,35 @@ class WritableDirsTest(Base):
                     self.dirs(resume, dirs=(self.added,), reads=(self.cwd, self.link)),
                     (self.work, self.added),
                 )
+
+    def test_a_plain_session_its_cwd_then_each_added_dir_in_its_flags(self):
+        os.mkdir(os.path.join(self.cwd, "sub"))
+        flags = (
+            "--verbose",
+            "--add-dir",
+            "sub",
+            "--add-dir=../added",
+            "--add-dir",
+            self.link,
+            "--",
+            "--add-dir",
+            "/x",
+        )
+        for resume in (False, True):
+            for cwd, given, dirs in (
+                ("", (), (self.work,)),
+                (self.cwd, (), (self.cwd,)),
+                (self.cwd, flags, (self.cwd, os.path.join(self.cwd, "sub"), self.added)),
+            ):
+                with self.subTest(resume=resume, cwd=cwd, flags=given):
+                    spec = Spec(
+                        workdir=self.work,
+                        sid=SID,
+                        access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
+                        flags=given,
+                        role_policy=False,
+                    )
+                    self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec, resume), dirs)
 
 
 class CommittedConfigTest(Base):

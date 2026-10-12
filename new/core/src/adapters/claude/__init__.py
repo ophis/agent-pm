@@ -4,7 +4,7 @@ ClaudeCommon's."""
 import os
 
 from adapters.base import Adapter
-from adapters.claude.common import ClaudeCommon
+from adapters.claude.common import ClaudeCommon, added_dirs
 from adapters.claude.headless import ClaudeHeadless
 from adapters.claude.tui import ClaudeTui
 
@@ -35,5 +35,9 @@ class ClaudeAdapter(Adapter):
         return self.common.session_status(sid, cwd)
 
     def writable_dirs(self, spec, resume):
-        dirs = (spec.access.cwd or spec.workdir, *spec.access.dirs)
+        cwd = spec.access.cwd or spec.workdir
+        if spec.role_policy:
+            dirs = (cwd, *spec.access.dirs)
+        else:
+            dirs = (cwd, *(os.path.join(cwd, d) for d in added_dirs(spec.flags)))
         return tuple(dict.fromkeys(map(os.path.realpath, dirs)))
