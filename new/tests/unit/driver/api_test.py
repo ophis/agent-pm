@@ -341,7 +341,7 @@ class ChecksTest(Base):
         for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
             for fields in (
                 {"flags": ("--x",)},
-                {"env": {"PAGER": "cat"}},
+                {"env": {"PAGER": "cat"}, "role_policy": False},
                 {"protect": ("/p",)},
                 {"role_policy": False},
             ):
@@ -1319,14 +1319,10 @@ class PlainTest(TuiBase):
         self.assertEqual((second.name, second.protect), ("inner-0f8fad5b", (TMUX, self.root)))
         self.assertEqual((second.sid, first.role_policy, second.role_policy), (SID, True, False))
 
-    def test_a_role_run_keeps_its_env_with_spec_env_last(self):
+    def test_a_role_run_keeps_its_env(self):
         self.environ(INNER_SESSION="1", INNER_ID="i", OTHER_ID="o", PAGER="cat", LAUNCH_DROP="x")
         kept = {"INNER_SESSION": "1", "INNER_ID": "i", "OTHER_ID": "o", "PAGER": "cat"}
         self.assertEqual(self.env("w1"), {**kept, "LAUNCH_SET": "1"})
-        self.assertEqual(
-            self.env("w2", env={"EDITOR": "vi", "LAUNCH_SET": "2"}),
-            {**kept, "LAUNCH_SET": "2", "EDITOR": "vi"},
-        )
 
     def test_a_plain_env_drops_every_adapters_identity_then_applies_the_launch_then_spec_env(self):
         self.environ(INNER_ID="i", OTHER_SESSION="", OTHER_ID="o", LAUNCH_DROP="x", KEEP="k")

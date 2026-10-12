@@ -3,8 +3,10 @@ picks the runtime (--client, else the caller's own tui session's, else the core 
 with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (what restart replays), shows it, enters
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
 reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits 1 on an error, 2 on a usage
-error. Follow-ups go through the Driver's tmux_host.py send. Run as `PYTHONPATH=new/core/src python3 -P -m
-agent_pm.crew …`; the commands it prints and runs (a worker entry's recovery) set PYTHONPATH to its import root."""
+error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONPATH=<absolute IMPORT_ROOT> python3
+-P -m agent_pm.crew …`, the form of each crew command it prints or runs (a worker entry's recovery); main first drops
+each PYTHONPATH entry resolving to IMPORT_ROOT, so workers and recovered role or pipeline entries get the user's
+own."""
 
 import argparse
 import contextlib
@@ -503,7 +505,7 @@ def _pythonpath(argv: list[str]) -> dict[str, str]:
 
 def _command(argv: list[str]) -> str:
     env = "".join(f"{k}={shlex.quote(v)} " for k, v in _pythonpath(argv).items())
-    return env + shlex.join(argv)
+    return (f"env {env}" if env else "") + shlex.join(argv)
 
 
 def _recovery(e: dict) -> str:
@@ -551,9 +553,8 @@ def attach(
                 )
             if after is not None:
                 roster.advance(r, directory, after, gen)
-            live = (
-                _live()
-            )  # before the rotation: a raise after its rename would drop the new cursor and gen
+            # before the rotation: a raise after its rename would drop the new cursor and gen
+            live = _live()
             roster.rotate(r, directory)
             panes = _sync(r, live)
             backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
@@ -607,9 +608,8 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
         except OSError as err:
             yield False, f"resumed {name}: not run: {err.strerror or err}"
             continue
-        except (
-            Exception
-        ) as err:  # e.g. Popen's ValueError for an argv item (a NUL, a lone surrogate)
+        # e.g. Popen's ValueError for an argv item (a NUL, a lone surrogate)
+        except Exception as err:
             yield False, f"resumed {name}: not run: {type(err).__name__}: {err}"
             continue
         last = next(
@@ -764,7 +764,20 @@ def _number(value: str) -> int:
     raise argparse.ArgumentTypeError(f"{value!r}: use a non-negative integer")
 
 
+def _drop_import_root() -> None:
+    entries = os.environ.get("PYTHONPATH")
+    if entries is None:
+        return
+    root = os.path.realpath(IMPORT_ROOT)
+    kept = [p for p in entries.split(os.pathsep) if os.path.realpath(p) != root]
+    if kept:
+        os.environ["PYTHONPATH"] = os.pathsep.join(kept)
+    else:
+        del os.environ["PYTHONPATH"]
+
+
 def main(argv=None) -> int:
+    _drop_import_root()
     argv = sys.argv[1:] if argv is None else list(argv)
     flags = []
     if "--" in argv:

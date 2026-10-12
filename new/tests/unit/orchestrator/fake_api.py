@@ -25,9 +25,9 @@ def _answer(value):
 
 
 class FakeApi:
-    """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default resumable yes), `usages` (per runtime, default
-    LOW) and `shown`: a value or an exception to raise; `records`: api.session's per sid; detach raises `detach_error`,
-    else its name goes live. `order` logs the sessions, close, show and detach calls."""
+    """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default resumable yes),
+    `usages` (per runtime, default LOW) and `shown`: a value or an exception to raise; `records`: api.session's per sid;
+    detach raises `detach_error`, else its name goes live. `order` logs the sessions, close, show and detach calls."""
 
     def __init__(self, order=None, gql=None):
         self.order = [] if order is None else order

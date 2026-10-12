@@ -341,10 +341,11 @@ class PlainTest(Base):
         self.assertNotIn(str(self.extra), argv)
         self.assertFalse([w for w in argv if w.startswith(POLICY)])
 
-    def test_the_session_env_is_last_in_a_plain_launch_env(self):
+    def test_an_access_env_is_refused(self):
         access = dataclasses.replace(self.plain.access, env={"S": "s"})
-        launch, _ = self.launch(dataclasses.replace(self.plain, access=access))
-        self.assertEqual(launch.env, {"CODEX_HOME": str(self.codex_home), "S": "s"})
+        with self.assertRaises(ConfigError) as caught:
+            self.launch(dataclasses.replace(self.plain, access=access))
+        self.assertEqual(str(caught.exception), "access env: not for a plain session; use env")
 
     def test_plain_launch_is_the_wiring_then_the_flags(self):
         (self.cwd / ".codex").mkdir()

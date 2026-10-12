@@ -1203,15 +1203,10 @@ class PlainTuiTest(Base):
         )
         self.assertEqual(self.plain("-p --help").argv[-2:], ("--", "-p --help"))
 
-    def test_the_session_env_after_the_config_env_in_its_env_and_resume(self):
-        config = {**CONFIG, "env": {"K": "v", "S": "config"}}
-        launch = self.plain(config=config, access=Access(env={"S": "s t"}))
-        self.assertEqual(
-            (dict(launch.env), launch.resume),
-            (
-                {"K": "v", "S": "s t"},
-                f"cd {shlex.quote(self.work)} && S='s t' claude --resume {SID}",
-            ),
+    def test_an_access_env_is_refused(self):
+        self.refused(
+            lambda: self.plain(access=Access(env={"S": "s t"})),
+            "access env: not for a plain session; use env",
         )
 
     def test_the_hooks_merge_into_the_users_settings_which_move_before_the_rest(self):

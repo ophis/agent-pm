@@ -187,7 +187,7 @@ def started(name, *rest):
 
 def recovered(argv):
     """A crew module's recovery as attach prints it."""
-    return f"PYTHONPATH={shlex.quote(ROOT)} {shlex.join(argv)}"
+    return f"env PYTHONPATH={shlex.quote(ROOT)} {shlex.join(argv)}"
 
 
 class Runs:
@@ -767,6 +767,27 @@ class MainTest(WorkerCase):
         self.assertEqual((e["kind"], e["sid"], e["note"]), ("worker", sid, "check it"))
         self.assertEqual(err, "tui: session w1: tmux attach -t '=w1'\n")
 
+    def test_a_worker_starts_with_its_pythonpath_less_each_entry_resolving_to_its_import_root(self):
+        link = os.path.join(self.dir, "root")
+        os.symlink(ROOT, link)
+        rel = os.path.relpath(ROOT)
+        cases = {
+            "w1": (f"{ROOT}:/u1:{rel}:{link}:{ROOT}/:/u2", "/u1:/u2"),
+            "w2": (f"{rel}:{ROOT}", None),
+            "w3": ("/u1", "/u1"),
+        }
+        seen, fake = [], self.api.start
+
+        def start(*args, **kw):
+            seen.append(os.environ.get("PYTHONPATH"))
+            return fake(*args, **kw)
+
+        self.api.start = start
+        for name, (given, want) in cases.items():
+            with self.subTest(given=given), mock.patch.dict(os.environ, {"PYTHONPATH": given}):
+                rc, _, err = self.run_main("start", name, "--manager", "m1", "--cwd", self.dir)
+                self.assertEqual((rc, seen[-1:]), (0, [want]), err)
+
     def test_start_an_entry_write_failure_one_stderr_line_exit_0(self):
         flags = ["--append-system-prompt", "a\nb"]
         rc, out, err = self.run_main(
@@ -1312,7 +1333,7 @@ def numbered(count, start=1):
 
 def tail(directory, n=0, gen=0, *backlog):
     me, events = (
-        f"PYTHONPATH={shlex.quote(ROOT)} python3 {' '.join(MODULE)}",
+        f"env PYTHONPATH={shlex.quote(ROOT)} python3 {' '.join(MODULE)}",
         shlex.quote(os.path.join(directory, "events")),
     )
     name = os.path.basename(directory)
@@ -1769,7 +1790,7 @@ class AttachTest(RosterCase):
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
         self.assertEqual(
             shlex.split(out.splitlines()[-6].split(": ", 1)[1]),
-            [f"PYTHONPATH={ROOT}", PY, *MODULE, "; rm -rf ~"],
+            ["env", f"PYTHONPATH={ROOT}", PY, *MODULE, "; rm -rf ~"],
         )
 
     def test_a_worker_entry_without_a_client_recovers_with_the_configs_runtime(self):
@@ -2476,10 +2497,32 @@ class ResumeTest(RosterCase):
         self.assertEqual(
             {n: shlex.split(cmd) for n, cmd in printed.items()},
             {
-                **{n: [*(f"{k}={v}" for k, v in env[n].items()), *argv] for n, argv in ran.items()},
+                **{
+                    n: [*(["env", f"PYTHONPATH={ROOT}"] if env[n] else []), *argv]
+                    for n, argv in ran.items()
+                },
                 "B": ["cd", cwd, "&&", *ran["B"]],
             },
         )
+
+    def test_a_crew_recovery_gets_its_import_root_the_rest_the_users_pythonpath(self):
+        entries = {
+            "B": entry("role", cwd=self.dir),
+            "b": entry(cwd=self.dir, resume=started("b")),
+            "p1": entry("pipeline", cwd=self.dir),
+        }
+        for given, user in ((f"{ROOT}:/u1", "/u1"), (ROOT, None)):
+            with self.subTest(given=given), mock.patch.dict(os.environ, {"PYTHONPATH": given}):
+                self.seed(MGR, **entries)
+                self.runs = Runs()
+                self.assertEqual(self.main_with(Api(), "attach", "--resume")[0], 0)
+                self.assertEqual(
+                    {
+                        Runs.key(argv): kw["env"].get("PYTHONPATH")
+                        for argv, kw, _ in self.runs.recoveries
+                    },
+                    {"/x/drive.py": user, "b": ROOT, "/x/router.py": user},
+                )
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"
@@ -2619,7 +2662,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = f"PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew"
+        me = f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew"
         self.assertEqual(
             self.attach(),
             (
@@ -2660,8 +2703,8 @@ class CursorTest(RosterCase):
             [line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"]
         )
         self.assertEqual(
-            [shlex.split(line.split(": ", 1)[1])[:5] for line in lines],
-            [[f"PYTHONPATH={ROOT}", "python3", *MODULE]] * 2,
+            [shlex.split(line.split(": ", 1)[1])[:6] for line in lines],
+            [["env", f"PYTHONPATH={ROOT}", "python3", *MODULE]] * 2,
         )
 
     def test_attach_quotes_the_paths_it_prints(self):
@@ -2685,6 +2728,7 @@ class CursorTest(RosterCase):
                     os.path.join(home, ".agent-pm", "managers", "mgr", "events"),
                 ],
                 [
+                    "env",
                     f"PYTHONPATH={root}",
                     "python3",
                     *MODULE,
@@ -2698,6 +2742,7 @@ class CursorTest(RosterCase):
                     "--resume",
                 ],
                 [
+                    "env",
                     f"PYTHONPATH={root}",
                     "python3",
                     *MODULE,

@@ -1,11 +1,11 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
-Launch whose env (last) and resume carry spec.access.env, and the runtime's output into the frozen event set (Event)
-plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at its next
-yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env. Access.dirs
-are granted write, Access.reads only read. Times are epoch seconds. Starts no process. role_policy=False (plain
-session): no role-run policy, flags and env unchanged; temporary (TASK-356), as are session_env, identity_env and
-child_defaults."""
+Launch whose env (last) and resume carry a role run's Access.env, and the runtime's output into the frozen event
+set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped
+at its next yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env.
+Access.dirs are granted write, Access.reads only read. Times are epoch seconds. Starts no process. role_policy=False
+(plain session): no role-run policy, flags unchanged, its env is Spec.env (per start, Driver-applied, allow-listed);
+temporary (TASK-356), as are session_env, identity_env and child_defaults."""
 
 import json
 import re
@@ -23,7 +23,7 @@ ACTIVITY = "activity"
 
 
 class ConfigError(Exception):
-    """A config or spec error."""
+    pass
 
 
 def _strings(value) -> bool:
@@ -101,6 +101,10 @@ class Spec:
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if type(self.role_policy) is not bool:
             raise ConfigError("role_policy must be a bool")
+        if not self.role_policy and self.access.env:
+            raise ConfigError("access env: not for a plain session; use env")
+        if self.role_policy and self.env:
+            raise ConfigError("env: plain sessions only (role_policy=False)")
         if self.name is not None and not isinstance(self.name, str):
             raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):

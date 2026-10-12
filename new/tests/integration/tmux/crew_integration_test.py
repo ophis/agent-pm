@@ -71,7 +71,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     me, events, name = (
-        f"PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew",
+        f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew",
         shlex.quote(os.path.join(directory, "events")),
         os.path.basename(directory),
     )
@@ -588,7 +588,7 @@ class RuntimeTest(Live):
         (c1,) = (e["env"] for e in logged(claude))
         identity = (*CLAUDE_SESSION, "CODEX_THREAD_ID", "CODEX_SANDBOX")
         for env in (w1, c1, w2):
-            self.assertEqual({k: env[k] for k in identity if k in env}, {})
+            self.assertEqual({k: env[k] for k in (*identity, "PYTHONPATH") if k in env}, {})
         self.assertEqual(w1["NO_COLOR"], "1")
         for env in (c1, w2):
             self.assertEqual({k: env[k] for k in fake_codex.DEFAULTS if k in env}, {})
@@ -754,7 +754,7 @@ class RosterTest(Live):
         self.assertEqual(
             self.attach().stdout,
             f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
-            f"resume w1: PYTHONPATH={shlex.quote(ROOT)} {shlex.join(resume)}\n"
+            f"resume w1: env PYTHONPATH={shlex.quote(ROOT)} {shlex.join(resume)}\n"
             f"{tail(self.directory, 0, 0, f'1 {done}')}",
         )
         self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")

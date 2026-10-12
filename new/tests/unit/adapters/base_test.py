@@ -189,18 +189,20 @@ class SpecTest(Refusals):
                 ("/p", "/q r/ü"),
             ),
         )
-        self.assertEqual(Spec(workdir="/w", env=MappingProxyType({"A": "1"})).env, {"A": "1"})
+        self.assertEqual(
+            Spec(workdir="/w", env=MappingProxyType({"A": "1"}), role_policy=False).env, {"A": "1"}
+        )
         self.assertEqual(Spec(workdir="/w", name="").name, "")
 
     def test_env_is_an_immutable_copy_and_specs_compare_by_value(self):
         source = {"A": "1"}
-        spec = Spec(workdir="/w", env=source)
+        spec = Spec(workdir="/w", env=source, role_policy=False)
         source["B"] = "2"
         self.assertEqual(dict(spec.env), {"A": "1"})
         with self.assertRaises(TypeError):
             spec.env["C"] = "3"
-        self.assertEqual(spec, Spec(workdir="/w", env={"A": "1"}))
-        self.assertNotEqual(spec, Spec(workdir="/w", env={"A": "2"}))
+        self.assertEqual(spec, Spec(workdir="/w", env={"A": "1"}, role_policy=False))
+        self.assertNotEqual(spec, Spec(workdir="/w", env={"A": "2"}, role_policy=False))
         self.assertEqual(self.plain(), self.plain())
 
     def test_replace_keeps_the_plain_session_fields(self):
@@ -239,6 +241,17 @@ class SpecTest(Refusals):
                     lambda: Spec(workdir="/w", env=bad),
                     "env must map variable names to strings without NUL",
                 )
+
+    def test_each_session_kind_has_its_own_env_and_refuses_the_others(self):
+        self.assertEqual(Spec(workdir="/w", access=Access(env={"A": "1"})).access.env, {"A": "1"})
+        self.refused(
+            lambda: self.plain(access=Access(env={"A": "1"})),
+            "access env: not for a plain session; use env",
+        )
+        self.refused(
+            lambda: Spec(workdir="/w", env={"A": "1"}),
+            "env: plain sessions only (role_policy=False)",
+        )
 
     def test_refuses_a_role_policy_other_than_a_bool(self):
         for bad in (0, 1, None, "False"):

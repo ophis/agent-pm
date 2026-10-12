@@ -357,7 +357,7 @@ def _no_tui_keys(name, events) -> None:
 
 
 def _no_tui_fields(spec: Spec) -> Spec:
-    if spec.flags or spec.env or spec.protect or not spec.role_policy:
+    if spec.flags or spec.protect or not spec.role_policy:
         raise ConfigError("flags, env, protect and role_policy=False: tui mode only")
     return spec
 
