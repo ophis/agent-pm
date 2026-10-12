@@ -233,9 +233,10 @@ class GridRetile(unittest.TestCase):
 
 
 class Worktree(Base):
-    def worktree(self, *answers, branch="TASK-1-x", spec="o/n", config=None):
+    def worktree(self, *answers, branch="TASK-1-x", spec="o/n", config=None, base_branch=None):
         run = Fake([*answers, HEAD])
-        return self.main(["worktree", spec, f"--branch={branch}", "--dir", self.dir], run, config), run
+        argv = [] if base_branch is None else [f"--base={base_branch}"]
+        return self.main(["worktree", spec, f"--branch={branch}", "--dir", self.dir, *argv], run, config), run
 
     def test_fresh_blobless_clone_on_a_new_branch_from_the_default(self):
         (code, out, _), run = self.worktree(info(default="trunk"))
@@ -265,8 +266,22 @@ class Worktree(Base):
                 self.assertEqual((code, run.calls), (1, []), err)
                 self.assertIn(want, err)
 
+    def test_a_new_branch_starts_from_the_explicit_base(self):
+        (code, _, err), run = self.worktree(info(), base_branch="re-architecture")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--no-track", "-b", "TASK-1-x", "origin/re-architecture"))
+
+    def test_an_unsafe_base_is_invalid_before_fetch_or_clone(self):
+        for base in ("-x", "a..b", "a b", "x/", "x;rm -rf ~", ""):
+            with self.subTest(base=base):
+                (code, _, err), run = self.worktree(info(), base_branch=base)
+                self.assertEqual(code, 2, err)
+                self.assertIn("unsafe base branch name", err)
+                self.assertFalse(any("fetch" in c or "clone" in c or "checkout" in c for c in run.calls))
+
     def test_remote_branch_is_tracked(self):
-        (code, _, _), run = self.worktree(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")))
+        (code, _, _), run = self.worktree(info(), (lambda a: "ls-remote" in a, ok("abc\trefs/heads/TASK-1-x\n")),
+                                        base_branch="re-architecture")
         self.assertEqual(code, 0)
         self.assertTrue(run.ran("git", "-C", self.wt, "ls-remote", "--heads", "origin", "refs/heads/TASK-1-x"))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "--track", "-b", "TASK-1-x", "origin/TASK-1-x"))
@@ -284,14 +299,16 @@ class Worktree(Base):
         self.assertTrue(run.ran("gh", "repo", "clone"))
 
     def test_reuse_fetches_and_switches_to_the_local_branch(self):
-        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")))
+        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: a[3:5] == ["branch", "--list"], ok("  TASK-1-x\n")),
+                                        base_branch="re-architecture")
         self.assertEqual(code, 0)
         self.assertTrue(run.ran("git", "-C", self.wt, *FETCH))
         self.assertTrue(run.ran("git", "-C", self.wt, "checkout", "TASK-1-x"))
         self.assertFalse(run.ran("gh", "repo", "clone"))
 
     def test_already_on_the_branch_changes_nothing(self):
-        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: "--show-current" in a, ok("TASK-1-x\n")))
+        (code, _, _), run = self.worktree(self.existing(), info(), (lambda a: "--show-current" in a, ok("TASK-1-x\n")),
+                                        base_branch="re-architecture")
         self.assertEqual(code, 0)
         self.assertFalse(any("checkout" in c or "worktree" in c for c in run.calls))
 
@@ -398,9 +415,9 @@ class Worktree(Base):
         rows = [(cmd, argv, opt) for cmd in ("worktree", "status") for argv, opt in (
             (["--dir", self.dir, "--branch", "b", "o/n", "--dir", os.path.expanduser("~/.claude")], "--dir"),
             (["--dir", self.dir, "--branch", "b", "o/n", "--branch", "c"], "--branch"),
-            (["--dir", self.dir, "--branch", "b", "--name", "x", "o/n", "--name", "y"], "--name"))]
-        for cmd, argv, opt in [*rows, ("status", ["--dir", self.dir, "--branch", "b", "--base", "a", "--base", "b", "o/n"],
-                                       "--base")]:
+            (["--dir", self.dir, "--branch", "b", "--name", "x", "o/n", "--name", "y"], "--name"),
+            (["--dir", self.dir, "--branch", "b", "--base", "a", "--base", "b", "o/n"], "--base"))]
+        for cmd, argv, opt in rows:
             with self.subTest(cmd=cmd, opt=opt):
                 self.assertIn(f"{opt} given twice", self.refused([cmd, *argv]))
 
@@ -408,8 +425,7 @@ class Worktree(Base):
         for argv, want in ((["worktree", "--dir", self.dir, "o/n"], "--branch"),
                            (["status", "--dir", self.dir, "o/n"], "--branch"),
                            (["prepare", "--dir", self.dir, "--branch", "b", "o/n"], "prepare"),
-                           (["checkout", "--dir", self.dir, "--branch", "b", "o/n"], "checkout"),
-                           (["worktree", "--dir", self.dir, "--branch", "b", "--base", "a", "o/n"], "unrecognized arguments")):
+                           (["checkout", "--dir", self.dir, "--branch", "b", "o/n"], "checkout")):
             with self.subTest(argv=argv):
                 self.assertIn(want, self.refused(argv))
 
@@ -489,9 +505,10 @@ class Clone(unittest.TestCase):
 
 
 class Local(Clone):
-    def worktree(self, branch="TASK-1-x", spec=None, base=None, config=None):
+    def worktree(self, branch="TASK-1-x", spec=None, base=None, config=None, base_branch=None):
         run, out, err = Real([info()]), io.StringIO(), io.StringIO()
-        code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, spec or self.clone], run=run, out=out, err=err,
+        argv = [] if base_branch is None else ["--base", base_branch]
+        code = repo.main(["worktree", "--dir", base or self.dir, "--branch", branch, *argv, spec or self.clone], run=run, out=out, err=err,
                          config=config or self.none, temp=())
         return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
 
@@ -550,6 +567,27 @@ class Local(Clone):
                 self.assertEqual((code, r["commit"], r["worktree"]), (0, commit, wt))
                 self.assertEqual(run.timeout("git", "-C", self.clone, "worktree", "add"), repo.LONG)
                 self.assertEqual((git("-C", wt, "branch", "--show-current"), upstream(wt)), (branch, tracks))
+
+    def test_explicit_base_only_affects_new_branches(self):
+        old = git("-C", self.clone, "rev-parse", "HEAD")
+        git("-C", self.clone, "branch", "TASK-1-local")
+        new = self.advance()
+        git("-C", self.seed, "checkout", "-q", "-b", "re-architecture", old)
+        git("-C", self.seed, "commit", "-q", "--allow-empty", "-m", "base")
+        selected = git("-C", self.seed, "rev-parse", "HEAD")
+        git("-C", self.seed, "push", "-q", "origin", "re-architecture")
+        for branch, commit, tracks in (("TASK-1-local", old, None), ("TASK-1-remote", old, "origin/TASK-1-remote"),
+                                       ("TASK-1-new", selected, None), ("TASK-1-default", new, None)):
+            with self.subTest(branch=branch):
+                base = os.path.join(self.tmp, branch)
+                selected_base = None if branch == "TASK-1-default" else "re-architecture"
+                code, r, _ = self.worktree(branch, base=base, base_branch=selected_base)
+                self.assertEqual(code, 0, r)
+                self.assertEqual((r["commit"], upstream(r["worktree"])), (commit, tracks))
+                code, reused, run = self.worktree(branch, base=base, base_branch="main")
+                self.assertEqual(code, 0, reused)
+                self.assertEqual(reused["commit"], commit)
+                self.assertFalse(any("add" in c or "checkout" in c for c in run.calls))
 
     def test_reuse_fetches_only(self):
         self.assertEqual(self.worktree()[0], 0)

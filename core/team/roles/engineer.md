@@ -23,11 +23,11 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
 
 ## Repo
 
-1. Check out the target repo ([Principles › Work › Worktree](#work)), `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; stand-in `build`; `<slug>` 2–4 lowercase English words joined by `-`). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`.
+1. Check out the target repo with `[--base <Base:>]` ([Principles › Work › Worktree](#work)), `<branch>` the input's `Branch:`, else `<id>-<slug>` (≤ 40 characters; stand-in `build`; `<slug>` 2–4 lowercase English words joined by `-`). JSON `host`, `repo`, `default`, `worktree` → `<host>`, `<owner>/<name>`, `<default>`, `<worktree>`.
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.
-2. Run `python3 <scripts>/repo.py status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`). JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
+2. Run `python3 <scripts>/repo.py status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`. JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
 - **Merge**: where named, merge `origin/<base>` into `<branch>`; never rebase.
   1. Rerun [Engineer › Repo](#repo) step 1, never `git fetch`: on an existing worktree it only fetches `origin/*`.
   2. `git -C <worktree> status` shows uncommitted changes or a merge in progress → first commit the work in progress, or finish that merge by step 3's conflict rule; can't → `needs_input`, `questions` naming the files; stop. Never stash, reset or check out over them.

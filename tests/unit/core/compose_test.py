@@ -1215,7 +1215,7 @@ def generic_names(text):
 
 
 LANGUAGE_RULE = "headings and fixed labels included"
-REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] <repo>",
+REPO_ARGS = {"worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>",
              "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>"}
 CHECKOUT_RULE = ("- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
                  "`Checkout:`; no `Checkout:` → drop it.")
