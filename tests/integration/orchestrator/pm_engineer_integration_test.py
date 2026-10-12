@@ -1,7 +1,3 @@
-from tests import hermetic  # noqa: F401
-from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL, MANAGER, ROUTER, fake_linear
-from tests.integration.orchestrator.segments import BUILD, REPORT, Segment
-
 import os
 import sys
 import unittest
@@ -9,6 +5,10 @@ from urllib.parse import unquote
 
 import issues
 import promote
+
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL, MANAGER, ROUTER, fake_linear
+from tests.integration.orchestrator.segments import BUILD, REPORT, Segment
 
 REWORK = "Add a section on stale sessions."
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."

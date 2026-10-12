@@ -1,8 +1,6 @@
-"""new/core/src/driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, respawn, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the
-events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
-
-from new.tests import guards, hermetic  # noqa: F401
+"""driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
+start (no pane), detach, respawn, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
+file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
 import ast
 import errno
@@ -24,7 +22,10 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-from driver import tmux_host
+from agent_pm.driver import tmux_host
+
+from new.tests import guards
+from new.tests.case import Case
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
@@ -339,7 +340,7 @@ class Tmux:
         return [c[1] if c[0] == "tmux" else c[0] for c in self.calls]
 
 
-class Start(unittest.TestCase):
+class Start(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -823,7 +824,7 @@ class Start(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
 
 
-class Detach(unittest.TestCase):
+class Detach(Case):
     """Session d hosting argv as old drive.detach did: no decoration, no dead pane kept."""
 
     setUp = Start.setUp
@@ -1053,7 +1054,7 @@ class Detach(unittest.TestCase):
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
 
 
-class Respawn(unittest.TestCase):
+class Respawn(Case):
     setUp = Start.setUp
 
     def respawn(self, fake, session="s", argv=("tool", "-x", "a b"), env=None):
@@ -1198,7 +1199,7 @@ class Respawn(unittest.TestCase):
 MARK_KW = {**TMUX_KW, "timeout": 5}
 
 
-class Mark(unittest.TestCase):
+class Mark(Case):
     """The event protocol a hook writes: the pane's @state, and done or blocked lines in the events file."""
 
     def setUp(self):
@@ -1299,7 +1300,7 @@ class Mark(unittest.TestCase):
         self.assertEqual(self.text(), "old\n")
 
 
-class EventsFile(unittest.TestCase):
+class EventsFile(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -1375,7 +1376,7 @@ class EventsFile(unittest.TestCase):
             self.assertFalse(os.path.exists(path))
 
 
-class Status(unittest.TestCase):
+class Status(Case):
     def test_states(self):
         # a signal death: -n (tmux prints the signal's name where libc has one, else its number)
         for pane, want in (
@@ -1462,7 +1463,7 @@ def row(name, **fields):
     }
 
 
-class Listing(unittest.TestCase):
+class Listing(Case):
     def listing(self, sessions, clients=(0, ""), panes=(0, ""), capture=(0, ""), match=None):
         fake = Tmux(
             results={
@@ -1675,7 +1676,7 @@ class Listing(unittest.TestCase):
                     self.assertEqual((got, fake.calls), (None, calls))
 
 
-class TmuxPath(unittest.TestCase):
+class TmuxPath(Case):
     def test_the_real_path_of_the_tmux_on_path_else_none(self):
         with tempfile.TemporaryDirectory() as d:
             real, bin_dir = os.path.join(d, "real"), os.path.join(d, "bin")
@@ -1695,7 +1696,7 @@ class TmuxPath(unittest.TestCase):
                     self.assertIsNone(tmux_host.tmux_path())
 
 
-class Kill(unittest.TestCase):
+class Kill(Case):
     def test_kill(self):
         fake = Tmux()
         tmux_host.kill("s", proc=fake)
@@ -1707,7 +1708,7 @@ class Kill(unittest.TestCase):
             tmux_host.kill("s", proc=Tmux(fail={"kill-session"}))
 
 
-class Send(unittest.TestCase):
+class Send(Case):
     def send(self, fake, text):
         tmux_host.send(
             "s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds))
@@ -1761,7 +1762,7 @@ class Send(unittest.TestCase):
                 sleep.assert_not_called()
 
 
-class Paste(unittest.TestCase):
+class Paste(Case):
     def test_loads_the_buffer_then_pastes_it_bracketed_deleting_it(self):
         fake = Tmux()
         self.assertIsNone(tmux_host.paste("s", "a;\nb", proc=fake))
@@ -1798,7 +1799,7 @@ class Paste(unittest.TestCase):
         self.assertEqual(fake.commands(), ["load-buffer"])
 
 
-class Keys(unittest.TestCase):
+class Keys(Case):
     def test_send_keys_names_the_keys(self):
         fake = Tmux()
         self.assertIsNone(tmux_host.keys("s", "Escape", "C-c", "Enter", proc=fake))
@@ -1818,7 +1819,7 @@ class Keys(unittest.TestCase):
             tmux_host.keys("s", "Enter", proc=Tmux(fail={"send-keys"}))
 
 
-class Option(unittest.TestCase):
+class Option(Case):
     def test_value(self):
         for printed, want in (("0123abcd\n", "0123abcd"), ("a b\n", "a b"), ("\n", "")):
             with self.subTest(printed=printed):
@@ -1851,7 +1852,7 @@ class Option(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
 
-class PaneId(unittest.TestCase):
+class PaneId(Case):
     def test_its_pane(self):
         fake = Tmux(pane="%5")
         self.assertEqual(tmux_host.pane("s", proc=fake), "%5")
@@ -1878,7 +1879,7 @@ class PaneId(unittest.TestCase):
                 tmux_host.pane("s", proc=Tmux(results={"display-message": result}))
 
 
-class PaneTarget(unittest.TestCase):
+class PaneTarget(Case):
     """status, kill, paste, keys, option and read take a pane id (%N) as their target."""
 
     def calls(self, target, fake):
@@ -1928,7 +1929,7 @@ class PaneTarget(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
 
-class Read(unittest.TestCase):
+class Read(Case):
     def test_visible_pane_or_last_lines(self):
         for lines, printed, want, extra in (
             (None, "a\n  b\n\n \n", "a\n  b", []),
@@ -1954,7 +1955,7 @@ class Read(unittest.TestCase):
             tmux_host.read("s", proc=Tmux(fail={"capture-pane"}))
 
 
-class Show(unittest.TestCase):
+class Show(Case):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
@@ -1995,7 +1996,7 @@ class Show(unittest.TestCase):
                 self.assertEqual(len(fake.calls), 1 if result else 0)
 
 
-class Pane(unittest.TestCase):
+class Pane(Case):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
@@ -2483,7 +2484,7 @@ def seq(*results):
     return lambda argv: next(it)
 
 
-class Stack(unittest.TestCase):
+class Stack(Case):
     """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal client (tty
     /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the `live` pane ids (`hosts`, panes()
     rows, for the tty format); pgrep finds no iTerm2 unless told; a tmux split prints %99."""
@@ -2855,7 +2856,7 @@ class Stack(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
 
-class Container(unittest.TestCase):
+class Container(Case):
     """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0), shown by a client on
     /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode; else a plain docker exec -it tmux attach); no
     iTerm2 and no iTerm2 variables. pgrep finds nothing: procps, busybox's usage error, or none installed."""
@@ -2946,7 +2947,7 @@ class Container(unittest.TestCase):
         self.assertNotIn("osascript", fake.commands())
 
 
-class GridOpen(unittest.TestCase):
+class GridOpen(Case):
     """Grid mode. The caller is in root session mgr (no @opener), pane %3, shown by a terminal client (tty
     /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes rows (window, @grid-manager, pane,
     width, height), a pane not in it is gone; list-panes -a prints nothing; iTerm2 runs; a split prints %20; tile
@@ -3345,7 +3346,7 @@ class GridOpen(unittest.TestCase):
                 self.assertEqual(fake.calls, [])
 
 
-class Retile(unittest.TestCase):
+class Retile(Case):
     def test_modes(self):
         self.assertEqual(tmux_host.RETILES, ("all", "open-close", "off"))
         self.assertEqual(tmux_host.RETILE, "open-close")
@@ -3364,7 +3365,7 @@ class Retile(unittest.TestCase):
                 tmux_host._retile(bad)
 
 
-class Opener(unittest.TestCase):
+class Opener(Case):
     def test_in_tmux_its_session(self):
         fake = Tmux(results={"display-message": (0, "cmd\n")})
         with environ(**INSIDE, TERM_PROGRAM="iTerm.app"):
@@ -3463,7 +3464,7 @@ def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     )
 
 
-class GridLayout(unittest.TestCase):
+class GridLayout(Case):
     """Window 160x48, manager %0 79 wide."""
 
     def tiles(self, cell):
@@ -3620,7 +3621,7 @@ class GridLayout(unittest.TestCase):
         )
 
 
-class GridTree(unittest.TestCase):
+class GridTree(Case):
     """Manager %0, its session mgr; rows: (session id, name, @opener, @pane)."""
 
     MGR = (1, "mgr", "", "")
@@ -3873,7 +3874,7 @@ class GridTree(unittest.TestCase):
                 )
 
 
-class Swaps(unittest.TestCase):
+class Swaps(Case):
     def test_every_order_of_four_correct_and_minimal(self):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
@@ -3893,7 +3894,7 @@ class Swaps(unittest.TestCase):
                 self.assertEqual(len(swaps), len(have) - cycles)
 
 
-class LayoutString(unittest.TestCase):
+class LayoutString(Case):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
@@ -3948,7 +3949,7 @@ class LayoutString(unittest.TestCase):
                 self.assertIsNone(tmux_host._parse_layout(bad))
 
 
-class Tile(unittest.TestCase):
+class Tile(Case):
     """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The server's socket is in a
     temp dir, @3's lock file beside it; the clock (clock()) at 1000 s, i.e. 1000000 ms."""
 
@@ -4732,7 +4733,7 @@ class Tile(unittest.TestCase):
             tmux_host.tile("@3", proc=Tmux(fail=("display-message",)))
 
 
-class Cli(unittest.TestCase):
+class Cli(Case):
     def main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -4933,7 +4934,7 @@ class Cli(unittest.TestCase):
             mock.assert_not_called()
 
 
-class SingleFile(unittest.TestCase):
+class SingleFile(Case):
     def setUp(self):
         with open(tmux_host.__file__) as f:
             self.source = f.read()
@@ -4996,7 +4997,7 @@ builtins.open = fake_open
 """
 
 
-class Exec(unittest.TestCase):
+class Exec(Case):
     def test_safe_for_tmux(self):
         self.assertNotIn("#", tmux_host.EXEC)
         self.assertFalse(tmux_host.EXEC.rstrip().endswith(";"))

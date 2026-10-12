@@ -1,9 +1,7 @@
-"""new/core/src/driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the
-payload on stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only a decoy tmux (no tmux runs
+"""driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the payload on
+stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only a decoy tmux (no tmux runs
 here); in process for its one locked write, its check of that tmux and its load of tmux_host; and the file standing
 alone."""
-
-from new.tests import SRC, guards, hermetic  # noqa: F401
 
 import ast
 import fcntl
@@ -20,9 +18,12 @@ import unittest
 import unittest.mock
 import uuid
 
-from driver.modes import tui_hook
+from agent_pm.driver.modes import tui_hook
 
-HOOK = os.path.join(SRC, "driver", "modes", "tui_hook.py")
+from new.tests import guards
+from new.tests.case import ROOT, Case
+
+HOOK = os.path.join(ROOT, "agent_pm", "driver", "modes", "tui_hook.py")
 PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
@@ -73,7 +74,7 @@ def write_state(folder: str, value) -> None:
         f.write(data)
 
 
-class Hook(unittest.TestCase):
+class Hook(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -403,7 +404,7 @@ class Hook(unittest.TestCase):
         self.assertNothingWritten()
 
 
-class InProcess(unittest.TestCase):
+class InProcess(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -502,14 +503,14 @@ class InProcess(unittest.TestCase):
         module = tui_hook.load_tmux_host()
         self.assertEqual(
             os.path.realpath(module.__file__),
-            os.path.realpath(os.path.join(SRC, "driver", "tmux_host.py")),
+            os.path.realpath(os.path.join(ROOT, "agent_pm", "driver", "tmux_host.py")),
         )
         self.assertTrue(callable(module.mark))
         self.assertEqual(sys.path, path)
         self.assertNotIn("tmux_host", set(sys.modules) - modules)
 
 
-class Standalone(unittest.TestCase):
+class Standalone(Case):
     def setUp(self):
         with open(HOOK) as f:
             self.source = f.read()

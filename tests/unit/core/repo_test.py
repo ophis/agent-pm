@@ -1,5 +1,3 @@
-from tests import hermetic
-
 import io
 import json
 import os
@@ -12,6 +10,8 @@ import unittest.mock
 
 import repo
 import tmux_host
+
+from tests import hermetic
 
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"

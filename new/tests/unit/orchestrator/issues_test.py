@@ -1,10 +1,10 @@
 """orchestrator issues.py, ported from the old issues_test, plus head: a description's part before its comments."""
 
-from new.tests import hermetic  # noqa: F401
-
 import unittest
 
-import issues
+from agent_pm_orchestrator import issues
+
+from new.tests.case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 HUMANS = ("ann@example.com", "bob@example.com")
@@ -68,7 +68,7 @@ HANDOFF = (
 )
 
 
-class ReadIssue(unittest.TestCase):
+class ReadIssue(Case):
     def test_maps_fields_and_queries_by_identifier(self):
         gql = FakeGql(
             payload(
@@ -190,7 +190,7 @@ class ReadIssue(unittest.TestCase):
             read().title = "x"
 
 
-class ParseHandoff(unittest.TestCase):
+class ParseHandoff(Case):
     def test_sections(self):
         inner = "Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore."
         inside = (
@@ -267,7 +267,7 @@ class ParseHandoff(unittest.TestCase):
                 self.assertIsNone(issues.parse_handoff(description))
 
 
-class Head(unittest.TestCase):
+class Head(Case):
     def test_cut_before_the_comments_header(self):
         top = f"Handoff from ENG-3: {URL}\n\n## Instructions\nAnn, t:\n"
         quoted = "## Comments\n- Ann, t:\n  > ## Comments\n"
@@ -312,7 +312,7 @@ class Head(unittest.TestCase):
         self.assertEqual(rest.split("\n", 1), ["## Comments", issues.parse_handoff(d).comments])
 
 
-class HandoffText(unittest.TestCase):
+class HandoffText(Case):
     def test_sections_in_order_empty_ones_omitted(self):
         header = "Handoff from DR-1: https://l/DR-1"
         sources = (("Report\n v2", "https://gh/r.md"), ("B", " https://b\n"))
@@ -357,7 +357,7 @@ class HandoffText(unittest.TestCase):
         )
 
 
-class IsUser(unittest.TestCase):
+class IsUser(Case):
     def test_is_user(self):
         for email, want in (
             ("ANN@Example.com", True),
@@ -370,7 +370,7 @@ class IsUser(unittest.TestCase):
                 self.assertIs(issues.is_user(note("x", email=email), HUMANS), want)
 
 
-class Brief(unittest.TestCase):
+class Brief(Case):
     def test_brief(self):
         for description, want in (
             (
@@ -384,7 +384,7 @@ class Brief(unittest.TestCase):
                 self.assertEqual(issues.brief(issue(description)), want)
 
 
-class BuildCutoff(unittest.TestCase):
+class BuildCutoff(Case):
     def test_build_cutoff(self):
         created = "2026-09-01T00:00:00.000Z"
         cases = [

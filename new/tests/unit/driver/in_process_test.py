@@ -1,7 +1,5 @@
-"""new/core/src/driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
+"""driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
-
-from new.tests import hermetic  # noqa: F401
 
 import signal
 import threading
@@ -9,9 +7,11 @@ import time
 import unittest
 from unittest import mock
 
-from adapters.base import Adapter, InProcess, Reply, Spec, Stderr
-from driver.errors import DriverError
-from driver.modes.in_process import InProcessMode
+from agent_pm.adapters.base import Adapter, InProcess, Reply, Spec, Stderr
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes.in_process import InProcessMode
+
+from new.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
@@ -41,7 +41,7 @@ def ended(*_):
     return [Reply("a")]
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def begin(self, script, resume=False):
         self.mode = InProcessMode(StubRun(script))
         self.mode.begin("hi", SPEC, resume)

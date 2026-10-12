@@ -4,8 +4,6 @@ settling and re-tiling modes, and a split outside it; ported from main's crew in
 tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
 fails the test. Also start's dead line for a command ending at once."""
 
-from new.tests import hermetic, live_tmux
-
 import contextlib
 import functools
 import io
@@ -18,7 +16,10 @@ import time
 import unittest
 from unittest import mock
 
-from driver import api, registry, tmux_host
+from agent_pm.driver import api, registry, tmux_host
+
+from new.tests import live_tmux
+from new.tests.case import Case
 
 MANAGER = "mgr"
 TIMEOUT = 60
@@ -30,10 +31,9 @@ RETILE_WAIT = 0.5
 PACE = 0.02
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
-        self.server = live_tmux.Server(self, home)
+        self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
         self.server.attach(MANAGER)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
@@ -48,7 +48,6 @@ class Live(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.cwd = os.path.realpath(tmp.name)
         self.settings = {}
-        self.addCleanup(registry.reset)
         self.configure()
 
     def configure(self, **settings) -> None:

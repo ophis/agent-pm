@@ -1,6 +1,3 @@
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
-
 import contextlib
 import errno
 import fcntl
@@ -23,6 +20,9 @@ from unittest import mock
 import crew
 from clients.claude import ClaudeClient
 from clients.codex import CodexClient
+
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
 
 clients = crew.clients
 roster = crew.roster

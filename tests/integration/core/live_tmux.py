@@ -1,5 +1,3 @@
-from tests.integration.core import fake_claude
-
 import os
 import resource
 import select
@@ -10,6 +8,8 @@ import tempfile
 import threading
 import time
 from typing import NamedTuple
+
+from tests.integration.core import fake_claude
 
 # Two words, so tmux execs them; one would run as `<default-shell> -c`, which without SHELL in env() is the user's
 # login shell, reading its rc files.

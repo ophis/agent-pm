@@ -1,9 +1,6 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
 dir to read, never added; its catalog row; a read dir holding the team dir composes unadded, a write dir refused."""
 
-from new.tests import NEW
-from new.tests.integration.composer import child
-
 import json
 import os
 import re
@@ -11,8 +8,11 @@ import shutil
 import tempfile
 import unittest
 
-from composer.prompt import RESUME, RETURN
-from utils.paths import temp_dirs, under
+from agent_pm.composer.prompt import RESUME, RETURN
+from agent_pm.utils.paths import temp_dirs, under
+
+from new.tests.case import NEW
+from new.tests.integration.composer import child
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
@@ -30,11 +30,11 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from utils.config_file import CONFIG, read_config
+CATALOG = """from agent_pm.utils.config_file import CONFIG, LOCAL, read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(read_config(CONFIG))
-params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
+team.check_all(read_config(CONFIG, LOCAL))
+params = composer.RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
 rows = {}
 for role, tasks in composer.catalog(team).items():
     run = composer.resolve(role, team=team)

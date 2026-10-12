@@ -2,9 +2,6 @@
 dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included, read
 dirs (the tasks dir among them) never added nor counted."""
 
-from new.tests import NEW, fake_adapter, hermetic
-from new.tests.unit.composer.team_test import POET, VERSE
-
 import io
 import json
 import os
@@ -18,14 +15,17 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-import composer
-from composer import RunConfig, RunParams
-from composer.base import SRC
-from composer.prompt import RESUME
-from delegate import ConfigError, plan
-from delegate.plan import place
-from driver import api, registry
-from utils.paths import temp_dirs, under
+from agent_pm import composer
+from agent_pm.composer import RunConfig, RunParams
+from agent_pm.composer.prompt import RESUME
+from agent_pm.delegate import ConfigError, plan
+from agent_pm.delegate.plan import place
+from agent_pm.driver import api, registry
+from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
+
+from new.tests import fake_adapter
+from new.tests.case import NEW, Case
+from new.tests.unit.composer.team_test import POET, VERSE
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")
@@ -51,7 +51,7 @@ def write_team(top, files=TEAM_FILES):
         os.chmod(path, 0o644)
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and the registry's
     adapters: the core config's and the fake runtime."""
 
@@ -61,17 +61,17 @@ class Base(unittest.TestCase):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.agent_pm = hermetic.home(self)
-        self.enterContext(mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter}))
+        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
         self.addCleanup(registry.reset)
         self.local("")
 
     def local(self, text):
         """The local config `text`, the registry's adapters re-read with it."""
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        local = os.path.join(self.agent_pm, "core-new.local.toml")
+        with open(local, "w") as f:
             f.write(text)
         fake = {"implementation": "adapters.fake:FakeAdapter"}
-        registry.configure({"adapters": registry.tables() | {"fake": fake}})
+        registry.configure({"adapters": registry.tables(registry.CONFIG, local) | {"fake": fake}})
 
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
@@ -266,13 +266,18 @@ class Refusals(Base):
 
 
 class Planned(Base):
-    KEYS = {"read": ["{{methods}}"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}
+    KEYS = {"read": ["{{methods}}"], "commands": ["x --dir {{workdir}}/src *"]}
 
-    def test_the_access_is_the_intents_with_the_gate_last(self):
-        command, gate = f"{SRC}/x --dir {self.work}/src *", "python3 /u/usage.py *"
-        for value, commands in ((gate, (command, gate)), ("", (command,))):
-            with self.subTest(gate=value):
-                got, _ = self.planned(keys=self.KEYS | {"gate": value})
+    def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
+        command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
+        env = {"PYTHONPATH": IMPORT_ROOT}
+        for keys, commands, want in (
+            (self.KEYS | {"gate": gate}, (command, gate), env),
+            (self.KEYS | {"gate": ""}, (command,), env),
+            (self.KEYS | {"commands": [], "gate": ""}, (), {}),
+        ):
+            with self.subTest(keys=keys):
+                got, _ = self.planned(keys=keys)
                 self.assertEqual(
                     got.spec.access,
                     api.Access(
@@ -281,6 +286,7 @@ class Planned(Base):
                         cwd=self.work,
                         project=False,
                         reads=(TASKS, METHODS),
+                        env=want,
                     ),
                 )
 

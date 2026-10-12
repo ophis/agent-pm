@@ -1,9 +1,7 @@
-"""new/core/src/driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
+"""driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
-
-from new.tests import SRC, fake_adapter, hermetic
 
 import errno
 import fcntl
@@ -19,7 +17,7 @@ import threading
 import unittest
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -32,9 +30,12 @@ from adapters.base import (
     SessionInfo,
     TurnEnd,
 )
-from driver import api, tmux_host
-from driver.errors import DriverError
-from driver.modes import tui
+from agent_pm.driver import api, tmux_host
+from agent_pm.driver.errors import DriverError
+from agent_pm.driver.modes import tui
+
+from new.tests import fake_adapter
+from new.tests.case import ROOT, Case
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -98,9 +99,8 @@ class ScanTui(fake_adapter.FakeTui):
         return payload.get("why", "")
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         self.root = os.path.join(self.agent_pm, "tui")
         self.dir = os.path.join(self.root, NAME)
         self.hooks = os.path.join(self.dir, "hooks.jsonl")
@@ -191,7 +191,7 @@ class PathsTest(Base):
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
-        hook = os.path.join(SRC, "driver", "modes", "tui_hook.py")
+        hook = os.path.join(ROOT, "agent_pm", "driver", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
         self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
         self.assertTrue(os.path.isabs(argv[2]))
@@ -1261,7 +1261,7 @@ class AttachTest(Base):
         self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
 
 
-class ModeTest(unittest.TestCase):
+class ModeTest(Case):
     def test_tui_mode_has_each_mode_method_with_its_parameters(self):
         def params(function):
             return [

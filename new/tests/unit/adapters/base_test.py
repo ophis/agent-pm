@@ -1,7 +1,5 @@
-"""new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
+"""adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
 Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
-
-from new.tests import hermetic  # noqa: F401
 
 import dataclasses
 import inspect
@@ -10,8 +8,8 @@ import unittest
 from types import MappingProxyType
 from unittest import mock
 
-from adapters import base
-from adapters.base import (
+from agent_pm.adapters import base
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -37,6 +35,8 @@ from adapters.base import (
     Usage,
     Window,
 )
+
+from new.tests.case import Case
 
 
 class StubAdapter(Adapter):
@@ -95,7 +95,7 @@ class NativeIdTui(LabeledTui):
         return payload.get("thread", "")
 
 
-class Refusals(unittest.TestCase):
+class Refusals(Case):
     def refused(self, build, message):
         with self.assertRaises(ConfigError) as caught:
             build()
@@ -106,19 +106,21 @@ class AccessTest(Refusals):
     def test_defaults(self):
         access = Access()
         self.assertEqual(
-            (access.dirs, access.commands, access.cwd, access.project, access.reads),
-            ((), (), "", False, ()),
+            (access.dirs, access.commands, access.cwd, access.project, access.reads, access.env),
+            ((), (), "", False, (), {}),
         )
 
     def test_accepts_tuples_of_strings(self):
         access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",))
         self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
 
-    def test_reads_is_the_last_positional_field(self):
-        self.assertEqual(
-            Access(("/a",), ("git",), "/c", True, ("/r",)),
-            Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",)),
-        )
+    def test_keeps_reads_and_env_together(self):
+        access = Access(reads=("/r",), env={"A": "b"})
+        self.assertEqual((access.reads, access.env), (("/r",), {"A": "b"}))
+
+    def test_takes_keywords_only(self):
+        with self.assertRaises(TypeError):
+            Access(("/a",), ("git",), "/c", True, ("/r",))
 
     def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
@@ -126,6 +128,31 @@ class AccessTest(Refusals):
                 self.refused(lambda: Access(dirs=bad), "dirs must be a tuple of strings")
                 self.refused(lambda: Access(commands=bad), "commands must be a tuple of strings")
                 self.refused(lambda: Access(reads=bad), "reads must be a tuple of strings")
+
+    def test_accepts_an_env_of_shell_names_to_strings(self):
+        env = {"PYTHONPATH": "/a b;c", "_x1": ""}
+        self.assertEqual(Access(env=MappingProxyType(env)).env, env)
+
+    def test_refuses_an_env_name_a_shell_assignment_cannot_hold_or_a_value_not_a_string_without_nul(
+        self,
+    ):
+        message = "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
+        for bad in (
+            {"X;Y": "a"},
+            {"A=B": "a"},
+            {"1A": "a"},
+            {"": "a"},
+            {"A B": "a"},
+            {"A\n": "a"},
+            {1: "a"},
+            {"A": 1},
+            {"A": None},
+            {"A": "b\0"},
+            [("A", "b")],
+            None,
+        ):
+            with self.subTest(bad=bad):
+                self.refused(lambda: Access(env=bad), message)
 
 
 class SpecTest(Refusals):
@@ -309,7 +336,7 @@ class SpecTest(Refusals):
                 )
 
 
-class SidErrorTest(unittest.TestCase):
+class SidErrorTest(Case):
     def test_none_for_a_non_empty_printable_string_without_a_slash(self):
         for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
             with self.subTest(sid=sid):
@@ -339,6 +366,14 @@ class LaunchTest(Refusals):
             (("x",), {}, (), "", "", ""),
         )
 
+    def test_project_override_is_optional_and_boolean(self):
+        self.assertIsNone(Launch(("x",)).project)
+        for value in (False, True):
+            self.assertIs(Launch(("x",), project=value).project, value)
+        for value in (0, 1, "yes", []):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "launch: project"):
+                Launch(("x",), project=value)
+
     def test_accepts_strings(self):
         launch = Launch(
             ("x", "-y"),
@@ -364,7 +399,7 @@ class LaunchTest(Refusals):
                     )
 
 
-class EventsTest(unittest.TestCase):
+class EventsTest(Case):
     def test_the_frozen_set_is_the_seven_events(self):
         self.assertEqual(
             typing.get_args(base.Event),
@@ -383,7 +418,7 @@ class EventsTest(unittest.TestCase):
                 setattr(event, name, "x")
 
 
-class ReportsTest(unittest.TestCase):
+class ReportsTest(Case):
     def test_usage_window_and_session_status_are_frozen_records(self):
         window = Window(used_percent=120.5, resets_at=None)
         self.assertEqual((window.used_percent, window.resets_at), (120.5, None))
@@ -436,6 +471,10 @@ class AdapterTest(Refusals):
                 self.assertIsNone(adapter.usage(output))
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
 
+    def test_session_metadata_preserves_info_by_default(self):
+        info = base.SessionInfo("s", "n", "/c", False, "/t", "resume n")
+        self.assertIs(StubAdapter({}).session_metadata(info), info)
+
     def test_writable_dirs_are_none_unless_overridden(self):
         spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")
         for resume in (False, True):
@@ -452,7 +491,7 @@ class AdapterTest(Refusals):
         self.assertIs(adapter.tui().adapter, adapter)
 
 
-class HeadlessTest(unittest.TestCase):
+class HeadlessTest(Case):
     def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
         lines = [
             '{"texts": ["a"]}\n',
@@ -471,7 +510,7 @@ class HeadlessTest(unittest.TestCase):
         )
 
 
-class InProcessTest(unittest.TestCase):
+class InProcessTest(Case):
     def test_run_is_its_only_abstract_method(self):
         self.assertEqual(InProcess.__abstractmethods__, frozenset({"run"}))
         with self.assertRaises(TypeError):
@@ -486,7 +525,7 @@ class InProcessTest(unittest.TestCase):
                 self.assertIsNone(run.check("p", Spec(workdir="/w", sid="s"), resume))
 
 
-class TuiTest(unittest.TestCase):
+class TuiTest(Case):
     def setUp(self):
         self.run = DetailedTui(StubAdapter({}))
         self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
@@ -597,7 +636,7 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(run.hook_events("work", {"session_id": "n1"}), [Activity("")])
 
 
-class NoProcessTest(unittest.TestCase):
+class NoProcessTest(Case):
     def test_nothing_starts_a_process(self):
         with (
             mock.patch("subprocess.Popen", side_effect=AssertionError("Popen")) as popen,

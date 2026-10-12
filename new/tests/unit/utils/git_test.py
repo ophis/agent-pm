@@ -1,6 +1,4 @@
-"""new/core/src/utils/git.py: common_dir over real git worktrees."""
-
-from new.tests import SRC  # noqa: F401
+"""new/core/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
 
 import os
 import subprocess
@@ -8,14 +6,25 @@ import tempfile
 import unittest
 import unittest.mock
 
-from utils.git import common_dir
+import agent_pm.utils.git
+from agent_pm.utils.git import common_dir
+
+from new.tests.case import Case
 
 
 def git(*argv):
     return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
 
 
-class CommonDir(unittest.TestCase):
+def ok(stdout=""):
+    return subprocess.CompletedProcess([], 0, stdout, "")
+
+
+def fail(stderr):
+    return subprocess.CompletedProcess([], 1, "", stderr)
+
+
+class CommonDir(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -100,6 +109,75 @@ class CommonDir(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertIsNone(common_dir(path))
+
+
+class Retry(Case):
+    LOCKS = (
+        "fatal: Unable to create '/w/.git/index.lock': File exists.",
+        "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
+        "error: could not lock config file .git/config: File exists",
+    )
+
+    def git(self, *results, args=("fetch", "origin")):
+        """(stdout or the RuntimeError, the argvs run, the mocked sleep)."""
+        calls, answers = [], list(results)
+
+        def run(argv, timeout):
+            calls.append(argv)
+            return answers.pop(0)
+
+        with unittest.mock.patch.object(agent_pm.utils.git.time, "sleep") as sleep:
+            try:
+                return agent_pm.utils.git.git(run, "/w", *args), calls, sleep
+            except RuntimeError as e:
+                return e, calls, sleep
+
+    def test_a_lock_failure_is_retried(self):
+        for stderr in self.LOCKS:
+            with self.subTest(stderr=stderr):
+                out, calls, sleep = self.git(fail(stderr), ok("done"))
+                self.assertEqual(
+                    (out, calls), ("done", [["git", "-C", "/w", "fetch", "origin"]] * 2)
+                )
+                sleep.assert_called_once_with(0.5)
+
+    def test_five_lock_failures_raise(self):
+        err, calls, sleep = self.git(*[fail(self.LOCKS[0])] * 5)
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("index.lock", str(err))
+        self.assertEqual(len(calls), 5)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.5, 1, 2, 4])
+
+    def test_the_command_text_shortens_long_arguments_and_stays_bounded(self):
+        msg = str(
+            self.git(
+                fail("fatal: boom"),
+                args=("--git-dir=" + "/private/var/folders/xy" * 10, "worktree", "prune"),
+            )[0]
+        )
+        self.assertTrue(msg.startswith("git --git-dir=/private/var/folders/xy"), msg)
+        self.assertTrue(msg.endswith("worktree prune: fatal: boom"), msg)
+        self.assertLess(len(msg), 120)
+        self.assertLess(
+            len(str(self.git(fail("fatal: boom"), args=["/a/long/path/argument" * 3] * 50)[0])), 250
+        )
+
+    def test_other_failures_are_not_retried(self):
+        err, calls, sleep = self.git(fail("fatal: not a git repository"), ok())
+        self.assertIsInstance(err, RuntimeError)
+        self.assertEqual(len(calls), 1)
+        sleep.assert_not_called()
+
+    def test_pre_options_go_before_the_worktree_and_the_timeout_is_passed(self):
+        seen = []
+        agent_pm.utils.git.git(
+            lambda argv, t: seen.append((argv, t)) or ok(),
+            "/w",
+            "status",
+            timeout=9,
+            pre=("-c", "a=b"),
+        )
+        self.assertEqual(seen, [(["git", "-c", "a=b", "-C", "/w", "status"], 9)])
 
 
 if __name__ == "__main__":

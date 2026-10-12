@@ -1,6 +1,4 @@
-"""new/core/src/utils/files.py: read_regular, append_line and save (main's save cases)."""
-
-from new.tests import hermetic  # noqa: F401
+"""utils/files.py: read_regular, append_line and save (main's save cases)."""
 
 import errno
 import json
@@ -12,12 +10,14 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from utils import files
+from agent_pm.utils import files
+
+from new.tests.case import Case
 
 DATA = b"0123456789"
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

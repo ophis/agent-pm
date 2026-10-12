@@ -4,8 +4,6 @@ send, the idle timer and its Blocked pause, attach from another process, stop, a
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
 a start while another process closes the name."""
 
-from new.tests import SRC, fake_adapter, hermetic, live_tmux
-
 import itertools
 import json
 import os
@@ -20,9 +18,12 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
-from driver import api, records, registry, tmux_host
-from driver.modes import tui
+from agent_pm.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
+from agent_pm.driver import api, records, registry, tmux_host
+from agent_pm.driver.modes import tui
+
+from new.tests import fake_adapter, live_tmux
+from new.tests.case import PY, Case, child_env
 
 MANAGER = "mgr"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -30,12 +31,11 @@ IDLE = 0.5  # idle_timeout, in seconds
 WAIT = 20  # upper bound on any wait, in seconds
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
-src, fake, config, name, text = sys.argv[1:]
-sys.path.insert(0, src)
-spec = importlib.util.spec_from_file_location("adapters.fake", fake)
-sys.modules["adapters.fake"] = module = importlib.util.module_from_spec(spec)
+fake, config, name, text = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agent_pm.adapters.fake", fake)
+sys.modules["agent_pm.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from driver import api, registry
+from agent_pm.driver import api, registry
 registry.configure(json.loads(config))
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
@@ -43,20 +43,17 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = (
-    "import sys; sys.path.insert(0, sys.argv[1]); from driver import api; api.close(sys.argv[2])"
-)
+CLOSE = "import sys; from agent_pm.driver import api; api.close(sys.argv[1])"
 SLOW_CLOSE = """import sys, time
-sys.path.insert(0, sys.argv[1])
-from driver import api
-from driver.modes import tui
+from agent_pm.driver import api
+from agent_pm.driver.modes import tui
 remove = tui._remove
 def slow(*args):
-    open(sys.argv[3], "w").close()
+    open(sys.argv[2], "w").close()
     time.sleep(1)
     remove(*args)
 tui._remove = slow
-api.close(sys.argv[2])
+api.close(sys.argv[1])
 """
 DIALOG = "Pick one: 1. this 2. that"
 
@@ -106,10 +103,9 @@ class Stream:
             raise AssertionError(f"an event within {seconds} s: {self.queue.get()!r}")
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
-        self.server = live_tmux.Server(self, home)
+        self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()
@@ -129,11 +125,10 @@ class Live(unittest.TestCase):
                 }
             }
         }
-        patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter})
+        patch = mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure(self.config)
-        self.addCleanup(registry.reset)
 
     def start(self, name: str, *steps, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
@@ -205,17 +200,8 @@ class TuiTest(Live):
         stream.quiet(3 * IDLE)
 
         res = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                "-c",
-                ATTACH,
-                SRC,
-                fake_adapter.__file__,
-                json.dumps(self.config),
-                "w1",
-                "more",
-            ],
+            [*PY, "-c", ATTACH, fake_adapter.__file__, json.dumps(self.config), "w1", "more"],
+            env=child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -349,7 +335,8 @@ class SameNameTest(Live):
     def test_a_restart_after_a_close_from_another_process(self):
         old, events = self.old("w5")
         res = subprocess.run(
-            [sys.executable, "-I", "-c", CLOSE, SRC, "w5"],
+            [*PY, "-c", CLOSE, "w5"],
+            env=child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -362,7 +349,8 @@ class SameNameTest(Live):
         self.start("w7", {"read": True})
         killed = os.path.join(self.dir, "killed")
         closer = subprocess.Popen(
-            [sys.executable, "-I", "-c", SLOW_CLOSE, SRC, "w7", killed],
+            [*PY, "-c", SLOW_CLOSE, "w7", killed],
+            env=child_env(),
             text=True,
             stdin=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

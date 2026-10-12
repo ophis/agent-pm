@@ -1,9 +1,5 @@
 """orchestrator target.py, ported from the old target_test."""
 
-from new.tests import hermetic  # noqa: F401
-
-import config
-
 import json
 import os
 import shutil
@@ -12,11 +8,13 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-import composer
-import issues
-import target
-import utils.repos
-from utils.shell import SHORT
+import agent_pm.utils.repos
+from agent_pm import composer
+from agent_pm.utils import config_file
+from agent_pm.utils.shell import SHORT
+from agent_pm_orchestrator import config, issues, target
+
+from new.tests.case import Case
 
 
 def ok(stdout="", code=0, stderr=""):
@@ -40,7 +38,16 @@ class FakeRun:
 PROJ = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 NO_LINE = target.Invalid("no Repo: line in the description or its ## Instructions")
 LOCAL = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C")
-ROLES = {r: SimpleNamespace(tasks=tuple(composer.index(r))) for r in config.TASKS}
+
+
+def roles():
+    """Each role's tasks: the committed core config's index (no local file)."""
+    return {
+        r: SimpleNamespace(
+            tasks=tuple(composer.index(r, config=config_file.CONFIG, local=os.devnull))
+        )
+        for r in config.TASKS
+    }
 
 
 def issue(description, title="ENG: Session Registry", ident="TASK-26", project=None):
@@ -66,7 +73,7 @@ def api(full_name="ophis/agent-pm", default="main", push=True):
     )
 
 
-class ParseRepo(unittest.TestCase):
+class ParseRepo(Case):
     def test_accepted(self):
         for line in (
             "Repo: ophis/agent-pm",
@@ -134,7 +141,7 @@ class ParseRepo(unittest.TestCase):
         )
 
 
-class Slug(unittest.TestCase):
+class Slug(Case):
     def test_rules(self):
         self.assertEqual(target.slug("ENG: Session Registry (MVP)!"), "session-registry-mvp")
         self.assertEqual(target.slug("Engineering 骨架"), "engineering")
@@ -143,7 +150,7 @@ class Slug(unittest.TestCase):
         self.assertFalse(target.slug("ENG: " + "a" * 39 + " bbb").endswith("-"))
 
 
-class PrTitle(unittest.TestCase):
+class PrTitle(Case):
     def test_keeps_unicode_letters_and_digits(self):
         self.assertEqual(
             target.pr_title("TASK-38", "ENG: Engineering 骨架"), "TASK-38: Engineering 骨架"
@@ -159,7 +166,7 @@ class PrTitle(unittest.TestCase):
         )
 
 
-class ResearchRepo(unittest.TestCase):
+class ResearchRepo(Case):
     REPOS = {PROJ: "ophis/agent-pm"}
 
     def test_mapped_repo_only_without_a_repo_line(self):
@@ -177,7 +184,7 @@ class ResearchRepo(unittest.TestCase):
                 self.assertEqual(target.research_repo(issue(desc, project=project), repos), want)
 
 
-class Check(unittest.TestCase):
+class Check(Case):
     REPOS = {PROJ: "ophis/agent-pm"}
     MAPPED = {"desc": "no repo here", "repos": REPOS, "project": PROJ}
     ISSUES = (
@@ -246,7 +253,7 @@ class Check(unittest.TestCase):
             repos or {},
             run=self.run_,
             work=self.work,
-            roles=ROLES,
+            roles=roles(),
         )
 
     def argvs(self):
@@ -536,7 +543,7 @@ def git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
 
 
-class WithClone(unittest.TestCase):
+class WithClone(Case):
     T = target.Target("ophis", "agent-pm", "TASK-26-x")
     HTTPS = "https://github.com/ophis/agent-pm.git"
 
@@ -579,7 +586,7 @@ class WithClone(unittest.TestCase):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
     def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = utils.repos.checkout(
+        want = agent_pm.utils.repos.checkout(
             os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26"
         )
         self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)

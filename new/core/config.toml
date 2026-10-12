@@ -3,9 +3,10 @@
 # too: tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a table
 # cannot drop a key this file sets, so a local [output] or [adapters.<name>] keeps this file's other keys in that table.
 #
-# Each layer reads only its own keys: the Composer (src/composer/) the run keys, [output], [roles.<role>], trusted_dirs
-# and team_dirs; src/repo.py users and trusted_dirs; src/roster.py runtime (the default of skills/tmux/scripts/crew.py's
-# workers); the Driver (src/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
+# Each layer reads only its own keys: the Composer (src/agent_pm/composer/) the run keys, [output], [roles.<role>],
+# trusted_dirs and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; src/roster.py runtime (the
+# default of skills/tmux/scripts/crew.py's workers); the Driver (src/agent_pm/driver/registry.py) [adapters.<name>],
+# status_line, workers_per_column and grid_retile.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -34,19 +35,19 @@
 #   team_dirs       local, global only: dirs of your own roles, tasks and templates (absolute or ~ path, matched by
 #                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold
 #                   roles/, tasks/ and templates/ (each optional) of <name>.md files ([a-z0-9-] names) in team/'s
-#                   formats (src/composer/__init__.py's docstring). Add-only: a name core or another team dir defines
-#                   stops the run, naming both files, so no team dir file changes or extends a core role. A team dir's
-#                   role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
+#                   formats (src/agent_pm/composer/__init__.py's docstring). Add-only: a name core or another team dir
+#                   defines stops the run, naming both files, so no team dir file changes or extends a core role. A team
+#                   dir's role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
 #                   template. A team dir is refused when it, its subdirs or files (by real path) lie in a temp dir,
 #                   overlap the workdir, the cwd, a write dir, another dir the run adds to write or a dir the runtime
 #                   can write (Codex: its CODEX_HOME), are writable by group or others, or are not yours; or a parent
 #                   dir of it is writable by group or others (not sticky) or owned by neither you nor root
-#                   (src/delegate/plan.py). The orchestrator's runs ignore it, but refuse a team dir overlapping their
-#                   workdir, cwd or a dir they add or can write
+#                   (src/agent_pm/delegate/plan.py). The orchestrator's runs ignore it, but refuse a team dir
+#                   overlapping their workdir, cwd or a dir they add or can write
 #   status_line     local, global only: true → tui sessions show tmux's status line; unset → false
 #   workers_per_column local, global only: panes per tmux grid column (the Driver's show), 1..9999; unset → 3
 #   grid_retile     local, global only: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all"
-#                   (also a drag or a window resize), "off" (never by itself: src/driver/tmux_host.py tile @N);
+#                   (also a drag or a window resize), "off" (never by itself: src/agent_pm/driver/tmux_host.py tile @N);
 #                   unset → "open-close"
 tier = 2
 effort = "high"
@@ -88,7 +89,7 @@ type = "local"
 #                 regardless
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the runtime's Adapter decides how
-#                 they are approved. {{scripts}} is new/core/src/, {{workdir}} the agent run's workdir; unset → none
+#                 they are approved. {{workdir}} is the agent run's workdir; unset → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the runtime's Adapter; unset → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, runtime, language, show, cwd or [output], for that role
@@ -97,7 +98,7 @@ type = "local"
 [roles.researcher]
 templates = ["research-report"]
 read = ["{{methods}}"]
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: [roles.researcher.output]
@@ -109,7 +110,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 # ── PM ──────────────────────────────────────────────────
 [roles.pm]
 templates = ["prd"]
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.pm.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
@@ -119,7 +120,7 @@ commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *"]
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]
 effort = "xhigh"
-commands = ["python3 {{scripts}}/repo.py worktree --dir {{workdir}}/src *", "python3 {{scripts}}/repo.py status --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *", "python3 -P -m agent_pm.agent_tools.repo status --dir {{workdir}}/src *"]
 
 [roles.engineer.output]
 type = "pull-request"
@@ -130,13 +131,13 @@ tier = 3
 effort = "low"
 
 # ── Adapters ────────────────────────────────────────────
-# [adapters.<name>]  one table per runtime, read only by src/driver/registry.py; <name> is the runtime name
-#                    driver.api.start takes and the package src/adapters/<name>/
+# [adapters.<name>]  one table per runtime, read only by src/agent_pm/driver/registry.py; <name> is the runtime name
+#                    driver.api.start takes and the package src/agent_pm/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
-# [adapters.claude]  Claude Code (src/adapters/claude/); each key optional; a plain session (src/adapters/base.py)
-#                    gets neither flags nor allow
+# [adapters.claude]  Claude Code (src/agent_pm/adapters/claude/); each key optional; a plain session
+#                    (src/agent_pm/adapters/base.py) gets neither flags nor allow
 #   flags            claude flags added to every session command; never --setting-sources (the Driver's)
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read rules
 #   env              variables added to every command's environment, over the adapter's defaults
@@ -184,7 +185,7 @@ max = "max"
 # Optional local env table supplies launch/probe variables, including CODEX_HOME; resume keeps the saved CODEX_HOME.
 [adapters.codex.env]
 
-# [adapters.print_prompt]  act-as's runtime (src/adapters/print_prompt/): in_process mode only; its run hands the
-#                          composed prompt back as the deliverable and starts no process; no other keys
+# [adapters.print_prompt]  act-as's runtime (src/agent_pm/adapters/print_prompt/): in_process mode only; its run hands
+#                          the composed prompt back as the deliverable and starts no process; no other keys
 [adapters.print_prompt]
 implementation = "adapters.print_prompt:PrintPromptAdapter"

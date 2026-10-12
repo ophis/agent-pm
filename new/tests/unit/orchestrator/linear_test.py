@@ -1,10 +1,6 @@
 """orchestrator linear.py, ported from the old linear_test (every call names its service; the log dir is a setting),
 plus client ids and comments found by id."""
 
-from new.tests import hermetic
-from new.tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
-from new.tests.unit.orchestrator.outage import FAILURES, failing
-
 import http.client
 import io
 import json
@@ -18,13 +14,17 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-import linear
+from agent_pm_orchestrator import linear
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
+from new.tests.unit.orchestrator.outage import FAILURES, failing
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
 
 
-class RoleIds(unittest.TestCase):
+class RoleIds(Case):
     def test_role_ids(self):
         roles = {r: SimpleNamespace(account=a) for r, a in ACCOUNTS.items()}
         gql = lambda q, **v: {"users": {"nodes": [{"id": "u-" + v["e"]}]}}  # noqa: E731
@@ -39,7 +39,7 @@ class RoleIds(unittest.TestCase):
         )
 
 
-class Humans(unittest.TestCase):
+class Humans(Case):
     def test_humans(self):
         def gql(q, **v):
             return {"users": {"nodes": [{"id": "u-" + v["e"]}] if v["e"] != "x@y.z" else []}}
@@ -53,7 +53,7 @@ class Humans(unittest.TestCase):
         )
 
 
-class TeamCheck(unittest.TestCase):
+class TeamCheck(Case):
     def cfg(self):
         return SimpleNamespace(team=TEAM, states=dict(STATES))
 
@@ -87,7 +87,7 @@ class TeamCheck(unittest.TestCase):
                 self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
 
 
-class TaskGroupCheck(unittest.TestCase):
+class TaskGroupCheck(Case):
     LABELS = {"light-research": LABEL1, "deep-research": LABEL2}
 
     def cfg(self, labels=LABELS):
@@ -183,7 +183,7 @@ def no_seam(case):
     os.environ.pop(SEAM, None)
 
 
-class LinearGql(unittest.TestCase):
+class LinearGql(Case):
     def setUp(self):
         no_seam(self)
 
@@ -268,7 +268,7 @@ def errors(*codes):
     ).encode()
 
 
-class Unavailable(unittest.TestCase):
+class Unavailable(Case):
     def setUp(self):
         no_seam(self)
         p = mock.patch.object(
@@ -392,7 +392,7 @@ class Unavailable(unittest.TestCase):
                 self.assertEqual(linear.operation(query), op)
 
 
-class Outage(unittest.TestCase):
+class Outage(Case):
     def test_each_failure_is_unavailable_and_recorded(self):
         want = {
             "5xx": (503, None),
@@ -400,7 +400,7 @@ class Outage(unittest.TestCase):
             "URLError": (None, "ConnectionRefusedError: [Errno 61] Connection refused"),
         }
         self.assertEqual(set(FAILURES), set(want))
-        with mock.patch.dict(os.environ, {SEAM: os.path.join(hermetic.HOME, "missing.json")}):
+        with mock.patch.dict(os.environ, {SEAM: os.path.join(self.home, "missing.json")}):
             for name, error in FAILURES.items():
                 with self.subTest(name):
                     gql = failing(error)
@@ -412,7 +412,7 @@ class Outage(unittest.TestCase):
                             ("teams", *want[name]),
                         )
                     self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})] * 2)
-            self.assertEqual(os.environ[SEAM], os.path.join(hermetic.HOME, "missing.json"))
+            self.assertEqual(os.environ[SEAM], os.path.join(self.home, "missing.json"))
 
     def test_ops_names_the_failing_operations(self):
         gql = failing(
@@ -425,7 +425,7 @@ class Outage(unittest.TestCase):
         self.assertEqual(gql.failed, [(linear.Q_TEAM, {"i": "I"}), (linear.M_STATE, {"i": "I"})])
 
 
-class HasKey(unittest.TestCase):
+class HasKey(Case):
     def test_without_the_seam_the_secret_is_never_read(self):
         no_seam(self)
         for code, want in ((0, True), (44, False)):
@@ -438,7 +438,7 @@ class HasKey(unittest.TestCase):
             )
 
 
-class Seam(unittest.TestCase):
+class Seam(Case):
     URL = "http://127.0.0.1:8123/graphql"
 
     def setUp(self):
@@ -589,7 +589,7 @@ class Seam(unittest.TestCase):
                     self.assertNotIn(key, code)
 
 
-class Helpers(unittest.TestCase):
+class Helpers(Case):
     def test_issue_id_is_unanchored(self):
         self.assertEqual(re.findall(linear.ISSUE_ID, "see ENG-12, PM-3."), ["ENG-12", "PM-3"])
         for bad in ("task-7", "7-ENG", "ENG-", "ENG-7 "):
@@ -618,7 +618,7 @@ class Stderr(io.StringIO):
         return super().write(s)
 
 
-class Logs(unittest.TestCase):
+class Logs(Case):
     TS = "2026-10-09T00:26:33-04:00"
 
     def setUp(self):
@@ -857,7 +857,7 @@ class Log(Logs):
                 self.assertEqual(len(self.text(path).splitlines()) - before, written, logs)
 
 
-class LogsDirDefault(unittest.TestCase):
+class LogsDirDefault(Case):
     def test_unset_until_an_entry_sets_it(self):
         self.assertIsNone(linear.LOGS_DIR)
 
@@ -951,7 +951,7 @@ class Gql:
         return {FIELDS[name]: {"success": r is not False}}
 
 
-class Writes(unittest.TestCase):
+class Writes(Case):
     def test_queries_verbatim(self):
         self.assertEqual(
             linear.M_SUBSCRIBE,
@@ -1092,7 +1092,7 @@ class Writes(unittest.TestCase):
 CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"  # promote's child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z") today
 
 
-class ClientId(unittest.TestCase):
+class ClientId(Case):
     def test_promotes_child_id_values(self):
         self.assertEqual(linear.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z"), CHILD)
         self.assertNotEqual(linear.client_id("DR-1", "pm", "2026-09-27T10:00:01.000Z"), CHILD)
@@ -1131,7 +1131,7 @@ def node(body="Run x", issue=ISSUE, me=True):
     return {"id": "c-1", "body": body, "issue": {"id": issue}, "user": {"isMe": me}}
 
 
-class FindComment(unittest.TestCase):
+class FindComment(Case):
     def test_found(self):
         gql = comment_gql(node("Progress (x): y"))
         self.assertEqual(linear.find_comment(gql, "c-1", ISSUE), "Progress (x): y")
@@ -1184,7 +1184,7 @@ class FindComment(unittest.TestCase):
                 self.assertFalse(linear.not_found(e))
 
 
-class LastMove(unittest.TestCase):
+class LastMove(Case):
     NODES = [
         {"createdAt": "2026-09-27T10:00:00.000Z", "actorId": "human", "toStateId": TODO},
         {"createdAt": "2026-09-27T12:00:00.000Z", "actorId": "agent", "toStateId": TODO},

@@ -1,5 +1,3 @@
-from tests import ROOT, hermetic
-
 import glob
 import io
 import os
@@ -19,6 +17,8 @@ import compose
 import drive
 from clients.claude import ClaudeClient
 from clients.skill import SkillClient
+
+from tests import ROOT, hermetic
 
 
 class Plain(clients.Client):

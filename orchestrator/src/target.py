@@ -6,9 +6,8 @@ from dataclasses import dataclass, replace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import CLONES, NAME, OWNER, REF, RUNS_DIR, TASKS, repo_slug, sh_run  # noqa: E402
-
 import repo  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, RUNS_DIR, TASKS, repo_slug, sh_run  # noqa: E402
 from repo import GUARD, SHORT, common_dir, err_text, under  # noqa: E402
 
 MAPPED = "project mapping "

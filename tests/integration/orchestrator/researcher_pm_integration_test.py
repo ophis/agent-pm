@@ -1,3 +1,7 @@
+import unittest
+
+import router
+
 from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator.flow_fixtures import (
     HARNESS_EMAIL,
@@ -6,10 +10,6 @@ from tests.integration.orchestrator.flow_fixtures import (
     RESEARCH_DIR,
 )
 from tests.integration.orchestrator.segments import RESEARCH, Segment
-
-import unittest
-
-import router
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."

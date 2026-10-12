@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from functools import partial
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import LOCAL, TASKS  # noqa: E402
-
+import config  # noqa: F401  (puts core/src on sys.path before drive)
 import drive  # noqa: E402
+from config import LOCAL, TASKS  # noqa: E402
 from issues import Issue  # noqa: E402
 from linear import call, comment, log, move, one_line, reraise_signal, subscribe  # noqa: E402
 from target import MAPPED  # noqa: E402

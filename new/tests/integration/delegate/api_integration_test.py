@@ -2,7 +2,21 @@
 and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the fix resume (FR-21), a usage limit
 (FR-58)."""
 
-from new.tests import fake_claude, hermetic
+import io
+import json
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stderr
+from unittest import mock
+
+from agent_pm import composer
+from agent_pm.delegate import Begun, Finished, Limit, Progress, run
+from agent_pm.delegate.runner import FIX
+from agent_pm.driver import registry
+
+from new.tests import fake_claude
+from new.tests.case import Case
 from new.tests.integration.delegate.cli_integration_test import (
     DONE,
     RESETS,
@@ -16,25 +30,11 @@ from new.tests.integration.delegate.cli_integration_test import (
 )
 from new.tests.unit.delegate.runner_test import block
 
-import io
-import json
-import os
-import tempfile
-import unittest
-from contextlib import redirect_stderr
-from unittest import mock
 
-import composer
-from delegate import Begun, Finished, Limit, Progress, run
-from delegate.runner import FIX
-from driver import registry
-
-
-class Base(unittest.TestCase):
+class Base(Case):
     """dummy-tester's echo over the fake `claude` in workdir `work`, the cwd the workdir."""
 
     def setUp(self):
-        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = os.path.realpath(tmp.name)
@@ -56,7 +56,6 @@ class Base(unittest.TestCase):
             )
         )
         registry.reset()
-        self.addCleanup(registry.reset)
 
     def go(self, steps, **scenario):
         """run() with the fake's `steps`; self.events gets each callback."""

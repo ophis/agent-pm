@@ -1,7 +1,24 @@
 """orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event, plus FR-43's TUI close
 and --tui's show on a fake Driver api, each Linear call's identity and the usage-limit path (FR-59)."""
 
+import io
+import json
+import os
+import re
+import signal
+import unittest
+from contextlib import redirect_stderr
+from datetime import UTC, datetime
+from unittest import mock
+
+from agent_pm import delegate
+from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
+from agent_pm.driver import api
+from agent_pm_orchestrator import config, linear, run, sessions, writeback
+
 from new.tests.unit.orchestrator.board_ids import STATES
+from new.tests.unit.orchestrator.config_test import GATE
+from new.tests.unit.orchestrator.fake_api import FakeApi
 from new.tests.unit.orchestrator.run_fixtures import (
     ENGINEER,
     HARNESS,
@@ -15,27 +32,6 @@ from new.tests.unit.orchestrator.run_fixtures import (
     Base,
     Gql,
 )
-
-import config
-
-import io
-import json
-import os
-import re
-import shlex
-import signal
-import unittest
-from contextlib import redirect_stderr
-from datetime import UTC, datetime
-from unittest import mock
-
-import delegate
-import linear
-import run
-import sessions
-import writeback
-from delegate import Begun, Finished, Limit, Outcome, Progress, Result
-from driver import api
 
 RUNTIME = "claude"
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
@@ -101,39 +97,6 @@ class FakeRun:
         return self.result
 
 
-class FakeApi:
-    """The Driver api's tui calls and session_info; `live` None: tmux's state unknown (sessions raises)."""
-
-    def __init__(self, order, gql):
-        self.order, self.gql = order, gql
-        self.live, self.errors, self.shown, self.info = [], {}, None, []
-
-    def sessions(self, match):
-        self.order.append(("sessions", match))
-        if self.live is None:
-            raise api.DriverError("tmux sessions unknown: tmux failed")
-        return [
-            api.SessionRow(n, None, None, "working", None, None, None, None, False)
-            for n in self.live
-            if re.fullmatch(match, n)
-        ]
-
-    def close(self, name):
-        self.order.append(("close", name))
-        if name in self.errors:
-            raise self.errors[name]
-
-    def show(self, name, split=None, split_from=None, opener=None):
-        self.order.append(("show", name, split, split_from, opener, len(self.gql().calls)))
-        if isinstance(self.shown, BaseException):
-            raise self.shown
-        return self.shown
-
-    def session_info(self, runtime, sid, cwd):
-        self.info.append((runtime, sid, cwd))
-        return api.SessionStatus("yes", None, CMD)
-
-
 class Case(Base):
     def setUp(self):
         super().setUp()
@@ -143,10 +106,7 @@ class Case(Base):
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
             mock.patch.object(sessions, "now", return_value=NOW),
-            mock.patch.object(api, "sessions", self.api.sessions),
-            mock.patch.object(api, "close", self.api.close),
-            mock.patch.object(api, "show", self.api.show),
-            mock.patch.object(api, "session_info", self.api.session_info),
+            self.api.patch(),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -248,7 +208,7 @@ class Inner(Case):
         )
         self.assertEqual(self.delegate.dirs, [True])
         self.assertEqual(self.api.info, [(RUNTIME, SID, self.rd)] * 2)
-        self.assertEqual(os.environ["PATH"], config.PATH)
+        self.assertEqual(os.environ["PATH"], config.path())
         self.assertEqual([o for o in self.order if o[0] == "show"], [])
 
     def test_no_outcome_leaves_the_issue(self):
@@ -318,10 +278,7 @@ class Inner(Case):
         self.assertEqual(self.main(assignee=RESEARCHER, target=None), 0)
         (researcher, *_), _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
-        self.assertEqual(
-            researcher.gate,
-            f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake",
-        )
+        self.assertEqual(researcher.gate, GATE)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_resume(self):

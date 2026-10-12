@@ -1,20 +1,17 @@
-"""Run-side fixtures: ids, the hermetic config files config.load() reads, a Linear fake recording each call's identity,
-and the orchestrator log's readers."""
-
-from new.tests import hermetic
-from new.tests.unit.orchestrator.board_ids import HEADER, STATES, role
+"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear fake recording each
+call's identity, and the orchestrator log's readers."""
 
 import json
 import os
 import shutil
 import tempfile
-import unittest
 from datetime import datetime
 from unittest import mock
 
-import linear
-import sessions
-import writeback
+from agent_pm_orchestrator import issues, linear, sessions, writeback
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator.board_ids import HEADER, STATES, role
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -23,6 +20,12 @@ ENGINEER, RESEARCHER = "engineer@agents.test", "researcher@agents.test"
 HARNESS, KEY = "linear-api-key", "linear-api-key-engineer"
 SESSION = linear.client_id(SID, "session")
 NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+URL = f"https://linear.app/t/issue/{ID}"
+USER_NOTE = {
+    "body": "Use SQLite.",
+    "createdAt": "2026-09-02T00:00:00.000Z",
+    "user": {"email": "ME@x.com", "name": "Me", "isMe": False},
+}
 CORE_LOCAL = """[roles.researcher.output]
 type = "github"
 repo = "ophis/private_docs"
@@ -74,7 +77,25 @@ def show(event):
     return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 
 
+def node(title="ENG: Session registry", description="Add a session registry.", comments=()):
+    return {
+        "id": UUID,
+        "identifier": ID,
+        "url": URL,
+        "title": title,
+        "description": description,
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "project": {"id": PROJECT},
+        "comments": {"nodes": list(comments)},
+        "attachments": {"nodes": []},
+        "relations": {"nodes": []},
+        "inverseRelations": {"nodes": []},
+    }
+
+
 NAMES = {
+    issues.Q_ISSUE: "issue",
+    linear.M_COMMENT: "post",
     sessions.M_UPDATE: "update",
     linear.M_COMMENT_ID: "comment",
     linear.Q_COMMENT: "find",
@@ -88,6 +109,7 @@ NAMES = {
 FIELDS = {
     "update": "commentUpdate",
     "comment": "commentCreate",
+    "post": "commentCreate",
     "state": "issueUpdate",
     "title": "issueUpdate",
     "subscribe": "issueSubscribe",
@@ -96,11 +118,11 @@ FIELDS = {
 
 
 class Gql:
-    """Linear: calls recorded as (name, service, vars); comments kept by client id, the issue as its UUID; `fail(name,
-    vars)` returns an exception to raise."""
+    """Linear: calls recorded as (name, service, vars); comments kept by client id, the issue as its UUID; `issue`: the
+    issue read's node; `fail(name, vars)` returns an exception to raise."""
 
-    def __init__(self, fail=lambda name, v: None):
-        self.fail, self.calls, self.timeouts, self.comments = fail, [], [], {}
+    def __init__(self, fail=lambda name, v: None, issue=None):
+        self.fail, self.issue, self.calls, self.timeouts, self.comments = fail, issue, [], [], {}
 
     def __call__(self, query, *, service, timeout=30, **v):
         name = NAMES[query]
@@ -108,6 +130,8 @@ class Gql:
         self.timeouts.append(timeout)
         if (e := self.fail(name, v)) is not None:
             raise e
+        if name == "issue":
+            return {"issue": self.issue}
         if name == "find":
             if v["c"] not in self.comments:
                 raise NOT_FOUND
@@ -133,13 +157,12 @@ class Gql:
         return {FIELDS[name]: {"success": True}}
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        home = hermetic.home(self)
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.local = os.path.join(home, "orchestrator-new.local.toml")
-        self.write(os.path.join(home, "core-new.local.toml"), CORE_LOCAL)
+        self.local = os.path.join(self.agent_pm, "orchestrator-new.local.toml")
+        self.write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
         self.write(self.local, local(self.work))
         self.rd = os.path.join(self.work, "work", ID)
         self.logs = os.path.join(self.work, "logs")

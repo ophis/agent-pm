@@ -1,8 +1,6 @@
 """orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id, numbered
 `#<seq>`, repaired at the end after a late write; the resume command is the Driver's session_info."""
 
-from new.tests import hermetic  # noqa: F401
-
 import functools
 import subprocess
 import threading
@@ -11,10 +9,11 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-import linear
-import sessions
-from delegate import Outcome
-from driver import api
+from agent_pm.delegate import Outcome
+from agent_pm.driver import api
+from agent_pm_orchestrator import linear, sessions
+
+from new.tests import case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
@@ -117,7 +116,7 @@ def bounded(limit):
     return mock.patch.object(sessions, "write", functools.partial(sessions.write, limit=limit))
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
         patch = mock.patch.multiple(api, session=mock.DEFAULT, session_info=mock.DEFAULT)
         mocks = patch.start()
@@ -314,6 +313,27 @@ class Command(Case):
                 rec = record()
                 self.assertIsNone(sessions.command(rec))
                 self.assertEqual(sessions.body(rec), f"Run {SID} · running · #1 · {T1}")
+
+
+class Status(Case):
+    def test_the_drivers_status_at_the_records_cwd_else_the_workdir(self):
+        st = api.SessionStatus("no", 5.0, "")
+        self.info.return_value = st
+        for entry, cwd in ((None, WORKDIR), ({"kind": "session", "cwd": "/data/r"}, "/data/r")):
+            with self.subTest(entry=entry):
+                self.session.return_value = entry
+                self.info.reset_mock()
+                self.assertIs(sessions.status(WORKDIR, "rt", SID), st)
+                self.session.assert_called_with(WORKDIR, SID)
+                self.info.assert_called_once_with("rt", SID, cwd)
+
+    def test_errors_propagate(self):
+        for target in (self.session, self.info):
+            with self.subTest(target=target):
+                self.session.side_effect = self.info.side_effect = None
+                target.side_effect = api.ConfigError("bad")
+                with self.assertRaises(api.ConfigError):
+                    sessions.status(WORKDIR, RUNTIME, SID)
 
 
 class Failure(Case):

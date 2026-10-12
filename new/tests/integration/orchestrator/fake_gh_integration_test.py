@@ -1,10 +1,11 @@
-from new.tests.integration.orchestrator import fake_gh
-
 import json
 import os
 import subprocess
 import tempfile
 import unittest
+
+from new.tests import case
+from new.tests.integration.orchestrator import fake_gh
 
 REPO = {"full_name": "acme/widgets", "default_branch": "main", "permissions": {"push": True}}
 RAW = "Accept: application/vnd.github.raw+json"
@@ -24,7 +25,7 @@ CONTENTS = {
 }
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

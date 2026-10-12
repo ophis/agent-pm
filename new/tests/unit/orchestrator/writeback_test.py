@@ -1,11 +1,5 @@
 """orchestrator writeback.py, ported from the old writeback_test (the sink's cases on progress), plus comment steps by
-client id found again on resume (FR-54), the usage-limit path (FR-59) and runs.note."""
-
-from new.tests import hermetic  # noqa: F401
-from new.tests.unit.orchestrator import board_ids
-from new.tests.unit.orchestrator.run_fixtures import logged, show
-
-import config
+client id found again on resume (FR-54), the usage-limit path (FR-59), runs.note and the Context builder."""
 
 import functools
 import hashlib
@@ -19,12 +13,13 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
-import issues
-import linear
-import runs
-import utils.files
-import writeback
-from delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
+import agent_pm.utils.files
+from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
+from agent_pm_orchestrator import config, issues, linear, runs, writeback
+
+from new.tests.case import Case
+from new.tests.unit.orchestrator import board_ids, run_fixtures
+from new.tests.unit.orchestrator.run_fixtures import logged, show
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -205,7 +200,7 @@ class ProcFcntl:
         return os.fsencode(os.readlink(f"/proc/self/fd/{fd}"))
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         if not hasattr(writeback.fcntl, "F_GETPATH"):
             patch = mock.patch.object(writeback, "fcntl", ProcFcntl)
@@ -557,7 +552,9 @@ class FinishLedger(Base):
 
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()
-        with mock.patch.object(utils.files.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(
+            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
+        ):
             err = writeback._step(ctx, "comment", lambda: None)
         self.assertIsInstance(err, OSError)
         self.assertEqual(os.listdir(ctx.workdir), [])
@@ -594,7 +591,9 @@ class CommentIds(Base):
     def test_a_resume_finds_a_post_whose_ledger_write_was_lost(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
-        with mock.patch.object(utils.files.os, "replace", side_effect=OSError("disk full")):
+        with mock.patch.object(
+            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
+        ):
             writeback.progress(ctx, START)
         self.assertEqual(gql.calls, [post("start", "Build started: x")])
         self.assertEqual(self.lines(), [f"step-error {ID} step=start error=OSError: disk full"])
@@ -1297,7 +1296,44 @@ class Bounce(Base):
             writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
 
 
-class RunsNote(unittest.TestCase):
+class ContextBuilder(run_fixtures.Base):
+    def test_the_one_context_of_a_role_from_the_config(self):
+        cfg = config.load()
+        gql = mock.Mock(return_value={})
+        for resume, target in ((False, TARGET), (True, None)):
+            with self.subTest(resume=resume):
+                ctx = writeback.context(
+                    cfg,
+                    "engineer",
+                    gql,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    target=target,
+                )
+                want = writeback.Context(
+                    ident=ID,
+                    issue_id=UUID,
+                    role="engineer",
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    workdir=os.path.join(self.work, "work", ID),
+                    gql=ctx.gql,
+                    humans=("me@x.com",),
+                    states=cfg.states,
+                    repos={PROJECT: "ophis/agent-pm"},
+                    team=cfg.team,
+                    target=target,
+                )
+                self.assertEqual(ctx, want)
+                ctx.gql("q", i=UUID)
+                gql.assert_called_with("q", service=run_fixtures.KEY, i=UUID)
+
+
+class RunsNote(Case):
     def test_one_durable_json_line_per_note(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp)

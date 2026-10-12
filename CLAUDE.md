@@ -11,7 +11,7 @@ python3 -m unittest tests.unit.core.drive_test            # one module
 claude --plugin-dir core                                  # this checkout's plugin as agent-pm@inline; /reload-plugins after edits
 claude plugin validate core && claude plugin validate .   # plugin and marketplace manifests; core/CLAUDE.md at the plugin root warns
 ./gen-preview.sh                                          # every role × task's composed prompt into previews/ (gitignored)
-uvx ruff@0.16.9 check .                                   # lint; config: pyproject.toml (why isort sorts hermetic and config imports first: its comment)
+uvx ruff@0.16.9 check .                                   # lint; config: pyproject.toml
 uvx ruff@0.16.9 format .                                  # format; CI pins the same version
 ```
 
@@ -33,7 +33,7 @@ Operating: README › Operating, README › Attended runs. Without `--dry-run`, 
 - `sessions.py`: one `Run <sid> · …` comment per session, posted with `harness_key` (`isMe` marks it); a resume edits it, a new claim adds one. A write is one try; a failure only logs `registry-error`. `issues.read_issue` and promote drop these comments. One stuck at `running` with no `agent-pm-<role>-<ID>` tmux session was killed: `tmux ls` is the truth.
 - `promote.py`: Handoff → the next role's Todo issue, its id hashed from source, role and handoff time (reruns are idempotent); then `prune.py` (its docstring). launchd's PATH lacks tmux and claude: subprocesses get `config.PATH`.
 - `config.WORK_DIR` is `<work_dir>` (`orchestrator/config.toml`'s `work_dir`). A `trusted_dirs` entry that is or contains it stops router, run and promote: git in a workdir must not see agent-pm, nor its `CLAUDE.md` and `.claude/` reach the run.
-- Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `repo`, `report`, `roster` or `tmux_host`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` first.
+- Imports: `linear` imports `config`, never the reverse. `config` puts `core/src` first on `sys.path`: no `orchestrator/src/` module may be named `clients`, `compose`, `drive`, `repo`, `report`, `roster` or `tmux_host`; `core/src` gains no `config` or `linear` module; a module importing a core module imports `config` before it, directly or through another module (default sorting puts `import config` before every core module but `clients` and `compose`: `run.py` reaches `config` through `attended`).
 - Identity: write-back and bounce act as the role's `account`, the rest as the harness account (README › Setup). Only Keychain service names travel in env, argv, logs and prompts, never keys. As the same macOS user, an agent run could read Keychain items: no enforced boundary.
 - No move changes an assignee; every move to In Review (write-back, bounce or harness) also subscribes each `human_members` email.
 - Logs: `linear.log` is the only writer of `<work_dir>/logs/orchestrator.jsonl` (README › Operating).
@@ -41,7 +41,7 @@ Operating: README › Operating, README › Attended runs. Without `--dry-run`, 
 
 ## Roles, tasks, rules
 
-- Config: each `config.toml` documents every key and has a local file merged over it (its header); `repo.read_config` is the only loader, and validation runs on the merge. An invalid config stops router, run and promote (`config.runnable`). Tests never read a real local file: a test module reading the repo's config (every orchestrator one) imports `tests/hermetic.py` first (`from tests import hermetic`); a test writes its own local file under `hermetic.home`.
+- Config: each `config.toml` documents every key and has a local file merged over it (its header); `repo.read_config` is the only loader, and validation runs on the merge. An invalid config stops router, run and promote (`config.runnable`). Tests never read a real local file: `tests/__init__.py` imports `tests/hermetic.py` (a temp HOME) before any test module loads; a test writes its own local file under `hermetic.home`.
 - Core owns roles, tasks, methods, principles and templates (`core/team/`, `core/config.toml`); `orchestrator/config.toml` adds what core must not know, plus the overlay.
 - Where a rule goes: every role → `core/team/principles.md`; every task of one role → `core/team/roles/<role>.md`; a document format → `core/team/templates/`; a method → `core/team/methods/`; one task (claiming, failure, hand-off, resume) → `core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `core/team/guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.

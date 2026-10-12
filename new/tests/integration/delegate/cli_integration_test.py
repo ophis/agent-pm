@@ -2,26 +2,26 @@
 a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, an interrupt, a usage limit, config errors.
 Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
 
-from new.tests import SRC, fake_claude, hermetic
-from new.tests.unit.delegate.runner_test import block
-
 import json
 import os
 import re
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from composer.prompt import RESUME
-from delegate.runner import FIX
-from driver import api, registry
+from agent_pm.composer.prompt import RESUME
+from agent_pm.delegate.runner import FIX
+from agent_pm.driver import api, registry
 
-CLI = os.path.join(SRC, "delegate", "cli.py")
+from new.tests import fake_claude
+from new.tests.case import PY, Case, child_env
+from new.tests.unit.delegate.runner_test import block
+
+CLI = (*PY, "-m", "agent_pm.delegate.cli")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 WAIT = 30  # seconds
 RESETS = 1760000000
@@ -62,13 +62,12 @@ def running(pid: int) -> bool:
     return True
 
 
-class Integration(unittest.TestCase):
+class Integration(Case):
     """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid SID."""
 
     ROLE = "dummy-tester"
 
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
@@ -84,8 +83,9 @@ class Integration(unittest.TestCase):
         )
         self.config = os.path.join(self.root, "config")
         self.env = {
+            **child_env({}),
             "PATH": fake_claude.install(bin_dir),
-            "HOME": home,
+            "HOME": self.home,
             "CLAUDE_CONFIG_DIR": self.config,
             "PYTHONUTF8": "1",
             "TZ": "UTC",
@@ -97,8 +97,7 @@ class Integration(unittest.TestCase):
 
     def argv(self, *extra) -> list[str]:
         return [
-            sys.executable,
-            CLI,
+            *CLI,
             "--role",
             self.ROLE,
             "--input",
@@ -473,14 +472,13 @@ class UsageLimit(Integration):
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
         registry.reset()
-        self.addCleanup(registry.reset)
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(api.session_info("claude", SID, self.proj).resumable, "yes")
 
 
 class ConfigErrors(Integration):
     def test_a_config_error_exits_2_and_starts_nothing(self):
-        cli = [sys.executable, CLI]
+        cli = list(CLI)
         cases = {
             "unknown role": (
                 [

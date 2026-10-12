@@ -1,3 +1,32 @@
+import argparse
+import contextlib
+import fcntl
+import functools
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+import uuid
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import UTC, datetime, timedelta, timezone
+from unittest import mock
+
+import attended
+import compose
+import config
+import drive
+import inputs
+import issues
+import linear
+import repo
+import roster
+import router
+import target
+
 from tests import hermetic  # noqa: F401
 from tests.unit.orchestrator.attended_test import Tmux
 from tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
@@ -29,36 +58,6 @@ from tests.unit.orchestrator.run_fixtures import (
     show,
 )
 from tests.unit.orchestrator.run_fixtures import Base as RunBase
-
-import config
-
-import argparse
-import contextlib
-import fcntl
-import functools
-import io
-import json
-import os
-import re
-import subprocess
-import sys
-import tempfile
-import unittest
-import uuid
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import UTC, datetime, timedelta, timezone
-from unittest import mock
-
-import attended
-import compose
-import drive
-import inputs
-import issues
-import linear
-import repo
-import roster
-import router
-import target
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 AGENT, USER = "agent", "user"

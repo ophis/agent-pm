@@ -1,6 +1,3 @@
-from tests import ROOT, hermetic
-from tests.integration.core import fake_claude, live_tmux
-
 import contextlib
 import functools
 import json
@@ -15,6 +12,9 @@ import time
 import unittest
 
 import crew
+
+from tests import ROOT, hermetic
+from tests.integration.core import fake_claude, live_tmux
 
 tmux_host = crew.tmux_host
 roster = crew.roster

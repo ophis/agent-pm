@@ -1,14 +1,14 @@
 """The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a run whose role picks
 its task, a draft left at the deliverable's path."""
 
-from new.tests import NEW
-from new.tests.integration.composer import child
-
 import os
 import re
 import unittest
 
-from composer.prompt import RESUME
+from agent_pm.composer.prompt import RESUME
+
+from new.tests.case import NEW
+from new.tests.integration.composer import child
 
 TEAM = os.path.join(NEW, "core", "team")
 ANSWER = "Say hello."

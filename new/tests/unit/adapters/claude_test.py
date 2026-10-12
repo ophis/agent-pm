@@ -1,9 +1,7 @@
-"""new/core/src/adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
+"""adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch (role run, plain session, session flags), hook payloads and
 usage-limit screen; ClaudeAdapter's hooks and writable dirs; the committed [adapters.claude] table. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
-
-from new.tests import hermetic
 
 import json
 import os
@@ -16,7 +14,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -34,11 +32,13 @@ from adapters.base import (
     Usage,
     Window,
 )
-from adapters.claude import ClaudeAdapter
-from adapters.claude.common import ClaudeCommon
-from adapters.claude.headless import ClaudeHeadless
-from adapters.claude.tui import ClaudeTui
-from driver import registry
+from agent_pm.adapters.claude import ClaudeAdapter
+from agent_pm.adapters.claude.common import ClaudeCommon
+from agent_pm.adapters.claude.headless import ClaudeHeadless
+from agent_pm.adapters.claude.tui import ClaudeTui
+from agent_pm.driver import registry
+
+from new.tests.case import Case
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
@@ -85,13 +85,12 @@ WHAT = {
     "allow": "a list of strings",
     "tiers": 'a table from tier "1"–"4" to a model name',
     "efforts": "a table from effort (low, medium, high, xhigh, max) to a string",
-    "env": "a table of strings to strings",
+    "env": "a table of environment names to strings without NUL",
 }
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.home = os.path.dirname(hermetic.home(self))
         self.tmp = self.dir()
         self.config_dir = os.path.join(self.tmp, "config")
         self.env({"CLAUDE_CONFIG_DIR": self.config_dir})
@@ -145,6 +144,7 @@ class ConfigTest(Base):
             ("efforts", "SECRET"),
             ("efforts", {"low": 1}),
             ("efforts", {"turbo": "SECRET"}),
+            ("efforts", {1: "SECRET"}),
             ("env", "SECRET"),
             ("env", {"K": 1}),
             ("env", {1: "SECRET"}),
@@ -156,6 +156,21 @@ class ConfigTest(Base):
                     lambda: ClaudeAdapter({key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
+
+    def test_invalid_environment_names_and_values_fail_before_launch(self):
+        for key, value in (
+            ("", "SECRET"),
+            ("A=B", "SECRET"),
+            ("A\0B", "SECRET"),
+            (1, "SECRET"),
+            ("A", "SECRET\0"),
+            ("A", 1),
+        ):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    ClaudeAdapter({"env": {key: value}})
+                self.assertIn("[adapters.claude].env", str(caught.exception))
+                self.assertNotIn("SECRET", str(caught.exception))
 
     def test_setting_sources_in_flags_is_refused(self):
         for flags in (
@@ -379,7 +394,10 @@ class ReadRulesTest(Base):
         bad = ["", "r", "./r", "/r\n", "/r\0", *(f"/r{c}s" for c in "*?[]{}()\\,"), "/" + "*" * 99]
         for read in bad:
             for launch in self.modes(reads=("/ok", read)):
-                with self.subTest(read=read), mock.patch("adapters.claude.common.Launch") as made:
+                with (
+                    self.subTest(read=read),
+                    mock.patch("agent_pm.adapters.claude.common.Launch") as made,
+                ):
                     self.refused(
                         launch,
                         f"claude: read dir {read!r:.80} must be a printable absolute path "
@@ -414,6 +432,20 @@ class EnvTest(Base):
         self.assertEqual(launch.unset, UNSET)
         self.assertEqual(ClaudeCommon.UNSET, UNSET)
         self.assertEqual(launch.cwd, "")
+
+    def test_the_session_env_wins_over_the_config_env(self):
+        config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
+        access = Access(env={"PYTHONPATH": "/root", "S": "s"})
+        self.env({"PYTHONPATH": "/parent"})
+        for launch in (
+            self.launch(config=config, access=access),
+            ClaudeAdapter(config)
+            .tui()
+            .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+        ):
+            self.assertEqual(
+                dict(launch.env), {**CEILING, "K": "v", "PYTHONPATH": "/root", "S": "s"}
+            )
 
 
 class TranscriptTest(Base):
@@ -478,6 +510,15 @@ class ResumeTest(Base):
             self.launch(access=Access(cwd=cwd)).resume,
             f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)}",
         )
+
+    def test_the_launch_resume_assigns_the_session_env_quoted(self):
+        env = {"PYTHONPATH": "/a b;c", "S": "s"}
+        resume = self.launch(access=Access(env=env)).resume
+        self.assertEqual(
+            resume,
+            f"cd {shlex.quote(self.work)} && PYTHONPATH='/a b;c' S=s claude --resume {SID}",
+        )
+        self.assertEqual(shlex.split(resume)[3:6], ["PYTHONPATH=/a b;c", "S=s", "claude"])
 
 
 def line(record) -> str:
@@ -644,7 +685,7 @@ def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
 
-class ParseUsageTest(unittest.TestCase):
+class ParseUsageTest(Case):
     def test_router_gate_cases(self):
         rows = (
             (['{"type":"system"}', "garbage"], False),
@@ -1377,7 +1418,7 @@ def epoch(stamp, zone=LA) -> float:
 NOW = epoch("2026-10-11 10:00")  # a Sunday
 
 
-class LimitTest(unittest.TestCase):
+class LimitTest(Case):
     def limit(self, screen, now=NOW):
         with mock.patch("time.time", return_value=now):
             return ClaudeAdapter({}).tui().limit(screen)
@@ -1640,7 +1681,6 @@ class CommittedConfigTest(Base):
             },
         )
         registry.configure({"adapters": tables})
-        self.addCleanup(registry.reset)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (

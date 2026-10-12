@@ -1,4 +1,4 @@
-from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
+"""Codex interactive launch policy, hook events and native limits."""
 
 import dataclasses
 import json
@@ -9,7 +9,8 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import (
+from agent_pm.adapters.base import (
+    Access,
     Activity,
     Blocked,
     ConfigError,
@@ -19,7 +20,10 @@ from adapters.base import (
     SessionBound,
     TurnEnd,
 )
-from adapters.codex import CodexAdapter, tui
+from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
@@ -66,6 +70,19 @@ class TuiTest(Base):
         self.assertIn("sandbox_workspace_write.network_access=false", data["argv"])
         self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot["codex_home"])
         self.assertIn(NATIVE, launch.resume)
+
+    def test_the_session_env_is_last_in_the_launch_env_and_its_resume(self):
+        access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
+        self.spec = dataclasses.replace(self.spec, access=access)
+        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
+        _, launch, _ = self.launch(adapter=adapter)
+        self.assertEqual(launch.env["PYTHONPATH"], "/a b;c")
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        self.spec = dataclasses.replace(self.spec, access=Access())
+        _, resumed, _ = self.launch(True, adapter)
+        self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
+        self.assertEqual(shlex.split(resumed.resume)[4], "PYTHONPATH=/a b;c")
 
     def test_resume_failure_happens_before_command(self):
         with (
@@ -228,11 +245,8 @@ class TuiTest(Base):
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        adapter_root = os.path.dirname(os.path.dirname(os.path.dirname(tui.__file__)))
         for resume in (False, True):
-            for index, tmpdir in enumerate(
-                ("/protected", "/driver-only", adapter_root, sys.prefix)
-            ):
+            for index, tmpdir in enumerate(("/protected", "/driver-only", IMPORT_ROOT, sys.prefix)):
                 with self.subTest(resume=resume, tmpdir=tmpdir):
                     config = {**self.common.config, "env": {"TMPDIR": tmpdir}}
                     adapter = CodexAdapter(config)

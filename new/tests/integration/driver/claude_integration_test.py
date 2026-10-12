@@ -3,15 +3,12 @@ registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through 
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
 
-from new.tests import SRC, fake_claude, hermetic
-
 import json
 import os
 import shlex
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -19,7 +16,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from adapters.base import (
+from agent_pm.adapters.base import (
     Activity,
     Exited,
     LimitHit,
@@ -31,7 +28,10 @@ from adapters.base import (
     Usage,
     Window,
 )
-from driver import api, registry
+from agent_pm.driver import api, registry
+
+from new.tests import fake_claude
+from new.tests.case import PY, Case, child_env
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.5  # idle_timeout, in seconds
@@ -56,14 +56,13 @@ PROBE = [
     "user",
     "--strict-mcp-config",
 ]
-# A caller: argv[1] goes first on sys.path, argv[2] is the claude table, argv[3] the workdir. It prints each event's
-# name; on a KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
+# A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
+# (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
-sys.path.insert(0, sys.argv[1])
-from driver import api, registry
+from agent_pm.driver import api, registry
 signal.signal(signal.SIGINT, signal.default_int_handler)
-registry.configure({"adapters": {"claude": json.loads(sys.argv[2])}})
-handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[3]))
+registry.configure({"adapters": {"claude": json.loads(sys.argv[1])}})
+handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[2]))
 try:
     for event in handle.events():
         print(type(event).__name__, flush=True)
@@ -89,9 +88,8 @@ def kill(pid: int) -> None:
         pass
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -111,7 +109,6 @@ class Base(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure({"adapters": {"claude": TABLE}})
-        self.addCleanup(registry.reset)
         self.scenario()
 
     def scenario(self, **fields):
@@ -376,8 +373,8 @@ class InterruptTest(Base):
         self.out = os.path.join(self.dir, "caller.out")
         with open(self.out, "w", encoding="utf-8") as f:
             caller = subprocess.Popen(
-                [sys.executable, "-I", "-c", CALLER, SRC, json.dumps(TABLE), self.workdir],
-                env=dict(os.environ),
+                [*PY, "-c", CALLER, json.dumps(TABLE), self.workdir],
+                env=child_env(),
                 stdin=subprocess.DEVNULL,
                 stdout=f,
                 stderr=subprocess.STDOUT,

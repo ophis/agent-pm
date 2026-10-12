@@ -1,3 +1,24 @@
+import dataclasses
+import io
+import json
+import os
+import shlex
+import signal
+import subprocess
+import unittest
+from contextlib import redirect_stderr
+from unittest import mock
+
+import attended
+import compose
+import config
+import drive
+import router
+import run
+import sessions
+import writeback
+from clients import claude as claude_client
+
 from tests import hermetic  # noqa: F401
 from tests.unit.orchestrator.attended_test import Tmux
 from tests.unit.orchestrator.board_ids import STATES
@@ -14,28 +35,6 @@ from tests.unit.orchestrator.run_fixtures import (
     node,
 )
 from tests.unit.orchestrator.run_fixtures import Base as RunBase
-
-import config
-
-import dataclasses
-import io
-import json
-import os
-import shlex
-import signal
-import subprocess
-import unittest
-from contextlib import redirect_stderr
-from unittest import mock
-
-import attended
-import compose
-import drive
-import router
-import run
-import sessions
-import writeback
-from clients import claude as claude_client
 
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
 DONE = {

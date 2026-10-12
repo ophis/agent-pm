@@ -1,5 +1,13 @@
 """promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its client id), related,
-the source Done; a failed move or a Linear outage is retried without a second child."""
+the source Done; a failed move or a Linear outage is retried without a second child; the tick's prune closes a
+finished issue's TUI session on a private tmux server, deletes its checkouts and archives it."""
+
+import os
+import subprocess
+import unittest
+from datetime import UTC, datetime, timedelta
+
+from agent_pm_orchestrator import promote
 
 from new.tests.integration.orchestrator import fake_linear
 from new.tests.integration.orchestrator.flow_fixtures import (
@@ -7,18 +15,18 @@ from new.tests.integration.orchestrator.flow_fixtures import (
     HARNESS_EMAIL,
     HUMAN,
     PROJECT,
+    TIMEOUT,
     Flow,
+    TmuxFlow,
 )
-
-import unittest
-from datetime import UTC, datetime, timedelta
-
-import promote
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."
 MUTATIONS = {op for op, text in fake_linear.texts().items() if text.startswith("mutation")}
 WRITES = ["promote.M_CREATE", "promote.M_RELATE", "linear.M_STATE", "linear.M_COMMENT"]
+DONE, OPEN = "TASK-20", "TASK-21"
+TUI = f"engineer-{DONE}-0123abcd"
+CLONE = ("src", "acme", "widgets")
 
 
 class Tick(Flow):
@@ -150,6 +158,69 @@ class Promote(Tick):
             self.events()[1:], [{"src": "promote", "kind": "promote", "issue": SOURCE, "to": child}]
         )
         self.assert_requests(WRITES, [("promote.Q_HANDOFF", HARNESS_EMAIL, "503")])
+
+
+class Prune(Tick, TmuxFlow):
+    def git_init(self, path):
+        res = subprocess.run(
+            ["git", "init", "--quiet", path],
+            env=self.env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+    def test_prune_after_done(self):
+        engineer = self.ids[ACCOUNTS["engineer"]]
+        done_id = self.fake.issue(
+            "ENG: Session registry",
+            identifier=DONE,
+            state="in_review",
+            assignee=engineer,
+            project=PROJECT,
+        )["id"]
+        self.fake.move(
+            DONE, "done", actor=self.ids[HUMAN], at=datetime.now(UTC) - timedelta(hours=25)
+        )
+        self.fake.issue(
+            "ENG: Session reaper",
+            identifier=OPEN,
+            state="in_progress",
+            assignee=engineer,
+            project=PROJECT,
+        )
+        gone = [os.path.join(self.runs_dir, DONE, *p) for p in (CLONE, ("publish",), ("tmp",))]
+        kept = os.path.join(self.runs_dir, OPEN, *CLONE)
+        for path in (*gone[:2], kept):
+            self.git_init(path)
+        os.makedirs(gone[2])
+        with open(os.path.join(gone[2], "x"), "w"):
+            pass
+        made = self.server.tmux("new-session", "-d", "-s", TUI, "cat", "-")
+        self.assertEqual(made.returncode, 0, made.stderr)
+        self.assertTrue(self.live(TUI))
+
+        self.tick()
+        self.assertEqual([p for p in gone if os.path.lexists(p)], [])
+        self.assertFalse(self.live(TUI))
+        self.assertTrue(os.path.isdir(os.path.join(kept, ".git")))
+        self.assertEqual([self.issue(i)["archived"] for i in (DONE, OPEN)], [True, False])
+        self.assertEqual(self.sent("prune.M_ARCHIVE"), [{"i": done_id}])
+        self.assert_requests(["prune.M_ARCHIVE"])
+        removed = (("src/acme/widgets", "clone"), ("publish", "clone"), ("tmp", "temp files"))
+        self.assertEqual(
+            self.events(),
+            [
+                {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": TUI},
+                *(
+                    {"src": "prune", "kind": "prune-removed", "entry": f"{DONE}/{e}", "what": w}
+                    for e, w in removed
+                ),
+                {"src": "prune", "kind": "prune-archived", "issue": DONE},
+            ],
+        )
 
 
 if __name__ == "__main__":
