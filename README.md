@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` holds shared pure tools any layer may import; it imports no layer. `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, an import of `utils/`, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` (not drawn) holds shared stdlib-only tools any layer may import; it imports no layer. `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -37,6 +37,7 @@ flowchart TB
   subgraph L2["role runs (role · task)"]
     D["delegate/<br>API · CLI · reply parsing · run policy"]
     C["composer/<br>prompt · run spec · resolve"]
+    AT["agent_tools/repo.py<br>named in the prompt, run by the agent:<br>git worktree · PR status"]
     T["core/team/<br>roles · tasks · methods · principles · templates<br>output/: output.md · destinations · outcome.schema.json"]
   end
   subgraph L3[sessions]
@@ -48,33 +49,23 @@ flowchart TB
       PP2["print_prompt/: one factory<br>PrintPromptAdapter<br>PrintPromptInProcess (hands the composed prompt back as the deliverable;<br>one start progress line, then the outcome; no headless, no tui)"]
     end
   end
-  U["utils/<br>shared pure tools: config file, paths<br>(stdlib, imports no layer)"]
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
   end
   LD --> R & PP
-  HU -->|"--issue · --tui"| R
-  M -->|"--issue · --tui"| R
+  HU & M -->|"--issue · --tui"| R
   M -->|"CLI --detach"| D
   A -->|"CLI --runtime print_prompt --mode in_process"| D
-  W -->|API| DR
+  W -->|"API: start · show · sessions(match) · Spec flags, env"| DR
   RU <==>|"delegate.run · begun, progress, outcome"| D
   CF -->|resolve| C
-  OR -->|"sessions · usage · session_info · detach · show · close · layout · attach_command · attach"| DR
+  OR -->|"session chores: sessions · usage · detach · show · close"| DR
   D --> C
-  C -->|reads| T
-  D -->|"outcome.schema.json"| T
+  C -->|"reads (Delegate: outcome.schema.json)"| T
   D <==>|"start · events, replies"| DR
   DR -->|"loads; headless() / tui() / in_process()"| B
-  B -.->|implemented by| CL & CX & PP2
   DR -->|"starts & hosts (pipe / tmux)"| RT
-  CL -.->|"wraps (argv, output, hooks)"| P1
-  CX -.->|wraps| P2
-  C -.->|imports| U
-  DR -.->|imports| U
-  AD -.->|imports| U
-  D -.->|imports| U
   R ~~~ RU
   PP ~~~ CF
   C ~~~ DR
