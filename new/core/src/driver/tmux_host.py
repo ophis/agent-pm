@@ -529,7 +529,7 @@ def open_pane(session: str, *, split: str | None = None, split_from: str | None 
     if tmux is None:
         return "tmux not found"
     tmux = os.path.abspath(tmux)
-    own = grid = None
+    own = grid = new = None
     try:
         if opener is None:
             try:
@@ -544,7 +544,14 @@ def open_pane(session: str, *, split: str | None = None, split_from: str | None 
             window, manager, at, side = grid
             if split is not None or split_from is not None:
                 print("tui: show: grid: --split/--split-from ignored", file=sys.stderr)
-            new, why = _split(session, side, at, tmux, proc)
+            # muted: an old mode's hook tile could land after a later drag; _grid_up unmutes
+            _tmux(["set-option", "-w", "-t", window, GRID_BUSY, window], proc)
+            try:
+                new, why = _split(session, side, at, tmux, proc)
+            finally:
+                if new is None:
+                    with contextlib.suppress(TuiError):
+                        _tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
         elif split_from is not None:
             new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
