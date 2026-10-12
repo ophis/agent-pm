@@ -2312,20 +2312,78 @@ class Tick(TickBase):
             self.assertEqual("plan mode=new queue=2" in self.said(), not argv, argv)
             self.assertEqual(self.said().count('blocked TASK-1 by=["TASK-7"]'), 1, argv)
 
-    def test_usage_blocked_is_said_once_a_day(self):
-        self.api.usages = {"a": reading(95)}
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        walk = ["plan mode=new queue=1", "pick TASK-1 queue=1"]
-        end = ["pick-none reason=nothing claimable", "skip reason=nothing claimed"]
-        self.tick(fake)
-        skip = "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%"
-        self.assertEqual(self.said(), [*walk, skip, *end])
-        self.assertEqual(
-            (self.start.launches, fake.issues["TASK-1"]["state"], fake.mutations), ([], "Todo", [])
+    def test_a_usage_blocked_tick_writes_only_its_usage_skips_once_a_day(self):
+        fake = FakeLinear(
+            [
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
+            ]
         )
-        self.api.usages = {"a": reading(97)}
-        self.tick(fake, again=True)
-        self.assertEqual(self.said(), [*walk, *end])
+        for again, five, said in (
+            (
+                False,
+                95,
+                [
+                    f"usage-skip TASK-{n} runtime=a reason=usage usage=five_hour=95% weekly=10%"
+                    for n in (1, 2)
+                ],
+            ),
+            (True, 97, []),
+        ):
+            with self.subTest(again=again):
+                self.api.usages = {"a": reading(five)}
+                self.assertEqual(self.tick(fake, again=again), 0)
+                self.assertEqual(self.said(), said)
+                self.assertEqual((self.start.launches, fake.mutations, self.state), ([], [], ""))
+
+    def test_a_usage_skipped_head_then_a_claim_keeps_every_line(self):
+        self.api.usages = {"a": reading(95), "b": reading(50)}
+        self.tick(two())
+        self.assertEqual(
+            self.said(),
+            [
+                "plan mode=new queue=2",
+                "pick TASK-1 queue=2",
+                "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%",
+                "pick TASK-2 queue=2",
+                "claim TASK-2 role=pm runtime=b",
+                "launch TASK-2 exit=0",
+            ],
+        )
+
+    def test_usage_skips_after_a_claim_skip_end_the_tick_quietly(self):
+        self.api.usages = {"a": reading(95)}
+        fake = FakeLinear(
+            [
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "researcher", priority=2),
+            ]
+        )
+        for sid in "abcd":
+            self.add("start", "TASK-1", sid, 300)
+        self.tick(fake)
+        self.assertEqual(
+            self.said(),
+            [
+                "plan mode=new queue=2",
+                "claim-skip TASK-1 to=in_review reason=reached 4 attempts",
+                "usage-skip TASK-2 runtime=a reason=usage usage=five_hour=95% weekly=10%",
+            ],
+        )
+
+    def test_an_outage_mid_walk_writes_the_waiting_lines_first(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        gql = failing(FAILURES["timeout"], gql=fake, ops={"issue"})
+        self.assertEqual(self.tick(gql), 1)
+        self.assertEqual(
+            self.said(),
+            [
+                "plan mode=new queue=1",
+                "pick TASK-1 queue=1",
+                f"linear-error op=issue {FIELDS['timeout']}",
+            ],
+        )
+        self.assertEqual((gql.failed[0][0], fake.mutations), (RECHECK, []))
 
     def test_trim_runs_before_plan(self):
         self.add("start", "TASK-8", "old", 60 * 24 * 8)
@@ -2435,24 +2493,15 @@ class TickGate(TickBase):
         self.resumable("TASK-1", "a", 60)
         self.resumable("TASK-3", "c", 50, "engineer")
         before = self.before()
-        self.assertEqual(self.tick(fake), 0)
         why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
-        self.assertEqual(
-            self.said(),
-            [
-                f"usage-skip TASK-1 {why}",
-                f"usage-skip TASK-3 {why}",
-                "plan mode=new queue=1",
-                "pick TASK-2 queue=1",
-                f"usage-skip TASK-2 {why}",
-                "pick-none reason=nothing claimable",
-                "skip reason=nothing claimed",
-            ],
-        )
-        self.assertEqual(
-            (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
-            ([], [], before, ["a"]),
-        )
+        for again, said in ((False, [f"usage-skip TASK-{n} {why}" for n in (1, 3, 2)]), (True, [])):
+            with self.subTest(again=again):
+                self.assertEqual(self.tick(fake, again=again), 0)
+                self.assertEqual(self.said(), said)
+                self.assertEqual(
+                    (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
+                    ([], [], before, ["a"]),
+                )
 
     def test_a_live_limit_row_lets_the_other_runtime_start(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()

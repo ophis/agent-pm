@@ -16,7 +16,8 @@ router.py --brake ROLE                       usage check for ROLE's runtime
               role.
 Bad arguments exit 2.
 
-Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none.
+Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked one only its
+usage-skip lines.
 """
 
 import argparse
@@ -134,24 +135,16 @@ def read_usage(runtime):
 
 
 class Gate:
-    def __init__(self, runs, now, dry):
+    def __init__(self, runs, now, dry, say=None):
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
+        self.say = say or functools.partial(log, "router", dry=dry)
 
     def blocked(self, runtime, ident):
         if runtime not in self.seen:
             self.seen[runtime] = self._check(runtime)
         reason, fields = self.seen[runtime]
         if reason:
-            log(
-                "router",
-                "usage-skip",
-                ident,
-                once=True,
-                dry=self.dry,
-                runtime=runtime,
-                reason=reason,
-                **fields,
-            )
+            self.say("usage-skip", ident, once=True, runtime=runtime, reason=reason, **fields)
         return reason is not None
 
     def _check(self, runtime):
@@ -164,7 +157,7 @@ class Gate:
             reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
             fields = shown if reason == "usage" else {}
         if self.dry:
-            log("router", "usage", dry=True, runtime=runtime, **shown, allowed=reason is None)
+            self.say("usage", runtime=runtime, **shown, allowed=reason is None)
         return reason, fields
 
 
@@ -213,10 +206,10 @@ def q_issues(fields=""):
 
 
 class Board:
-    def __init__(self, gql, entries, now, dry, cfg, gate):
+    def __init__(self, gql, entries, now, dry, cfg, gate, say=None):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.gate = cfg, gate
-        self.say = functools.partial(log, "router", dry=dry)
+        self.say = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
@@ -487,6 +480,37 @@ def lock(runs, dry):
         yield free
 
 
+class Held:
+    """A tick's walk log: plan, pick, usage-skip, pick-none and skip lines wait, written before the next other line. At
+    the walk's end, waiting usage-skips mean a usage-blocked walk: only they are written; else all are. A dry run and an
+    exception wait for nothing."""
+
+    WAIT = {"plan", "pick", "usage-skip", "pick-none", "skip"}
+
+    def __init__(self, dry):
+        self.dry, self.waiting = dry, []
+
+    def __call__(self, kind, issue=None, **fields):
+        if not self.dry and kind in self.WAIT:
+            self.waiting.append((kind, issue, fields))
+            return
+        self.write()
+        log("router", kind, issue, dry=self.dry, **fields)
+
+    def write(self, kinds=WAIT):
+        for kind, issue, fields in self.waiting:
+            if kind in kinds:
+                log("router", kind, issue, **fields)
+        self.waiting = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error, *_):
+        blocked = error is None and any(w[0] == "usage-skip" for w in self.waiting)
+        self.write({"usage-skip"} if blocked else self.WAIT)
+
+
 def choose(board, gate, live_ids, full, counts):
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
@@ -533,20 +557,20 @@ def tick(opts, cfg, gql, now, hour, start):
                 trim(runs, now)
             except Exception as e:
                 say("skip", reason="prune failed", error=one_line(e))
-        gate = Gate(runs, now, dry)
-        board = Board(gql, parse_log(runs), now, dry, cfg, gate)
-        live_ids = {i for ids in live.values() for i in ids}
-        run = choose(board, gate, live_ids, full, counts)
-        if run is None or dry:
+        with Held(dry) as walk:
+            gate = Gate(runs, now, dry, walk)
+            board = Board(gql, parse_log(runs), now, dry, cfg, gate, walk)
+            run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
+            if run is None or dry:
+                return 0
+            a = begin(*run, runs)
+            try:
+                rc = start(a)
+            except (Exception, SystemExit) as e:
+                walk("launch-error", a.issue, error=one_line(e))
+                return 0
+            walk("launch", a.issue, exit=rc)
             return 0
-        a = begin(*run, runs)
-        try:
-            rc = start(a)
-        except (Exception, SystemExit) as e:
-            say("launch-error", a.issue, error=one_line(e))
-            return 0
-        say("launch", a.issue, exit=rc)
-        return 0
 
 
 def run_issue(opts, cfg, gql, now, start):
