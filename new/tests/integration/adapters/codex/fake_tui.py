@@ -236,7 +236,7 @@ def interactive(args):
     options = parser()
     options.add_argument("--no-daemon", action="store_true", required=True)
     options.add_argument("-C", required=True)
-    options.add_argument("-s", choices=("workspace-write",), required=True)
+    options.add_argument("-s", choices=("danger-full-access", "workspace-write"), required=True)
     options.add_argument("-m")
     options.add_argument("--add-dir", action="append", default=[])
     options.add_argument("prompt", nargs="?")

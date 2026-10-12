@@ -24,7 +24,10 @@ def absolute_path(path: str, label: str) -> str:
 
 
 def validate_snapshot(value: dict) -> dict:
-    if not isinstance(value, dict) or set(value) != {
+    if not isinstance(value, dict):
+        raise RecoveryError("invalid Codex recovery snapshot fields")
+    value = {"sandbox": "workspace-write", **value}
+    if set(value) != {
         "cwd",
         "project",
         "dirs",
@@ -33,8 +36,11 @@ def validate_snapshot(value: dict) -> dict:
         "effort",
         "network",
         "codex_home",
+        "sandbox",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
+    if value["sandbox"] not in ("danger-full-access", "workspace-write"):
+        raise RecoveryError("invalid Codex recovery snapshot sandbox")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     for key in ("project", "network"):
         if type(value[key]) is not bool:
@@ -59,6 +65,7 @@ def validate_snapshot(value: dict) -> dict:
         "model": value["model"],
         "effort": value["effort"],
         "network": value["network"],
+        "sandbox": value["sandbox"],
     }
     if validated != value:
         raise RecoveryError("invalid Codex recovery snapshot path")

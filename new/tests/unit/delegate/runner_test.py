@@ -29,8 +29,9 @@ from unittest import mock
 import composer
 from delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
 from delegate.outcome import save
-from delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT, printable
+from delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from driver import api, registry
+from utils import text as text_utils
 
 SID = "11111111-2222-3333-4444-555555555555"
 NAME = "fake-11111111"
@@ -793,8 +794,8 @@ class InProcess(Base):
 class Terminal(Base):
     """Main's Sinks case: what reaches the terminal is printable."""
 
-    def test_printable_drops_control_characters_but_tabs(self):
-        self.assertEqual(printable("a\x1b]52;c;ZXZpbA==\x07b\tc\r\n"), "a]52;c;ZXZpbA==b\tc")
+    def test_printable_is_the_utils_one(self):
+        self.assertIs(runner.printable, text_utils.printable)
 
     def test_replies_progress_and_stderr_lines_are_printed_printable(self):
         self.go(

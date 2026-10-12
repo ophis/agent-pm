@@ -131,29 +131,32 @@ class HeadlessIntegrationTest(unittest.TestCase):
     def record(self):
         return next((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
 
-    def expected_args(self, prompt, resume=False):
-        return [
+    def expected_args(self, prompt, resume=False, sandbox="danger-full-access"):
+        args = [
             "exec",
             "--json",
             "--skip-git-repo-check",
             "-s",
-            "workspace-write",
+            sandbox,
             "-c",
             'approval_policy="on-request"',
             "-c",
             'approvals_reviewer="auto_review"',
-            "-c",
-            "sandbox_workspace_write.network_access=false",
-            "-c",
-            "sandbox_workspace_write.writable_roots=[]",
-            "-m",
-            "gpt-test",
-            "-c",
-            "model_reasoning_effort=low",
-            "--add-dir",
-            str(self.extra),
-            "--add-dir",
-            str(self.tasks),
+        ]
+        if sandbox == "workspace-write":
+            args.extend(
+                [
+                    "-c",
+                    "sandbox_workspace_write.network_access=false",
+                    "-c",
+                    "sandbox_workspace_write.writable_roots=[]",
+                ]
+            )
+        args.extend(["-m", "gpt-test", "-c", "model_reasoning_effort=low"])
+        if sandbox == "workspace-write":
+            args.extend(["--add-dir", str(self.extra), "--add-dir", str(self.tasks)])
+        return [
+            *args,
             *(["resume", NATIVE] if resume else []),
             "--",
             prompt + "\n\n" + self.adapter.runtime_note,
@@ -212,6 +215,22 @@ class HeadlessIntegrationTest(unittest.TestCase):
             (entry["cwd"], entry["env"]["PWD"], entry["env"]["CODEX_HOME"]),
             (str(self.cwd), str(self.cwd), str(self.codex_home)),
         )
+
+    def test_workspace_write_exact_flags_and_saved_policy_through_driver(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
+        self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))
+        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        registry.configure(self.config)
+        self.drain(
+            api.start("codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid)
+        )
+        first, second = self.logged()
+        self.assertEqual(first["argv"], self.expected_args("one", sandbox="workspace-write"))
+        self.assertEqual(
+            second["argv"], self.expected_args("again", resume=True, sandbox="workspace-write")
+        )
+        self.assertEqual(second["snapshot"]["snapshot"]["sandbox"], "workspace-write")
 
     def direct_launch(self, prompt, resume=False):
         adapter = CodexAdapter(
@@ -324,7 +343,12 @@ class HeadlessIntegrationTest(unittest.TestCase):
         alternate = self.root / "changed"
         alternate.mkdir()
         cfg = self.config["adapters"]["codex"]
-        cfg.update(tiers={"1": "changed"}, efforts={"low": "high"}, shell_network=True)
+        cfg.update(
+            tiers={"1": "changed"},
+            efforts={"low": "high"},
+            shell_network=True,
+            sandbox="workspace-write",
+        )
         cfg["env"]["CODEX_HOME"] = str(alternate)
         registry.configure(self.config)
         access = Access(
@@ -350,6 +374,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
         )
 
     def test_add_dir_order_and_tasks_prompt_survive_resume(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):
             with self.subTest(resume=resume):
