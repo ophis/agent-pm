@@ -1,5 +1,5 @@
-"""delegate/outcome.py: main's drive.validate cases with the same results (FR-20), read with deliverable_file (FR-19),
-and main's save cases."""
+"""delegate/outcome.py: main's drive.validate cases with the same results (FR-20) and read with deliverable_file (FR-19);
+main's save cases: unit/utils/files_test.py."""
 
 import dataclasses
 import json
@@ -13,7 +13,8 @@ import unittest.mock
 from agent_pm import composer
 from agent_pm.composer import RunConfig
 from agent_pm.delegate import outcome
-from agent_pm.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, save, validate
+from agent_pm.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
+from agent_pm.utils import files
 
 from new.tests.case import Case
 
@@ -352,40 +353,8 @@ class ReadRace(Base):
 
 
 class Save(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-        self.path = os.path.join(self.dir, "sub", "f.txt")
-
-    def test_writes_replaces_and_makes_the_directory(self):
-        save(self.path, "one\n")
-        save(self.path, "two\n")
-        with open(self.path) as f:
-            self.assertEqual(f.read(), "two\n")
-        self.assertEqual(os.listdir(os.path.dirname(self.path)), ["f.txt"])
-
-    def test_a_planted_symlink_is_replaced_not_followed(self):
-        outside = os.path.join(self.dir, "outside")
-        with open(outside, "w") as f:
-            f.write("keep\n")
-        os.makedirs(os.path.dirname(self.path))
-        os.symlink(outside, self.path)
-        save(self.path, "new\n")
-        with open(self.path) as f, open(outside) as g:
-            self.assertEqual(
-                (os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n")
-            )
-
-    def test_no_temp_is_left_when_the_replace_fails(self):
-        save(self.path, "old\n")
-        with unittest.mock.patch.object(outcome.os, "replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                save(self.path, "new\n")
-        with open(self.path) as f:
-            self.assertEqual(
-                (f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"])
-            )
+    def test_is_the_utils_one(self):
+        self.assertIs(outcome.save, files.save)
 
 
 if __name__ == "__main__":

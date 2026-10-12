@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The Delegate's command line: one role's run in a Driver Mode (--mode: headless, the default, tui or in_process), its
 plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in one and the core config's team_dirs).
---task unset: the agent run picks one from its index. Exits 0 on a valid outcome, even when the client exited non-zero;
-1 on none, the client exiting 0 or its tui session left open; 2 on a config or usage error (nothing started, stdout
-empty); 3 when the client exited non-zero (an in_process run that raised: 1) or failed to start without a valid
-outcome, or on a usage limit."""
+--task unset: the agent run picks one from its index. --out -: a valid outcome's deliverable goes to stdout, control
+characters dropped but newlines and tabs; --out PATH: stderr names it once it holds the deliverable. A run's stdout is
+otherwise empty. Exits 0 on a valid outcome, even when the client exited non-zero; 1 on none, the client exiting 0 or
+its tui session left open; 2 on a config or usage error (nothing started, stdout empty); 3 when the client exited
+non-zero (an in_process run that raised: 1) or failed to start without a valid outcome, or on a usage limit."""
 
 import argparse
 import json
@@ -33,8 +34,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
     )
-    ap.add_argument("--out")
-    ap.add_argument("--workdir")
+    ap.add_argument(
+        "--out", action=Once, metavar="PATH|-", help="where the deliverable is written; -: stdout"
+    )
+    ap.add_argument("--workdir", action=Once)
     ap.add_argument("--repo")
     ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
     ap.add_argument("--sid")
@@ -62,7 +65,7 @@ def main(argv: list[str]) -> int:
             "mode": a.mode,
             "sid": a.sid,
             "resume": a.sid if a.resume else None,
-            "out": a.out,
+            "out": None if a.out == "-" else a.out,
             "repo": a.repo,
             "team": team,
         }
@@ -76,6 +79,11 @@ def main(argv: list[str]) -> int:
     if result.outcome is None:
         _say(f"delegate: {result.error}")
         return 3 if result.returncode or result.limit else 1
+    if deliverable := result.outcome.deliverable:
+        if a.out == "-":
+            print("\n".join(map(printable, deliverable.split("\n"))), end="", flush=True)
+        elif api.records.holds(out := os.path.abspath(a.out), deliverable):
+            _say(f"delegate: deliverable {out}")
     _say(f"delegate: status {result.outcome.status}")
     return 0
 
@@ -112,6 +120,7 @@ def _shown(p: Plan) -> dict:
         "cwd": access.cwd,
         "project": access.project,
         "dirs": access.dirs,
+        "reads": access.reads,
         "commands": access.commands,
         "tier": p.spec.tier,
         "effort": p.spec.effort,

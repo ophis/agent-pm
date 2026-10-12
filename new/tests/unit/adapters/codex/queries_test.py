@@ -1,3 +1,5 @@
+"""Codex account usage and Driver inspection queries."""
+
 import json
 import os
 import sys
@@ -77,9 +79,9 @@ class UsageTest(Case):
         self.assertEqual(Path(launch.argv[1]).name, "account_probe.py")
         self.assertTrue(Path(launch.argv[1]).is_file())
         self.assertEqual(
-            launch.env, {**self.adapter.common.defaults, "PAGER": "configured", "ADDED": "value"}
+            launch.env, {**self.adapter.common.DEFAULTS, "PAGER": "configured", "ADDED": "value"}
         )
-        self.assertEqual(launch.unset, self.adapter.common.unset)
+        self.assertEqual(launch.unset, self.adapter.common.UNSET)
         self.assertEqual(launch.cwd, "")
 
     def test_usage_is_pure_and_matches_both_window_positions(self):

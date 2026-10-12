@@ -21,8 +21,8 @@ from agent_pm.composer.base import (
 from agent_pm.utils.config_file import LOCAL, read_config
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.protocol import PROGRESS
 
-PROGRESS = "agent-pm-progress"
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
 KINDS = ("roles", "tasks", "templates")
 TEAM_NAME = re.compile(r"[a-z0-9-]+")

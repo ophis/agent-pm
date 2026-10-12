@@ -1,8 +1,4 @@
-"""Claude Code's tui Mode, interactive `claude`: ClaudeTui. launch: ClaudeCommon's, with a command hook per label in
---settings (Notification's on the types waiting on the user) and the prompt after "--" unless empty. reply:
-last_assistant_message, else the last assistant message's text in transcript_path's last 4 MiB. limit: Claude's
-usage-limit message, reset at the `resets <when>` after it (WHEN), the next such time when undated, local time
-without a known zone."""
+"""Claude Code interactive launches and hooks, transcript replies and native usage limits."""
 
 import json
 import re
@@ -160,13 +156,12 @@ def _resets(when: re.Match) -> float | None:
     try:
         if day is not None:
             month = _index(word, MONTHS)
-            return (
-                None
-                if month is None
-                else datetime(
-                    int(year or now.year), month + 1, int(day), hour, minute, tzinfo=zone
-                ).timestamp()
-            )
+            if month is None:
+                return None
+            at = datetime(int(year or now.year), month + 1, int(day), hour, minute, tzinfo=zone)
+            if year is None and at < now - timedelta(days=1):
+                at = at.replace(year=now.year + 1)
+            return at.timestamp()
         weekday = None if word is None else _index(word, WEEKDAYS)
         if word is not None and weekday is None:
             return None

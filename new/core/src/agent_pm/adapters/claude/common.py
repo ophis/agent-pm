@@ -1,11 +1,5 @@
-"""What every Claude Code Mode shares: ClaudeCommon validates [adapters.claude] (an error names the key, never its
-value) and gives a tier's model, an effort's value, a command's env and UNSET (a parent session's identity keys, which
-a child must not inherit), a session's transcript and resume command, Claude's sid rule (a lowercase UUID: Claude takes
-the sid as its own session id), the usage probe and its reading, and a session's SessionStatus.
-
-launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
-(--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), and the project and local setting
-sources only for a project run; its env and resume command carry the session env."""
+"""Claude Code configuration, launch metadata, usage and session inspection shared by both Modes. A launch's env and
+resume command carry the session env."""
 
 import json
 import math
@@ -17,10 +11,12 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from agent_pm.adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Spec, Usage, Window
+from agent_pm.utils.paths import printable_abs
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+NOT_LITERAL = "*?[]{}()\\,"
 
 
 def number(value) -> float | None:
@@ -51,10 +47,30 @@ def _strings(value) -> bool:
     return isinstance(value, list) and all(isinstance(s, str) for s in value)
 
 
+def _read_dir(path: str) -> str:
+    if not printable_abs(path) or any(c in NOT_LITERAL for c in path):
+        raise ConfigError(
+            f"claude: read dir {path!r:.80} must be a printable absolute path without {NOT_LITERAL}"
+        )
+    return path
+
+
+def _read_rules(reads: tuple[str, ...]) -> tuple[str, ...]:
+    dirs = (d for read in reads for d in (_read_dir(read), _read_dir(os.path.realpath(read))))
+    return tuple(dict.fromkeys(f"Read(/{d.rstrip('/')}/**)" for d in dirs))
+
+
 def _table(value, keys=None) -> bool:
     return isinstance(value, Mapping) and all(
         isinstance(k, str) and (keys is None or k in keys) and isinstance(v, str)
         for k, v in value.items()
+    )
+
+
+def _environment(value) -> bool:
+    return _table(value) and all(
+        key and "=" not in key and "\0" not in key and "\0" not in item
+        for key, item in value.items()
     )
 
 
@@ -67,7 +83,7 @@ CHECKS = (
         lambda v: _table(v, EFFORTS),
         f"a table from effort ({', '.join(EFFORTS)}) to a string",
     ),
-    ("env", _table, "a table of strings to strings"),
+    ("env", _environment, "a table of environment names to strings without NUL"),
 )
 
 
@@ -176,13 +192,17 @@ class ClaudeCommon:
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
     ) -> Launch:
-        """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
+        """Build a Claude command with configured settings, access grants and output arguments."""
         sid = self.uuid(spec.sid)
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd or spec.workdir
         mcp = os.path.join(cwd, ".mcp.json")
-        allow = (*(f"Bash({command})" for command in access.commands), *self.allow)
+        allow = (
+            *(f"Bash({command})" for command in access.commands),
+            *_read_rules(access.reads),
+            *self.allow,
+        )
         argv = (
             "claude",
             *head,

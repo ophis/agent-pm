@@ -1,11 +1,13 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
-dir checks (TeamRuns), for a custom team and for the configured team dirs."""
+dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included, read
+dirs (the tasks dir among them) never added nor counted."""
 
 import io
 import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 import uuid
@@ -18,9 +20,10 @@ from agent_pm.composer import RunConfig, RunParams
 from agent_pm.composer.prompt import RESUME
 from agent_pm.delegate import ConfigError, plan
 from agent_pm.delegate.plan import place
-from agent_pm.driver import api
+from agent_pm.driver import api, registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
 
+from new.tests import fake_adapter
 from new.tests.case import NEW, Case
 from new.tests.unit.composer.team_test import POET, VERSE
 
@@ -49,7 +52,8 @@ def write_team(top, files=TEAM_FILES):
 
 
 class Base(Case):
-    """A real temp dir for the workdir `work` (not made) and a HOME of the test's own (self.agent_pm)."""
+    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and the registry's
+    adapters: the core config's and the fake runtime."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -57,10 +61,16 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
+        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
+        self.addCleanup(registry.reset)
+        self.local("")
 
     def local(self, text):
+        """The local config `text`, the registry's adapters re-read with it."""
         with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write(text)
+        fake = {"implementation": "adapters.fake:FakeAdapter"}
+        registry.configure({"adapters": registry.tables() | {"fake": fake}})
 
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
@@ -270,10 +280,11 @@ class Planned(Base):
                 self.assertEqual(
                     got.spec.access,
                     api.Access(
-                        dirs=(TASKS, METHODS),
+                        dirs=(),
                         commands=commands,
                         cwd=self.work,
                         project=False,
+                        reads=(TASKS, METHODS),
                         env=want,
                     ),
                 )
@@ -282,8 +293,8 @@ class Planned(Base):
         got, err = self.planned(keys=self.KEYS, cwd=None)
         access = got.spec.access
         self.assertEqual(
-            (access.cwd, access.project, access.dirs),
-            (os.getcwd(), False, (self.work, TASKS, METHODS)),
+            (access.cwd, access.project, access.dirs, access.reads),
+            (os.getcwd(), False, (self.work,), (TASKS, METHODS)),
         )
         self.assertEqual(err, notice(os.getcwd()))
 
@@ -363,19 +374,41 @@ class ConfiguredTeamDirs(Base):
         self.local(f"team_dirs = {json.dumps([self.team])}\n")
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
-        inside, tasks = os.path.join(self.team, "w"), os.path.join(self.team, "tasks")
+        inside = os.path.join(self.team, "w")
         for kw, what in (
             ({"workdir": inside}, f"the workdir {inside}"),
             ({"cwd": self.tmp}, f"the cwd {self.tmp}"),
             ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
-            ({"keys": {"read": [self.tmp]}}, f"a dir the run adds {self.tmp}"),
-            ({"keys": {"read": [tasks]}}, f"a dir the run adds {tasks}"),
         ):
             with self.subTest(what=what):
                 self.assertEqual(
                     self.refused(**kw),
                     f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
                 )
+
+    def test_a_read_dir_overlapping_one_is_read_unadded(self):
+        for read in (self.tmp, os.path.join(self.team, "tasks")):
+            with self.subTest(read=read):
+                access = self.planned(keys={"read": [read]})[0].spec.access
+                self.assertEqual((access.dirs, access.reads), ((), (TASKS, read)))
+
+    def test_one_overlapping_codex_home_is_refused(self):
+        for home in (os.path.join(self.team, "codex"), self.tmp):
+            with self.subTest(home=home), mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+                self.assertEqual(
+                    self.refused(runtime="codex"),
+                    f"team_dirs: {self.team} overlaps a dir codex can write {home}: the agent "
+                    "run can write there",
+                )
+
+    def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
+        with mock.patch.object(api, "writable_dirs", return_value=()) as asked:
+            got = self.planned(resume=SID)[0]
+            asked.assert_called_once_with("fake", got.spec, SID)
+            asked.reset_mock()
+            self.local("")
+            self.planned(runtime="codex")
+            asked.assert_not_called()
 
     def test_a_symlink_in_one_is_checked_by_its_real_path(self):
         tasks, moved = os.path.join(self.team, "tasks"), os.path.join(self.work, "team-tasks")
@@ -419,26 +452,59 @@ class CustomTeam(Base):
         self.tasks = os.path.join(self.team, "tasks")
         self.found = composer.team(composer.TEAM, [self.team])
 
-    def test_the_roles_own_tasks_dir_is_an_added_dir_exempt_from_the_check(self):
-        got, _ = self.planned("poet", "verse", team=self.found)
-        self.assertIn(self.tasks, got.spec.access.dirs)
+    def read_unadded(self, role, task, reads, **kw):
+        """`role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs."""
+        home = os.path.join(self.tmp, "codex")
+        for runtime in ("fake", "codex"):
+            with (
+                self.subTest(role=role, runtime=runtime),
+                mock.patch.dict(os.environ, {"CODEX_HOME": home}),
+            ):
+                got, _ = self.planned(role, task, team=self.found, runtime=runtime, **kw)
+                self.assertEqual((got.spec.access.dirs, got.spec.access.reads), ((), reads))
+        return got
+
+    def test_the_roles_own_tasks_dir_is_a_read_dir_never_added(self):
+        got = self.read_unadded("poet", "verse", (self.tasks,))
         self.assertEqual(TASKS_PARAM.search(got.prompt)[1], self.tasks)
+
+    def test_a_read_dir_holding_it_or_its_tasks_dir_is_read_unadded(self):
+        self.read_unadded("poet", "verse", (self.tasks, self.team), keys={"read": [self.team]})
+        self.read_unadded(
+            "researcher", "light-research", (TASKS, self.tasks), keys={"read": [self.tasks]}
+        )
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
         inside, top = os.path.join(self.team, "w"), os.path.dirname(self.team)
-        for role, kw, what in (
-            ("poet", {"workdir": inside}, f"the workdir {inside}"),
-            ("poet", {"cwd": top}, f"the cwd {top}"),
-            ("poet", {"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
-            ("poet", {"keys": {"read": [self.team]}}, f"a dir the run adds {self.team}"),
-            ("researcher", {"keys": {"read": [self.tasks]}}, f"a dir the run adds {self.tasks}"),
+        for kw, what in (
+            ({"workdir": inside}, f"the workdir {inside}"),
+            ({"cwd": top}, f"the cwd {top}"),
+            ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
+            ({"keys": {"write": [self.tasks]}}, f"write dir {self.tasks} {self.tasks}"),
         ):
-            with self.subTest(role=role, what=what):
-                task = "verse" if role == "poet" else "light-research"
+            with self.subTest(what=what):
                 self.assertEqual(
-                    self.refused(role, task, team=self.found, **kw),
+                    self.refused("poet", "verse", team=self.found, **kw),
                     f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
                 )
+
+    def test_one_overlapping_a_dir_codex_can_write_is_refused(self):
+        inside, top = os.path.join(self.team, "codex"), os.path.dirname(self.team)
+        tmpdir = f"[adapters.codex.env]\nTMPDIR = {json.dumps(top)}\n"
+        for home, local, what in (
+            (inside, "", inside),
+            (self.tasks, "", self.tasks),
+            (top, "", top),
+            (os.path.join(self.tmp, "codex"), tmpdir, top),
+        ):
+            with self.subTest(home=home, local=local):
+                self.local(local)
+                with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
+                    self.assertEqual(
+                        self.refused("poet", "verse", team=self.found, runtime="codex"),
+                        f"team_dirs: {self.team} overlaps a dir codex can write {what}: the "
+                        "agent run can write there",
+                    )
 
 
 if __name__ == "__main__":

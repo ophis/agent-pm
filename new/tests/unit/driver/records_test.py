@@ -4,7 +4,6 @@ import errno
 import io
 import json
 import os
-import stat
 import tempfile
 import threading
 import unittest
@@ -13,6 +12,7 @@ from contextlib import redirect_stderr
 from datetime import datetime
 
 from agent_pm.driver import records
+from agent_pm.utils import files
 
 from new.tests.case import Case
 
@@ -98,46 +98,9 @@ class Note(Base):
         self.assertRegex(err.getvalue(), r"^records: .*gone")
 
 
-class AppendLine(Base):
-    def test_appends_after_what_is_there_and_an_empty_text_creates_the_file_owner_only(self):
-        records.append_line(self.path, "")
-        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
-        records.append_line(self.path, "one\n")
-        records.append_line(self.path, "two\n")
-        self.assertEqual(self.content(), b"one\ntwo\n")
-
-    def test_a_short_write_continues_with_the_rest(self):
-        real = os.write
-        with unittest.mock.patch.object(
-            os, "write", side_effect=lambda fd, data: real(fd, bytes(data[:3]))
-        ) as write:
-            records.append_line(self.path, "héllo wörld\n")
-        self.assertEqual((write.call_count, self.content()), (5, "héllo wörld\n".encode()))
-
-    def test_a_symlink_is_refused(self):
-        target = os.path.join(self.dir, "target")
-        with open(target, "w") as f:
-            f.write("keep\n")
-        os.symlink(target, self.path)
-        with self.assertRaises(OSError):
-            records.append_line(self.path, "x\n")
-        with open(target) as f:
-            self.assertEqual(f.read(), "keep\n")
-
-    def test_a_fifo_is_refused_without_blocking_with_or_without_a_reader(self):
-        os.mkfifo(self.path)
-        with self.assertRaises(OSError) as e:
-            self.promptly(lambda: records.append_line(self.path, "x\n"))
-        self.assertEqual(e.exception.errno, errno.ENXIO)
-        reader = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-        self.addCleanup(os.close, reader)
-        with self.assertRaises(OSError) as e:
-            self.promptly(lambda: records.append_line(self.path, "x\n"))
-        self.assertEqual(e.exception.errno, errno.EINVAL)
-
-    def test_a_lone_surrogate_is_written_as_a_replacement_character(self):
-        records.append_line(self.path, json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n")
-        self.assertEqual(self.content(), b'{"text": "a?b"}\n')
+class AppendLine(unittest.TestCase):
+    def test_is_the_utils_one(self):
+        self.assertIs(records.append_line, files.append_line)
 
 
 class Holds(Base):
@@ -218,6 +181,19 @@ class Session(Base):
             {k: v for k, v in first.items() if k != "project"},
         )
         self.assertEqual(records.session(self.dir, SID), latest)
+
+    def test_metadata_updates_only_the_matching_latest_session(self):
+        first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
+        self.write(
+            first,
+            {"kind": "session_metadata", "sid": "other", "resume": "wrong"},
+            {"kind": "session_metadata", "sid": SID, "transcript": "/t", "resume": "resume"},
+        )
+        self.assertEqual(
+            records.session(self.dir, SID), {**first, "transcript": "/t", "resume": "resume"}
+        )
+        self.write(first, {"kind": "session_metadata", "sid": SID, "transcript": "/t"}, first)
+        self.assertEqual(records.session(self.dir, SID), first)
 
     def test_none_without_a_valid_session_record(self):
         self.assertIsNone(records.session(self.dir, SID))

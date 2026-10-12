@@ -16,10 +16,9 @@ naming the file.
 """
 
 from agent_pm.composer.base import SCHEMA, TEAM, ConfigError
-from agent_pm.composer.prompt import OUTCOME, render
+from agent_pm.composer.prompt import render
 from agent_pm.composer.run import RunConfig, RunParams, access, resolve, trusted_dirs
 from agent_pm.composer.teams import (
-    PROGRESS,
     Team,
     catalog,
     check_overlap,
@@ -29,6 +28,7 @@ from agent_pm.composer.teams import (
     team_dirs,
     team_paths,
 )
+from agent_pm.utils.protocol import OUTCOME, PROGRESS
 
 __all__ = [
     "ConfigError",

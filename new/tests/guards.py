@@ -1,4 +1,4 @@
-"""The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
+"""The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
 layer_imports(core)   imports go one way (new/README.md), none imports agent_tools or a BARE name, nested, relative
                       or import_module'd
@@ -13,6 +13,10 @@ tmux_calls(core)      "tmux" only in TMUX_HOST
 syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; the import
                       root holds only agent_pm
+orchestrator_imports(orch) src/ imports stdlib, siblings, utils, `from driver import api`, delegate's __all__ (and
+                      composer's, in config.py only); no module named as in NAMED
+orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
+config_once(orch)     config.load, linear.use_logs only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
 
 import ast
@@ -33,7 +37,7 @@ ALLOWED = {
 TOOLS = "agent_tools"
 PURE = ("utils", TOOLS)
 BARE = (*LAYERS, *PURE, "repo")
-RUNTIME = re.compile(r"claude|codex", re.I)
+RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
@@ -47,6 +51,17 @@ TUI_HOOK = "src/agent_pm/driver/modes/tui_hook.py"
 STANDALONE = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
+CORE_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "src")
+EXPORTERS = ("delegate", "composer")
+DENIED = {"adapters", "repo", "roster", "core", "tmux_host", "attended"}
+NAMED = {*LAYERS, "utils", "repo", "attended"}
+TOOL_STRINGS = ("tmux", "adapters")
+TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
+ENTRIES = ("src/run.py", "src/promote.py", "src/router.py")
+ONCE = ("config.load", "linear.use_logs")
+LOAD_HELPERS = ("runnable", "run_config", "docs")
+HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
+HANDOFF_HOME = "src/issues.py"
 
 
 def layer_imports(core: str) -> list[str]:
@@ -273,6 +288,153 @@ def _at_import(node):
         ):
             yield child
             yield from _at_import(child)
+
+
+def orchestrator_imports(orch: str) -> list[str]:
+    found = set()
+    src = {rel: text for rel, text in _files(orch, ".py") if rel.startswith("src/")}
+    siblings = {rel[4:-3] for rel in src if "/" not in rel[4:]}
+    found.update(f"{rel}: module named {rel[4:-3]}" for rel in src if rel[4:-3] in NAMED)
+    exported = {package: _exported(package) for package in EXPORTERS}
+    for rel, text in src.items():
+        tree = ast.parse(text, rel)
+        for line, module, name in _import_items(tree):
+            if _denied(rel, module, name, siblings, exported):
+                full = (
+                    module
+                    if name is None
+                    else module + name
+                    if module.endswith(".")
+                    else f"{module}.{name}"
+                )
+                found.add(f"{rel}:{line}: imports {full}")
+        bound = _bindings(tree)
+        found.update(
+            f"{rel}:{n.lineno}: uses {bound[n.value.id]}.{n.attr}"
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and bound.get(n.value.id) in exported
+            and n.attr not in exported[bound[n.value.id]]
+        )
+    return sorted(found)
+
+
+def orchestrator_text(orch: str) -> list[str]:
+    found = set()
+    for rel, text in _files(orch, (".py", ".toml")):
+        lines = text.splitlines()
+        grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
+        for number, line in enumerate(lines, 1):
+            found.update(
+                f"{rel}:{number}: runtime name {w}"
+                for w in RUNTIME.findall(line.replace("CLAUDE.md", " "))
+            )
+            if grammar:
+                found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
+        strings = (
+            _strings(ast.parse(text, rel))
+            if rel.endswith(".py")
+            else (
+                (number, m[1] or m[2])
+                for number, line in enumerate(lines, 1)
+                for m in TOML_STRING.finditer(TOML_CODE.match(line)[0])
+            )
+        )
+        found.update(
+            f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
+        )
+    return sorted(found)
+
+
+def config_once(orch: str) -> list[str]:
+    found = set()
+    for rel, text in _files(orch, ".py"):
+        if not rel.startswith("src/"):
+            continue
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        mains = {
+            id(n)
+            for top in tree.body
+            if rel in ENTRIES and isinstance(top, ast.FunctionDef) and top.name == "main"
+            for n in ast.walk(top)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                called = _dotted(node.func, bound)
+                if called in ONCE and id(node) not in mains:
+                    found.add(f"{rel}:{node.lineno}: calls {called} outside an entry main")
+                elif called.rpartition(".")[2] in LOAD_HELPERS and rel != "src/config.py":
+                    found.add(f"{rel}:{node.lineno}: calls {called}")
+    return sorted(found)
+
+
+def _denied(rel, module, name, siblings, exported):
+    top = module.split(".")[0]
+    if top in DENIED:
+        return True
+    if top in exported:
+        return (
+            "." in module
+            or name is not None
+            and name not in exported[top]
+            or (top == "composer" and rel != "src/config.py")
+        )
+    if top == "driver":
+        return (module, name) != ("driver", "api")
+    return not (top in sys.stdlib_module_names or top in siblings or top == "utils")
+
+
+def _exported(package):
+    with open(os.path.join(CORE_SRC, package, "__init__.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    return next(
+        set(ast.literal_eval(n.value))
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+    )
+
+
+def _import_items(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from ((node.lineno, a.name, None) for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            yield from (
+                (node.lineno, "." * node.level + (node.module or ""), a.name) for a in node.names
+            )
+        elif (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+            and _dotted(node.func, {}).rpartition(".")[2] in ("__import__", "import_module")
+        ):
+            yield node.lineno, node.args[0].value, None
+
+
+def _bindings(tree):
+    bound = {}
+    for node in ast.walk(tree):
+        for a in node.names if isinstance(node, (ast.Import, ast.ImportFrom)) else ():
+            if isinstance(node, ast.Import):
+                bound[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+            elif node.module and not node.level:
+                bound[a.asname or a.name] = f"{node.module}.{a.name}"
+    return bound
+
+
+def _dotted(node, bound):
+    chain = []
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    base = [bound.get(node.id, node.id)] if isinstance(node, ast.Name) else []
+    return ".".join([*base, *reversed(chain)])
 
 
 def _private(name):

@@ -1,6 +1,6 @@
-"""driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface,
-usage() and session_info(), the session env (Access.env) reaching a session but not its usage probe, over the fake
-adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
+"""driver/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
+session_info() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
+fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
 registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
 patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
 run; claude and codex, from the committed config, refuse it. The Mode protocol, and a Handle over a scripted Mode on a
@@ -721,6 +721,45 @@ class HandleOverAModeTest(Case):
         self.assertLess(len(found), 50, found)
         return found
 
+    def test_binding_and_late_metadata_preserve_completion(self):
+        adapter = fake_adapter.FakeAdapter({})
+        resolver = mock.Mock(side_effect=lambda info: dataclasses.replace(info, resume="resume n1"))
+        adapter.session_metadata = resolver
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        records.note(records.path(self.dir), "session", sid="s1", cwd=self.dir, project=False)
+        self.assertEqual(self.events(handle), [api.SessionBound("n1"), api.Exited(0)])
+        self.assertEqual(handle.info().resume, "resume n1")
+        self.assertEqual(records.session(self.dir, "s1")["resume"], "resume n1")
+        records.note(records.path(self.dir), "result", outcome={"status": "done"})
+        resolver.side_effect = lambda info: dataclasses.replace(info, transcript="/late")
+        self.assertEqual(handle.info().transcript, "/late")
+        self.assertEqual(records.session(self.dir, "s1")["transcript"], "/late")
+        self.assertTrue(records.complete(self.dir))
+        self.assertEqual(
+            sum(e["kind"] == "session" for e in records.read(records.path(self.dir))), 1
+        )
+        previous = handle.info()
+        resolver.side_effect = OSError("metadata unavailable")
+        self.assertEqual(handle.info(), previous)
+
+    def test_binding_record_failure_remains_fatal(self):
+        adapter = fake_adapter.FakeAdapter({})
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        with mock.patch.object(records, "note", side_effect=OSError("binding failed")):
+            with self.assertRaisesRegex(OSError, "binding failed"):
+                self.events(handle)
+        self.assertIn(("stop",), self.mode.calls)
+        self.assertEqual(handle.info().native_id, "")
+
+    def test_metadata_resolver_cannot_replace_session_identity_or_effective_project(self):
+        adapter = fake_adapter.FakeAdapter({})
+        adapter.session_metadata = lambda info: dataclasses.replace(
+            info, sid="other", native_id="other", cwd="/other", project=True, transcript="/t"
+        )
+        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        self.events(handle)
+        self.assertEqual(handle.info(), api.SessionInfo("s1", "n1", self.dir, False, "/t", ""))
+
     def test_events_in_order_the_modes_exited_dropped_exited_last_in_poll_slices(self):
         handle = self.handle(
             (0, [api.Activity("a"), api.Exited(9)], False),
@@ -928,9 +967,54 @@ class SessionInfoTest(Base):
         )
 
 
+class WritableDirsTest(Base):
+    def dirs(self, **kwargs):
+        return mock.patch.object(ProbeAdapter, "writable_dirs", autospec=True, **kwargs)
+
+    def test_the_fake_runtime_claims_none(self):
+        self.assertEqual(api.writable_dirs("fake", self.spec()), ())
+
+    def test_the_adapters_dirs_as_a_tuple_under_the_spec_with_the_resumed_sid(self):
+        spec = self.spec(access=Access(dirs=(self.dir,), cwd=self.dir), tier=2)
+        with self.dirs(return_value=[self.dir, self.workdir]) as dirs:
+            self.assertEqual(api.writable_dirs("probe", spec, "r1"), (self.dir, self.workdir))
+            self.assertEqual(api.writable_dirs("probe", spec), (self.dir, self.workdir))
+        self.assertEqual(
+            [c.args[1:] for c in dirs.call_args_list],
+            [(dataclasses.replace(spec, sid="r1"), True), (spec, False)],
+        )
+
+    def test_refuses_a_spec_sid_a_bad_resume_or_an_unknown_runtime(self):
+        set_sid = "spec.sid is set by writable_dirs(): pass resume="
+        bad_sid = 'sid must be a non-empty printable string without "/", got '
+        unknown = f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}"
+        cases = [
+            ("s1", None, "probe", set_sid),
+            ("s1", "s1", "probe", set_sid),
+            *((None, bad, "probe", bad_sid + repr(bad)) for bad in ("", "a/b", 5)),
+            (None, None, "nope", unknown),
+        ]
+        for spec_sid, resume, runtime, message in cases:
+            with (
+                self.subTest(spec_sid=spec_sid, resume=resume, runtime=runtime),
+                self.dirs() as dirs,
+                self.assertRaises(api.ConfigError) as caught,
+            ):
+                api.writable_dirs(runtime, self.spec(sid=spec_sid), resume)
+            self.assertEqual(str(caught.exception), message)
+            dirs.assert_not_called()
+
+    def test_an_os_error_from_the_adapter_is_a_config_error(self):
+        with self.dirs(side_effect=PermissionError(13, "denied")):
+            with self.assertRaises(api.ConfigError) as caught:
+                api.writable_dirs("probe", self.spec())
+        self.assertEqual(str(caught.exception), "probe's writable dirs: [Errno 13] denied")
+        self.assertIsInstance(caught.exception.__cause__, PermissionError)
+
+
 def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), sessions [], option None."""
+    (absent), sessions [], option None, pane %1."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -940,6 +1024,7 @@ def fake_host() -> mock.Mock:
     host.status.return_value = None
     host.sessions.return_value = []
     host.option.return_value = None
+    host.pane.return_value = "%1"
     return host
 
 
@@ -974,6 +1059,24 @@ class TuiBase(Base):
 
 
 class TuiStartTest(TuiBase):
+    def test_effective_project_override_reaches_info_record_and_tui_state(self):
+        original = fake_adapter.FakeTui.launch
+        for project in (True, False):
+
+            def launch(run, *args):
+                return dataclasses.replace(original(run, *args), project=project)
+
+            with (
+                self.subTest(project=project),
+                mock.patch.object(fake_adapter.FakeTui, "launch", launch),
+            ):
+                handle = self.tui(
+                    name=f"project-{project}", spec=self.spec(access=Access(project=not project))
+                )
+            self.assertIs(handle.info().project, project)
+            self.assertIs(records.session(self.workdir, handle.sid)["project"], project)
+            self.assertIs(tui.read_state(handle.name)["project"], project)
+
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
 
@@ -1112,10 +1215,10 @@ class TuiStartTest(TuiBase):
         self.host.read.return_value = "pane text"
         self.assertEqual((handle.state(), handle.screen()), ("live", "pane text"))
         handle.send("hi")
-        self.host.paste.assert_called_once_with("w1", "hi")
-        self.host.keys.assert_called_once_with("w1", "Enter")
+        self.host.paste.assert_called_once_with("%1", "hi")
+        self.host.keys.assert_called_once_with("%1", "Enter")
         handle.stop()
-        self.host.kill.assert_called_once_with("w1")
+        self.host.kill.assert_called_once_with("%1")
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
 
@@ -1143,16 +1246,16 @@ class SessionEnvTest(TuiBase):
 
 class AttachTest(TuiBase):
     def started(self, *hooked) -> None:
-        """Tui session w1 started (sid SID), then a hooks.jsonl record per (label, payload) in `hooked`, its @sid SID;
-        the host's calls cleared."""
+        """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label, payload) in `hooked`,
+        its @sid SID; the host's calls cleared."""
         self.tui(name="w1", sid=SID, events=self.events)
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "w") as f:
             f.writelines(
                 json.dumps({"ts": "", "label": label, "payload": payload}) + "\n"
                 for label, payload in hooked
             )
-        self.host.option.side_effect = lambda name, key: (
-            SID if (name, key) == ("w1", "@sid") else None
+        self.host.option.side_effect = lambda target, key: (
+            SID if (target, key) == ("%1", "@sid") else None
         )
         self.host.reset_mock()
 
@@ -1165,7 +1268,12 @@ class AttachTest(TuiBase):
         )
         self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
         self.assertEqual(
-            self.host.mock_calls, [mock.call.option("w1", "@sid"), mock.call.pane("w1")]
+            self.host.mock_calls,
+            [
+                mock.call.pane("w1"),
+                mock.call.option("%1", "@sid"),
+                mock.call.option("%1", "@state"),
+            ],
         )
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(
@@ -1173,6 +1281,53 @@ class AttachTest(TuiBase):
             )
         self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))
         self.assertEqual(handle.reply, "r2")
+
+    def test_attach_refreshes_bound_metadata_without_starting_a_session(self):
+        self.started(("tool", {"session_id": "n1"}))
+        records.note(records.path(self.workdir), "result", outcome={"status": "done"})
+
+        def metadata(adapter, info):
+            self.assertEqual(info.native_id, "n1")
+            return dataclasses.replace(info, transcript="/attached", resume="resume n1")
+
+        with mock.patch.object(fake_adapter.FakeAdapter, "session_metadata", metadata):
+            handle = api.attach("w1")
+        self.assertEqual(handle.info().transcript, "/attached")
+        self.assertEqual(records.session(self.workdir, SID)["resume"], "resume n1")
+        self.assertTrue(records.complete(self.workdir))
+        self.assertEqual(sum(e["kind"] == "session" for e in self.written()), 1)
+
+    def test_attached_while_blocked_no_idle_timeout_until_its_next_event(self):
+        """On a fake clock (time.monotonic, time.sleep), a tool record comes at 10 s."""
+        hooks = os.path.join(self.root, "w1", "hooks.jsonl")
+        for hooked, state, first in (
+            ((("tool", {}), ("ask", {})), None, (api.Activity(""), 10)),
+            ((), "blocked", (api.Activity(""), 10)),
+            ((("ask", {}), ("tool", {})), None, (api.IdleTimeout(1), 1)),
+            ((("ask", {}), ("stop", {})), "working", (api.IdleTimeout(1), 1)),
+        ):
+            with self.subTest(hooked=hooked, state=state):
+                self.host.status.return_value = None
+                self.started(*hooked)
+                options = {"@sid": SID, "@state": state}
+                self.host.option.side_effect = lambda target, key: options[key]
+                self.host.status.return_value, self.host.read.return_value = tmux_host.RUNNING, ""
+                now = [0.0]
+
+                def sleep(seconds):
+                    if now[0] > 60:
+                        raise AssertionError("no event")
+                    now[0] += seconds
+                    if now[0] - seconds < 10 <= now[0]:
+                        with open(hooks, "a") as f:
+                            f.write(json.dumps({"ts": "", "label": "tool", "payload": {}}) + "\n")
+
+                with (
+                    mock.patch("time.monotonic", lambda: now[0]),
+                    mock.patch("time.sleep", sleep),
+                ):
+                    event = next(api.attach("w1", idle_timeout=1).events())
+                self.assertEqual((event, round(now[0])), first)
 
     def test_a_bad_name_or_idle_timeout_is_refused_before_tmux_or_a_path(self):
         self.name_refused(api.attach)
@@ -1481,6 +1636,7 @@ class ExportsTest(Case):
             "detach",
             "layout",
             "show",
+            "writable_dirs",
         ):
             with self.subTest(name=name):
                 self.assertIn(name, api.__all__)

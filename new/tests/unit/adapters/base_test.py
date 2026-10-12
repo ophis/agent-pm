@@ -106,19 +106,26 @@ class AccessTest(Refusals):
     def test_defaults(self):
         access = Access()
         self.assertEqual(
-            (access.dirs, access.commands, access.cwd, access.project, access.env),
-            ((), (), "", False, {}),
+            (access.dirs, access.commands, access.cwd, access.project, access.reads, access.env),
+            ((), (), "", False, (), {}),
         )
 
     def test_accepts_tuples_of_strings(self):
-        access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True)
-        self.assertEqual((access.dirs, access.commands), (("/a",), ("git",)))
+        access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",))
+        self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
 
-    def test_refuses_dirs_or_commands_that_are_not_a_tuple_of_strings(self):
+    def test_reads_is_the_last_positional_field(self):
+        self.assertEqual(
+            Access(("/a",), ("git",), "/c", True, ("/r",)),
+            Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",)),
+        )
+
+    def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
             with self.subTest(bad=bad):
                 self.refused(lambda: Access(dirs=bad), "dirs must be a tuple of strings")
                 self.refused(lambda: Access(commands=bad), "commands must be a tuple of strings")
+                self.refused(lambda: Access(reads=bad), "reads must be a tuple of strings")
 
     def test_accepts_an_env_of_shell_names_to_strings(self):
         env = {"PYTHONPATH": "/a b;c", "_x1": ""}
@@ -259,6 +266,14 @@ class LaunchTest(Refusals):
             (("x",), {}, (), "", "", ""),
         )
 
+    def test_project_override_is_optional_and_boolean(self):
+        self.assertIsNone(Launch(("x",)).project)
+        for value in (False, True):
+            self.assertIs(Launch(("x",), project=value).project, value)
+        for value in (0, 1, "yes", []):
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "launch: project"):
+                Launch(("x",), project=value)
+
     def test_accepts_strings(self):
         launch = Launch(
             ("x", "-y"),
@@ -352,6 +367,16 @@ class AdapterTest(Refusals):
             with self.subTest(output=output):
                 self.assertIsNone(adapter.usage(output))
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
+
+    def test_session_metadata_preserves_info_by_default(self):
+        info = base.SessionInfo("s", "n", "/c", False, "/t", "resume n")
+        self.assertIs(StubAdapter({}).session_metadata(info), info)
+
+    def test_writable_dirs_are_none_unless_overridden(self):
+        spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(StubAdapter({}).writable_dirs(spec, resume), ())
 
     def test_in_process_is_none_unless_overridden(self):
         self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))

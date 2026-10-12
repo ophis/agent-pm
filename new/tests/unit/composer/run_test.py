@@ -541,27 +541,30 @@ class Access(Fake):
             team=found or team(self.root),
         )
 
-    def test_dirs_writes_and_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
+    def test_dirs_reads_writes_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
         env = {"PYTHONPATH": IMPORT_ROOT}
-        for name, cfg, repo_dir, dirs, writes, commands, want, session in (
+        out = os.path.join(self.methods, "out")
+        for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
             (
                 "gate",
                 {"commands": ["python3 -P -m x *"], "gate": gate},
                 None,
+                [],
                 [self.tasks],
                 [],
                 ["python3 -P -m x *"],
                 gate,
                 env,
             ),
-            ("no gate", {"commands": ["x"]}, None, [self.tasks], [], ["x"], "", env),
-            ("a gate alone", {"gate": gate}, None, [self.tasks], [], [], gate, env),
+            ("no gate", {"commands": ["x"]}, None, [], [self.tasks], [], ["x"], "", env),
+            ("a gate alone", {"gate": gate}, None, [], [self.tasks], [], [], gate, env),
             (
                 "repo entry binds to the repo dir",
                 {"write": ["repo"], "commands": ["x --dir {{workdir}}/src *"]},
                 self.repo,
-                [self.tasks, self.repo],
+                [self.repo],
+                [self.tasks],
                 [self.repo],
                 [f"x --dir {self.work}/src *"],
                 "",
@@ -571,18 +574,42 @@ class Access(Fake):
                 "no repo dir drops the repo entry",
                 {"read": ["repo"], "write": ["repo", "~/w", "~/w"]},
                 None,
-                [self.tasks, home],
+                [home],
+                [self.tasks],
                 [home],
                 [],
                 "",
                 {},
             ),
             (
-                "methods fills read and write, deduped",
+                "read dirs after the tasks dir, deduped",
+                {"read": ["{{methods}}", "repo", self.tasks, "{{methods}}"]},
+                self.repo,
+                [],
+                [self.tasks, self.methods, self.repo],
+                [],
+                [],
+                "",
+                {},
+            ),
+            (
+                "methods fills read and write, deduped, write wins",
                 {"read": ["{{methods}}", self.tasks], "write": ["{{methods}}/out", "{{methods}}"]},
                 None,
-                [self.tasks, self.methods, os.path.join(self.methods, "out")],
-                [os.path.join(self.methods, "out"), self.methods],
+                [out, self.methods],
+                [self.tasks],
+                [out, self.methods],
+                [],
+                "",
+                {},
+            ),
+            (
+                "a tasks dir to write",
+                {"write": [self.tasks]},
+                None,
+                [self.tasks],
+                [],
+                [self.tasks],
                 [],
                 "",
                 {},
@@ -593,6 +620,7 @@ class Access(Fake):
                     self.intent(repo_dir=repo_dir, **cfg),
                     Intent(
                         dirs=tuple(dirs),
+                        reads=tuple(reads),
                         writes=tuple(writes),
                         commands=tuple(commands),
                         gate=want,
@@ -602,19 +630,38 @@ class Access(Fake):
                     ),
                 )
 
-    def test_the_workdir_comes_first_only_when_the_cwd_is_another_dir(self):
+    def test_a_dir_to_read_and_write_is_only_in_dirs_also_through_a_symlink(self):
+        shared, link = os.path.join(self.tmp, "shared"), os.path.join(self.tmp, "link")
+        tasks_link = os.path.join(self.tmp, "tasks-link")
+        os.makedirs(shared)
+        os.symlink(shared, link)
+        os.symlink(self.tasks, tasks_link)
+        for read, write, dirs, reads in (
+            ([shared], [shared], (shared,), (self.tasks,)),
+            ([link], [shared], (shared,), (self.tasks,)),
+            ([shared], [link], (link,), (self.tasks,)),
+            ([], [tasks_link], (tasks_link,), ()),
+            ([link, shared], [], (), (self.tasks, link)),
+        ):
+            with self.subTest(read=read, write=write):
+                got = self.intent(read=read, write=write)
+                self.assertEqual((got.dirs, got.reads, got.writes), (dirs, reads, tuple(write)))
+
+    def test_the_workdir_comes_first_only_when_the_cwd_is_another_dir_and_then_is_no_read_dir(self):
         other, link = os.path.join(self.tmp, "other"), os.path.join(self.tmp, "link")
         for d in (self.work, other):
             os.makedirs(d)
         os.symlink(self.work, link)
-        for cwd, dirs in (
-            (self.work, (self.tasks,)),
-            (link, (self.tasks,)),
-            (other, (self.work, self.tasks)),
+        for cwd, dirs, reads in (
+            (self.work, (self.repo,), (self.tasks, link)),
+            (link, (self.repo,), (self.tasks, link)),
+            (other, (self.work, self.repo), (self.tasks,)),
         ):
             with self.subTest(cwd=cwd):
-                got = self.intent(cwd=cwd, project=True)
-                self.assertEqual((got.dirs, got.cwd, got.project), (dirs, cwd, True))
+                got = self.intent(cwd=cwd, project=True, read=[link], write=[self.repo])
+                self.assertEqual(
+                    (got.dirs, got.reads, got.cwd, got.project), (dirs, reads, cwd, True)
+                )
 
     def test_a_cwd_that_is_not_an_absolute_path(self):
         for cwd in ("", "work"):
@@ -623,9 +670,10 @@ class Access(Fake):
                     self.intent(cwd=cwd)
                 self.assertEqual(str(cm.exception), f"cwd must be an absolute path, got {cwd!r}")
 
-    def test_a_team_dir_roles_tasks_dir(self):
+    def test_a_team_dir_roles_tasks_dir_is_read_not_added(self):
         found, top = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
-        self.assertEqual(self.intent(found=found, role="poet").dirs, (os.path.join(top, "tasks"),))
+        got = self.intent(found=found, role="poet")
+        self.assertEqual((got.dirs, got.reads), ((), (os.path.join(top, "tasks"),)))
 
     def test_an_unknown_placeholder(self):
         for key in ("read", "write", "commands"):

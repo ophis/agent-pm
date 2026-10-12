@@ -29,10 +29,10 @@ from agent_pm.composer.base import (
     read_text,
 )
 from agent_pm.composer.run import RunConfig, RunParams
-from agent_pm.composer.teams import PROGRESS, Team, index, tasks_path, team_or_default
+from agent_pm.composer.teams import Team, index, tasks_path, team_or_default
 from agent_pm.utils.markdown import unfenced
+from agent_pm.utils.protocol import OUTCOME, PROGRESS
 
-OUTCOME = "agent-pm-outcome"
 RESUME = (
     "Resumed agent run after an interruption. These rules are current and may have changed since this session "
     "started. The input below is current: it adds to this session's earlier input. Continue the task this "

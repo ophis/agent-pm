@@ -1,3 +1,5 @@
+"""Codex isolated account queries through a fake native app-server."""
+
 import json
 import os
 import shlex

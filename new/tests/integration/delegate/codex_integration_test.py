@@ -35,6 +35,8 @@ def said(*texts) -> list[dict]:
 
 
 class Integration(Case):
+    ROLE, TASK = "dummy-tester", "echo"
+
     def setUp(self):
         home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         tmp = tempfile.TemporaryDirectory()
@@ -73,9 +75,9 @@ class Integration(Case):
             "--runtime",
             "codex",
             "--role",
-            "dummy-tester",
+            self.ROLE,
             "--task",
-            "echo",
+            self.TASK,
             "--input",
             "Hello.",
             "--out",
@@ -125,7 +127,8 @@ class Codex(Integration):
             self.assertIn(line, res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
         self.assertEqual(
-            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"]
+            self.kinds(),
+            ["session", "input", "client_session", "session_metadata", "progress", "result", "end"],
         )
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE])
         (call,) = self.calls()
@@ -197,6 +200,7 @@ class Codex(Integration):
                 "session",
                 "input",
                 "client_session",
+                "session_metadata",
                 "progress",
                 "invalid",
                 "session",

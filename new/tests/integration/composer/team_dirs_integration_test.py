@@ -1,5 +1,5 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
-dir added; its catalog row; a read dir holding the team dir refused."""
+dir to read, never added; its catalog row; a read dir holding the team dir composes unadded, a write dir refused."""
 
 import json
 import os
@@ -80,7 +80,7 @@ class TeamDirs(child.Case):
     def test_a_team_dirs_role_composes_with_its_tasks_dir(self):
         got = self.composed()
         self.assertEqual(TASKS_PARAM.search(got["prompt"])[1], self.tasks)
-        self.assertIn(self.tasks, got["intent"]["dirs"])
+        self.assertEqual((got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks]))
         self.assertEqual(os.listdir(self.work), [])
 
     def test_the_catalog_lists_its_role_after_cores_with_its_sources(self):
@@ -100,23 +100,31 @@ class TeamDirs(child.Case):
         tasks = TASKS_PARAM.search(prompt)[1]
         with open(os.path.join(tasks, "note.md"), encoding="utf-8") as f:
             self.assertIn(f"\n   {MARK}\n", f.read())
-        self.assertIn(tasks, got["intent"]["dirs"])
+        self.assertIn(tasks, got["intent"]["reads"])
         self.assertIn(f"\n{RETURN}\n", prompt)
         self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
-    def test_a_run_and_its_resume_add_its_tasks_dir(self):
+    def test_a_run_and_its_resume_read_its_tasks_dir_unadded(self):
         for resume in (False, True):
             with self.subTest(resume=resume):
                 got = self.composed(resume=resume)
-                dirs = got["intent"]["dirs"]
-                self.assertIn(self.tasks, map(os.path.realpath, dirs))
-                self.assertNotIn(CORE_TASKS, dirs)
+                dirs, reads = got["intent"]["dirs"], got["intent"]["reads"]
+                self.assertIn(self.tasks, map(os.path.realpath, reads))
+                self.assertNotIn(self.tasks, map(os.path.realpath, dirs))
+                self.assertNotIn(CORE_TASKS, dirs + reads)
                 self.assertIn(f"`{self.tasks}`", got["prompt"])
                 self.assertEqual(got["prompt"].startswith(RESUME), resume)
                 self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
-    def test_a_read_dir_holding_the_team_dir_is_refused(self):
+    def test_a_read_dir_holding_the_team_dir_composes_unadded(self):
         self.local(f"[roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
+        got = self.composed()
+        self.assertEqual(
+            (got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks, self.team])
+        )
+
+    def test_a_write_dir_holding_the_team_dir_is_refused(self):
+        self.local(f"[roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
         got = self.compose("writer", "note")
         self.assertEqual(
             got,

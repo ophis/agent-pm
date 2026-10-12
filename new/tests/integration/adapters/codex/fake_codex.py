@@ -26,7 +26,7 @@ def parse(args):
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--json", action="store_true", required=True)
     parser.add_argument("--skip-git-repo-check", action="store_true", required=True)
-    parser.add_argument("-s", choices=("workspace-write",), required=True)
+    parser.add_argument("-s", choices=("danger-full-access", "workspace-write"), required=True)
     parser.add_argument("-m")
     parser.add_argument("-c", action="append", default=[])
     parser.add_argument("--add-dir", action="append", default=[])

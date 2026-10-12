@@ -1,9 +1,9 @@
 """The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
 starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
-`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record.
-attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a tmux session of its
-own."""
+`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record;
+writable_dirs() the dirs a runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
+tui session by name; detach() runs a command in a tmux session of its own."""
 
 import contextlib
 import logging
@@ -87,6 +87,7 @@ __all__ = [
     "show",
     "start",
     "usage",
+    "writable_dirs",
 ]
 
 MODES = ("headless", "tui", "in_process")
@@ -153,15 +154,18 @@ class Handle:
         idle_timeout: float | None,
         name: str | None = None,
         reply: str | None = None,
+        blocked: bool = False,
+        adapter: Adapter | None = None,
     ):
         self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
+        self._adapter = adapter
         self._channel = records.path(workdir)
         self._reply = reply
         self._queue: deque = deque()
         self._closed = False
         self._ended = False
-        self._blocked = False
+        self._blocked = blocked
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
         last = time.monotonic()
@@ -209,6 +213,7 @@ class Handle:
                 durable=True,
             )
             self._info = replace(self._info, native_id=event.native_id)
+            self._refresh_metadata()
         elif isinstance(event, Stderr):
             records.note(self._channel, "stderr", best_effort=True, text=event.text)
         elif isinstance(event, Reply):
@@ -228,7 +233,27 @@ class Handle:
     def stop(self) -> None:
         self._host.stop()
 
+    def _refresh_metadata(self) -> None:
+        if self._adapter is None or not self._info.native_id:
+            return
+        try:
+            resolved = self._adapter.session_metadata(self._info)
+            info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
+        except Exception:
+            return
+        if info != self._info:
+            self._info = info
+            records.note(
+                self._channel,
+                "session_metadata",
+                best_effort=True,
+                sid=self.sid,
+                transcript=info.transcript,
+                resume=info.resume,
+            )
+
     def info(self) -> SessionInfo:
+        self._refresh_metadata()
         return self._info
 
     @property
@@ -300,6 +325,7 @@ def start(
         idle_timeout=idle_timeout,
         info=info,
         name=steps.name,
+        adapter=adapter,
     )
 
 
@@ -318,7 +344,12 @@ class _LaunchSteps:
             raise ConfigError(f"runtime {self.runtime!r} gave no command")
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
         return SessionInfo(
-            spec.sid, "", self.cwd, spec.access.project, launch.transcript, launch.resume
+            spec.sid,
+            "",
+            self.cwd,
+            spec.access.project if launch.project is None else launch.project,
+            launch.transcript,
+            launch.resume,
         )
 
 
@@ -443,7 +474,8 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
     _idle(idle_timeout)
     state = tui.read_state(name)
     try:
-        run = registry.adapter(state["runtime"]).tui()
+        adapter = registry.adapter(state["runtime"])
+        run = adapter.tui()
     except ConfigError as e:
         raise DriverError(f"no tui session {name}: {e}") from None
     if run is None:
@@ -457,7 +489,7 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         state["transcript"],
         state["resume"],
     )
-    return Handle(
+    handle = Handle(
         state["sid"],
         state["runtime"],
         "tui",
@@ -467,7 +499,11 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         idle_timeout=idle_timeout,
         name=name,
         reply=host.reply,
+        blocked=host.blocked,
+        adapter=adapter,
     )
+    handle.info()
+    return handle
 
 
 def sessions(prefix: str = "") -> Sessions:
@@ -545,7 +581,7 @@ def attach_command(name: str) -> str:
 def detach(
     name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None
 ) -> None:
-    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv runs."""
+    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd."""
     _name(name)
     if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
         raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
@@ -599,3 +635,16 @@ def session_info(runtime: str, sid: str, cwd: str) -> SessionStatus:
         return adapter.session_status(sid, cwd)
     except OSError:
         return SessionStatus("unknown", None, "")
+
+
+def writable_dirs(runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
+    """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails closed."""
+    if spec.sid is not None:
+        raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
+    if resume is not None and (error := sid_error(resume)):
+        raise ConfigError(error)
+    adapter = registry.adapter(runtime)
+    try:
+        return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
+    except OSError as e:
+        raise ConfigError(f"{runtime}'s writable dirs: {e}") from e

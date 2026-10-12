@@ -64,7 +64,8 @@ jobs:
         with:
           python-version: "3.11"
       - name: New core unit tests
-        run: python3 -m unittest discover -s new/tests/unit -t . -p "*_test.py"
+        run: |
+          python3 -m unittest $(find new/tests/unit -name '*_test.py' -not -path '*/orchestrator/*' | sed 's#/#.#g; s#\.py$##')
 
   new-integration:
     name: New core integration (Python 3.11)
@@ -86,4 +87,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
       - name: New core integration tests
-        run: python3 -m unittest discover -v -s new/tests/integration -t . -p "*_test.py"
+        run: |
+          python3 -m unittest -v $(find new/tests/integration -name '*_test.py' -not -path '*/orchestrator/*' | sed 's#/#.#g; s#\.py$##')
+
+  new-orchestrator-unit:
+    name: New orchestrator unit tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: New orchestrator unit tests
+        run: python3 -m unittest discover -s new/tests/unit/orchestrator -t . -p "*_test.py"
+
+  new-orchestrator-integration:
+    name: New orchestrator integration (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+      - name: New orchestrator integration tests
+        run: python3 -m unittest discover -v -s new/tests/integration/orchestrator -t . -p "*_test.py"

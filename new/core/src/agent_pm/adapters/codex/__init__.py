@@ -4,10 +4,11 @@ from agent_pm.adapters.base import Adapter, SessionStatus
 
 from .common import CodexCommon
 from .headless import CodexHeadless
+from .tui import CodexTui
 
 
 class CodexAdapter(Adapter):
-    keys = frozenset({"tiers", "efforts", "shell_network", "env"})
+    keys = frozenset({"tiers", "efforts", "shell_network", "sandbox", "env"})
     runtime_note = (
         "Run each shell call separately. Command approvals follow Codex automatic review."
     )
@@ -20,7 +21,7 @@ class CodexAdapter(Adapter):
         return CodexHeadless(self)
 
     def tui(self):
-        return None
+        return CodexTui(self)
 
     def usage_probe(self):
         return self.common.probe()
@@ -28,6 +29,12 @@ class CodexAdapter(Adapter):
     def usage(self, output):
         return self.common.parse_usage(output)
 
+    def session_metadata(self, info):
+        return self.common.session_metadata(info)
+
     def session_status(self, sid, cwd):
         found = self.common.inspect(sid, cwd)
         return SessionStatus(found.resumable, found.last_active, found.resume)
+
+    def writable_dirs(self, spec, resume):
+        return self.common.writable_dirs(spec, resume)

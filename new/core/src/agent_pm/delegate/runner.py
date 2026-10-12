@@ -11,11 +11,13 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.composer import OUTCOME, RunConfig, Team
-from agent_pm.delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome, save
+from agent_pm.delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.outcome import read as read_outcome
 from agent_pm.delegate.plan import ConfigError, Plan, plan
 from agent_pm.delegate.reply import marks, outcome_block
 from agent_pm.driver import api
+from agent_pm.utils.files import save
+from agent_pm.utils.text import printable
 
 IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
@@ -141,11 +143,6 @@ class Tui(Headless):
 
 
 POLICIES = {"headless": Headless, "tui": Tui, "in_process": Headless}
-
-
-def printable(text: str) -> str:
-    """Without control characters but tabs: an agent run's output can't steer the terminal."""
-    return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
 def _say(text: str) -> None:
@@ -351,11 +348,17 @@ class _Attempts:
 
     def finish(self, outcome: Outcome, rc: int) -> Result:
         p, kind = self.plan, self.plan.run.output["type"]
-        if kind in SAVES_DELIVERABLE and outcome.deliverable and p.out:
+        if outcome.deliverable and p.out:
             if not api.records.holds(
                 p.out, outcome.deliverable
             ):  # else the agent run wrote it there
-                save(p.out, outcome.deliverable)
+                try:
+                    save(p.out, outcome.deliverable)
+                except OSError as e:
+                    if kind in SAVES_DELIVERABLE:
+                        raise
+                    _say(f"delegate: cannot save the deliverable to {p.out}: {e}")
+                    self.note("save_error", error=str(e))
             if kind == "local":
                 outcome = replace(outcome, url=p.out)
         if not p.resume and outcome.status != "needs_input" and "start" not in self.seen:

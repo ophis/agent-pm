@@ -1,22 +1,38 @@
+"""Codex Driver usage queries and environment isolation through a fake app-server."""
+
 import json
 import os
 import shlex
 import sys
+import tempfile
 import time
+import unittest
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.adapters.base import Usage, Window
+from agent_pm.adapters.codex import CodexAdapter
 from agent_pm.driver import api, registry
 
+from new.tests.case import NEW
 from new.tests.integration.adapters.codex import fake_app_server
-from new.tests.unit.adapters.codex.support import Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
-class UsageIntegrationTest(Base):
+class UsageIntegrationTest(unittest.TestCase):
+    def test_fixture_preserves_filesystem_checks_outside_its_scratch(self):
+        self.assertTrue(os.path.lexists(__file__))
+
     def setUp(self):
-        super().setUp()
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.home, self.work = (self.root / name for name in ("home", "work"))
+        self.codex_home = self.home / ".codex"
+        for path in (self.work, self.codex_home):
+            path.mkdir(parents=True, exist_ok=True)
+        self.common = CodexAdapter({"shell_network": False}).common
         self.bin = self.root / "bin"
         self.bin.mkdir()
         executable = self.bin / "codex"
@@ -33,6 +49,8 @@ class UsageIntegrationTest(Base):
             mock.patch.dict(
                 os.environ,
                 {
+                    "HOME": str(self.home),
+                    "CODEX_HOME": str(self.codex_home),
                     "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                     "CODEX_THREAD_ID": "inherited",
                 },
@@ -119,15 +137,15 @@ class UsageIntegrationTest(Base):
 
     def test_native_environment_filters_markers_and_keeps_configured_overrides(self):
         common = self.common
-        inherited = {key: "inherited" for key in (*common.unset, *common.defaults)}
+        inherited = {key: "inherited" for key in (*common.UNSET, *common.DEFAULTS)}
         with mock.patch.dict(os.environ, inherited):
             self.assertEqual(
                 self.probe(FAKE_ADDITION="configured", PAGER="configured"), Usage(FIVE, WEEK)
             )
         env = json.loads(self.log.read_text().splitlines()[0])["env"]
-        for key in common.unset:
+        for key in common.UNSET:
             self.assertIsNone(env[key], key)
-        for key, value in common.defaults.items():
+        for key, value in common.DEFAULTS.items():
             self.assertEqual(env[key], "configured" if key == "PAGER" else value, key)
         self.assertEqual(
             (env["CODEX_HOME"], env["FAKE_ADDITION"]), (str(self.codex_home), "configured")
