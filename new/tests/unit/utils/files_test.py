@@ -1,4 +1,7 @@
 """new/core/src/utils/files.py: read_regular, append_line and save (main's save cases)."""
+
+from new.tests import hermetic  # noqa: F401
+
 import errno
 import json
 import os
@@ -9,7 +12,6 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from new.tests import hermetic  # noqa: F401
 from utils import files
 
 DATA = b"0123456789"
@@ -35,6 +37,7 @@ class Base(unittest.TestCase):
                 out["value"] = call()
             except BaseException as e:
                 out["error"] = e
+
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         thread.join(5)
@@ -59,17 +62,32 @@ class ReadRegular(Base):
 
     def test_limit_from_the_start_or_the_end(self):
         self.write()
-        for limit, tail, want in ((4, False, b"0123"), (4, True, b"6789"), (0, False, b""), (0, True, b""),
-                                  (20, False, DATA), (20, True, DATA), (None, True, DATA)):
+        for limit, tail, want in (
+            (4, False, b"0123"),
+            (4, True, b"6789"),
+            (0, False, b""),
+            (0, True, b""),
+            (20, False, DATA),
+            (20, True, DATA),
+            (None, True, DATA),
+        ):
             with self.subTest(limit=limit, tail=tail):
                 self.assertEqual(files.read_regular(self.path, limit=limit, tail=tail), want)
 
     def test_from_an_offset(self):
         self.write()
-        for offset, limit, tail, want in ((3, None, False, b"3456789"), (3, 4, False, b"3456"), (3, 4, True, b"6789"),
-                                          (8, 4, True, b"89"), (10, None, False, b""), (12, 4, False, b"")):
+        for offset, limit, tail, want in (
+            (3, None, False, b"3456789"),
+            (3, 4, False, b"3456"),
+            (3, 4, True, b"6789"),
+            (8, 4, True, b"89"),
+            (10, None, False, b""),
+            (12, 4, False, b""),
+        ):
             with self.subTest(offset=offset, limit=limit, tail=tail):
-                self.assertEqual(files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want)
+                self.assertEqual(
+                    files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want
+                )
 
     def test_a_symlink_is_none(self):
         target = os.path.join(self.dir, "target")
@@ -109,7 +127,9 @@ class AppendLine(Base):
 
     def test_a_short_write_continues_with_the_rest(self):
         real = os.write
-        with unittest.mock.patch.object(os, "write", side_effect=lambda fd, data: real(fd, bytes(data[:3]))) as write:
+        with unittest.mock.patch.object(
+            os, "write", side_effect=lambda fd, data: real(fd, bytes(data[:3]))
+        ) as write:
             files.append_line(self.path, "héllo wörld\n")
         self.assertEqual((write.call_count, self.content()), (5, "héllo wörld\n".encode()))
 
@@ -159,7 +179,9 @@ class Save(Base):
         os.symlink(outside, self.path)
         files.save(self.path, "new\n")
         with open(self.path) as f, open(outside) as g:
-            self.assertEqual((os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n"))
+            self.assertEqual(
+                (os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n")
+            )
 
     def test_no_temp_is_left_when_the_replace_fails(self):
         files.save(self.path, "old\n")
@@ -167,7 +189,9 @@ class Save(Base):
             with self.assertRaises(OSError):
                 files.save(self.path, "new\n")
         with open(self.path) as f:
-            self.assertEqual((f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"]))
+            self.assertEqual(
+                (f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"])
+            )
 
 
 if __name__ == "__main__":

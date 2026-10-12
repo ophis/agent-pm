@@ -1,6 +1,7 @@
 """Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with the prompt last
 after "--" so a leading "-" stays the prompt. parse turns init, assistant, result and rate-limit records into events,
 one LimitHit per run."""
+
 from adapters.base import Activity, Headless, LimitHit, Reply, SessionBound, TurnEnd
 from adapters.claude.common import number
 
@@ -13,8 +14,14 @@ class ClaudeHeadless(Headless):
 
     def launch(self, prompt, spec, resume):
         common = self.adapter.common
-        return common.launch(spec, resume, common.PLUGINS, ("-p",), ("--output-format", "stream-json", "--verbose"),
-                             ("--", prompt))
+        return common.launch(
+            spec,
+            resume,
+            common.PLUGINS,
+            ("-p",),
+            ("--output-format", "stream-json", "--verbose"),
+            ("--", prompt),
+        )
 
     def parse(self, record):
         kind = record.get("type")
@@ -33,8 +40,14 @@ class ClaudeHeadless(Headless):
                 yield from self._limit()
             message = record.get("message")
             content = message.get("content") if isinstance(message, dict) else None
-            blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-            text = "\n".join(b["text"] for b in blocks if b.get("type") == "text" and isinstance(b.get("text"), str))
+            blocks = (
+                [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+            )
+            text = "\n".join(
+                b["text"]
+                for b in blocks
+                if b.get("type") == "text" and isinstance(b.get("text"), str)
+            )
             if text.strip():
                 yield Reply(text)
             for block in blocks:

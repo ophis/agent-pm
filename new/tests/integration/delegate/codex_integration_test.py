@@ -1,6 +1,19 @@
 """delegate/cli.py as a subprocess, --runtime codex, over new/tests/integration/adapters/codex/fake_codex.py (on PATH as
 `codex`); HOME, its recovery store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from
 any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
+
+from new.tests import NEW
+from new.tests.integration.adapters.codex import fake_codex
+from new.tests.integration.delegate.cli_integration_test import (
+    CLI,
+    DONE,
+    SID,
+    UNSAVED,
+    UNSAVED_ERROR,
+    mark,
+)
+from new.tests.unit.delegate.runner_test import block
+
 import json
 import os
 import shlex
@@ -10,10 +23,6 @@ import tempfile
 import unittest
 from unittest import mock
 
-from new.tests import NEW
-from new.tests.integration.adapters.codex import fake_codex
-from new.tests.integration.delegate.cli_integration_test import CLI, DONE, SID, UNSAVED, UNSAVED_ERROR, mark
-from new.tests.unit.delegate.runner_test import block
 from delegate.runner import FIX
 
 NATIVE = fake_codex.NATIVE
@@ -37,21 +46,55 @@ class Integration(unittest.TestCase):
             os.mkdir(d)
         codex = os.path.join(bin_dir, "codex")
         with open(codex, "w") as f:
-            f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_codex.__file__)} "$@"\n')
+            f.write(
+                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_codex.__file__)} "$@"\n'
+            )
         os.chmod(codex, 0o755)
         self.out = os.path.join(self.work, "out.md")
-        self.scenario, self.log = os.path.join(root, "scenario.json"), os.path.join(root, "exec.jsonl")
-        self.env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": self.home, "PYTHONUTF8": "1",
-                    "CODEX_HOME": os.path.join(self.home, ".codex"), "FAKE_LOG": self.log,
-                    "FAKE_SCENARIO": self.scenario}
+        self.scenario, self.log = (
+            os.path.join(root, "scenario.json"),
+            os.path.join(root, "exec.jsonl"),
+        )
+        self.env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": self.home,
+            "PYTHONUTF8": "1",
+            "CODEX_HOME": os.path.join(self.home, ".codex"),
+            "FAKE_LOG": self.log,
+            "FAKE_SCENARIO": self.scenario,
+        }
 
     def drive(self, steps, *extra, **scenario) -> subprocess.CompletedProcess:
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario}, f)
-        argv = [sys.executable, CLI, "--runtime", "codex", "--role", "dummy-tester", "--task", "echo",
-                "--input", "Hello.", "--out", self.out, "--workdir", self.work, "--sid", SID, *extra]
-        return subprocess.run(argv, cwd=self.work, env=self.env, stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, timeout=60)
+        argv = [
+            sys.executable,
+            CLI,
+            "--runtime",
+            "codex",
+            "--role",
+            "dummy-tester",
+            "--task",
+            "echo",
+            "--input",
+            "Hello.",
+            "--out",
+            self.out,
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            *extra,
+        ]
+        return subprocess.run(
+            argv,
+            cwd=self.work,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def records(self) -> list[dict]:
         with open(os.path.join(self.work, "run.jsonl")) as f:
@@ -81,11 +124,16 @@ class Codex(Integration):
         for line in ("Progress (start): echoing", "Codex says hello.", "delegate: status done"):
             self.assertIn(line, res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "result", "end"])
+        self.assertEqual(
+            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"]
+        )
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE])
         (call,) = self.calls()
         self.assertTrue(call["stdin_eof"])
-        self.assertEqual((call["cwd"], call["argv"][:2], call["resume_id"]), (self.work, ["exec", "--json"], None))
+        self.assertEqual(
+            (call["cwd"], call["argv"][:2], call["resume_id"]),
+            (self.work, ["exec", "--json"], None),
+        )
         self.assertIn("# Input\n\nHello.", call["prompt"])
 
     def test_two_runs_resume_the_same_native_session_and_keep_previous_progress(self):
@@ -143,8 +191,20 @@ class Codex(Integration):
         first, second = self.calls()
         self.assertEqual((first["resume_id"], second["resume_id"]), (None, NATIVE))
         self.assertTrue(second["prompt"].startswith(FIX.format(error=UNSAVED_ERROR)))
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "invalid", "session",
-                                        "client_session", "result", "end"])
+        self.assertEqual(
+            self.kinds(),
+            [
+                "session",
+                "input",
+                "client_session",
+                "progress",
+                "invalid",
+                "session",
+                "client_session",
+                "result",
+                "end",
+            ],
+        )
         self.assertEqual(self.read(self.out), DONE["deliverable"])
 
 

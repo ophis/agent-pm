@@ -4,6 +4,9 @@ the launch's environment; then stop() of a process group and a process that outl
 record and resume steps. The fake adapter, a subclass whose launch takes env, unset and cwd from its config, and one
 whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
 given to registry.configure."""
+
+from new.tests import fake_adapter, hermetic
+
 import dataclasses
 import io
 import json
@@ -19,19 +22,30 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import fake_adapter, hermetic
-from adapters.base import Access, Activity, Blocked, Exited, Launch, LimitHit, Reply, SessionBound, Stderr, TurnEnd
+from adapters.base import (
+    Access,
+    Activity,
+    Blocked,
+    Exited,
+    Launch,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Stderr,
+    TurnEnd,
+)
 from driver import api, records, registry
 
-WAIT = 20      # upper bound on any wait, in seconds
-IDLE = 0.3     # idle_timeout, in seconds
+WAIT = 20  # upper bound on any wait, in seconds
+IDLE = 0.3  # idle_timeout, in seconds
 SILENCE = 0.9  # 3 × IDLE
-GAP = 0.2      # between stderr lines; that test's idle_timeout is 3 × GAP
+GAP = 0.2  # between stderr lines; that test's idle_timeout is 3 × GAP
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z")
 
 
 class LaunchingAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose launch also takes its env, unset and cwd from its config."""
+
     keys = fake_adapter.FakeAdapter.keys | {"env", "unset", "cwd"}
 
     def headless(self):
@@ -41,8 +55,12 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
 class LaunchingRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         config = self.adapter.config
-        return dataclasses.replace(super().launch(prompt, spec, resume), env=config.get("env", {}),
-                                   unset=tuple(config.get("unset", ())), cwd=config.get("cwd", ""))
+        return dataclasses.replace(
+            super().launch(prompt, spec, resume),
+            env=config.get("env", {}),
+            unset=tuple(config.get("unset", ())),
+            cwd=config.get("cwd", ""),
+        )
 
 
 LAUNCHING = types.ModuleType("adapters.launching")
@@ -51,6 +69,7 @@ LAUNCHING.LaunchingAdapter = LaunchingAdapter
 
 class ScriptAdapter(fake_adapter.FakeAdapter):
     """The fake adapter whose runtime is this Python running its config's `script`."""
+
     keys = fake_adapter.FakeAdapter.keys | {"script"}
 
     def headless(self):
@@ -97,8 +116,14 @@ class Base(unittest.TestCase):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
-        patch = mock.patch.dict(sys.modules, {"adapters.fake": fake_adapter, "adapters.launching": LAUNCHING,
-                                              "adapters.script": SCRIPT})
+        patch = mock.patch.dict(
+            sys.modules,
+            {
+                "adapters.fake": fake_adapter,
+                "adapters.launching": LAUNCHING,
+                "adapters.script": SCRIPT,
+            },
+        )
         patch.start()
         self.addCleanup(patch.stop)
         self.addCleanup(registry.reset)
@@ -110,13 +135,21 @@ class Base(unittest.TestCase):
 
     def configure(self, **extra):
         """Tables fake and launching, each with this test's scenario and log; `extra` keys go into launching's."""
-        tables = {name: {"implementation": f"adapters.{name}:{name.capitalize()}Adapter", "scenario": self.scenario,
-                         "log": self.log} for name in ("fake", "launching")}
+        tables = {
+            name: {
+                "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
+                "scenario": self.scenario,
+                "log": self.log,
+            }
+            for name in ("fake", "launching")
+        }
         tables["launching"].update(extra)
         registry.configure({"adapters": tables})
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
-        handle = api.start(runtime, "headless", "hello", spec or api.Spec(workdir=self.workdir), **kwargs)
+        handle = api.start(
+            runtime, "headless", "hello", spec or api.Spec(workdir=self.workdir), **kwargs
+        )
         self.addCleanup(handle.stop)
         return handle
 
@@ -132,6 +165,7 @@ class Base(unittest.TestCase):
                     on(event)
             except BaseException as e:
                 errors.append(e)
+
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         thread.join(WAIT)
@@ -158,17 +192,37 @@ class Base(unittest.TestCase):
 class AcceptanceTest(Base):
     def test_streams_the_frozen_event_set_to_exited_and_records_the_session(self):
         marker = "[agent-pm-progress:start] x"
-        self.steps(out("session", id="native-1"), out("activity", name="Read"), out("message", text="one"),
-                   out("message", text=marker), out("message", text="three"), out("blocked", reason="approve"),
-                   out("result", text="done", pending=2), {"err": "warning: slow"}, {"exit": 0})
+        self.steps(
+            out("session", id="native-1"),
+            out("activity", name="Read"),
+            out("message", text="one"),
+            out("message", text=marker),
+            out("message", text="three"),
+            out("blocked", reason="approve"),
+            out("result", text="done", pending=2),
+            {"err": "warning: slow"},
+            {"exit": 0},
+        )
         handle = self.start()
         self.assertIsNone(handle.reply)
         self.assertEqual(handle.info().native_id, "")
         seen = []
-        found = self.drain(handle, lambda event: seen.append((event, handle.reply, handle.info().native_id)))
-        self.assertEqual([e for e in found if not isinstance(e, Stderr)],
-                         [SessionBound("native-1"), Activity("Read"), Reply("one"), Reply(marker), Reply("three"),
-                          Blocked("approve"), TurnEnd("done", 2), Exited(0)])
+        found = self.drain(
+            handle, lambda event: seen.append((event, handle.reply, handle.info().native_id))
+        )
+        self.assertEqual(
+            [e for e in found if not isinstance(e, Stderr)],
+            [
+                SessionBound("native-1"),
+                Activity("Read"),
+                Reply("one"),
+                Reply(marker),
+                Reply("three"),
+                Blocked("approve"),
+                TurnEnd("done", 2),
+                Exited(0),
+            ],
+        )
         self.assertEqual(found.count(Stderr("warning: slow")), 1)
         self.assertEqual(found[-1], Exited(0))
         for event, reply, native in seen:
@@ -181,11 +235,24 @@ class AcceptanceTest(Base):
         for entry in written:
             self.assertRegex(entry["ts"], STAMP)
         bare = [{k: v for k, v in e.items() if k != "ts"} for e in written]
-        self.assertEqual(bare[0], {"kind": "session", "sid": handle.sid, "cwd": self.workdir, "project": False,
-                                   "transcript": os.path.join(self.workdir, f"fake-{handle.sid}.jsonl"),
-                                   "resume": f"fake --resume {handle.sid}"})
-        self.assertCountEqual(bare[1:], [{"kind": "client_session", "sid": handle.sid, "client_id": "native-1"},
-                                         {"kind": "stderr", "text": "warning: slow"}])
+        self.assertEqual(
+            bare[0],
+            {
+                "kind": "session",
+                "sid": handle.sid,
+                "cwd": self.workdir,
+                "project": False,
+                "transcript": os.path.join(self.workdir, f"fake-{handle.sid}.jsonl"),
+                "resume": f"fake --resume {handle.sid}",
+            },
+        )
+        self.assertCountEqual(
+            bare[1:],
+            [
+                {"kind": "client_session", "sid": handle.sid, "client_id": "native-1"},
+                {"kind": "stderr", "text": "warning: slow"},
+            ],
+        )
 
 
 class IdleTest(Base):
@@ -198,6 +265,7 @@ class IdleTest(Base):
             marks.append((time.monotonic(), event))
             if isinstance(event, api.IdleTimeout):
                 alive.append(running(self.logged()[0]["pid"]))
+
         found = self.drain(handle, on)
         self.assertEqual((found[0], found[-1]), (Activity("Read"), Exited(0)))
         idles = [(at, e) for at, e in marks if isinstance(e, api.IdleTimeout)]
@@ -206,7 +274,7 @@ class IdleTest(Base):
         self.assertEqual({e for _, e in idles}, {api.IdleTimeout(IDLE)})
         self.assertEqual(alive, [True] * len(idles))
         times = [marks[0][0]] + [at for at, _ in idles]
-        for before, after in zip(times, times[1:]):
+        for before, after in zip(times, times[1:], strict=False):
             self.assertGreaterEqual(after - before, IDLE - 0.01)
 
     def test_none_after_blocked(self):
@@ -218,16 +286,30 @@ class IdleTest(Base):
         self.assertEqual(self.drain(self.start()), [Activity("Read"), Exited(0)])
 
     def test_a_stderr_line_after_blocked_starts_no_timer(self):
-        self.steps(out("blocked", reason="approve"), {"sleep": 0.1}, {"err": "still waiting"}, {"sleep": SILENCE})
+        self.steps(
+            out("blocked", reason="approve"),
+            {"sleep": 0.1},
+            {"err": "still waiting"},
+            {"sleep": SILENCE},
+        )
         found = self.drain(self.start(idle_timeout=IDLE))
         self.assertCountEqual(found[:-1], [Blocked("approve"), Stderr("still waiting")])
         self.assertEqual(found[-1], Exited(0))
 
     def test_stderr_lines_restart_the_timer(self):
-        self.steps({"err": "1"}, {"sleep": GAP}, {"err": "2"}, {"sleep": GAP}, {"err": "3"}, {"sleep": GAP},
-                   {"err": "4"})
-        self.assertEqual(self.drain(self.start(idle_timeout=3 * GAP)),
-                         [Stderr("1"), Stderr("2"), Stderr("3"), Stderr("4"), Exited(0)])
+        self.steps(
+            {"err": "1"},
+            {"sleep": GAP},
+            {"err": "2"},
+            {"sleep": GAP},
+            {"err": "3"},
+            {"sleep": GAP},
+            {"err": "4"},
+        )
+        self.assertEqual(
+            self.drain(self.start(idle_timeout=3 * GAP)),
+            [Stderr("1"), Stderr("2"), Stderr("3"), Stderr("4"), Exited(0)],
+        )
 
 
 class ExitTest(Base):
@@ -242,7 +324,9 @@ class ExitTest(Base):
     def test_stop_mid_sleep_ends_with_a_negative_exited_and_is_idempotent(self):
         self.steps(out("activity", name="Read"), {"sleep": 60})
         handle = self.start()
-        found = self.drain(handle, lambda event: handle.stop() if isinstance(event, Activity) else None)
+        found = self.drain(
+            handle, lambda event: handle.stop() if isinstance(event, Activity) else None
+        )
         self.assertEqual(len(found), 2)
         self.assertEqual(found[0], Activity("Read"))
         self.assertIsInstance(found[1], Exited)
@@ -255,8 +339,16 @@ class ExitTest(Base):
 class ProcessGroupTest(Base):
     def script(self, code: str, **kwargs) -> api.Handle:
         """A started session of runtime `script` running `code`."""
-        registry.configure({"adapters": {"script": {"implementation": "adapters.script:ScriptAdapter",
-                                                     "script": textwrap.dedent(code)}}})
+        registry.configure(
+            {
+                "adapters": {
+                    "script": {
+                        "implementation": "adapters.script:ScriptAdapter",
+                        "script": textwrap.dedent(code),
+                    }
+                }
+            }
+        )
         return self.start("script", **kwargs)
 
     def test_stop_kills_a_grandchild_holding_the_pipes_so_events_end_with_exited(self):
@@ -271,20 +363,28 @@ class ProcessGroupTest(Base):
             if isinstance(event, Reply):
                 self.addCleanup(kill, int(event.text))
                 handle.stop()
+
         found = self.drain(handle, on)
         self.assertEqual(len(found), 2)
         self.assertIsInstance(found[0], Reply)
         self.assertEqual(found[1], Exited(-signal.SIGKILL))
 
-    def test_a_process_that_closed_its_pipes_and_lives_yields_idle_timeouts_until_stop_ends_it(self):
-        handle = self.script("""
+    def test_a_process_that_closed_its_pipes_and_lives_yields_idle_timeouts_until_stop_ends_it(
+        self,
+    ):
+        handle = self.script(
+            """
             import json, os, time
             print(json.dumps({"type": "activity", "name": "Read"}), flush=True)
             os.close(1)
             os.close(2)
             time.sleep(60)
-        """, idle_timeout=IDLE)
-        found = self.drain(handle, lambda event: handle.stop() if isinstance(event, api.IdleTimeout) else None)
+        """,
+            idle_timeout=IDLE,
+        )
+        found = self.drain(
+            handle, lambda event: handle.stop() if isinstance(event, api.IdleTimeout) else None
+        )
         self.assertEqual(found, [Activity("Read"), api.IdleTimeout(IDLE), Exited(-signal.SIGKILL)])
 
 
@@ -324,8 +424,11 @@ class FailureTest(Base):
 
 class LaunchEnvironmentTest(Base):
     def test_unset_then_env_apply_to_the_callers_environment(self):
-        for extra, shown in (({}, "caller"), ({"unset": ["FAKE_ENV"]}, None),
-                             ({"unset": ["FAKE_ENV"], "env": {"FAKE_ENV": "launch"}}, "launch")):
+        for extra, shown in (
+            ({}, "caller"),
+            ({"unset": ["FAKE_ENV"]}, None),
+            ({"unset": ["FAKE_ENV"], "env": {"FAKE_ENV": "launch"}}, "launch"),
+        ):
             with self.subTest(extra=extra), mock.patch.dict(os.environ, {"FAKE_ENV": "caller"}):
                 self.forget()
                 self.configure(**extra)
@@ -337,10 +440,15 @@ class LaunchEnvironmentTest(Base):
         os.mkdir(cwd)
         other = os.path.join(self.dir, "other")
         os.mkdir(other)
-        for runtime, extra, access, want in (("launching", {"cwd": cwd}, Access(cwd=other), cwd),
-                                             ("fake", {}, Access(cwd=other), other),
-                                             ("fake", {}, Access(), self.workdir)):
-            with self.subTest(runtime=runtime, want=want), mock.patch.dict(os.environ, {"PWD": "/"}):
+        for runtime, extra, access, want in (
+            ("launching", {"cwd": cwd}, Access(cwd=other), cwd),
+            ("fake", {}, Access(cwd=other), other),
+            ("fake", {}, Access(), self.workdir),
+        ):
+            with (
+                self.subTest(runtime=runtime, want=want),
+                mock.patch.dict(os.environ, {"PWD": "/"}),
+            ):
                 self.forget()
                 self.configure(**extra)
                 handle = self.start(runtime, api.Spec(workdir=self.workdir, access=access))
@@ -358,10 +466,14 @@ class FakeTest(Base):
 
     def test_a_limit_record_is_a_limit_hit(self):
         self.steps(out("limit", resets_at=1.5), out("limit", resets_at=None), out("limit"))
-        self.assertEqual(self.drain(self.start()), [LimitHit(1.5), LimitHit(None), LimitHit(None), Exited(0)])
+        self.assertEqual(
+            self.drain(self.start()), [LimitHit(1.5), LimitHit(None), LimitHit(None), Exited(0)]
+        )
 
     def test_resume_steps_run_only_on_a_resume(self):
-        self.scenario_object(steps=[out("message", text="first")], resume=[out("message", text="again")])
+        self.scenario_object(
+            steps=[out("message", text="first")], resume=[out("message", text="again")]
+        )
         first = self.start()
         self.assertEqual(self.drain(first), [Reply("first"), Exited(0)])
         self.assertEqual(self.drain(self.start(resume=first.sid)), [Reply("again"), Exited(0)])

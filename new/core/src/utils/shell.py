@@ -1,4 +1,5 @@
 """Subprocess runs with a timeout, their stderr shown with URL userinfo masked."""
+
 import re
 import subprocess
 from collections.abc import Callable
@@ -10,7 +11,9 @@ Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    return subprocess.run(
+        argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL
+    )
 
 
 def redact(text: str) -> str:

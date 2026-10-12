@@ -1,4 +1,7 @@
 """new/core/src/driver/records.py: run.jsonl writes, reads and attempt completeness."""
+
+from new.tests import hermetic  # noqa: F401
+
 import errno
 import io
 import json
@@ -10,7 +13,6 @@ import unittest.mock
 from contextlib import redirect_stderr
 from datetime import datetime
 
-from new.tests import hermetic  # noqa: F401
 from driver import records
 from utils import files
 
@@ -30,7 +32,10 @@ class Base(unittest.TestCase):
 
     def write(self, *lines):
         with open(self.path, "wb") as f:
-            f.writelines((line if isinstance(line, bytes) else json.dumps(line).encode()) + b"\n" for line in lines)
+            f.writelines(
+                (line if isinstance(line, bytes) else json.dumps(line).encode()) + b"\n"
+                for line in lines
+            )
 
     def promptly(self, call):
         """call()'s result or exception; fails instead of hanging when it blocks."""
@@ -41,6 +46,7 @@ class Base(unittest.TestCase):
                 out["value"] = call()
             except BaseException as e:
                 out["error"] = e
+
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         thread.join(5)
@@ -120,7 +126,17 @@ class Holds(Base):
 class Read(Base):
     def test_the_json_object_lines_in_order_invalid_ones_skipped(self):
         first, second = {"kind": "session", "n": 1}, {"kind": "result", "n": "é"}
-        self.write(first, b"", b"not json", b"[]", b"3", b"\xff\xfe", b'{"kind": "session"', b"[" * 100_000, second)
+        self.write(
+            first,
+            b"",
+            b"not json",
+            b"[]",
+            b"3",
+            b"\xff\xfe",
+            b'{"kind": "session"',
+            b"[" * 100_000,
+            second,
+        )
         self.assertEqual(records.read(self.path), [first, second])
 
     def test_missing_or_empty_is_empty(self):
@@ -149,9 +165,21 @@ class Session(Base):
     def test_the_latest_valid_session_record_of_the_sid_wins(self):
         first = {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": False}
         latest = {**first, "cwd": "/b", "project": True}
-        self.write(first, latest, b"not json", b"[]", b"\xff\xfe", b'{"kind": "session"', {**first, "kind": "input"},
-                   {**first, "sid": "other"}, {**first, "cwd": "rel"}, {**first, "cwd": "/x\x1b[2J"},
-                   {**first, "cwd": 3}, {**first, "project": 1}, {k: v for k, v in first.items() if k != "project"})
+        self.write(
+            first,
+            latest,
+            b"not json",
+            b"[]",
+            b"\xff\xfe",
+            b'{"kind": "session"',
+            {**first, "kind": "input"},
+            {**first, "sid": "other"},
+            {**first, "cwd": "rel"},
+            {**first, "cwd": "/x\x1b[2J"},
+            {**first, "cwd": 3},
+            {**first, "project": 1},
+            {k: v for k, v in first.items() if k != "project"},
+        )
         self.assertEqual(records.session(self.dir, SID), latest)
 
     def test_none_without_a_valid_session_record(self):
@@ -167,10 +195,12 @@ class Complete(Base):
 
     def test_a_result_after_the_last_session_record(self):
         needs = {"kind": "result", "outcome": {"status": "needs_input"}}
-        for lines, want in (((self.SESSION, needs, self.END, self.SESSION), False),
-                            ((self.SESSION, self.RESULT, self.END), True),
-                            ((self.SESSION,), False),
-                            ((self.RESULT, self.END), False)):
+        for lines, want in (
+            ((self.SESSION, needs, self.END, self.SESSION), False),
+            ((self.SESSION, self.RESULT, self.END), True),
+            ((self.SESSION,), False),
+            ((self.RESULT, self.END), False),
+        ):
             with self.subTest([r["kind"] for r in lines]):
                 self.write(*lines)
                 self.assertIs(records.complete(self.dir), want)

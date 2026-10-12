@@ -1,7 +1,9 @@
 """new/core/src/utils/text.py: printable (main's Sinks case)."""
-import unittest
 
 from new.tests import SRC  # noqa: F401
+
+import unittest
+
 from utils.text import printable
 
 

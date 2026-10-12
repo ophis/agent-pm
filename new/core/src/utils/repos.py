@@ -1,4 +1,5 @@
 """Repo specs, origin URLs and checkout paths."""
+
 import os
 import re
 from dataclasses import dataclass
@@ -9,7 +10,9 @@ OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
 NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
 SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
-URL = re.compile(r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?")
+URL = re.compile(
+    r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?"
+)
 SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
@@ -26,8 +29,14 @@ class Repo:
     @classmethod
     def parse(cls, spec: str) -> "Repo":
         m = SPEC.fullmatch(spec.strip())
-        if not m or m.group(3) in (".", "..") or (m.group(1) is None and spec.strip().startswith("https://")):
-            raise Invalid(f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name")
+        if (
+            not m
+            or m.group(3) in (".", "..")
+            or (m.group(1) is None and spec.strip().startswith("https://"))
+        ):
+            raise Invalid(
+                f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name"
+            )
         return cls((m.group(1) or "github.com").lower(), m.group(2), m.group(3))
 
     @property
@@ -41,7 +50,11 @@ def url_slug(url: str) -> str | None:
     if not m:
         return None
     scheme, host, port, owner, name = m.groups()
-    return f"{host}:{port}/{owner}/{name}" if port and scheme in ("http", "https") else f"{host}/{owner}/{name}"
+    return (
+        f"{host}:{port}/{owner}/{name}"
+        if port and scheme in ("http", "https")
+        else f"{host}/{owner}/{name}"
+    )
 
 
 def origin(url: str) -> str | None:

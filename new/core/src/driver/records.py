@@ -1,6 +1,7 @@
 """Run records: <workdir>/run.jsonl, one JSON object {"ts", "kind", **fields} per line. Files open nonblocking (a FIFO
 must not block) and never through a symlink; a write refuses anything but a regular file, a read returns what it can.
 The agent run can append to the file: what a read finds is a status hint, never an authorization or a recovery grant."""
+
 import json
 import os
 import sys
@@ -26,10 +27,15 @@ def holds(path: str | Path, text: str) -> bool:
     return read_regular(path, limit=len(data) + 1) == data
 
 
-def note(path: str, kind: str, *, best_effort: bool = False, durable: bool = False, **fields) -> None:
+def note(
+    path: str, kind: str, *, best_effort: bool = False, durable: bool = False, **fields
+) -> None:
     try:
-        append_line(path, json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n",
-                    durable=durable)
+        append_line(
+            path,
+            json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n",
+            durable=durable,
+        )
     except OSError as e:
         if not best_effort:
             raise
@@ -54,8 +60,12 @@ def read(path: str) -> list[dict]:
 def session(workdir: str, sid: str) -> dict | None:
     found = None
     for e in read(path(workdir)):
-        if (e.get("kind") == "session" and e.get("sid") == sid and printable_abs(e.get("cwd"))
-                and isinstance(e.get("project"), bool)):
+        if (
+            e.get("kind") == "session"
+            and e.get("sid") == sid
+            and printable_abs(e.get("cwd"))
+            and isinstance(e.get("project"), bool)
+        ):
             found = e
     return found
 

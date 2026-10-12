@@ -1,3 +1,5 @@
+from tests import ROOT
+
 import json
 import os
 import re
@@ -7,8 +9,6 @@ import sys
 import tempfile
 import unittest
 import uuid
-
-from tests import ROOT
 
 HOOK = os.path.join(ROOT, "core", "src", "clients", "_codex_hook.py")
 PANE = "%3"
@@ -54,8 +54,17 @@ class HookTest(unittest.TestCase):
     def write_record(self, native, **fields):
         fd = os.open(self.record, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"version": 1, "sid": self.sid, "cwd": self.cwd, "codex_home": os.path.join(self.dir, "codex"),
-                       "native": native, **fields}, f)
+            json.dump(
+                {
+                    "version": 1,
+                    "sid": self.sid,
+                    "cwd": self.cwd,
+                    "codex_home": os.path.join(self.dir, "codex"),
+                    "native": native,
+                    **fields,
+                },
+                f,
+            )
 
     def write_reply(self, text):
         fd = os.open(self.reply, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -65,16 +74,33 @@ class HookTest(unittest.TestCase):
     def hook(self, word, payload, args=None, events=None):
         data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         args = [word, events or self.events, self.record, self.tmux] if args is None else args
-        env = {"PATH": "/usr/bin:/bin", "TMUX_PANE": PANE, "TMUX_LOG": self.log,
-               "WATCH": os.pathsep.join((self.record, self.reply))}
-        res = subprocess.run([sys.executable, "-I", HOOK, *args], input=data, capture_output=True, env=env,
-                             timeout=60)
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "TMUX_PANE": PANE,
+            "TMUX_LOG": self.log,
+            "WATCH": os.pathsep.join((self.record, self.reply)),
+        }
+        res = subprocess.run(
+            [sys.executable, "-I", HOOK, *args],
+            input=data,
+            capture_output=True,
+            env=env,
+            timeout=60,
+        )
         self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
         return res.stderr.decode()
 
     def payload(self, event, **extra):
-        return {"session_id": self.native, "transcript_path": None, "cwd": self.cwd, "hook_event_name": event,
-                "model": "m", "permission_mode": "default", "turn_id": "t1", **extra}
+        return {
+            "session_id": self.native,
+            "transcript_path": None,
+            "cwd": self.cwd,
+            "hook_event_name": event,
+            "model": "m",
+            "permission_mode": "default",
+            "turn_id": "t1",
+            **extra,
+        }
 
     def stop(self, message="the answer"):
         return self.payload("Stop", stop_hook_active=False, last_assistant_message=message)
@@ -103,19 +129,33 @@ class HookTest(unittest.TestCase):
 
     def marked(self, state):
         calls = [["set-option", "-t", PANE, "@state", state]]
-        return calls + [["display-message", "-p", "-t", PANE, "#S"]] if state in ("done", "blocked") else calls
+        return (
+            calls + [["display-message", "-p", "-t", PANE, "#S"]]
+            if state in ("done", "blocked")
+            else calls
+        )
 
     def test_stop_binds_then_saves_the_reply_then_marks_done(self):
         message = "**Done**: 完成\n\n- one\n- two"
         self.assertEqual(self.hook("done", self.stop(message)), "")
         self.assertEqual(self.bound(), self.native)
         with open(self.record) as f:
-            self.assertEqual(json.load(f), {"version": 1, "sid": self.sid, "cwd": self.cwd,
-                                            "codex_home": os.path.join(self.dir, "codex"), "native": self.native})
+            self.assertEqual(
+                json.load(f),
+                {
+                    "version": 1,
+                    "sid": self.sid,
+                    "cwd": self.cwd,
+                    "codex_home": os.path.join(self.dir, "codex"),
+                    "native": self.native,
+                },
+            )
         self.assertEqual(self.replied(), message)
         for path in (self.record, self.reply):
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        self.assertEqual(sorted(os.listdir(self.workers)), sorted((f"{self.sid}.json", f"{self.sid}.reply")))
+        self.assertEqual(
+            sorted(os.listdir(self.workers)), sorted((f"{self.sid}.json", f"{self.sid}.reply"))
+        )
         calls = self.calls()
         self.assertEqual([c["argv"] for c in calls], self.marked("done"))
         self.assertEqual(json.loads(calls[0]["files"][f"{self.sid}.json"])["native"], self.native)
@@ -123,8 +163,12 @@ class HookTest(unittest.TestCase):
         self.assertRegex(self.lines(), LINE % "done")
 
     def test_each_word_binds_and_marks_its_state(self):
-        for word, event, state in (("session", "SessionStart", "working"), ("working", "UserPromptSubmit", "working"),
-                                   ("blocked", "PermissionRequest", "blocked"), ("interrupt", "Interrupt", "done")):
+        for word, event, state in (
+            ("session", "SessionStart", "working"),
+            ("working", "UserPromptSubmit", "working"),
+            ("blocked", "PermissionRequest", "blocked"),
+            ("interrupt", "Interrupt", "done"),
+        ):
             with self.subTest(word=word):
                 self.write_record(None)
                 open(self.events, "w").close()
@@ -139,8 +183,11 @@ class HookTest(unittest.TestCase):
     def test_an_interrupt_or_a_null_message_keeps_the_reply(self):
         self.write_record(self.native)
         self.write_reply("old")
-        for word, payload in (("interrupt", self.payload("Interrupt")), ("done", self.stop(None)),
-                              ("done", self.payload("Stop", stop_hook_active=False))):
+        for word, payload in (
+            ("interrupt", self.payload("Interrupt")),
+            ("done", self.stop(None)),
+            ("done", self.payload("Stop", stop_hook_active=False)),
+        ):
             with self.subTest(word=word, payload=payload):
                 open(self.events, "w").close()
                 self.assertEqual(self.hook(word, payload), "")
@@ -168,8 +215,14 @@ class HookTest(unittest.TestCase):
     def test_a_sub_agent_another_cwd_or_a_bad_id_neither_binds_nor_replies(self):
         elsewhere = os.path.join(self.dir, "elsewhere")
         os.mkdir(elsewhere)
-        for change in ({"agent_id": "a1", "agent_type": "worker"}, {"cwd": elsewhere}, {"cwd": None},
-                       {"session_id": self.native.upper()}, {"session_id": "not-a-uuid"}, {"session_id": None}):
+        for change in (
+            {"agent_id": "a1", "agent_type": "worker"},
+            {"cwd": elsewhere},
+            {"cwd": None},
+            {"session_id": self.native.upper()},
+            {"session_id": "not-a-uuid"},
+            {"session_id": None},
+        ):
             with self.subTest(change=change):
                 open(self.events, "w").close()
                 self.assertEqual(self.hook("done", {**self.stop(), **change}), "")
@@ -196,9 +249,15 @@ class HookTest(unittest.TestCase):
         def mode():
             self.write_record(None)
             os.chmod(self.record, 0o644)
-        for name, setup in (("missing", lambda: None), ("symlink", symlink), ("extra key", malformed(extra=1)),
-                            ("other sid", malformed(sid=str(uuid.uuid4()))), ("version", malformed(version=2)),
-                            ("mode", mode)):
+
+        for name, setup in (
+            ("missing", lambda: None),
+            ("symlink", symlink),
+            ("extra key", malformed(extra=1)),
+            ("other sid", malformed(sid=str(uuid.uuid4()))),
+            ("version", malformed(version=2)),
+            ("mode", mode),
+        ):
             with self.subTest(name):
                 if os.path.lexists(self.record):
                     os.unlink(self.record)
@@ -216,15 +275,28 @@ class HookTest(unittest.TestCase):
         os.symlink(self.events, link)
         err = self.hook("done", self.stop(), events=link)
         self.assertRegex(err, r"\Acodex_hook: events file .+\n\Z")
-        self.assertEqual((self.bound(), self.replied(), self.lines()), (self.native, "the answer", ""))
+        self.assertEqual(
+            (self.bound(), self.replied(), self.lines()), (self.native, "the answer", "")
+        )
 
     def test_bad_arguments_do_nothing(self):
-        for args in ([], ["done"], ["done", self.events, self.record], ["bogus", self.events, self.record, self.tmux],
-                     ["done", self.events, self.record, "tmux"], ["done", self.events, self.reply, self.tmux],
-                     ["done", "events", self.record, self.tmux], ["done", self.events, self.record, self.tmux, "x"]):
+        for args in (
+            [],
+            ["done"],
+            ["done", self.events, self.record],
+            ["bogus", self.events, self.record, self.tmux],
+            ["done", self.events, self.record, "tmux"],
+            ["done", self.events, self.reply, self.tmux],
+            ["done", "events", self.record, self.tmux],
+            ["done", self.events, self.record, self.tmux, "x"],
+        ):
             with self.subTest(args=args):
-                self.assertRegex(self.hook("done", self.stop(), args=args), r"\Acodex_hook: usage: .+\n\Z")
-                self.assertEqual((self.bound(), self.replied(), self.lines(), self.calls()), (None, None, "", []))
+                self.assertRegex(
+                    self.hook("done", self.stop(), args=args), r"\Acodex_hook: usage: .+\n\Z"
+                )
+                self.assertEqual(
+                    (self.bound(), self.replied(), self.lines(), self.calls()), (None, None, "", [])
+                )
 
     def test_a_bad_payload_binds_nothing_and_still_marks(self):
         for data in (b"", b"not json", b"[1]", b'"text"', b"\xff\xfe\x00"):

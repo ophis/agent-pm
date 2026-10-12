@@ -2,6 +2,9 @@
 adapter's package copied into it as src/adapters/fake/ and its table appended to the copy's config.toml, nothing else
 changed, runs a headless session through driver.api.start in an isolated child Python that sees only the copy. A table
 without its package, or a package without its table, fails there before anything starts."""
+
+from new.tests import CORE, fake_adapter
+
 import json
 import os
 import shutil
@@ -10,9 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from new.tests import CORE, fake_adapter
-
-TIMEOUT = 60   # seconds
+TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
 # The child: argv[1] goes first on sys.path; it starts runtime argv[3] headless in workdir argv[2] and prints its events;
 # a ConfigError exits 1, its text on stderr.
@@ -44,23 +45,41 @@ class ExtensionAdapterIntegration(unittest.TestCase):
         self.work = os.path.join(self.root, "work")
         scenario = os.path.join(self.root, "scenario.json")
         with open(scenario, "w", encoding="utf-8") as f:
-            json.dump([{"out": {"type": "session", "id": "native-1"}}, {"out": {"type": "message", "text": "hi"}},
-                       {"out": {"type": "result", "text": "done"}}], f)
-        self.table('[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
-                   f"scenario = {json.dumps(scenario)}\nlog = {json.dumps(os.path.join(self.root, 'log.jsonl'))}\n")
+            json.dump(
+                [
+                    {"out": {"type": "session", "id": "native-1"}},
+                    {"out": {"type": "message", "text": "hi"}},
+                    {"out": {"type": "result", "text": "done"}},
+                ],
+                f,
+            )
+        self.table(
+            '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
+            f"scenario = {json.dumps(scenario)}\nlog = {json.dumps(os.path.join(self.root, 'log.jsonl'))}\n"
+        )
 
     def package(self, name: str) -> None:
         """The fake adapter's package copied in as src/adapters/<name>/."""
-        shutil.copytree(os.path.dirname(fake_adapter.__file__), os.path.join(self.src, "adapters", name), ignore=SKIP)
+        shutil.copytree(
+            os.path.dirname(fake_adapter.__file__),
+            os.path.join(self.src, "adapters", name),
+            ignore=SKIP,
+        )
 
     def table(self, text: str) -> None:
         with open(self.config, "a", encoding="utf-8") as f:
             f.write("\n" + text)
 
     def child(self, runtime: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, "-I", "-c", CHILD, self.src, self.work, runtime], cwd=self.root,
-                              env={**os.environ, "HOME": self.home}, stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, timeout=TIMEOUT)
+        return subprocess.run(
+            [sys.executable, "-I", "-c", CHILD, self.src, self.work, runtime],
+            cwd=self.root,
+            env={**os.environ, "HOME": self.home},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
 
     def refused(self, runtime: str, error: str) -> None:
         """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or process."""
@@ -75,12 +94,16 @@ class ExtensionAdapterIntegration(unittest.TestCase):
         data = json.loads(child.stdout)
         for path in data["files"]:
             self.assertTrue(path.startswith(self.src + os.sep), path)
-        self.assertEqual([name for name, _ in data["events"]], ["SessionBound", "Reply", "TurnEnd", "Exited"])
+        self.assertEqual(
+            [name for name, _ in data["events"]], ["SessionBound", "Reply", "TurnEnd", "Exited"]
+        )
         self.assertEqual(data["events"][-1], ["Exited", {"returncode": 0}])
         with open(os.path.join(self.work, "run.jsonl"), encoding="utf-8") as f:
             written = [json.loads(line) for line in f]
-        self.assertEqual([(e["kind"], e["sid"]) for e in written],
-                         [("session", data["sid"]), ("client_session", data["sid"])])
+        self.assertEqual(
+            [(e["kind"], e["sid"]) for e in written],
+            [("session", data["sid"]), ("client_session", data["sid"])],
+        )
 
     def test_a_table_without_its_package_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "adapters.absent:AbsentAdapter"\n')

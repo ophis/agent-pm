@@ -1,11 +1,13 @@
 """new/core/src/utils/git.py: common_dir over real git worktrees."""
+
+from new.tests import SRC  # noqa: F401
+
 import os
 import subprocess
 import tempfile
 import unittest
 import unittest.mock
 
-from new.tests import SRC  # noqa: F401
 from utils.git import common_dir
 
 
@@ -18,12 +20,23 @@ class CommonDir(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
-        env = unittest.mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-                                                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        env = unittest.mock.patch.dict(
+            os.environ,
+            {
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
+        )
         env.start()
         self.addCleanup(env.stop)
-        self.clone, self.bare = os.path.join(self.tmp, "clone"), os.path.join(self.tmp, "origin.git")
+        self.clone, self.bare = (
+            os.path.join(self.tmp, "clone"),
+            os.path.join(self.tmp, "origin.git"),
+        )
         git("init", "-q", "-b", "main", self.clone)
         git("-C", self.clone, "commit", "-q", "--allow-empty", "-m", "one")
         git("clone", "-q", "--bare", self.clone, self.bare)
@@ -63,14 +76,28 @@ class CommonDir(unittest.TestCase):
 
     def test_no_worktree_names_no_clone(self):
         wt = self.add()
-        plain, linked, junk, orphan, bare = (os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare"))
+        plain, linked, junk, orphan, bare = (
+            os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare")
+        )
         for d in (plain, linked, junk, orphan, bare):
             os.makedirs(d)
         os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
-        for d, text in ((junk, "nonsense\n"), (orphan, f"gitdir: {self.tmp}/gone\n"), (bare, f"gitdir: {self.bare}\n")):
+        for d, text in (
+            (junk, "nonsense\n"),
+            (orphan, f"gitdir: {self.tmp}/gone\n"),
+            (bare, f"gitdir: {self.bare}\n"),
+        ):
             with open(os.path.join(d, ".git"), "w") as f:
                 f.write(text)
-        for path in (self.clone, plain, linked, junk, orphan, bare, os.path.join(self.tmp, "missing")):
+        for path in (
+            self.clone,
+            plain,
+            linked,
+            junk,
+            orphan,
+            bare,
+            os.path.join(self.tmp, "missing"),
+        ):
             with self.subTest(path=path):
                 self.assertIsNone(common_dir(path))
 

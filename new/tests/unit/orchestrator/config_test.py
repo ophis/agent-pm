@@ -1,5 +1,11 @@
 """orchestrator config.py, ported from the old config_test (less its clients layer and transcript cases) onto load()'s
 frozen Config, plus the old attended name cases (TUI names)."""
+
+from new.tests import NEW, ORCH_SRC, hermetic
+from new.tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+
+import config
+
 import dataclasses
 import json
 import os
@@ -12,9 +18,6 @@ import tomllib
 import unittest
 from unittest import mock
 
-from new.tests import NEW, ORCH_SRC, hermetic
-from new.tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
-import config
 import composer
 import delegate
 from utils import config_file
@@ -22,8 +25,16 @@ from utils.git import GUARD
 from utils.shell import SHORT
 
 REPO = os.path.dirname(NEW)
-BASE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer") + role("solo")
-PIPELINE = HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
+BASE = (
+    HEADER
+    + role("researcher", 'next = "pm"')
+    + role("pm", 'next = "engineer"')
+    + role("engineer")
+    + role("solo")
+)
+PIPELINE = (
+    HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
+)
 CORE_LOCAL = """language = "Chinese"
 
 [roles.researcher.output]
@@ -43,20 +54,24 @@ LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-800
 P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
 SLUG = "ophis/agent-pm"
 HTTPS = "https://github.com/ophis/agent-pm.git"
-STATES_LINE = HEADER[HEADER.index("states = "):HEADER.index("task_label_group")]
+STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 GATE = f"python3 {shlex.quote(config.ROOT)}/orchestrator/src/router.py --brake"
 LABEL = ("orchestrator/config.toml", "core")
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 
 def missing(keys):
-    return (f"missing {keys}: set them in ~/.agent-pm/orchestrator-new.local.toml (orchestrator/config.toml's "
-            "`# local:` lines)")
+    return (
+        f"missing {keys}: set them in ~/.agent-pm/orchestrator-new.local.toml (orchestrator/config.toml's "
+        "`# local:` lines)"
+    )
 
 
 def old_key(key):
-    return (f"core: orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
-            "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)")
+    return (
+        f"core: orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
+        "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
+    )
 
 
 def write(path, text):
@@ -89,86 +104,226 @@ class ConfigFile:
 
 class Config(ConfigFile, unittest.TestCase):
     def test_tests_never_read_this_machines_local_file(self):
-        self.assertEqual(os.path.expanduser(config.LOCAL), os.path.join(self.home, "orchestrator-new.local.toml"))
+        self.assertEqual(
+            os.path.expanduser(config.LOCAL), os.path.join(self.home, "orchestrator-new.local.toml")
+        )
 
     def test_tests_home_already_gone_at_exit_prints_nothing(self):
-        res = subprocess.run([sys.executable, "-c", "import shutil; from new.tests import hermetic; shutil.rmtree(hermetic.HOME)"],
-                             cwd=REPO, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        res = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import shutil; from new.tests import hermetic; shutil.rmtree(hermetic.HOME)",
+            ],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
         self.assertEqual((res.returncode, res.stderr), (0, ""))
 
     def test_stage_order(self):
         self.assertEqual(self.load(PIPELINE).stages, {"researcher": 0, "pm": 1, "engineer": 2})
-        self.assertEqual(self.load(HEADER + role("researcher") + role("pm", 'next = "engineer"') + role("engineer")).stages,
-                         {"researcher": 0, "pm": 0, "engineer": 1})
+        self.assertEqual(
+            self.load(
+                HEADER + role("researcher") + role("pm", 'next = "engineer"') + role("engineer")
+            ).stages,
+            {"researcher": 0, "pm": 0, "engineer": 1},
+        )
 
     def test_rejected(self):
-        body = BASE[BASE.index("[roles"):]
+        body = BASE[BASE.index("[roles") :]
         group = "task_label_group must be a Linear label group id (UUID): "
         label = BASE + f'[task_labels]\nlight-research = "{LABEL1}"\n'
         upper = "ABCDEF00-0000-4000-8000-000000000021"
         solo = role("solo")
         x = BASE + "[roles.x]\n"
         cases = [
-            (BASE + role("a", 'next = "b"') + role("b", 'next = "a"'), "the next chain from 'a' has a cycle"),
-            (HEADER + 'docs = { repo = "acme/notes", clone = "/nonexistent/notes", branch = "trunk" }\n' + body, "unknown keys: docs"),
+            (
+                BASE + role("a", 'next = "b"') + role("b", 'next = "a"'),
+                "the next chain from 'a' has a cycle",
+            ),
+            (
+                HEADER
+                + 'docs = { repo = "acme/notes", clone = "/nonexistent/notes", branch = "trunk" }\n'
+                + body,
+                "unknown keys: docs",
+            ),
             (HEADER + '[projects.p]\nnext = "q"\n' + body, "unknown keys: projects"),
-            (BASE + '[tasks.x]\nmodel = "opus"\n[docs]\nrepo = "acme/notes"\n', "unknown keys: docs, tasks"),
-            (BASE.replace(solo, role("solo", 'role = "x"', 'task = "y"')), "[roles.solo] has unknown keys: role, task"),
-            (BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")), "[roles.solo] has unknown keys: read_only, tasks"),
+            (
+                BASE + '[tasks.x]\nmodel = "opus"\n[docs]\nrepo = "acme/notes"\n',
+                "unknown keys: docs, tasks",
+            ),
+            (
+                BASE.replace(solo, role("solo", 'role = "x"', 'task = "y"')),
+                "[roles.solo] has unknown keys: role, task",
+            ),
+            (
+                BASE.replace(solo, role("solo", 'tasks = ["x"]', "read_only = []")),
+                "[roles.solo] has unknown keys: read_only, tasks",
+            ),
             (x + 'key = "k-x"\n', missing("roles.x.account")),
-            (x + 'account = ""\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: ''"),
-            (x + 'account = 5\nkey = "k-x"\n', "[roles.x] account must be the role's Linear email: 5"),
+            (
+                x + 'account = ""\nkey = "k-x"\n',
+                "[roles.x] account must be the role's Linear email: ''",
+            ),
+            (
+                x + 'account = 5\nkey = "k-x"\n',
+                "[roles.x] account must be the role's Linear email: 5",
+            ),
             (x + 'account = "x@agents.test"\n', missing("roles.x.key")),
-            (BASE + "[roles.x]\n[roles.y]\nkey = 'k-y'\n", missing("roles.x.account, roles.x.key, roles.y.account")),
-            (x + 'account = "x@agents.test"\nkey = ""\n', "[roles.x] key must be a Keychain service name: ''"),
-            (x + 'account = "x@agents.test"\nkey = ["k"]\n', "[roles.x] key must be a Keychain service name: ['k']"),
-            *[(BASE + role("x", f"max_runs = {value}"), f"[roles.x] max_runs must be a whole number >= 1: {shown}")
-              for shown, value in {"0": "0", "-1": "-1", "'2'": '"2"', "True": "true", "1.5": "1.5"}.items()],
+            (
+                BASE + "[roles.x]\n[roles.y]\nkey = 'k-y'\n",
+                missing("roles.x.account, roles.x.key, roles.y.account"),
+            ),
+            (
+                x + 'account = "x@agents.test"\nkey = ""\n',
+                "[roles.x] key must be a Keychain service name: ''",
+            ),
+            (
+                x + 'account = "x@agents.test"\nkey = ["k"]\n',
+                "[roles.x] key must be a Keychain service name: ['k']",
+            ),
+            *[
+                (
+                    BASE + role("x", f"max_runs = {value}"),
+                    f"[roles.x] max_runs must be a whole number >= 1: {shown}",
+                )
+                for shown, value in {
+                    "0": "0",
+                    "-1": "-1",
+                    "'2'": '"2"',
+                    "True": "true",
+                    "1.5": "1.5",
+                }.items()
+            ],
             (BASE.replace('harness_key = "linear-api-key"\n', ""), missing("harness_key")),
-            (BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"), "harness_key must be a Keychain service name: 1"),
-            (BASE.replace(TEAM, "Frank's Agents"), "team must be a Linear team id (UUID): \"Frank's Agents\""),
+            (
+                BASE.replace('harness_key = "linear-api-key"', "harness_key = 1"),
+                "harness_key must be a Keychain service name: 1",
+            ),
+            (
+                BASE.replace(TEAM, "Frank's Agents"),
+                'team must be a Linear team id (UUID): "Frank\'s Agents"',
+            ),
             (BASE.replace(f'"{TEAM}"', "5"), "team must be a Linear team id (UUID): 5"),
             (BASE.replace(f'team = "{TEAM}"\n', ""), missing("team")),
-            (body, missing("team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
-                           "states.handoff, states.done, states.canceled")),
-            (BASE.replace(STATES_LINE, ""), missing("states.todo, states.in_progress, states.in_review, states.handoff, "
-                                                    "states.done, states.canceled")),
-            (BASE.replace(STATES_LINE, 'states = "x"\n'), missing("states.todo, states.in_progress, states.in_review, "
-                                                                 "states.handoff, states.done, states.canceled")),
+            (
+                body,
+                missing(
+                    "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
+                    "states.handoff, states.done, states.canceled"
+                ),
+            ),
+            (
+                BASE.replace(STATES_LINE, ""),
+                missing(
+                    "states.todo, states.in_progress, states.in_review, states.handoff, "
+                    "states.done, states.canceled"
+                ),
+            ),
+            (
+                BASE.replace(STATES_LINE, 'states = "x"\n'),
+                missing(
+                    "states.todo, states.in_progress, states.in_review, "
+                    "states.handoff, states.done, states.canceled"
+                ),
+            ),
             (BASE.replace(f', canceled = "{STATES["canceled"]}"', ""), missing("states.canceled")),
             (BASE.replace(" }\n", ', backlog = "x" }\n', 1), "[states] has unknown keys: backlog"),
-            (BASE.replace(STATES["done"], "Done"), "states.done must be a Linear workflow state id (UUID): 'Done'"),
+            (
+                BASE.replace(STATES["done"], "Done"),
+                "states.done must be a Linear workflow state id (UUID): 'Done'",
+            ),
             (BASE.replace(f'task_label_group = "{TASK_GROUP}"\n', ""), missing("task_label_group")),
             (BASE.replace(TASK_GROUP, "not-a-uuid"), group + "'not-a-uuid'"),
-            (BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"), group + "'ABCDEF00-0000-4000-8000-000000000002'"),
+            (
+                BASE.replace(TASK_GROUP, "ABCDEF00-0000-4000-8000-000000000002"),
+                group + "'ABCDEF00-0000-4000-8000-000000000002'",
+            ),
             (BASE.replace(f'"{TASK_GROUP}"', "5"), group + "5"),
-            *[(HEADER + f"task_labels = {value}\n" + body, 'task_labels must be a table of <task> = "<Linear label id>"')
-              for value in ('"x"', "[1]", "5")],
-            *[(label + f"deep-research = {value}\n", f"task_labels.deep-research must be a Linear label id (UUID): {shown}")
-              for shown, value in {"'Light Research'": '"Light Research"', repr(upper): f'"{upper}"', "5": "5", "['x']": '["x"]',
-                                   "''": '""', "True": "true"}.items()],
-            (label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
-             f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}"),
+            *[
+                (
+                    HEADER + f"task_labels = {value}\n" + body,
+                    'task_labels must be a table of <task> = "<Linear label id>"',
+                )
+                for value in ('"x"', "[1]", "5")
+            ],
+            *[
+                (
+                    label + f"deep-research = {value}\n",
+                    f"task_labels.deep-research must be a Linear label id (UUID): {shown}",
+                )
+                for shown, value in {
+                    "'Light Research'": '"Light Research"',
+                    repr(upper): f'"{upper}"',
+                    "5": "5",
+                    "['x']": '["x"]',
+                    "''": '""',
+                    "True": "true",
+                }.items()
+            ],
+            (
+                label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
+                f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}",
+            ),
             ('logs_dir = "/x"\n' + BASE, "unknown keys: logs_dir"),
-            (HEADER + 'project_repos = "x"\n' + body,
-             'project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'),
-            *[(HEADER + f"local_clones = {value}\n" + body, 'local_clones must be a table of "<owner>/<name>" = "<path>"')
-              for value in ('"/x"', '["/x"]', "5")],
-            (BASE + f'[local_clones]\n"{SLUG}" = "/x"\n"Ophis/Agent-PM" = "/y"\n',
-             f"local_clones.{SLUG} and local_clones.Ophis/Agent-PM are the same repo"),
+            (
+                HEADER + 'project_repos = "x"\n' + body,
+                'project_repos must be a table of "<Linear project id>" = "<owner>/<name>"',
+            ),
+            *[
+                (
+                    HEADER + f"local_clones = {value}\n" + body,
+                    'local_clones must be a table of "<owner>/<name>" = "<path>"',
+                )
+                for value in ('"/x"', '["/x"]', "5")
+            ],
+            (
+                BASE + f'[local_clones]\n"{SLUG}" = "/x"\n"Ophis/Agent-PM" = "/y"\n',
+                f"local_clones.{SLUG} and local_clones.Ophis/Agent-PM are the same repo",
+            ),
         ]
         for text, message in cases:
             with self.subTest(message, text=text):
                 self.fails("orchestrator/config.toml: " + message, text)
 
     def test_bad_table_entry_rejected(self):
-        cases = [("project_repos", key, value) for key, value in (
-                     ("not-a-uuid", "ophis/x"), (P1.upper(), "ophis/x"), (P1, "https://github.com/ophis/x"), (P1, "ophis/."),
-                     (P1, "ophis/.."), (P1, ""), (P1, 42), (P1, "ophis"))]
-        cases += [("local_clones", key, value) for key, value in (
-                      ("agent-pm", "/x"), ("https://github.com/ophis/agent-pm", "/x"), ("ophis/..", "/x"), (SLUG, 42), (SLUG, True),
-                      (SLUG, ["/x"]), (SLUG, ""), (SLUG, "x/y"), (SLUG, "./x"), (SLUG, " /x"), (SLUG, "/x\ny"), (SLUG, "/x\x85y"),
-                      (SLUG, "/x\u2028y"), (SLUG, "/x\u2029y"), (SLUG, "/x\ty"), (SLUG, "/x\x00y"))]
+        cases = [
+            ("project_repos", key, value)
+            for key, value in (
+                ("not-a-uuid", "ophis/x"),
+                (P1.upper(), "ophis/x"),
+                (P1, "https://github.com/ophis/x"),
+                (P1, "ophis/."),
+                (P1, "ophis/.."),
+                (P1, ""),
+                (P1, 42),
+                (P1, "ophis"),
+            )
+        ]
+        cases += [
+            ("local_clones", key, value)
+            for key, value in (
+                ("agent-pm", "/x"),
+                ("https://github.com/ophis/agent-pm", "/x"),
+                ("ophis/..", "/x"),
+                (SLUG, 42),
+                (SLUG, True),
+                (SLUG, ["/x"]),
+                (SLUG, ""),
+                (SLUG, "x/y"),
+                (SLUG, "./x"),
+                (SLUG, " /x"),
+                (SLUG, "/x\ny"),
+                (SLUG, "/x\x85y"),
+                (SLUG, "/x\u2028y"),
+                (SLUG, "/x\u2029y"),
+                (SLUG, "/x\ty"),
+                (SLUG, "/x\x00y"),
+            )
+        ]
         for table, key, value in cases:
             with self.subTest(table=table, key=key, value=value):
                 with self.assertRaises(config.ConfigError) as cm:
@@ -179,23 +334,47 @@ class Config(ConfigFile, unittest.TestCase):
 
     def test_loads(self):
         cfg = self.load(PIPELINE)
-        self.assertEqual((cfg.team, cfg.states, cfg.harness_key, cfg.task_label_group), (TEAM, STATES, "linear-api-key", TASK_GROUP))
+        self.assertEqual(
+            (cfg.team, cfg.states, cfg.harness_key, cfg.task_label_group),
+            (TEAM, STATES, "linear-api-key", TASK_GROUP),
+        )
         pm = cfg.roles["pm"]
-        self.assertEqual((pm.account, pm.key, pm.next, pm.max_runs, pm.require_instructions),
-                         ("pm@agents.test", "linear-api-key-pm", "engineer", 1, True))
-        self.assertEqual((cfg.task_labels, cfg.project_repos, cfg.local_clones, cfg.human_members), ({}, {}, {}, ()))
-        cfg = self.load(PIPELINE.replace(role("engineer"), role("engineer", "max_runs = 3", "require_instructions = false"))
-                        + "[core.roles.pm]\ntier = 1\n")
-        self.assertEqual((cfg.roles["engineer"].max_runs, cfg.roles["engineer"].require_instructions), (3, False))
+        self.assertEqual(
+            (pm.account, pm.key, pm.next, pm.max_runs, pm.require_instructions),
+            ("pm@agents.test", "linear-api-key-pm", "engineer", 1, True),
+        )
+        self.assertEqual(
+            (cfg.task_labels, cfg.project_repos, cfg.local_clones, cfg.human_members),
+            ({}, {}, {}, ()),
+        )
+        cfg = self.load(
+            PIPELINE.replace(
+                role("engineer"), role("engineer", "max_runs = 3", "require_instructions = false")
+            )
+            + "[core.roles.pm]\ntier = 1\n"
+        )
+        self.assertEqual(
+            (cfg.roles["engineer"].max_runs, cfg.roles["engineer"].require_instructions), (3, False)
+        )
         self.assertEqual((cfg.roles["pm"].run.tier, cfg.roles["researcher"].run.tier), (1, 2))
-        cfg = self.load(PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n')
+        cfg = self.load(
+            PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n'
+        )
         self.assertEqual(cfg.task_labels, {"light-research": LABEL1, "deep-research": LABEL2})
         cfg = self.load(PIPELINE + f'[project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n')
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
 
     def test_frozen(self):
-        cfg = self.load('human_members = ["a@x.com"]\n' + PIPELINE + f'[task_labels]\nbuild = "{LABEL1}"\n')
-        for obj, attr in ((cfg, "team"), (cfg, "roles"), (cfg, "work_dir"), (cfg.roles["pm"], "max_runs"), (cfg.docs, "repo")):
+        cfg = self.load(
+            'human_members = ["a@x.com"]\n' + PIPELINE + f'[task_labels]\nbuild = "{LABEL1}"\n'
+        )
+        for obj, attr in (
+            (cfg, "team"),
+            (cfg, "roles"),
+            (cfg, "work_dir"),
+            (cfg.roles["pm"], "max_runs"),
+            (cfg.docs, "repo"),
+        ):
             with self.subTest(attr), self.assertRaises(dataclasses.FrozenInstanceError):
                 setattr(obj, attr, None)
         for name in ("states", "roles", "task_labels", "project_repos", "local_clones", "stages"):
@@ -203,46 +382,92 @@ class Config(ConfigFile, unittest.TestCase):
                 getattr(cfg, name)["x"] = 1
         with self.assertRaises(TypeError):
             cfg.docs.dirs["x"] = "y"
-        self.assertEqual((cfg.human_members, cfg.roles["pm"].tasks), (("a@x.com",), ("product-design",)))
+        self.assertEqual(
+            (cfg.human_members, cfg.roles["pm"].tasks), (("a@x.com",), ("product-design",))
+        )
 
     def test_one_resolve_and_one_index_per_role(self):
-        with mock.patch.object(composer, "resolve", wraps=composer.resolve) as resolve, \
-                mock.patch.object(composer, "index", wraps=composer.index) as index:
+        with (
+            mock.patch.object(composer, "resolve", wraps=composer.resolve) as resolve,
+            mock.patch.object(composer, "index", wraps=composer.index) as index,
+        ):
             cfg = self.load(PIPELINE + "[core.roles.pm]\ntier = 1\n")
         overlay = {"roles": {"pm": {"tier": 1}}}
         roles = ["researcher", "pm", "engineer"]
-        self.assertEqual(resolve.call_args_list, [mock.call(r, None, overlays=[overlay], label=LABEL, config=config_file.CONFIG)
-                                                  for r in roles])
-        self.assertEqual(index.call_args_list, [mock.call(r, config=config_file.CONFIG) for r in roles])
-        self.assertEqual({r: x.run for r, x in cfg.roles.items()},
-                         {r: composer.resolve(r, overlays=[overlay], label=LABEL) for r in roles})
+        self.assertEqual(
+            resolve.call_args_list,
+            [
+                mock.call(r, None, overlays=[overlay], label=LABEL, config=config_file.CONFIG)
+                for r in roles
+            ],
+        )
+        self.assertEqual(
+            index.call_args_list, [mock.call(r, config=config_file.CONFIG) for r in roles]
+        )
+        self.assertEqual(
+            {r: x.run for r, x in cfg.roles.items()},
+            {r: composer.resolve(r, overlays=[overlay], label=LABEL) for r in roles},
+        )
 
     def test_a_config_error_carries_the_log_dir_once_work_dir_is_valid(self):
-        e = self.fails("orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'", 'work_dir = "w"\n' + PIPELINE)
+        e = self.fails(
+            "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'",
+            'work_dir = "w"\n' + PIPELINE,
+        )
         self.assertIsNone(e.logs_dir)
         self.assertIsInstance(e, SystemExit)
         logs = os.path.join(os.path.realpath(self.home), "logs")
-        for message, text in (("orchestrator/config.toml: " + missing("team"), PIPELINE.replace(f'team = "{TEAM}"\n', "")),
-                              ("orchestrator/config.toml: role 'ghost' is not in core/config.toml", PIPELINE + role("ghost"))):
+        for message, text in (
+            (
+                "orchestrator/config.toml: " + missing("team"),
+                PIPELINE.replace(f'team = "{TEAM}"\n', ""),
+            ),
+            (
+                "orchestrator/config.toml: role 'ghost' is not in core/config.toml",
+                PIPELINE + role("ghost"),
+            ),
+        ):
             with self.subTest(message):
                 e = self.fails(message, text)
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
     def test_importing_reads_no_config_file(self):
         write(os.path.join(self.home, "orchestrator-new.local.toml"), "[[[ not toml")
-        code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import config\n"
-                "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))")
-        res = subprocess.run([sys.executable, "-c", code, ORCH_SRC], capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                             timeout=60, env={**os.environ, "HOME": os.path.dirname(self.home)})
+        code = (
+            "import json, sys; sys.path.insert(0, sys.argv[1]); import config\n"
+            "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
+        )
+        res = subprocess.run(
+            [sys.executable, "-c", code, ORCH_SRC],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+            env={**os.environ, "HOME": os.path.dirname(self.home)},
+        )
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         msg, logs = json.loads(res.stdout)
         self.assertTrue(msg.startswith("orchestrator/config.toml: "), msg)
         self.assertIsNone(logs)
 
 
-ROLES = {"researcher": ("researcher@agents.test", "linear-api-key-researcher", ("deep-research", "light-research"), 1, "pm"),
-         "pm": ("pm@agents.test", "linear-api-key-pm", ("product-design",), 1, "engineer"),
-         "engineer": ("engineer@agents.test", "linear-api-key-engineer", ("build", "light-build"), 1, None)}
+ROLES = {
+    "researcher": (
+        "researcher@agents.test",
+        "linear-api-key-researcher",
+        ("deep-research", "light-research"),
+        1,
+        "pm",
+    ),
+    "pm": ("pm@agents.test", "linear-api-key-pm", ("product-design",), 1, "engineer"),
+    "engineer": (
+        "engineer@agents.test",
+        "linear-api-key-engineer",
+        ("build", "light-build"),
+        1,
+        None,
+    ),
+}
 
 
 def fields(roles):
@@ -257,31 +482,58 @@ class Runnable(ConfigFile, unittest.TestCase):
         roles = self.runs()
         self.assertEqual(fields(roles), ROLES)
         self.assertEqual(list(roles), ["researcher", "pm", "engineer"])
-        self.assertEqual({r: x.tasks for r, x in roles.items()}, {r: tuple(composer.index(r)) for r in roles})
+        self.assertEqual(
+            {r: x.tasks for r, x in roles.items()}, {r: tuple(composer.index(r)) for r in roles}
+        )
         roles = self.runs(HEADER + role("engineer") + role("researcher", "max_runs = 3"))
-        self.assertEqual([(r, x.max_runs) for r, x in roles.items()], [("engineer", 1), ("researcher", 3)])
+        self.assertEqual(
+            [(r, x.max_runs) for r, x in roles.items()], [("engineer", 1), ("researcher", 3)]
+        )
         text = PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\nbuild = "{LABEL2}"\n'
         self.assertEqual(list(self.runs(text)), ["researcher", "pm", "engineer"])
 
     def test_tasks_by_role(self):
         self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
-        self.assertEqual({r: (x.kind, x.prefix, x.files) for r, x in config.TASKS.items()},
-                         {"researcher": ("research", "", False), "pm": ("design", "PRD", False),
-                          "engineer": ("build", "ENG", True)})
+        self.assertEqual(
+            {r: (x.kind, x.prefix, x.files) for r, x in config.TASKS.items()},
+            {
+                "researcher": ("research", "", False),
+                "pm": ("design", "PRD", False),
+                "engineer": ("build", "ENG", True),
+            },
+        )
 
     def test_rejected(self):
         cases = [
             (PIPELINE + role("ghost"), "role 'ghost' is not in core/config.toml"),
             (PIPELINE + role("dummy-tester"), "role 'dummy-tester' has no entry in config.TASKS"),
-            (HEADER + role("researcher", 'next = "pm"'), "next of 'researcher' names undefined role 'pm'"),
-            (HEADER + role("researcher") + role("pm", 'next = "researcher"'),
-             "next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix"),
-            (PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
-             "[roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s"),
-            (PIPELINE.replace("linear-api-key-engineer", "linear-api-key"), "[roles.engineer] key 'linear-api-key' is harness_key"),
-            *[(text + f'[task_labels]\n{task} = "{LABEL1}"\n',
-               f"task_labels.{task} is not a task of a role in orchestrator/config.toml")
-              for task, text in (("echo", PIPELINE), ("ghost", PIPELINE), ("product-design", HEADER + role("researcher")))],
+            (
+                HEADER + role("researcher", 'next = "pm"'),
+                "next of 'researcher' names undefined role 'pm'",
+            ),
+            (
+                HEADER + role("researcher") + role("pm", 'next = "researcher"'),
+                "next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix",
+            ),
+            (
+                PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
+                "[roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
+            ),
+            (
+                PIPELINE.replace("linear-api-key-engineer", "linear-api-key"),
+                "[roles.engineer] key 'linear-api-key' is harness_key",
+            ),
+            *[
+                (
+                    text + f'[task_labels]\n{task} = "{LABEL1}"\n',
+                    f"task_labels.{task} is not a task of a role in orchestrator/config.toml",
+                )
+                for task, text in (
+                    ("echo", PIPELINE),
+                    ("ghost", PIPELINE),
+                    ("product-design", HEADER + role("researcher")),
+                )
+            ],
         ]
         for text, message in cases:
             with self.subTest(message):
@@ -344,10 +596,18 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_tasks_are_the_core_configs_index(self):
         index = composer.index
-        with mock.patch.object(composer, "index", side_effect=lambda r, config: (
-                {"deep-research": ""} if r == "researcher" else index(r, config=config))) as fake:
+        with mock.patch.object(
+            composer,
+            "index",
+            side_effect=lambda r, config: (
+                {"deep-research": ""} if r == "researcher" else index(r, config=config)
+            ),
+        ) as fake:
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
-        self.assertEqual(fake.call_args_list, [mock.call(r, config=self.core_path) for r in ("researcher", "pm", "engineer")])
+        self.assertEqual(
+            fake.call_args_list,
+            [mock.call(r, config=self.core_path) for r in ("researcher", "pm", "engineer")],
+        )
 
     def test_an_index_error_stops_the_caller(self):
         error = composer.ConfigError("roles/researcher.md: lists 'ghost' without tasks/ghost.md")
@@ -355,12 +615,16 @@ class OtherRoot(ConfigFile, unittest.TestCase):
             self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md", PIPELINE)
 
     def test_overlay_fills_root(self):
-        cfg = self.load(PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
-                        '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n[core.roles.pm]\nlanguage = "French"\n')
+        cfg = self.load(
+            PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
+            '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n[core.roles.pm]\nlanguage = "French"\n'
+        )
         q = shlex.quote(self.root)
         self.assertTrue(q.startswith("'"), q)
         run = cfg.roles["researcher"].run
-        self.assertEqual((run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}"))
+        self.assertEqual(
+            (run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}")
+        )
         run = cfg.roles["pm"].run
         self.assertEqual((run.gate, run.language), ("", "French"))
 
@@ -380,37 +644,63 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_overlay_unknown_keys(self):
         unknown = "core: orchestrator/config.toml: unknown key "
-        cases = [("[core]\nfoo = 1\n", unknown + "'foo' in [core]"),
-                 ('[core]\nusers = ["octocat"]\n', unknown + "'users' in [core]"),
-                 ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in [core]"),
-                 ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in [core]"),
-                 ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in [core]"),
-                 ('[core]\nteam_dirs = ["~/.agent-pm/team"]\n', unknown + "'team_dirs' in [core]"),
-                 ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in [core]"),
-                 ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in [core.roles.researcher]")]
-        cases += [('[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n', old_key("default_task")),
-                  ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks"))]
+        cases = [
+            ("[core]\nfoo = 1\n", unknown + "'foo' in [core]"),
+            ('[core]\nusers = ["octocat"]\n', unknown + "'users' in [core]"),
+            ('[core]\ntrusted_dirs = ["~/x"]\n', unknown + "'trusted_dirs' in [core]"),
+            ("[core]\nworkers_per_column = 2\n", unknown + "'workers_per_column' in [core]"),
+            ('[core]\ngrid_retile = "off"\n', unknown + "'grid_retile' in [core]"),
+            ('[core]\nteam_dirs = ["~/.agent-pm/team"]\n', unknown + "'team_dirs' in [core]"),
+            ("[core.clients.claude]\nflags = []\n", unknown + "'clients' in [core]"),
+            ("[core.roles.researcher]\nfoo = 1\n", unknown + "'foo' in [core.roles.researcher]"),
+        ]
+        cases += [
+            (
+                '[core.roles.researcher]\ndefault_task = "light-research"\nfoo = 1\n',
+                old_key("default_task"),
+            ),
+            ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks")),
+        ]
         for text, message in cases:
             with self.subTest(message):
                 self.fails(message, PIPELINE + text)
 
     def test_resolution_rejects_unknown_overlay_roles_and_output_keys(self):
         core = "core: orchestrator/config.toml: "
-        for text, message in (("[core.roles.reseacher]\ntier = 2\n", "unknown role 'reseacher' in [core.roles]"),
-                              ('[core.output]\ntype = "local"\ntypo = 1\n', "unknown key 'typo' in [core.output]"),
-                              ('[core.roles.researcher.output]\ntype = "local"\ntypo = 1\n',
-                               "unknown key 'typo' in [core.roles.researcher.output]")):
+        for text, message in (
+            ("[core.roles.reseacher]\ntier = 2\n", "unknown role 'reseacher' in [core.roles]"),
+            ('[core.output]\ntype = "local"\ntypo = 1\n', "unknown key 'typo' in [core.output]"),
+            (
+                '[core.roles.researcher.output]\ntype = "local"\ntypo = 1\n',
+                "unknown key 'typo' in [core.roles.researcher.output]",
+            ),
+        ):
             with self.subTest(message):
                 self.fails(core + message, PIPELINE + text)
 
     def test_core_errors(self):
-        cases = [('trusted_dirs = ["rel/dir"]\n' + CORE_TOML, PIPELINE,
-                  "core: trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path"),
-                 (CORE_TOML, PIPELINE + '[core]\ncwd = "rel"\n', "core: cwd must be a printable absolute or ~ path, got 'rel'"),
-                 (CORE_TOML.replace("[roles.engineer]\n", "[roles.engineer]\ntier = 9\n"), PIPELINE,
-                  "core: tier must be an integer 1–4, got 9"),
-                 (CORE_TOML, PIPELINE + '[core.roles.researcher]\ngate = "echo `id`"\n',
-                  "core: gate must be one line of shell command without backticks")]
+        cases = [
+            (
+                'trusted_dirs = ["rel/dir"]\n' + CORE_TOML,
+                PIPELINE,
+                "core: trusted_dirs: 'rel/dir' is not an absolute or expandable ~ path",
+            ),
+            (
+                CORE_TOML,
+                PIPELINE + '[core]\ncwd = "rel"\n',
+                "core: cwd must be a printable absolute or ~ path, got 'rel'",
+            ),
+            (
+                CORE_TOML.replace("[roles.engineer]\n", "[roles.engineer]\ntier = 9\n"),
+                PIPELINE,
+                "core: tier must be an integer 1–4, got 9",
+            ),
+            (
+                CORE_TOML,
+                PIPELINE + '[core.roles.researcher]\ngate = "echo `id`"\n',
+                "core: gate must be one line of shell command without backticks",
+            ),
+        ]
         for core, text, message in cases:
             with self.subTest(message):
                 self.core(core)
@@ -418,16 +708,23 @@ class OtherRoot(ConfigFile, unittest.TestCase):
 
     def test_docs(self):
         self.assertEqual(self.load(PIPELINE).docs, config.Docs("acme/notes", "trunk", DIRS))
-        self.assertEqual(self.load(HEADER + role("pm", 'next = "engineer"') + role("engineer")).docs,
-                         config.Docs("acme/notes", "trunk", {"pm": "Designs/"}))
+        self.assertEqual(
+            self.load(HEADER + role("pm", 'next = "engineer"') + role("engineer")).docs,
+            config.Docs("acme/notes", "trunk", {"pm": "Designs/"}),
+        )
         self.core(CORE_TOML.replace(DESIGN, DESIGN.replace(" }", ', host = "github.com" }')))
         self.assertEqual(self.load(PIPELINE).docs, config.Docs("acme/notes", "trunk", DIRS))
 
     def test_docs_mismatch(self):
-        message = ("core: document roles must publish to one github.com repo and branch (their [output] in "
-                   "~/.agent-pm/core-new.local.toml)")
-        for design in (DESIGN.replace("acme/notes", "acme/other"), DESIGN.replace('"trunk"', '"main"'),
-                       DESIGN.replace(" }", ', host = "ghe.example.com" }')):
+        message = (
+            "core: document roles must publish to one github.com repo and branch (their [output] in "
+            "~/.agent-pm/core-new.local.toml)"
+        )
+        for design in (
+            DESIGN.replace("acme/notes", "acme/other"),
+            DESIGN.replace('"trunk"', '"main"'),
+            DESIGN.replace(" }", ', host = "ghe.example.com" }'),
+        ):
             with self.subTest(design):
                 self.core(CORE_TOML.replace(DESIGN, design))
                 self.fails(message, PIPELINE)
@@ -435,20 +732,46 @@ class OtherRoot(ConfigFile, unittest.TestCase):
         self.fails(message, HEADER + role("engineer"))
 
 
-DEPLOYMENT = {"team", "states", "human_members", "harness_key", "task_label_group", "task_labels", "project_repos",
-              "local_clones", "work_dir"}
+DEPLOYMENT = {
+    "team",
+    "states",
+    "human_members",
+    "harness_key",
+    "task_label_group",
+    "task_labels",
+    "project_repos",
+    "local_clones",
+    "work_dir",
+}
 
 
 class Local(ConfigFile, unittest.TestCase):
     def test_local_on_top(self):
-        self.local(HEADER + 'human_members = ["b@x.com"]\n' + role("researcher", "max_runs = 2") + role("pm")
-                   + f'[project_repos]\n"{P2}" = "ophis/y"\n')
-        cfg = self.load('human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
-                        f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n')
+        self.local(
+            HEADER
+            + 'human_members = ["b@x.com"]\n'
+            + role("researcher", "max_runs = 2")
+            + role("pm")
+            + f'[project_repos]\n"{P2}" = "ophis/y"\n'
+        )
+        cfg = self.load(
+            'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
+            f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
+        )
         self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
-        self.assertEqual(fields(cfg.roles), {"researcher": ("researcher@agents.test", "linear-api-key-researcher",
-                                                            ROLES["researcher"][2], 2, "pm"),
-                                             "pm": ("pm@agents.test", "linear-api-key-pm", ROLES["pm"][2], 1, None)})
+        self.assertEqual(
+            fields(cfg.roles),
+            {
+                "researcher": (
+                    "researcher@agents.test",
+                    "linear-api-key-researcher",
+                    ROLES["researcher"][2],
+                    2,
+                    "pm",
+                ),
+                "pm": ("pm@agents.test", "linear-api-key-pm", ROLES["pm"][2], 1, None),
+            },
+        )
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/y"})
         self.assertEqual(cfg.roles["pm"].run.tier, 1)
 
@@ -464,20 +787,30 @@ class Local(ConfigFile, unittest.TestCase):
 
     def test_a_bad_local_value_is_rejected(self):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
-        self.fails("orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'", BASE)
+        self.fails(
+            "orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
+            BASE,
+        )
 
 
-STEPS = ("\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
-         "## Resume\n\nRedo step 2.\n")
+STEPS = (
+    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
+    "## Resume\n\nRedo step 2.\n"
+)
 
 
 class TeamDirsIgnored(ConfigFile, unittest.TestCase):
     def setUp(self):
         super().setUp()
         self.team = os.path.realpath(os.path.join(self.home, "team"))
-        writer = ("# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
-                  "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n")
-        for rel, text in (("tasks/one-pager.md", "# One-Pager\n" + STEPS), ("roles/writer.md", writer)):
+        writer = (
+            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
+            "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
+        )
+        for rel, text in (
+            ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
+            ("roles/writer.md", writer),
+        ):
             path = os.path.join(self.team, rel)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             write(path, text)
@@ -485,14 +818,27 @@ class TeamDirsIgnored(ConfigFile, unittest.TestCase):
 
     def seen(self):
         pm = self.load(PIPELINE).roles["pm"]
-        return pm, delegate.plan(pm.run, None, "x", self.work, runtime="claude", mode="headless", sid=SID,
-                                 out=os.path.join(self.work, "out.md"), cwd=self.work)
+        return pm, delegate.plan(
+            pm.run,
+            None,
+            "x",
+            self.work,
+            runtime="claude",
+            mode="headless",
+            sid=SID,
+            out=os.path.join(self.work, "out.md"),
+            cwd=self.work,
+        )
 
     def test_team_dirs_change_no_orchestrator_run(self):
         before = self.seen()
-        write(os.path.join(self.home, "core-new.local.toml"),
-              f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n")
-        self.assertIn("writer", composer.catalog(composer.team(composer.TEAM, composer.team_dirs())))
+        write(
+            os.path.join(self.home, "core-new.local.toml"),
+            f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
+        )
+        self.assertIn(
+            "writer", composer.catalog(composer.team(composer.TEAM, composer.team_dirs()))
+        )
         after = self.seen()
         self.assertEqual(after, before)
         self.assertNotIn("one-pager", after[1].prompt)
@@ -514,37 +860,67 @@ class RealConfig(unittest.TestCase):
         with open(config.CONFIG, "rb") as f:
             committed = tomllib.load(f)
         self.assertFalse(DEPLOYMENT & set(committed))
-        self.assertEqual({r: set(p) & {"account", "key"} for r, p in committed["roles"].items()},
-                         {"researcher": set(), "pm": set(), "engineer": set()})
+        self.assertEqual(
+            {r: set(p) & {"account", "key"} for r, p in committed["roles"].items()},
+            {"researcher": set(), "pm": set(), "engineer": set()},
+        )
 
     def test_without_local_names_what_is_missing(self):
         with self.assertRaises(config.ConfigError) as cm:
             self.load()
-        self.assertEqual(cm.exception.code, "orchestrator/config.toml: " + missing(
-            "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
-            "states.done, states.canceled, roles.researcher.account, roles.researcher.key, roles.pm.account, roles.pm.key, "
-            "roles.engineer.account, roles.engineer.key"))
+        self.assertEqual(
+            cm.exception.code,
+            "orchestrator/config.toml: "
+            + missing(
+                "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
+                "states.done, states.canceled, roles.researcher.account, roles.researcher.key, roles.pm.account, roles.pm.key, "
+                "roles.engineer.account, roles.engineer.key"
+            ),
+        )
 
     def test_real_config(self):
         cfg = self.load(HEADER + role("researcher") + role("pm") + role("engineer"))
-        self.assertEqual({r: (*v, cfg.roles[r].require_instructions) for r, v in fields(cfg.roles).items()},
-                         {"researcher": (*ROLES["researcher"][:3], 3, "pm", True), "pm": (*ROLES["pm"][:3], 3, "engineer", False),
-                          "engineer": (*ROLES["engineer"][:3], 3, None, True)})
+        self.assertEqual(
+            {r: (*v, cfg.roles[r].require_instructions) for r, v in fields(cfg.roles).items()},
+            {
+                "researcher": (*ROLES["researcher"][:3], 3, "pm", True),
+                "pm": (*ROLES["pm"][:3], 3, "engineer", False),
+                "engineer": (*ROLES["engineer"][:3], 3, None, True),
+            },
+        )
         self.assertEqual(list(cfg.roles), ["researcher", "pm", "engineer"])
-        self.assertEqual(cfg.docs, config.Docs("ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}))
-        self.assertEqual((cfg.team, cfg.task_labels, cfg.project_repos, cfg.local_clones), (TEAM, {}, {}, {}))
+        self.assertEqual(
+            cfg.docs,
+            config.Docs(
+                "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}
+            ),
+        )
+        self.assertEqual(
+            (cfg.team, cfg.task_labels, cfg.project_repos, cfg.local_clones), (TEAM, {}, {}, {})
+        )
         self.assertEqual(cfg.stages, {"researcher": 0, "pm": 1, "engineer": 2})
-        self.assertEqual({r: (x.run.gate, x.run.task, x.run.language) for r, x in cfg.roles.items()},
-                         {"researcher": (GATE, "", "Chinese"), "pm": ("", "", "Chinese"), "engineer": ("", "", "Chinese")})
+        self.assertEqual(
+            {r: (x.run.gate, x.run.task, x.run.language) for r, x in cfg.roles.items()},
+            {
+                "researcher": (GATE, "", "Chinese"),
+                "pm": ("", "", "Chinese"),
+                "engineer": ("", "", "Chinese"),
+            },
+        )
 
     def test_local_lines_uncommented_set_every_required_key(self):
         with open(config.CONFIG) as f:
-            local = "".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: "))
+            local = "".join(
+                line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
+            )
         with self.assertRaises(config.ConfigError) as cm:
             self.load(local)
         zero = "00000000-0000-0000-0000-000000000000"
-        self.assertEqual(cm.exception.code, f"orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
-                                            "(UUID) to <owner>/<name>: '<owner>/<name>'")
+        self.assertEqual(
+            cm.exception.code,
+            f"orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
+            "(UUID) to <owner>/<name>: '<owner>/<name>'",
+        )
 
 
 def git(*args):
@@ -579,8 +955,16 @@ class Clones(ConfigFile, unittest.TestCase):
             (".git a file", dotgit_file, f"{dotgit_file} is not a git clone"),
             (".git a symlink", linked, f"{linked} is not a git clone"),
             ("no origin", no_origin, f"{no_origin}: no origin URL naming host/owner/name"),
-            ("non-github host", gitlab, "origin is gitlab.com/ophis/agent-pm, not github.com/ophis/agent-pm"),
-            ("other owner/name", other, "origin is github.com/ophis/other, not github.com/ophis/agent-pm"),
+            (
+                "non-github host",
+                gitlab,
+                "origin is gitlab.com/ophis/agent-pm, not github.com/ophis/agent-pm",
+            ),
+            (
+                "other owner/name",
+                other,
+                "origin is github.com/ophis/other, not github.com/ophis/agent-pm",
+            ),
         ]
 
 
@@ -591,32 +975,50 @@ class LocalClones(Clones):
         os.makedirs(real)
         os.symlink(real, os.path.join(self.dir, "link"))
         with mock.patch.object(config, "clone_error", return_value=None) as clone_error:
-            cfg = self.load(f'work_dir = "{self.dir}/w"\n' + PIPELINE
-                            + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n')
+            cfg = self.load(
+                f'work_dir = "{self.dir}/w"\n'
+                + PIPELINE
+                + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n'
+            )
         self.assertEqual(cfg.local_clones, {SLUG: real, "ophis/x": real, "ophis/y": home})
-        self.assertEqual(clone_error.call_args_list, [mock.call(real, SLUG), mock.call(real, "ophis/x"), mock.call(home, "ophis/y")])
+        self.assertEqual(
+            clone_error.call_args_list,
+            [mock.call(real, SLUG), mock.call(real, "ophis/x"), mock.call(home, "ophis/y")],
+        )
 
 
 class CloneError(Clones):
     def test_matching_origin(self):
-        for name, origin, slug in (("https", HTTPS, SLUG), ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
-                                   ("bare", "https://github.com/ophis/agent-pm", SLUG), ("case", HTTPS, "OPHIS/Agent-PM"),
-                                   ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG)):
+        for name, origin, slug in (
+            ("https", HTTPS, SLUG),
+            ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
+            ("bare", "https://github.com/ophis/agent-pm", SLUG),
+            ("case", HTTPS, "OPHIS/Agent-PM"),
+            ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG),
+        ):
             with self.subTest(name):
                 self.assertIsNone(config.clone_error(self.clone(name, origin), slug))
 
     def test_reasons(self):
-        bad = self.bad() + [(repr(path), path, f"{path!r} has a non-printable character") for path in ("/x\ny", "/x\x85y", "/x\u2028y")]
+        bad = self.bad() + [
+            (repr(path), path, f"{path!r} has a non-printable character")
+            for path in ("/x\ny", "/x\x85y", "/x\u2028y")
+        ]
         for name, path, reason in bad:
             with self.subTest(name):
                 self.assertEqual(config.clone_error(path, SLUG), reason)
 
     def test_run_failures_are_reasons(self):
         clone = self.clone()
-        for error in (OSError("boom"), subprocess.TimeoutExpired(["git"], 10),
-                      UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")):
+        for error in (
+            OSError("boom"),
+            subprocess.TimeoutExpired(["git"], 10),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        ):
+
             def run(argv, timeout):
                 raise error
+
             with self.subTest(type(error).__name__):
                 self.assertEqual(config.clone_error(clone, SLUG, run=run), f"git: {error}")
 
@@ -626,8 +1028,11 @@ class CloneError(Clones):
         def run(argv, timeout):
             calls.append((argv, timeout))
             return subprocess.CompletedProcess(argv, 0, HTTPS + "\n", "")
+
         self.assertIsNone(config.clone_error(clone, SLUG, run=run))
-        self.assertEqual(calls, [(["git", *GUARD, "-C", clone, "remote", "get-url", "origin"], SHORT)])
+        self.assertEqual(
+            calls, [(["git", *GUARD, "-C", clone, "remote", "get-url", "origin"], SHORT)]
+        )
 
 
 class LocalClonesRunnable(Clones):
@@ -638,8 +1043,10 @@ class LocalClonesRunnable(Clones):
         self.assertEqual(list(self.runs(SLUG, self.clone())), ["researcher", "pm", "engineer"])
         for name, path, reason in self.bad():
             with self.subTest(name):
-                self.fails(f"orchestrator/config.toml: local_clones.{SLUG}: {reason}",
-                           PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(path)}\n')
+                self.fails(
+                    f"orchestrator/config.toml: local_clones.{SLUG}: {reason}",
+                    PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(path)}\n',
+                )
 
     def test_no_entries_runs_no_git(self):
         with mock.patch.object(config, "clone_error") as clone_error:
@@ -657,9 +1064,20 @@ class Writable(unittest.TestCase):
 
 class RepoSlug(unittest.TestCase):
     def test_slug(self):
-        cases = {"ophis/agent-pm": ("ophis", "agent-pm"), "ophis/.github": ("ophis", ".github"),
-                 "-a/b": None, "a/-b": None, "a/..": None, "a/.": None, "a b/c": None, "ophis": None,
-                 "https://github.com/ophis/x": None, "": None, None: None, 42: None}
+        cases = {
+            "ophis/agent-pm": ("ophis", "agent-pm"),
+            "ophis/.github": ("ophis", ".github"),
+            "-a/b": None,
+            "a/-b": None,
+            "a/..": None,
+            "a/.": None,
+            "a b/c": None,
+            "ophis": None,
+            "https://github.com/ophis/x": None,
+            "": None,
+            None: None,
+            42: None,
+        }
         for value, want in cases.items():
             with self.subTest(value=value):
                 self.assertEqual(config.repo_slug(value), want)
@@ -669,17 +1087,34 @@ class WorkDir(ConfigFile, unittest.TestCase):
     def test_unset_is_in_home(self):
         work = os.path.realpath(self.home)
         cfg = self.load(PIPELINE)
-        self.assertEqual((cfg.work_dir, cfg.runs_dir, cfg.logs_dir, cfg.runs_log, cfg.run_dir("TASK-9")),
-                         (work, work + "/work", work + "/logs", work + "/logs/runs.jsonl", work + "/work/TASK-9"))
+        self.assertEqual(
+            (cfg.work_dir, cfg.runs_dir, cfg.logs_dir, cfg.runs_log, cfg.run_dir("TASK-9")),
+            (
+                work,
+                work + "/work",
+                work + "/logs",
+                work + "/logs/runs.jsonl",
+                work + "/work/TASK-9",
+            ),
+        )
         home = os.path.dirname(work)
-        self.fails("orchestrator/config.toml: work_dir must neither lie in nor contain "
-                   f"local_clones.ophis/x {home}: '~/.agent-pm'", PIPELINE + '[local_clones]\n"ophis/x" = "~"\n')
+        self.fails(
+            "orchestrator/config.toml: work_dir must neither lie in nor contain "
+            f"local_clones.ophis/x {home}: '~/.agent-pm'",
+            PIPELINE + '[local_clones]\n"ophis/x" = "~"\n',
+        )
 
     def test_set(self):
         home = os.path.realpath(os.path.dirname(self.home))
-        self.assertEqual(self.load('work_dir = "~/d"\n' + PIPELINE).work_dir, os.path.join(home, "d"))
+        self.assertEqual(
+            self.load('work_dir = "~/d"\n' + PIPELINE).work_dir, os.path.join(home, "d")
+        )
         with mock.patch.object(config, "clone_error", return_value=None):
-            cfg = self.load(f'work_dir = "{home}/d"\n' + PIPELINE + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n')
+            cfg = self.load(
+                f'work_dir = "{home}/d"\n'
+                + PIPELINE
+                + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n'
+            )
         self.assertEqual(cfg.work_dir, f"{home}/d")
 
     def test_refused(self):
@@ -690,17 +1125,24 @@ class WorkDir(ConfigFile, unittest.TestCase):
         os.makedirs(os.path.join(d, "c"))
         os.symlink(os.path.join(d, "c"), clink)
         repo = f"work_dir must neither lie in nor contain the repo {real}: "
-        clone = lambda path: f'[local_clones]\n"ophis/x" = "{path}"\n'  # noqa: E731
-        in_clone = lambda path: f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "  # noqa: E731
-        cases = [(f'work_dir = "{real}"\n', "", f"{repo}{real!r}"),
-                 (f'work_dir = "{real}/w"\n', "", f"{repo}{real + '/w'!r}"),
-                 (f'work_dir = "{link}/w"\n', "", f"{repo}{link + '/w'!r}"),
-                 (f'work_dir = "{os.path.dirname(real)}"\n', "", f"{repo}{os.path.dirname(real)!r}"),
-                 (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{d + '/c'!r}"),
-                 (f'work_dir = "{clink}"\n', clone(f"{d}/c/x"), f"{in_clone(d + '/c/x')}{clink!r}"),
-                 (f'work_dir = "{clink}/w"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{clink + '/w'!r}"),
-                 ('work_dir = "w"\n', "", "work_dir must be a printable absolute or ~ path: 'w'"),
-                 ("work_dir = 5\n", "", "work_dir must be a printable absolute or ~ path: 5")]
+
+        def clone(path):
+            return f'[local_clones]\n"ophis/x" = "{path}"\n'
+
+        def in_clone(path):
+            return f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "
+
+        cases = [
+            (f'work_dir = "{real}"\n', "", f"{repo}{real!r}"),
+            (f'work_dir = "{real}/w"\n', "", f"{repo}{real + '/w'!r}"),
+            (f'work_dir = "{link}/w"\n', "", f"{repo}{link + '/w'!r}"),
+            (f'work_dir = "{os.path.dirname(real)}"\n', "", f"{repo}{os.path.dirname(real)!r}"),
+            (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{d + '/c'!r}"),
+            (f'work_dir = "{clink}"\n', clone(f"{d}/c/x"), f"{in_clone(d + '/c/x')}{clink!r}"),
+            (f'work_dir = "{clink}/w"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{clink + '/w'!r}"),
+            ('work_dir = "w"\n', "", "work_dir must be a printable absolute or ~ path: 'w'"),
+            ("work_dir = 5\n", "", "work_dir must be a printable absolute or ~ path: 5"),
+        ]
         for text, tail, msg in cases:
             with self.subTest(text=text, tail=tail):
                 self.fails(f"orchestrator/config.toml: {msg}", text + BASE + tail)
@@ -708,15 +1150,34 @@ class WorkDir(ConfigFile, unittest.TestCase):
 
 class PathSeam(unittest.TestCase):
     def read(self, **env):
-        env = {**{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"}, **env, "PYTHONPATH": REPO}
-        res = subprocess.run([sys.executable, "-c", "from new.tests import hermetic; import config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))"],
-                             cwd=REPO, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        env = {
+            **{k: v for k, v in os.environ.items() if k != "AGENT_PM_PATH"},
+            **env,
+            "PYTHONPATH": REPO,
+        }
+        res = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from new.tests import hermetic; import config, json, os; print(json.dumps([os.environ['HOME'], config.PATH]))",
+            ],
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         home, path = json.loads(res.stdout)
         return f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin", path
 
     def test_agent_pm_path_goes_in_front_empty_or_unset_is_the_default(self):
-        for env, front in (({"AGENT_PM_PATH": "/fakes/bin:/more"}, "/fakes/bin:/more:"), ({}, ""), ({"AGENT_PM_PATH": ""}, "")):
+        for env, front in (
+            ({"AGENT_PM_PATH": "/fakes/bin:/more"}, "/fakes/bin:/more:"),
+            ({}, ""),
+            ({"AGENT_PM_PATH": ""}, ""),
+        ):
             with self.subTest(env=env):
                 default, path = self.read(**env)
                 self.assertEqual(path, front + default)
@@ -724,12 +1185,20 @@ class PathSeam(unittest.TestCase):
 
 class Shell(unittest.TestCase):
     def test_sh_run(self):
-        with mock.patch.object(config.subprocess, "run", return_value="res") as run, \
-                mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}):
+        with (
+            mock.patch.object(config.subprocess, "run", return_value="res") as run,
+            mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}),
+        ):
             self.assertEqual(config.sh_run(["git", "status"], 5), "res")
             env = {**os.environ, "PATH": config.PATH}
-        run.assert_called_once_with(["git", "status"], capture_output=True, text=True, timeout=5,
-                                    stdin=subprocess.DEVNULL, env=env)
+        run.assert_called_once_with(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
         self.assertEqual(env["KEEP"], "1")
 
 
@@ -745,25 +1214,53 @@ class TuiNames(unittest.TestCase):
         self.assertEqual(config.session("pm", ID), f"agent-pm-pm-{ID}")
 
     def test_a_prefix_outside_the_contract(self):
-        for role_name, ident in (("Engineer", ID), ("eng_x", ID), ("", ID), ("2pm", ID), ("engineer", "task-12"),
-                                 ("engineer", "TASK-12 ")):
-            with self.subTest(role=role_name, ident=ident), self.assertRaisesRegex(ValueError, "TUI session prefix"):
+        for role_name, ident in (
+            ("Engineer", ID),
+            ("eng_x", ID),
+            ("", ID),
+            ("2pm", ID),
+            ("engineer", "task-12"),
+            ("engineer", "TASK-12 "),
+        ):
+            with (
+                self.subTest(role=role_name, ident=ident),
+                self.assertRaisesRegex(ValueError, "TUI session prefix"),
+            ):
                 config.tui_prefix(role_name, ident)
         with self.assertRaises(ValueError) as cm:
             config.tui_prefix("Engineer", ID)
-        self.assertEqual(str(cm.exception), r"TUI session prefix 'Engineer-TASK-12': want ([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)")
+        self.assertEqual(
+            str(cm.exception),
+            r"TUI session prefix 'Engineer-TASK-12': want ([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)",
+        )
 
     def test_the_name_round_trips(self):
         self.assertEqual(config.TUI.pattern, r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)-[0-9a-f]{8}")
         self.assertEqual(config.tui_name("engineer", ID, SID), A)
-        self.assertEqual(config.tui_issue(config.tui_name("dummy-tester", "T-1", SID)), ("dummy-tester", "T-1"))
+        self.assertEqual(
+            config.tui_issue(config.tui_name("dummy-tester", "T-1", SID)), ("dummy-tester", "T-1")
+        )
 
     def test_found_by_name_only(self):
-        found = {A: ("engineer", ID), B: ("dummy-tester", ID), "pm-TASK-12-cccccccc": ("pm", ID),
-                 "engineer-TASK-1-aaaaaaaa": ("engineer", "TASK-1"), "pm-T-1-aaaaaaaa": ("pm", "T-1")}
-        others = ["Engineer-TASK-12-bbbbbbbb", "agent-pm-engineer-TASK-12", "agent-pm-engineer-TASK-12345678",
-                  "engineer-0b6f2c1e", "engineer-TASK-12-0B6F2C1E", "engineer-TASK-12-0b6f2c1", "engineer-task-12-0b6f2c1e",
-                  "mine", "pm-T-1-aaaaaaaa-drive", "agent-pm-pm-T-1"]
+        found = {
+            A: ("engineer", ID),
+            B: ("dummy-tester", ID),
+            "pm-TASK-12-cccccccc": ("pm", ID),
+            "engineer-TASK-1-aaaaaaaa": ("engineer", "TASK-1"),
+            "pm-T-1-aaaaaaaa": ("pm", "T-1"),
+        }
+        others = [
+            "Engineer-TASK-12-bbbbbbbb",
+            "agent-pm-engineer-TASK-12",
+            "agent-pm-engineer-TASK-12345678",
+            "engineer-0b6f2c1e",
+            "engineer-TASK-12-0B6F2C1E",
+            "engineer-TASK-12-0b6f2c1",
+            "engineer-task-12-0b6f2c1e",
+            "mine",
+            "pm-T-1-aaaaaaaa-drive",
+            "agent-pm-pm-T-1",
+        ]
         for name, want in [*found.items(), *((o, None) for o in others)]:
             with self.subTest(name):
                 self.assertEqual(config.tui_issue(name), want)

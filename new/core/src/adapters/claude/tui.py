@@ -3,6 +3,7 @@
 last_assistant_message, else the last assistant message's text in transcript_path's last 4 MiB. limit: Claude's
 usage-limit message, reset at the `resets <when>` after it (WHEN), the next such time when undated, local time
 without a known zone."""
+
 import json
 import re
 import shlex
@@ -10,32 +11,62 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from adapters.base import ACTIVITY, BLOCKED, TURN_END, LimitHit, Tui
 from utils.files import read_regular
+
+from adapters.base import ACTIVITY, BLOCKED, TURN_END, LimitHit, Tui
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
-WHEN = re.compile(r"(?:([A-Za-z]+)(?: (\d{1,2})(?:, (\d{4}))?)?,? )?(\d{1,2})(?::([0-5]\d))?([ap]m)(?: \(([^)]*)\))?",
-                  re.I)
+WHEN = re.compile(
+    r"(?:([A-Za-z]+)(?: (\d{1,2})(?:, (\d{4}))?)?,? )?(\d{1,2})(?::([0-5]\d))?([ap]m)(?: \(([^)]*)\))?",
+    re.I,
+)
 ZONE = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")
-MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
-          "december")
+MONTHS = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 
 
 class ClaudeTui(Tui):
-    hooks = {"Stop": TURN_END, "PermissionRequest": BLOCKED, "Notification": BLOCKED, "PostToolUse": ACTIVITY,
-             "UserPromptSubmit": ACTIVITY}
-    MATCHER = ("^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input"
-               "|quota_auto_resume_stale)$")
+    hooks = {
+        "Stop": TURN_END,
+        "PermissionRequest": BLOCKED,
+        "Notification": BLOCKED,
+        "PostToolUse": ACTIVITY,
+        "UserPromptSubmit": ACTIVITY,
+    }
+    MATCHER = (
+        "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input"
+        "|quota_auto_resume_stale)$"
+    )
     dialogs = ("Quick safety check",)
 
     def launch(self, prompt, spec, resume, hook):
         common = self.adapter.common
-        hooks = {label: [{**({"matcher": self.MATCHER} if label == "Notification" else {}),
-                          "hooks": [{"type": "command", "command": shlex.join((*hook, label))}]}]
-                 for label in self.hooks}
-        return common.launch(spec, resume, {**common.PLUGINS, "hooks": hooks}, tail=("--", prompt) if prompt else ())
+        hooks = {
+            label: [
+                {
+                    **({"matcher": self.MATCHER} if label == "Notification" else {}),
+                    "hooks": [{"type": "command", "command": shlex.join((*hook, label))}],
+                }
+            ]
+            for label in self.hooks
+        }
+        return common.launch(
+            spec, resume, {**common.PLUGINS, "hooks": hooks}, tail=("--", prompt) if prompt else ()
+        )
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")
@@ -44,7 +75,7 @@ class ClaudeTui(Tui):
         path = payload.get("transcript_path")
         try:
             data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
-        except ValueError:   # a NUL or a lone surrogate in the path
+        except ValueError:  # a NUL or a lone surrogate in the path
             data = None
         return _last_text(data or b"")
 
@@ -81,12 +112,19 @@ def _last_text(data: bytes) -> str:
             record = json.loads(line)
         except (ValueError, RecursionError):
             continue
-        message = record.get("message") if isinstance(record, dict) and record.get("type") == "assistant" else None
+        message = (
+            record.get("message")
+            if isinstance(record, dict) and record.get("type") == "assistant"
+            else None
+        )
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
             continue
-        blocks = [b["text"] for b in content
-                  if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
+        blocks = [
+            b["text"]
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+        ]
         mid = message.get("id")
         mid = mid if isinstance(mid, str) and mid else object()
         if last is None:
@@ -123,8 +161,13 @@ def _resets(when: re.Match) -> float | None:
     try:
         if day is not None:
             month = _index(word, MONTHS)
-            return None if month is None else datetime(int(year or now.year), month + 1, int(day), hour, minute,
-                                                       tzinfo=zone).timestamp()
+            return (
+                None
+                if month is None
+                else datetime(
+                    int(year or now.year), month + 1, int(day), hour, minute, tzinfo=zone
+                ).timestamp()
+            )
         weekday = None if word is None else _index(word, WEEKDAYS)
         if word is not None and weekday is None:
             return None
