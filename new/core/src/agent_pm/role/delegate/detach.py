@@ -4,11 +4,10 @@ ConfigError, nothing started. When the driver form ends, outcome() appends its o
 
 import os
 import sys
-import time
 from dataclasses import dataclass
 
 from agent_pm.role.delegate.plan import ConfigError, Plan
-from agent_pm.session import api
+from agent_pm.session import Events, api
 from agent_pm.utils.files import append_line
 from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.text import printable
@@ -101,8 +100,7 @@ def detach(
 
 def outcome(events: str, driver: str, status: str | None) -> None:
     """Appends `HH:MM:SS <driver> outcome <status>`, None as `error`; an OSError is printed, never raised."""
-    line = f"{time.strftime('%H:%M:%S')} {driver} outcome {status or 'error'}\n"
     try:
-        append_line(events, line, own=True)
+        Events(events).write(driver, "outcome", status or "error")
     except OSError as e:
         print(printable(f"delegate: {e}"), file=sys.stderr, flush=True)

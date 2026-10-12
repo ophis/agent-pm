@@ -1,4 +1,4 @@
-"""The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
+"""The new tree's rules: each guard takes a root and returns its sorted violations; str constants include docstrings.
 
 layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS, SESSION
                       and SHARED, a session layer no role module but UPWARD, none imports TOOLS, ORCH or a BARE name,
@@ -7,7 +7,7 @@ role_session(core)    role/ imports SESSION only by an __all__ name
 layer_commands(new)   COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
                       but SESSION_COMMAND
 core_standalone(core) no file names LINEAR
-runtime_names(core)   no runtime name (RUNTIME) outside session/adapters/ but a .toml's comments and Adapter lines
+runtime_names(core)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no str constant naming OLD
 adapters_key(core)    no str constant "adapters" outside session/driver/
 syntax_311(new)       every .py parses as Python 3.11
@@ -15,6 +15,7 @@ pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
+events_format(new)    EVENT_CLOCK only in EVENTS_HOME
 syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
                       src/ hold only their package
@@ -79,6 +80,10 @@ ORCH_SRC = f"src/{ORCH}/"
 ROOTS = (("core", CORE_PKG), ("linear-orchestrator", ORCH))
 CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
 SESSION_SRC = f"{CORE_TOP}{SESSION}/"
+EVENTS_HOME = f"{CORE_TOP}session/events.py"
+EVENT_CLOCK = "%H:%M:%S"
+# until TASK-368
+EVENT_WRITERS = {f"{CORE_TOP}session/driver/tmux_host.py"}
 COMMAND_SRC = (SESSION_SRC, f"{CORE_TOP}role/", f"{ROOTS[1][0]}/{ORCH_SRC}")
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
@@ -261,6 +266,20 @@ def tmux_calls(core: str) -> list[str]:
                 for line, s in _strings(ast.parse(text, rel))
                 if s == "tmux"
             )
+    return sorted(found)
+
+
+def events_format(new: str) -> list[str]:
+    found = set()
+    for top, _ in ROOTS:
+        for rel, text in _files(os.path.join(new, top, "src"), ".py"):
+            rel = f"{top}/src/{rel}"
+            if rel != EVENTS_HOME and rel not in EVENT_WRITERS:
+                found.update(
+                    f"{rel}:{line}: event line format outside session/events.py"
+                    for line, s in _strings(ast.parse(text, rel))
+                    if EVENT_CLOCK in s
+                )
     return sorted(found)
 
 

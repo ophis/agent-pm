@@ -2,5 +2,6 @@
 is its public API."""
 
 from agent_pm.session.driver import api
+from agent_pm.session.events import Events
 
-__all__ = ["api"]
+__all__ = ["api", "Events"]
