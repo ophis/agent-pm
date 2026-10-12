@@ -13,8 +13,9 @@ from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
+from agent_pm.linear_orchestrator.engine import config, run
+from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import api
-from agent_pm_linear import config, linear, run, sessions, writeback
 
 from tests.unit.orchestrator.board_ids import STATES
 from tests.unit.orchestrator.config_test import GATE

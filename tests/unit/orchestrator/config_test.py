@@ -15,10 +15,10 @@ from unittest import mock
 import agent_pm.config
 from agent_pm import delegate
 from agent_pm.delegate import composer
+from agent_pm.linear_orchestrator.engine import config
 from agent_pm.utils import config_file
 from agent_pm.utils.repos.git import GUARD
 from agent_pm.utils.repos.shell import SHORT
-from agent_pm_linear import config
 
 from tests.case import ORCH_ROOT, PY, Case, child_env
 from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
@@ -56,7 +56,7 @@ STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group"
 ROOT_Q = shlex.quote(config.ROOT)
 GATE = (
     f"env PYTHONPATH={ROOT_Q}/core/src:{ROOT_Q}/linear-orchestrator/src "
-    "python3 -P -m agent_pm_linear.router --brake researcher"
+    "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 )
 LABEL = ("linear-orchestrator/config.toml", "core")
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -434,7 +434,7 @@ class Config(ConfigFile, Case):
     def test_importing_reads_no_config_file(self):
         write(os.path.join(self.agent_pm, "linear-new.local.toml"), "[[[ not toml")
         code = (
-            "import json\nfrom agent_pm_linear import config\n"
+            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
             "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
         )
         res = subprocess.run(
@@ -1172,7 +1172,7 @@ class WorkDir(ConfigFile, Case):
 IMPORT_ALONE = """import json, os, sys
 opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm_linear import config
+from agent_pm.linear_orchestrator.engine import config
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
 print(json.dumps({

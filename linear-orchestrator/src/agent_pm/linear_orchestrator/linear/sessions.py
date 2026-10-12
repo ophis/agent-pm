@@ -5,9 +5,9 @@ status: a session's SessionStatus at its recorded cwd."""
 import re
 import threading
 
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import api
-
-from agent_pm_linear import config, linear
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10

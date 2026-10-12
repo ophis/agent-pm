@@ -18,16 +18,8 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agent_pm_linear import (
-    config,
-    issues,
-    linear,
-    promote,
-    prune,
-    router,
-    sessions,
-    writeback,
-)
+from agent_pm.linear_orchestrator.engine import config, promote, prune, router
+from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 
 from tests.unit.orchestrator.board_ids import STATES, TEAM
 

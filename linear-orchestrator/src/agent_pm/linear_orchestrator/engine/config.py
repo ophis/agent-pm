@@ -18,7 +18,7 @@ from agent_pm.utils.paths import temp_dirs, under
 from agent_pm.utils.repos import NAME, OWNER
 from agent_pm.utils.repos.git import GUARD
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
 LOCAL = "~/.agent-pm/linear-new.local.toml"
 

@@ -10,8 +10,8 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import Outcome
+from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import api
-from agent_pm_linear import linear, sessions
 
 from tests import case
 

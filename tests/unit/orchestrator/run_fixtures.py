@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime
 from unittest import mock
 
-from agent_pm_linear import issues, linear, sessions, writeback
+from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 
 from tests.case import Case
 from tests.unit.orchestrator.board_ids import HEADER, STATES, role

@@ -12,7 +12,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm_linear import config, linear, promote, sessions
+from agent_pm.linear_orchestrator.engine import config, promote
+from agent_pm.linear_orchestrator.linear import linear, sessions
 
 from tests.case import Case
 from tests.unit.orchestrator import run_fixtures
@@ -891,7 +892,7 @@ class TestPruneHook(Base):
         for name, pruner in (("import error", None), ("run error", Boom)):
             with self.subTest(name):
                 with mock.patch.dict(
-                    sys.modules, {"agent_pm_linear.prune": None}
+                    sys.modules, {"agent_pm.linear_orchestrator.engine.prune": None}
                 ):  # None: its import fails
                     rc = self.run_main("--dry-run", pruner=pruner)
                 self.assertEqual(rc, 0)
@@ -900,7 +901,7 @@ class TestPruneHook(Base):
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
-                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm_linear\.prune"
+                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm\.linear_orchestrator\.engine\.prune"
                     r"|RuntimeError: boom)",
                 )
 

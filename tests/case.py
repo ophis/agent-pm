@@ -1,4 +1,4 @@
-"""Case, every test's base, and the child helpers: agent_pm and agent_pm_linear only from this tree's import
+"""Case, every test's base, and the child helpers: namespace package agent_pm only from this tree's import
 roots (ROOT, ORCH_ROOT)."""
 
 import os
@@ -7,18 +7,19 @@ import tempfile
 import unittest
 from unittest import mock
 
+import agent_pm
 from agent_pm.session.adapters import registry
-from agent_pm.utils import paths
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(REPO, "core")
 ROOT = os.path.join(CORE, "src")
 ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 PY = (sys.executable, "-P", "-s")
+PYTHONPATH = "core/src:linear-orchestrator/src"
 
 
 class Case(unittest.TestCase):
-    """Fails a test at once if agent_pm or agent_pm_linear is another tree's, else runs it (whatever its setUp)
+    """Fails a test at once if any part of agent_pm is another tree's, else runs it (whatever its setUp)
     in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
 
     def run(self, result=None):
@@ -45,21 +46,22 @@ class Case(unittest.TestCase):
 
 
 def _foreign() -> str | None:
-    orch = sys.modules.get("agent_pm_linear")
-    orch_root = (
-        os.path.dirname(os.path.dirname(getattr(orch, "__file__", None) or ""))
-        if orch
-        else ORCH_ROOT
-    )
-    for name, found, root, pythonpath in (
-        ("agent_pm", paths.IMPORT_ROOT, ROOT, "core/src"),
-        ("agent_pm_linear", orch_root, ORCH_ROOT, "core/src:linear-orchestrator/src"),
-    ):
-        if os.path.realpath(found) != os.path.realpath(root):
-            return (
-                f"{name} is imported from {found}, not this tree's {root}: "
-                f"run with PYTHONPATH={pythonpath}"
-            )
+    own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in (ROOT, ORCH_ROOT)}
+    for path in agent_pm.__path__:
+        if os.path.realpath(path) not in own:
+            return f"agent_pm.__path__ holds {path}, not only this tree's: run with PYTHONPATH={PYTHONPATH}"
+    for name, module in list(sys.modules.items()):
+        top, _, sub = name.partition(".")
+        where = getattr(module, "__file__", None)
+        if top == "agent_pm" and sub and "." not in sub and where:
+            found = os.path.dirname(os.path.dirname(where))
+            found = os.path.dirname(found) if os.path.basename(where) == "__init__.py" else found
+            root = ORCH_ROOT if sub == "linear_orchestrator" else ROOT
+            if os.path.realpath(found) != os.path.realpath(root):
+                return (
+                    f"{name} is imported from {found}, not this tree's {root}: "
+                    f"run with PYTHONPATH={PYTHONPATH}"
+                )
     return None
 
 

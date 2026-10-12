@@ -4,8 +4,9 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from agent_pm_linear import config, issues, linear, sessions
-from agent_pm_linear.linear import (
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.linear import issues, linear, sessions
+from agent_pm.linear_orchestrator.linear.linear import (
     config_error,
     linear_error,
     linear_gql,
@@ -275,7 +276,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
-            from agent_pm_linear.prune import Pruner as pruner
+            from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
         pruner(gql, now, dry, work=work, team=team, roles=roles).run()
     except linear.Unavailable as e:
         linear_error("prune", e, dry)

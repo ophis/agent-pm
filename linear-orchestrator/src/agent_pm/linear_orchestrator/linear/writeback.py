@@ -13,11 +13,10 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from agent_pm.delegate import Outcome, Progress
-from agent_pm.utils.files import save
-
-from agent_pm_linear.config import LOCAL, TASKS
-from agent_pm_linear.issues import Issue
-from agent_pm_linear.linear import (
+from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
+from agent_pm.linear_orchestrator.engine.target import MAPPED
+from agent_pm.linear_orchestrator.linear.issues import Issue
+from agent_pm.linear_orchestrator.linear.linear import (
     call,
     client_id,
     comment,
@@ -28,7 +27,7 @@ from agent_pm_linear.linear import (
     reraise_signal,
     subscribe,
 )
-from agent_pm_linear.target import MAPPED
+from agent_pm.utils.files import save
 
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"

@@ -18,11 +18,12 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
+from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, target
+from agent_pm.linear_orchestrator.engine import run as run_py
+from agent_pm.linear_orchestrator.linear import issues, linear
 from agent_pm.session import api
 from agent_pm.utils.repos.git import GUARD
 from agent_pm.utils.repos.shell import SHORT
-from agent_pm_linear import config, inputs, issues, linear, router, runs, target
-from agent_pm_linear import run as run_py
 
 from tests.case import ORCH_ROOT, ROOT
 from tests.unit.orchestrator import run_fixtures
@@ -3149,7 +3150,7 @@ def inner(*args, text=INPUT):
         sys.executable,
         "-P",
         "-m",
-        "agent_pm_linear.run",
+        "agent_pm.linear_orchestrator.engine.run",
         "--uuid",
         UUID,
         *args,
@@ -3728,7 +3729,7 @@ class Usage(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm_linear.router "
+            "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router "
             "[--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):

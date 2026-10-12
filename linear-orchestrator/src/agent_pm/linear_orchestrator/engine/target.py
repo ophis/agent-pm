@@ -7,13 +7,13 @@ import re
 from dataclasses import dataclass, replace
 
 import agent_pm.utils.repos
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
+from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils.paths import under
 from agent_pm.utils.repos import NAME, OWNER
 from agent_pm.utils.repos.git import GUARD, common_dir
 from agent_pm.utils.repos.shell import SHORT, err_text
-
-from agent_pm_linear import config, issues
-from agent_pm_linear.config import CLONES, REF, TASKS, repo_slug, sh_run
 
 MAPPED = "project mapping "
 

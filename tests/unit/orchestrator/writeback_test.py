@@ -15,7 +15,8 @@ from unittest import mock
 
 import agent_pm.utils.files
 from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
-from agent_pm_linear import config, issues, linear, runs, writeback
+from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 
 from tests.case import Case
 from tests.unit.orchestrator import board_ids, run_fixtures

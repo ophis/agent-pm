@@ -85,7 +85,7 @@ max_runs = 3
 #              task-level keys is an error
 [core.roles.researcher]
 # the session's PYTHONPATH is core/src only, so the gate sets both roots; why `env`: README.md › Layout (act-as row)
-gate = "env PYTHONPATH={{root}}/core/src:{{root}}/linear-orchestrator/src python3 -P -m agent_pm_linear.router --brake researcher"
+gate = "env PYTHONPATH={{root}}/core/src:{{root}}/linear-orchestrator/src python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: show = ""

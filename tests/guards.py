@@ -18,8 +18,8 @@ modes_import_api(core) MODES never imports SESSION_API
 tmux_calls(core)      "tmux" only in TMUX_HOST
 status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(core)       STANDALONE files parse as Python 3.9
-import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
-                      src/ hold only their package
+import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
+namespace_package(repo) each ROOTS' src/ holds only its package, no __init__.py, exactly OWN's subpackages
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's in config.py only), no bare name; any module name (packages cannot clash)
@@ -73,6 +73,7 @@ SHARED = ("utils", "config", "delegate.event")
 # until TASK-366 (356-5) deletes print_prompt
 UPWARD = {("session.adapters.print_prompt.in_process", "delegate.event")}
 TOOLS = "delegate.team.tools"
+ORCH = "linear_orchestrator"
 UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
@@ -87,6 +88,7 @@ BARE = (
     "utils",
     TOOLS.rpartition(".")[2],
     "repo",
+    ORCH,
 )
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
@@ -102,9 +104,13 @@ HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
 CORE_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "src")
 CORE_PKG = "agent_pm"
-ORCH = "agent_pm_linear"
-ORCH_SRC = f"src/{ORCH}/"
-ROOTS = (("core", CORE_PKG), ("linear-orchestrator", ORCH))
+ORCH_PKG = f"{CORE_PKG}.{ORCH}"
+ORCH_SRC = f"src/{CORE_PKG}/{ORCH}/"
+ROOTS = (("core", CORE_PKG), ("linear-orchestrator", CORE_PKG))
+OWN = {
+    "core": ("config.py", "delegate", "manager", "session", "utils"),
+    "linear-orchestrator": (ORCH,),
+}
 TREES = (*(top for top, _ in ROOTS), "tests")
 CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
 SESSION_SRC = f"{CORE_TOP}{SESSION}/"
@@ -123,19 +129,19 @@ SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
 LINEAR = re.compile(f"{ROOTS[1][0]}|{ORCH}")
 COMPOSER = f"{CORE_PKG}.delegate.composer"
 EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
-CONFIG_PY = f"{ORCH_SRC}config.py"
+CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
-ENTRIES = tuple(f"{ORCH_SRC}{name}.py" for name in ("run", "promote", "router"))
-ONCE = (f"{ORCH}.config.load", f"{ORCH}.linear.use_logs")
+ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
+ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
 LOAD_HELPERS = ("runnable", "run_config", "docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
-HANDOFF_HOME = f"{ORCH_SRC}issues.py"
+HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
 COMMAND_FILES = ("core/config.toml", "linear-orchestrator/config.toml")
 COMMAND_DOCS = ("core/skills/", f"{CORE_TOP}delegate/team/")
 PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
 PYTHON_OK = re.compile(
-    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w"
+    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{CORE_PKG}\.\w"
     r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
 )
 
@@ -377,13 +383,21 @@ def import_hygiene(repo: str) -> list[str]:
             for t in tokenize.generate_tokens(io.StringIO(text).readline)
             if t.type == tokenize.COMMENT and HYGIENE.search(t.string)
         )
+    return sorted(found)
+
+
+def namespace_package(repo: str) -> list[str]:
+    found = set()
     for top, package in ROOTS:
-        root = os.path.join(repo, top, "src")
-        found.update(
-            f"{top}/src/{entry}: not {package}"
-            for entry in (os.listdir(root) if os.path.isdir(root) else ())
-            if entry not in (package, "__pycache__")
-        )
+        for rel, wanted in (("src", {package}), (f"src/{package}", set(OWN[top]))):
+            path = os.path.join(repo, top, rel)
+            have = set(os.listdir(path) if os.path.isdir(path) else ()) - {"__pycache__"}
+            found.update(
+                f"{top}/{rel}/{e}: "
+                + ("namespace package __init__.py" if e == "__init__.py" else f"not {top}'s")
+                for e in have - wanted
+            )
+            found.update(f"{top}/{rel}/{e}: missing" for e in wanted - have)
     return sorted(found)
 
 
@@ -529,10 +543,10 @@ def config_once(orch: str) -> list[str]:
 
 def _denied(rel, module, name, exported):
     top = module.split(".")[0]
-    if top in sys.stdlib_module_names or top == ORCH:
+    joined = f"{module}.{name}" if name else module
+    if top in sys.stdlib_module_names or _within(joined, ORCH_PKG):
         return False
     packages = (CORE_PKG, *(f"{CORE_PKG}.{g}" for g in GROUPS))
-    joined = f"{module}.{name}" if name else module
     target = next(
         (t for t in (joined, module) if t in exported or _shared(t)),
         joined if module in packages else module,

@@ -7,8 +7,8 @@ import types
 import unittest
 from unittest import mock
 
+import agent_pm
 from agent_pm.session.adapters import registry
-from agent_pm.utils import paths
 
 from tests.case import ORCH_ROOT, REPO, ROOT, Case, child_env
 
@@ -80,49 +80,53 @@ class CaseTest(Case):
         self.assertEqual(len(result.failures), 1)
         self.assertEqual(calls, ["reset", "test", "reset"])
 
-    def test_agent_pm_from_another_tree_fails_the_test_before_its_set_up(self):
-        ran = []
-        with mock.patch.object(paths, "IMPORT_ROOT", "/elsewhere/src"):
-            result = self.run_inner(ran.append, set_up=ran.append)
-        ((_, failure),) = result.failures
-        self.assertIn(
-            f"agent_pm is imported from /elsewhere/src, not this tree's {ROOT}: "
-            "run with PYTHONPATH=core/src",
-            failure,
-        )
-        self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
-
-    def orchestrator(self, root):
-        """An agent_pm_linear package module found under `root`."""
-        module = types.ModuleType("agent_pm_linear")
-        module.__file__ = os.path.join(root, "agent_pm_linear", "__init__.py")
+    def module(self, name, root):
+        """A package module `name` (agent_pm.<sub>) found under `root`."""
+        module = types.ModuleType(name)
+        module.__file__ = os.path.join(root, *name.split("."), "__init__.py")
         return module
 
-    def test_agent_pm_linear_from_another_tree_fails_the_test_before_its_set_up(self):
+    def assert_fails_before_set_up(self, message):
         ran = []
-        elsewhere = {"agent_pm_linear": self.orchestrator("/elsewhere/src")}
-        with mock.patch.dict(sys.modules, elsewhere):
-            result = self.run_inner(ran.append, set_up=ran.append)
+        result = self.run_inner(ran.append, set_up=ran.append)
         ((_, failure),) = result.failures
-        self.assertIn(
-            f"agent_pm_linear is imported from /elsewhere/src, not this tree's {ORCH_ROOT}: "
-            "run with PYTHONPATH=core/src:linear-orchestrator/src",
-            failure,
-        )
+        self.assertIn(f"{message}: run with PYTHONPATH=core/src:linear-orchestrator/src", failure)
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
-    def test_agent_pm_linear_absent_or_this_trees_passes(self):
+    def test_a_subpackage_from_another_tree_fails_the_test_before_its_set_up(self):
+        for name, root in (("agent_pm.session", ROOT), ("agent_pm.linear_orchestrator", ORCH_ROOT)):
+            elsewhere = {name: self.module(name, "/elsewhere/src")}
+            with self.subTest(name), mock.patch.dict(sys.modules, elsewhere):
+                self.assert_fails_before_set_up(
+                    f"{name} is imported from /elsewhere/src, not this tree's {root}"
+                )
+
+    def test_another_trees_agent_pm_dir_on_the_package_path_fails_the_test(self):
+        with mock.patch.object(
+            agent_pm, "__path__", [*agent_pm.__path__, "/elsewhere/src/agent_pm"]
+        ):
+            self.assert_fails_before_set_up(
+                "agent_pm.__path__ holds /elsewhere/src/agent_pm, not only this tree's"
+            )
+
+    def test_the_orchestrator_absent_or_this_trees_passes(self):
         self.assertEqual(ORCH_ROOT, os.path.join(REPO, "linear-orchestrator", "src"))
-        self.assertTrue(os.path.isfile(self.orchestrator(ORCH_ROOT).__file__))
-        for found in (None, self.orchestrator(ORCH_ROOT)):
+        name = "agent_pm.linear_orchestrator"
+        self.assertTrue(os.path.isfile(self.module(name, ORCH_ROOT).__file__))
+        for found in (None, self.module(name, ORCH_ROOT)):
             ran = []
             with self.subTest(found=found), mock.patch.dict(sys.modules):
-                sys.modules.pop("agent_pm_linear", None)
+                sys.modules.pop(name, None)
                 if found:
-                    sys.modules["agent_pm_linear"] = found
+                    sys.modules[name] = found
                 result = self.run_inner(ran.append)
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)
+
+    def test_agent_pm_spans_only_this_trees_src_dirs(self):
+        own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in (ROOT, ORCH_ROOT)}
+        self.assertLessEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
+        self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath(self):
         base = {

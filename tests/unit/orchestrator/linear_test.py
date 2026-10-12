@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm_linear import linear
+from agent_pm.linear_orchestrator.linear import linear
 
 from tests.case import Case
 from tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node

@@ -4,7 +4,7 @@ import urllib.error
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm_linear import linear
+from agent_pm.linear_orchestrator.linear import linear
 
 FAILURES = {  # factories: a fresh exception per use
     "5xx": lambda: urllib.error.HTTPError(linear.URL, 503, "Service Unavailable", {}, io.BytesIO()),

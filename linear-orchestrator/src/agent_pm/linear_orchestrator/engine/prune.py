@@ -19,14 +19,9 @@ import shutil
 import subprocess
 from datetime import timedelta
 
-from agent_pm.session import api
-from agent_pm.utils.paths import under
-from agent_pm.utils.repos.git import GUARD, common_dir, git
-from agent_pm.utils.repos.shell import SHORT
-
-from agent_pm_linear import config
-from agent_pm_linear.config import CLONES
-from agent_pm_linear.linear import (
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.config import CLONES
+from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
     Unavailable,
@@ -35,6 +30,10 @@ from agent_pm_linear.linear import (
     log,
     one_line,
 )
+from agent_pm.session import api
+from agent_pm.utils.paths import under
+from agent_pm.utils.repos.git import GUARD, common_dir, git
+from agent_pm.utils.repos.shell import SHORT
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)

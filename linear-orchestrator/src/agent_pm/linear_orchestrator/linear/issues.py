@@ -4,7 +4,7 @@ parse_handoff and head."""
 import re
 from dataclasses import dataclass
 
-from agent_pm_linear import linear, sessions
+from agent_pm.linear_orchestrator.linear import linear, sessions
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }

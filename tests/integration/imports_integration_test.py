@@ -1,4 +1,4 @@
-"""Every module of agent_pm, agent_pm_linear and tests imported alone in a fresh child, an empty temp dir
+"""Every module of agent_pm (both import roots) and tests imported alone in a fresh child, an empty temp dir
 its HOME and cwd, with only the import roots it needs (EXTRA): it exits 0, leaving the dir empty and sys.path
 unchanged."""
 
@@ -9,7 +9,7 @@ import unittest
 
 from tests.case import ORCH_ROOT, PY, REPO, ROOT, Case, child_env
 
-EXTRA = {"agent_pm": (), "agent_pm_linear": (ORCH_ROOT,), "tests": (ORCH_ROOT, REPO)}
+EXTRA = {"agent_pm": (), "agent_pm.linear_orchestrator": (ORCH_ROOT,), "tests": (ORCH_ROOT, REPO)}
 CHILD = """import importlib, sys
 path = list(sys.path)
 importlib.import_module(sys.argv[1])
@@ -27,22 +27,26 @@ def modules(root: str, package: str) -> list[str]:
     return found
 
 
+def extra(name: str) -> tuple[str, ...]:
+    return EXTRA[max((p for p in EXTRA if f"{name}.".startswith(f"{p}.")), key=len)]
+
+
 class ImportsAlone(Case):
     def test_each_module(self):
         names = (
             modules(ROOT, "agent_pm")
-            + modules(ORCH_ROOT, "agent_pm_linear")
+            + modules(ORCH_ROOT, "agent_pm.linear_orchestrator")
             + modules(REPO, "tests")
         )
         self.assertIn("agent_pm.session.engine.api", names)
-        self.assertIn("agent_pm_linear.run", names)
+        self.assertIn("agent_pm.linear_orchestrator.engine.run", names)
         self.assertIn("tests.case", names)
         for name in names:
             with self.subTest(name), tempfile.TemporaryDirectory() as home:
                 res = subprocess.run(
                     [*PY, "-c", CHILD, name],
                     cwd=home,
-                    env={**child_env(None, *EXTRA[name.split(".")[0]]), "HOME": home},
+                    env={**child_env(None, *extra(name)), "HOME": home},
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,

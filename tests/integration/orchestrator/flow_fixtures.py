@@ -12,7 +12,7 @@ import tempfile
 import tomllib
 from urllib.parse import quote
 
-from agent_pm_linear import linear
+from agent_pm.linear_orchestrator.linear import linear
 
 from tests import live_tmux
 from tests.case import ORCH_ROOT, PY, Case, child_env
@@ -21,7 +21,9 @@ from tests.integration.orchestrator import fake_gh, fake_linear
 from tests.unit.orchestrator import board_ids, run_fixtures
 from tests.unit.orchestrator.run_fixtures import ID, SID
 
-RUN, PROMOTE, ROUTER = (("-m", f"agent_pm_linear.{n}") for n in ("run", "promote", "router"))
+RUN, PROMOTE, ROUTER = (
+    ("-m", f"agent_pm.linear_orchestrator.engine.{n}") for n in ("run", "promote", "router")
+)
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
 _CFG = tomllib.loads(run_fixtures.local("/") + TASK_LABELS)
@@ -43,7 +45,7 @@ MANAGER = "manager"
 TIMEOUT = 60
 TAIL = 20
 GUARD = (
-    "import json, shutil, sys\nfrom agent_pm_linear import config\n"
+    "import json, shutil, sys\nfrom agent_pm.linear_orchestrator.engine import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
 

@@ -88,7 +88,7 @@ class Roots(Case):
         self.assertEqual(IMPORT_ROOT, ROOT)
         self.assertEqual(IMPORT_ROOT, os.path.join(REPO, "core", "src"))
         self.assertEqual(CORE, os.path.join(REPO, "core"))
-        self.assertTrue(os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "__init__.py")))
+        self.assertTrue(os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "utils", "paths.py")))
         self.assertTrue(os.path.isfile(os.path.join(CORE, "config.toml")))
 
 

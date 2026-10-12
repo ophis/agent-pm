@@ -10,7 +10,7 @@ import subprocess
 import sys
 import unittest
 
-from agent_pm_linear import config
+from agent_pm.linear_orchestrator.engine import config
 
 from tests import live_tmux
 from tests.case import ROOT

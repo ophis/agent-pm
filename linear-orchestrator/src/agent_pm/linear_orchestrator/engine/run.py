@@ -11,11 +11,11 @@ import signal
 import sys
 
 from agent_pm import delegate
+from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
+from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
 from agent_pm.session import api
 from agent_pm.utils.text import printable
-
-from agent_pm_linear import config, linear, runs, sessions, writeback
-from agent_pm_linear.linear import ISSUE_ID, log, one_line
 
 
 def _stop(signum, frame):

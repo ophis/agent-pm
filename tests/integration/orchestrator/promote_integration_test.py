@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from agent_pm_linear import promote
+from agent_pm.linear_orchestrator.engine import promote
 
 from tests.integration.orchestrator import fake_linear
 from tests.integration.orchestrator.flow_fixtures import (

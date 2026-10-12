@@ -15,10 +15,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from agent_pm.linear_orchestrator.engine import config
 from agent_pm.utils.files import append_line
 from agent_pm.utils.text import printable
-
-from agent_pm_linear import config
 
 SEAM = "AGENT_PM_LINEAR"
 URL = "https://api.linear.app/graphql"

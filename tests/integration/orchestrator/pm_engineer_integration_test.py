@@ -8,7 +8,8 @@ import re
 import unittest
 from urllib.parse import unquote
 
-from agent_pm_linear import issues, promote
+from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.linear import issues
 
 from tests.integration.orchestrator import fake_linear
 from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL

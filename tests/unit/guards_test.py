@@ -15,7 +15,7 @@ from tests.case import CORE, ORCH_ROOT, PY, REPO, ROOT, Case, child_env
 
 PKG = "src/agent_pm"
 ORCH = os.path.dirname(ORCH_ROOT)
-OPKG = "src/agent_pm_linear"
+OPKG = "src/agent_pm/linear_orchestrator"
 FIXTURES = ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
 ORCH_GUARDS = (guards.orchestrator_imports, guards.orchestrator_text, guards.config_once)
 PROBE = (
@@ -66,6 +66,7 @@ class RealTree(Case):
             (guards.tmux_calls, CORE),
             (guards.syntax_39, CORE),
             (guards.import_hygiene, REPO),
+            (guards.namespace_package, REPO),
             (guards.python_commands, REPO),
             *((guard, ORCH) for guard in ORCH_GUARDS),
             (guards.private_imports, ORCH),
@@ -102,13 +103,12 @@ class RealTree(Case):
                 self.assertEqual(os.path.commonpath([src, os.path.realpath(module.__file__)]), src)
 
     def test_orchestrator_loads_from_its_root(self):
-        package = os.path.join(ORCH_ROOT, "agent_pm_linear")
+        package = os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator")
         names = sorted(
-            "agent_pm_linear" + ("" if f == "__init__.py" else f".{f[:-3]}")
-            for f in os.listdir(package)
-            if f.endswith(".py")
+            ".".join(path.relative_to(ORCH_ROOT).with_suffix("").parts).removesuffix(".__init__")
+            for path in Path(package).rglob("*.py")
         )
-        self.assertIn("agent_pm_linear.run", names)
+        self.assertIn("agent_pm.linear_orchestrator.engine.run", names)
         out = subprocess.run(
             [*PY, "-c", PROBE, *names],
             env=child_env(None, ORCH_ROOT),
@@ -117,10 +117,9 @@ class RealTree(Case):
             check=True,
         ).stdout
         loaded = json.loads(out)
+        real = os.path.realpath(package)
         for name in names:
-            self.assertEqual(
-                os.path.dirname(os.path.realpath(loaded[name])), os.path.realpath(package)
-            )
+            self.assertEqual(os.path.commonpath([real, os.path.realpath(loaded[name])]), real)
 
 
 class EveryTest(Sample):
@@ -311,19 +310,20 @@ class LayerImports(Sample):
     def test_importing_the_orchestrator_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/delegate/x.py": "from agent_pm_linear.config import load\n",
-                f"{PKG}/session/modes/x.py": "from agent_pm_linear import config\n",
-                f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm_linear')\n",
-                f"{PKG}/x.py": "import agent_pm_linear.run\n",
+                f"{PKG}/delegate/x.py": "from agent_pm.linear_orchestrator.engine.config import load\n",
+                f"{PKG}/session/modes/x.py": "from agent_pm import linear_orchestrator\n",
+                f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm.linear_orchestrator')\n",
+                f"{PKG}/x.py": "import agent_pm.linear_orchestrator.engine.run\nimport linear_orchestrator\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/delegate/x.py: delegate imports agent_pm_linear.config",
-                f"{PKG}/session/modes/x.py: session.modes imports agent_pm_linear.config",
-                f"{PKG}/utils/x.py: outside the layers imports agent_pm_linear",
-                f"{PKG}/x.py: outside the layers imports agent_pm_linear.run",
+                f"{PKG}/delegate/x.py: delegate imports agent_pm.linear_orchestrator.engine.config",
+                f"{PKG}/session/modes/x.py: session.modes imports agent_pm.linear_orchestrator",
+                f"{PKG}/utils/x.py: outside the layers imports agent_pm.linear_orchestrator",
+                f"{PKG}/x.py: bare import linear_orchestrator",
+                f"{PKG}/x.py: outside the layers imports agent_pm.linear_orchestrator.engine.run",
             ],
         )
 
@@ -469,19 +469,19 @@ class CoreStandalone(Sample):
         root = self.tree(
             {
                 "config.toml": "# see ../linear-orchestrator/\n",
-                "team/roles/r.md": "x\nRun agent_pm_linear.run, not linear-orchestrator\n",
-                f"{PKG}/x.py": "import agent_pm_linear\n",
-                f"{PKG}/__pycache__/x.pyc": "agent_pm_linear",
-                "skills/a/notes": "Linear orchestrator, linear_orchestrator, agent_pm_lineage\n",
+                "team/roles/r.md": "x\nRun agent_pm.linear_orchestrator.engine.run, not linear-orchestrator\n",
+                f"{PKG}/x.py": "import agent_pm.linear_orchestrator\n",
+                f"{PKG}/__pycache__/x.pyc": "linear_orchestrator",
+                "skills/a/notes": "Linear orchestrator, linear_orchestra, agent_pm_lineage\n",
             }
         )
         self.assertEqual(
             guards.core_standalone(root),
             [
                 "config.toml:1: names linear-orchestrator",
-                f"{PKG}/x.py:1: names agent_pm_linear",
-                "team/roles/r.md:2: names agent_pm_linear",
+                f"{PKG}/x.py:1: names linear_orchestrator",
                 "team/roles/r.md:2: names linear-orchestrator",
+                "team/roles/r.md:2: names linear_orchestrator",
             ],
         )
 
@@ -775,34 +775,48 @@ class ImportHygiene(Sample):
             ],
         )
 
-    def test_the_import_root_holds_only_the_package(self):
-        src = os.path.join("core", "src")
-        names = (
-            "agent_pm/__init__.py",
-            "__pycache__/x.pyc",
-            "repo.py",
-            "other/__init__.py",
-            "README",
-        )
-        root = self.tree({f"{src}/{name}": "" for name in names})
+
+class NamespacePackage(Sample):
+    def own(self, *extra: str) -> str:
+        files = [
+            f"{top}/src/agent_pm/{sub}" + ("" if sub.endswith(".py") else "/__init__.py")
+            for top, subs in guards.OWN.items()
+            for sub in subs
+        ]
+        return self.tree({f: "" for f in (*files, *extra)})
+
+    def test_the_own_subpackages_and_caches_are_clean(self):
+        root = self.own("core/src/__pycache__/x.pyc", f"core/{PKG}/__pycache__/x.pyc")
+        self.assertEqual(guards.namespace_package(root), [])
+
+    def test_an_init_py_is_refused(self):
+        root = self.own(f"core/{PKG}/__init__.py", f"linear-orchestrator/{PKG}/__init__.py")
         self.assertEqual(
-            guards.import_hygiene(root),
-            [f"{src}/{entry}: not agent_pm" for entry in ("README", "other", "repo.py")],
+            guards.namespace_package(root),
+            [f"{top}/{PKG}/__init__.py: namespace package __init__.py" for top in guards.OWN],
         )
 
-    def test_the_orchestrator_root_holds_only_its_package(self):
-        src = "linear-orchestrator/src"
-        names = (
-            "agent_pm_linear/__init__.py",
-            "__pycache__/x.pyc",
-            "config.py",
-            "agent_pm/__init__.py",
+    def test_a_foreign_subpackage_or_entry_is_refused(self):
+        root = self.own(
+            f"core/{PKG}/linear_orchestrator/__init__.py",
+            "core/src/repo.py",
+            f"linear-orchestrator/{PKG}/session/__init__.py",
+            "linear-orchestrator/src/other/__init__.py",
         )
-        root = self.tree({f"{src}/{name}": "" for name in names})
         self.assertEqual(
-            guards.import_hygiene(root),
-            [f"{src}/{entry}: not agent_pm_linear" for entry in ("agent_pm", "config.py")],
+            guards.namespace_package(root),
+            [
+                f"core/{PKG}/linear_orchestrator: not core's",
+                "core/src/repo.py: not core's",
+                f"linear-orchestrator/{PKG}/session: not linear-orchestrator's",
+                "linear-orchestrator/src/other: not linear-orchestrator's",
+            ],
         )
+
+    def test_a_missing_subpackage(self):
+        root = self.own()
+        os.remove(os.path.join(root, "core", PKG, "config.py"))
+        self.assertEqual(guards.namespace_package(root), [f"core/{PKG}/config.py: missing"])
 
 
 class PythonCommands(Sample):
@@ -817,7 +831,7 @@ class PythonCommands(Sample):
                 "core/skills/a/SKILL.md": "Run `python3.11 x.py`.\n"
                 "- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                 f"{team}/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
-                "3. `env PYTHONPATH=x python3 -P -m agent_pm_linear.run`\n"
+                "3. `env PYTHONPATH=x python3 -P -m agent_pm.linear_orchestrator.engine.run`\n"
                 "4. `python3 -P <team>/tools/repo.py status --dir x`\n"
                 "5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n",
             }
@@ -904,7 +918,7 @@ class OrchestratorImports(Sample):
                 "import agent_pm.session.engine.api\nimport third_party\n__import__('agent_pm.session.adapters.base')\n"
                 "import agent_pm.delegate\nagent_pm.delegate.engine.detach.x\n"
                 "from agent_pm.session.engine.api import start\n",
-                f"{OPKG}/config.py": "from agent_pm.delegate import composer\ncomposer.run.resolve()\n",
+                f"{OPKG}/engine/config.py": "from agent_pm.delegate import composer\ncomposer.run.resolve()\n",
             }
         )
         self.assertEqual(
@@ -916,21 +930,21 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/a.py:5: imports agent_pm.session.adapters.base",
                 f"{OPKG}/a.py:7: uses agent_pm.delegate.engine",
                 f"{OPKG}/a.py:8: imports agent_pm.session.engine.api.start",
-                f"{OPKG}/config.py:2: uses agent_pm.delegate.composer.run",
+                f"{OPKG}/engine/config.py:2: uses agent_pm.delegate.composer.run",
             ],
         )
 
     def test_allowed_imports_are_clean(self):
         root = self.tree(
             {
-                f"{OPKG}/config.py": "import os\nfrom agent_pm.delegate.composer import resolve\n"
+                f"{OPKG}/engine/config.py": "import os\nfrom agent_pm.delegate.composer import resolve\n"
                 "from agent_pm.delegate import composer\ncomposer.index()\nimport agent_pm.delegate.composer\n"
                 "from agent_pm.utils.files import save\n",
-                f"{OPKG}/run.py": "from agent_pm_linear import config\n"
-                "from agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
+                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\n"
+                "from agent_pm import linear_orchestrator\nfrom agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
                 "delegate.Begun\nimport agent_pm.delegate as d\nd.Finished\n"
                 "from agent_pm.session import api\nimport agent_pm.utils.repos.shell\nfrom agent_pm import utils\n"
-                "import agent_pm_linear.linear\nfrom agent_pm_linear.config import TASKS\n",
+                "import agent_pm.linear_orchestrator.linear.linear\nfrom agent_pm.linear_orchestrator.engine.config import TASKS\n",
                 f"{OPKG}/utils.py": "",
             }
         )
@@ -988,7 +1002,7 @@ class OrchestratorText(Sample):
     def test_handoff_literals_only_in_issues(self):
         root = self.tree(
             {
-                f"{OPKG}/issues.py": 'H = "Handoff from"\n'
+                f"{OPKG}/linear/issues.py": 'H = "Handoff from"\n'
                 'S = ("## Source", "## Instructions", "## Comments")\n',
                 f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
                 f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
@@ -1010,30 +1024,31 @@ class OrchestratorText(Sample):
 
 
 class ConfigOnce(Sample):
-    LOAD = "calls agent_pm_linear.config.load outside an entry main"
-    USE_LOGS = "calls agent_pm_linear.linear.use_logs outside an entry main"
+    LOAD = "calls agent_pm.linear_orchestrator.engine.config.load outside an entry main"
+    USE_LOGS = "calls agent_pm.linear_orchestrator.linear.linear.use_logs outside an entry main"
 
     def test_load_and_use_logs_outside_an_entry_main(self):
         root = self.tree(
             {
-                f"{OPKG}/run.py": "from agent_pm_linear import config, linear\n\ndef main():\n"
+                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\n"
+                "from agent_pm.linear_orchestrator.linear import linear\ndef main():\n"
                 "    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
-                f"{OPKG}/writeback.py": "from agent_pm_linear import config\n"
-                "from agent_pm_linear.linear import use_logs\n\ndef main():\n"
+                f"{OPKG}/linear/writeback.py": "from agent_pm.linear_orchestrator.engine import config\n"
+                "from agent_pm.linear_orchestrator.linear.linear import use_logs\n\ndef main():\n"
                 "    config.load()\n    use_logs(None)\n",
-                f"{OPKG}/promote.py": "import agent_pm_linear.config as c\n\nclass P:\n"
+                f"{OPKG}/engine/promote.py": "import agent_pm.linear_orchestrator.engine.config as c\n\nclass P:\n"
                 "    def main(self):\n        c.load()\n",
-                "src/run.py": "import agent_pm_linear.config\n\ndef main():\n"
-                "    agent_pm_linear.config.load()\n",
+                "src/run.py": "import agent_pm.linear_orchestrator.engine.config\n\ndef main():\n"
+                "    agent_pm.linear_orchestrator.engine.config.load()\n",
             }
         )
         self.assertEqual(
             guards.config_once(root),
             [
-                f"{OPKG}/promote.py:5: {self.LOAD}",
-                f"{OPKG}/run.py:8: {self.LOAD}",
-                f"{OPKG}/writeback.py:5: {self.LOAD}",
-                f"{OPKG}/writeback.py:6: {self.USE_LOGS}",
+                f"{OPKG}/engine/promote.py:5: {self.LOAD}",
+                f"{OPKG}/engine/run.py:8: {self.LOAD}",
+                f"{OPKG}/linear/writeback.py:5: {self.LOAD}",
+                f"{OPKG}/linear/writeback.py:6: {self.USE_LOGS}",
                 f"src/run.py:4: {self.LOAD}",
             ],
         )
@@ -1041,7 +1056,10 @@ class ConfigOnce(Sample):
     def test_the_real_entries_calls_outside_an_entry(self):
         files = {}
         for name in ("run.py", "promote.py"):
-            with open(os.path.join(ORCH_ROOT, "agent_pm_linear", name), encoding="utf-8") as f:
+            with open(
+                os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator", "engine", name),
+                encoding="utf-8",
+            ) as f:
                 files[f"{OPKG}/not_{name}"] = f.read()
         found = guards.config_once(self.tree(files))
         self.assertEqual(
@@ -1052,10 +1070,11 @@ class ConfigOnce(Sample):
     def test_load_helpers_outside_config_py(self):
         root = self.tree(
             {
-                f"{OPKG}/run.py": "from agent_pm_linear import config\nconfig.runnable(1)\n",
-                f"{OPKG}/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n"
+                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nconfig.runnable(1)\n",
+                f"{OPKG}/engine/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n"
                 "    docs()\n",
-                f"{OPKG}/promote.py": "from agent_pm_linear import config, linear\n\n"
+                f"{OPKG}/engine/promote.py": "from agent_pm.linear_orchestrator.engine import config\n"
+                "from agent_pm.linear_orchestrator.linear import linear\n"
                 "def main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n"
                 "        linear.use_logs(None)\n",
                 "src/config.py": "def load():\n    runnable()\n",
@@ -1064,7 +1083,7 @@ class ConfigOnce(Sample):
         self.assertEqual(
             guards.config_once(root),
             [
-                f"{OPKG}/run.py:2: calls agent_pm_linear.config.runnable",
+                f"{OPKG}/engine/run.py:2: calls agent_pm.linear_orchestrator.engine.config.runnable",
                 "src/config.py:2: calls runnable",
             ],
         )
