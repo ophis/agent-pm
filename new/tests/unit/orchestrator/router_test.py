@@ -80,7 +80,7 @@ CONFIG_ENG2 = (
 )
 HUMANS = 'human_members = ["me@x.com"]\n'
 FULL = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"]
-SESSIONS = [("sessions", "agent-pm-")]
+SESSIONS = [("sessions", re.escape("agent-pm-") + ".*")]
 LIGHT, DEEP, STRAY, ORPHAN_LABEL = (
     f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24)
 )
@@ -1831,7 +1831,7 @@ class LiveSessions(Base):
                 "engineer": ["TASK-10", "TASK-2"],
             },
         )
-        self.assertEqual(self.api.order, [("sessions", "agent-pm-")])
+        self.assertEqual(self.api.order, SESSIONS)
 
     def test_unknown_sessions_are_none(self):
         self.api.live = None

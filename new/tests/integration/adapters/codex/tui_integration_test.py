@@ -237,7 +237,7 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.lines(2), ["w1 blocked", "w1 done"])
         self.assertEqual(handle.reply, raw)
         self.assertEqual(len(self.server.panes("=mgr:")), 1)
-        self.assertEqual(api.sessions("w").state("w1"), "live")
+        self.assertEqual([r.name for r in api.sessions("w1")], ["w1"])
         self.assertEqual(self.server.option("w1", "@sid"), self.sid)
         self.assertEqual(stat.S_IMODE(self.record().stat().st_mode), 0o600)
         hook_store = self.home / ".agent-pm" / "tui" / "w1" / "hooks.jsonl"
@@ -299,7 +299,7 @@ class TuiIntegrationTest(Live):
         self.assertIn(self.bound().native_id, handle.info().resume)
         handle.stop()
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
-        self.assertEqual(api.sessions().state("w1"), "absent")
+        self.assertEqual(api.sessions("w1"), [])
 
     def test_hooks_persist_binding_without_any_consumer(self):
         release = self.root / "release"
@@ -580,7 +580,7 @@ class TuiIntegrationTest(Live):
         with self.assertRaisesRegex(ConfigError, "project Codex settings"):
             self.start(spec=spec)
         self.assertEqual(self.logged(), [])
-        self.assertEqual(api.sessions().names, ("mgr",))
+        self.assertEqual([r.name for r in api.sessions()], ["mgr"])
         self.assertFalse((self.work / "run.jsonl").exists())
 
     def test_parent_markers_and_injected_defaults_are_removed_fresh_resumed_and_nested(self):

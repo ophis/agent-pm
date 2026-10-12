@@ -3,17 +3,19 @@ starts it in its Mode (headless, tui or in_process) and returns its Handle. Hand
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
 `stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record;
 writable_dirs() the dirs a runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
-tui session by name; detach() runs a command in a tmux session of its own."""
+tui session by name; detach() runs a command in a tmux session of its own. A plain session's env allow-list and
+Spec.role_policy are temporary (TASK-356)."""
 
 import contextlib
 import logging
 import os
+import re
 import signal
 import stat
 import time
 import uuid
 from collections import deque
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -68,8 +70,8 @@ __all__ = [
     "STATES",
     "SessionBound",
     "SessionInfo",
+    "SessionRow",
     "SessionStatus",
-    "Sessions",
     "Spec",
     "Stderr",
     "TurnEnd",
@@ -105,17 +107,18 @@ class IdleTimeout:
 
 
 @dataclass(frozen=True)
-class Sessions:
-    """The tmux sessions named `prefix`…; names None: tmux's state is unknown."""
+class SessionRow:
+    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None none."""
 
-    prefix: str
-    names: tuple[str, ...] | None
-
-    def state(self, name: str) -> str:
-        """One of STATES."""
-        if not isinstance(name, str) or not name.startswith(self.prefix):
-            raise ValueError(f"{name!r:.80} does not start with {self.prefix!r}")
-        return "unknown" if self.names is None else "live" if name in self.names else "absent"
+    name: str
+    sid: str | None
+    runtime: str | None
+    state: str
+    pane: str | None
+    opener: str | None
+    shown: str | None
+    last_lines: str | None
+    own: bool
 
 
 class Mode(Protocol):
@@ -264,9 +267,25 @@ class Handle:
         return usage(self.runtime)
 
 
-def _child_env(launch: Launch, cwd: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in launch.unset}
-    return {**env, **launch.env, "PWD": cwd}
+def _child_env(
+    launch: Launch, cwd: str, drop: Collection[str] = (), extra: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
+    return {**env, **launch.env, **(extra or {}), "PWD": cwd}
+
+
+def _plain_drop(env: Mapping[str, str]) -> frozenset[str]:
+    """Each Adapter's identity_env, and its child_defaults at their value inside it."""
+    adapters = [registry.adapter(name) for name in registry.configured()]
+    allowed = sorted({key for a in adapters for key in a.child_defaults})
+    for key in sorted(env):
+        if key not in allowed:
+            raise ConfigError(f"env {key}: want one of {', '.join(allowed)}")
+    drop = {key for a in adapters for key in a.identity_env}
+    for a in adapters:
+        if a.session_env and a.session_env in os.environ:
+            drop.update(k for k, v in a.child_defaults.items() if os.environ.get(k) == v)
+    return frozenset(drop)
 
 
 def start(
@@ -280,8 +299,8 @@ def start(
     sid: str | None = None,
     events: str | None = None,
 ) -> Handle:
-    """tui: tmux session `name`, else <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and
-    dead lines."""
+    """tui: tmux session `name` (spec.name), else <runtime>-<sid[:8]>, refused when running; `events` gets its done,
+    blocked and dead lines; spec.protect gains the hook paths."""
     if mode not in MODES:
         raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
     _idle(idle_timeout)
@@ -293,6 +312,8 @@ def start(
         raise ConfigError(f"sid {sid!r:.80} differs from resume {resume!r:.80}")
     if spec.sid is not None:
         raise ConfigError("spec.sid is set by start(): pass sid= or resume=")
+    if spec.name is not None:
+        raise ConfigError("spec.name is set by start()")
     adapter = registry.adapter(runtime)
     kind = _STEPS[mode]
     run = kind.run_of(adapter)
@@ -300,7 +321,7 @@ def start(
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
     sid = resume or sid or str(uuid.uuid4())
     steps = kind(run, runtime, sid, name, events)
-    spec = replace(spec, sid=sid)
+    spec = steps.specced(replace(spec, sid=sid))
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
     info = steps.info(prompt, spec, resume is not None)
@@ -335,6 +356,12 @@ def _no_tui_keys(name, events) -> None:
             raise ConfigError(f"{key}: tui mode only")
 
 
+def _no_tui_fields(spec: Spec) -> Spec:
+    if spec.flags or spec.protect or not spec.role_policy:
+        raise ConfigError("flags, env, protect and role_policy=False: tui mode only")
+    return spec
+
+
 class _LaunchSteps:
     """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd for begin()."""
 
@@ -355,6 +382,7 @@ class _LaunchSteps:
 
 class _HeadlessSteps(_LaunchSteps):
     name = None
+    specced = staticmethod(_no_tui_fields)
 
     @staticmethod
     def run_of(adapter: Adapter) -> Headless | None:
@@ -389,6 +417,19 @@ class _TuiSteps(_LaunchSteps):
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
         self.name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
         self.events = _events(events)
+        self.tmux = tmux_host.tmux_path()
+        if self.tmux is None:
+            raise DriverError("tmux not found")
+
+    def specced(self, spec: Spec) -> Spec:
+        self.drop = () if spec.role_policy else _plain_drop(spec.env)
+        self.extra = spec.env
+        hooks = (
+            self.tmux,
+            *([self.events] if self.events else []),
+            os.path.expanduser(tui.TUI_DIR),
+        )
+        return replace(spec, name=self.name, protect=(*spec.protect, *hooks))
 
     def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
         return self.run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(self.name)))
@@ -397,7 +438,13 @@ class _TuiSteps(_LaunchSteps):
     def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
         with tui.lock(self.name):
             yield tui.TuiMode.prepare(
-                self.name, self.run, info, self.events, runtime=self.runtime, workdir=workdir
+                self.name,
+                self.run,
+                info,
+                self.events,
+                runtime=self.runtime,
+                workdir=workdir,
+                tmux=self.tmux,
             )
 
     def begin(self, host: tui.TuiMode) -> None:
@@ -405,13 +452,14 @@ class _TuiSteps(_LaunchSteps):
         host.begin(
             launch.argv,
             cwd=self.cwd,
-            env=_child_env(launch, self.cwd),
+            env=_child_env(launch, self.cwd, self.drop, self.extra),
             status_line=self.settings.status_line,
         )
 
 
 class _InProcessSteps:
     name = None
+    specced = staticmethod(_no_tui_fields)
 
     @staticmethod
     def run_of(adapter: Adapter) -> InProcess | None:
@@ -506,11 +554,37 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
     return handle
 
 
-def sessions(prefix: str = "") -> Sessions:
-    if not isinstance(prefix, str) or prefix and not tmux_host.NAME.fullmatch(prefix):
-        raise ConfigError(f"prefix must match [A-Za-z0-9_-]*, got {prefix!r:.80}")
-    found = tmux_host.sessions(prefix)
-    return Sessions(prefix, None if found is None else tuple(found))
+def sessions(match: str | None = None) -> list[SessionRow]:
+    """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is unknown."""
+    if match is not None and not isinstance(match, str):
+        raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
+    try:
+        pattern = None if match is None else re.compile(match)
+    except re.error as e:
+        raise ConfigError(f"match {match!r:.80}: {e}") from None
+    found = tmux_host.listing(pattern)
+    if found is None:
+        raise DriverError("tmux sessions unknown: tmux failed")
+    try:
+        own = tmux_host.own_session() if found else None
+    except tmux_host.TuiError as e:
+        raise DriverError(f"tmux sessions unknown: {e}") from None
+    return [_row(f, own) for f in found]
+
+
+def _row(found: Mapping, own: str | None) -> SessionRow:
+    sid, runtime, state = found["sid"], found["runtime"], found["state"]
+    return SessionRow(
+        name=found["name"],
+        sid=None if sid_error(sid) else sid,
+        runtime=runtime if isinstance(runtime, str) and registry.NAME.match(runtime) else None,
+        state="dead" if found["dead"] else state if state in ("done", "blocked") else "working",
+        pane=found["pane"],
+        opener=found["opener"],
+        shown=found["shown"],
+        last_lines=found["last_lines"],
+        own=found["name"] == own,
+    )
 
 
 def close(name: str) -> None:

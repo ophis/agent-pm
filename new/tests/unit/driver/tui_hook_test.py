@@ -1,12 +1,14 @@
-"""driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the
-payload on stdin, $TMUX_PANE set, PATH only a stub tmux that logs each call (no tmux runs here); in process for its one
-locked write and its load of tmux_host; and the file standing alone."""
+"""driver/modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the payload on
+stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only a decoy tmux (no tmux runs
+here); in process for its one locked write, its check of that tmux and its load of tmux_host; and the file standing
+alone."""
 
 import ast
 import fcntl
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -36,6 +38,18 @@ if os.environ.get("TMUX_FAIL"):
 if sys.argv[1] == "display-message":
     print("w1")
 """
+DECOY = """#!{python} -I
+open({log!r}, "a").close()
+"""
+
+
+def install(folder: str, text: str) -> str:
+    os.mkdir(folder)
+    path = os.path.join(folder, "tmux")
+    with open(path, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o755)
+    return path
 
 
 def state(root: str, events) -> dict:
@@ -49,6 +63,7 @@ def state(root: str, events) -> dict:
         "resume": "",
         "events": events,
         "words": dict(WORDS),
+        "tmux_path": os.path.join(root, "bin", "tmux"),
     }
 
 
@@ -69,14 +84,14 @@ class Hook(Case):
         self.hooks = os.path.join(self.dir, "hooks.jsonl")
         self.events = os.path.join(self.root, "events")
         os.close(os.open(self.events, os.O_WRONLY | os.O_CREAT, 0o600))
-        stub = os.path.join(self.root, "bin")
-        os.mkdir(stub)
-        with open(os.path.join(stub, "tmux"), "w") as f:
-            f.write(TMUX.format(python=sys.executable))
-        os.chmod(os.path.join(stub, "tmux"), 0o755)
+        self.tmux = install(os.path.join(self.root, "bin"), TMUX.format(python=sys.executable))
+        self.decoy = os.path.join(self.root, "decoy.log")
+        install(
+            os.path.join(self.root, "path"), DECOY.format(python=sys.executable, log=self.decoy)
+        )
         self.log = os.path.join(self.root, "tmux.log")
         self.env = {
-            "PATH": stub,
+            "PATH": os.path.join(self.root, "path"),
             "TMUX_PANE": PANE,
             "TMUX_LOG": self.log,
             "TMUX_TMPDIR": self.root,
@@ -163,6 +178,31 @@ class Hook(Case):
                     self.assertRegex(self.lines(), LINE % word)
                 self.assertEqual(self.calls(), calls)
         self.assertEqual([r["label"] for r in self.records()], list(WORDS))
+
+    def test_the_tmux_session_json_names_runs_never_one_on_path(self):
+        self.assertEqual(self.hook("ask"), "")
+        self.assertEqual(
+            self.calls(),
+            [
+                ["set-option", "-t", PANE, "@state", "blocked"],
+                ["display-message", "-p", "-t", PANE, "#S"],
+            ],
+        )
+        self.assertRegex(self.lines(), LINE % "blocked")
+        self.assertFalse(os.path.exists(self.decoy))
+
+    def test_a_tmux_that_is_no_regular_executable_file_is_one_stderr_line_after_the_record(self):
+        plain = os.path.join(self.root, "plain")
+        with open(plain, "w") as f:
+            f.write(TMUX.format(python=sys.executable))
+        os.chmod(plain, 0o644)
+        for tmux in (plain, os.path.join(self.root, "bin"), os.path.join(self.root, "missing")):
+            with self.subTest(tmux):
+                write_state(self.dir, {**self.state, "tmux_path": tmux})
+                self.assertError(self.hook("stop"), tmux)
+        self.assertEqual([r["label"] for r in self.records()], ["stop"] * 3)
+        self.assertEqual((self.calls(), self.lines()), ([], ""))
+        self.assertFalse(os.path.exists(self.decoy))
 
     def test_a_label_without_a_word_is_recorded_and_marks_nothing(self):
         self.assertEqual(self.hook("other", {"x": 1}), "")
@@ -298,6 +338,7 @@ class Hook(Case):
             "transcript": ("rel", "/a\x7fb", None),
             "project": ("true", 0, 1, None),
             "resume": (None, 1, []),
+            "tmux_path": ("", "tmux", "bin/tmux", "/a\nb", None, 1),
         }
         for field, values in bad.items():
             for value in (*values, MISSING):
@@ -371,10 +412,56 @@ class InProcess(Case):
         self.dir = os.path.join(self.root, "s1")
         os.mkdir(self.dir, 0o700)
         self.events = os.path.join(self.root, "events")
+        self.tmux = install(os.path.join(self.root, "bin"), "")
         write_state(self.dir, state(self.root, self.events))
+        self.fake = types.SimpleNamespace(mark=unittest.mock.Mock(), TuiError=Exception)
+
+    def faked(self, uid=None, mode=None, executable=True):
+        """main on a tool record, tmux_host the fake; os.stat and os.access of the tmux faked: owner uid, st_mode mode
+        (None: the real ones), whether executable."""
+        real_stat, real_access = os.stat, os.access
+
+        def fake_stat(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            if path != self.tmux:
+                return st
+            return types.SimpleNamespace(
+                st_mode=st.st_mode if mode is None else mode,
+                st_uid=st.st_uid if uid is None else uid,
+            )
+
+        def fake_access(path, how, *args, **kwargs):
+            return executable if path == self.tmux else real_access(path, how, *args, **kwargs)
+
+        with (
+            unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=self.fake),
+            unittest.mock.patch("os.stat", fake_stat),
+            unittest.mock.patch("os.access", fake_access),
+        ):
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"))
+
+    def test_a_tmux_of_yours_or_roots_marks(self):
+        for uid in (os.getuid(), 0):
+            with self.subTest(uid=uid):
+                self.fake.mark.reset_mock()
+                self.faked(uid=uid)
+                self.fake.mark.assert_called_once_with("working", self.events, tmux=self.tmux)
+
+    def test_a_foreign_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
+        for case, kwargs in (
+            ("foreign", {"uid": os.getuid() + 1}),
+            ("directory", {"mode": stat.S_IFDIR | 0o755}),
+            ("not executable", {"executable": False}),
+        ):
+            with self.subTest(case):
+                with self.assertRaisesRegex(tui_hook.HookError, re.escape(self.tmux)):
+                    self.faked(**kwargs)
+        self.fake.mark.assert_not_called()
+        with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
+            self.assertEqual(len(f.read().splitlines()), 3)
 
     def test_one_write_under_an_exclusive_flock_then_the_mark(self):
-        fake = types.SimpleNamespace(mark=unittest.mock.Mock(), TuiError=Exception)
+        fake = self.fake
         calls = unittest.mock.Mock()
         with (
             unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=fake),
@@ -393,7 +480,7 @@ class InProcess(Case):
             [
                 unittest.mock.call.flock(fd, fcntl.LOCK_EX),
                 unittest.mock.call.write(fd, data),
-                unittest.mock.call.mark("working", self.events),
+                unittest.mock.call.mark("working", self.events, tmux=self.tmux),
             ],
         )
         self.assertEqual(json.loads(data)["payload"], {"tool_name": "Bash"})

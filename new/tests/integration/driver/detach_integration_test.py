@@ -58,11 +58,11 @@ class DetachTest(Case):
     def gone(self) -> bool:
         # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped until another child of the server exits
         self.server.tmux("run-shell", "-b", "true")
-        return api.sessions("d").names == ()
+        return api.sessions("d.*") == []
 
     def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
         self.assertIsNone(self.detach("d1", opener=MANAGER))
-        self.assertEqual(api.sessions("d").state("d1"), "live")
+        self.assertEqual([r.name for r in api.sessions("d1")], ["d1"])
         tmux_host.detach("d0", self.argv("d0"), cwd=self.dir, env=self.server.env())
         signals = {int(s) for s in api.SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
@@ -87,7 +87,7 @@ class DetachTest(Case):
             self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout, pid
         )
         self.assertEqual([self.server.option(n, "@opener") for n in ("d1", MANAGER)], ["", ""])
-        self.assertEqual(api.sessions().names, ("d1", MANAGER))
+        self.assertEqual([r.name for r in api.sessions()], ["d1", MANAGER])
 
     def test_a_cwd_it_cannot_enter_is_refused_never_a_success(self):
         missing = os.path.join(self.dir, "missing")

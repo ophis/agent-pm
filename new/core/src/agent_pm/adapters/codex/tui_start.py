@@ -370,6 +370,8 @@ def _start(argv, termination):
         "workdir",
         "sid",
         "store",
+        "protect",
+        "add_dirs",
     }:
         raise StartError("Codex tui launch: invalid launch fields")
     for key in ("argv", "hook", "hook_flags"):
@@ -388,6 +390,12 @@ def _start(argv, termination):
         or any(not isinstance(word, str) or not word for word in commands.values())
     ):
         raise StartError("Codex tui launch: invalid hook commands")
+    for key in ("protect", "add_dirs"):
+        if not isinstance(data[key], list) or any(
+            not isinstance(path, str) or "\0" in path or not os.path.isabs(path)
+            for path in data[key]
+        ):
+            raise StartError(f"Codex tui launch: invalid {key} paths")
     sessions.absolute_path(data["store"], "store")
     state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
     if state is None:
@@ -403,8 +411,10 @@ def _start(argv, termination):
             data["argv"][0],
             data["store"],
             *(word for word in data["hook"] if os.path.isabs(word)),
+            *data["protect"],
         ],
         env,
+        data["add_dirs"],
     )
     cwd = state.snapshot["cwd"]
     termination.check()

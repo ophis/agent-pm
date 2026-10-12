@@ -39,6 +39,7 @@ from new.tests.case import ROOT, Case
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+TMUX = "/opt/tmux/bin/tmux"
 TS = "2026-10-11T12:00:00.000+00:00"
 WORDS = {"stop": "done", "ask": "blocked", "tool": "working"}
 DEFAULT = object()
@@ -120,7 +121,7 @@ class Base(Case):
         self.run = ScanTui(fake_adapter.FakeAdapter({"tui": True}))
         self.info = SessionInfo(SID, "", self.tmp, False, "", "")
 
-    def prepare(self, run=None, info=None, events=DEFAULT, workdir=None) -> tui.TuiMode:
+    def prepare(self, run=None, info=None, events=DEFAULT, workdir=None, tmux=TMUX) -> tui.TuiMode:
         events = self.events if events is DEFAULT else events
         return tui.TuiMode.prepare(
             NAME,
@@ -129,6 +130,7 @@ class Base(Case):
             events,
             runtime="fake",
             workdir=workdir or self.tmp,
+            tmux=tmux,
         )
 
     def started(self) -> tui.TuiMode:
@@ -157,6 +159,7 @@ class Base(Case):
             "resume": "",
             "events": self.events,
             "words": WORDS,
+            "tmux_path": TMUX,
             **changes,
         }
 
@@ -271,6 +274,8 @@ class PrepareTest(Base):
             ({"events": "rel"}, "events"),
             ({"workdir": "/a\nb"}, "workdir"),
             ({"run": BadLabel(self.run.adapter)}, "words"),
+            ({"tmux": "bin/tmux"}, "tmux_path"),
+            ({"tmux": None}, "tmux_path"),
         ):
             with self.subTest(field):
                 with self.assertRaisesRegex(DriverError, rf"\Atui session w1: bad {field} "):
@@ -408,7 +413,7 @@ class LockTest(Base):
 
 
 class BeginTest(Base):
-    def test_starts_the_session_tagged_with_its_sid(self):
+    def test_starts_the_session_tagged_with_its_sid_and_runtime(self):
         mode = self.prepare()
         mode.begin(["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}, status_line=True)
         self.assertEqual(
@@ -421,7 +426,7 @@ class BeginTest(Base):
                     env={"A": "1"},
                     events=self.events,
                     status_line=True,
-                    tags={"@sid": SID},
+                    tags={"@sid": SID, "@runtime": "fake"},
                 ),
                 mock.call.pane(NAME),
             ],
@@ -436,7 +441,7 @@ class BeginTest(Base):
                 env={},
                 events=None,
                 status_line=False,
-                tags={"@sid": SID},
+                tags={"@sid": SID, "@runtime": "fake"},
             ),
         )
 
@@ -517,6 +522,7 @@ class ReadStateTest(Base):
             "transcript": "rel",
             "project": "no",
             "resume": None,
+            "tmux_path": "tmux",
         }
         for field, value in bad.items():
             for state in (

@@ -1,5 +1,7 @@
 """Claude Code configuration, launch metadata, usage and session inspection shared by both Modes. A launch's env and
-resume command carry the session env."""
+resume command carry a role run's Access.env. plain is a plain session's (adapters.base): the session id, tier, effort
+and --name, then --settings, `hooks` merged into the first --settings in spec.flags, then the rest of spec.flags; the
+config's env without ENV. refuse: a session flag before "--"."""
 
 import json
 import math
@@ -7,7 +9,7 @@ import os
 import re
 import shlex
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.adapters.base import EFFORTS, ConfigError, Launch, SessionStatus, Spec, Usage, Window
@@ -17,6 +19,63 @@ TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 NOT_LITERAL = "*?[]{}()\\,"
+REFUSED = (
+    "--resume",
+    "-r",
+    "--session-id",
+    "--continue",
+    "-c",
+    "--fork-session",
+    "--from-pr",
+    "--teleport",
+)
+
+
+def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
+    return flags[: flags.index("--")] if "--" in flags else flags
+
+
+def refuse(flags: tuple[str, ...]) -> None:
+    for flag in _before_end(flags):
+        word = flag.partition("=")[0] if flag.startswith("--") else flag
+        if word in REFUSED:
+            raise ConfigError(f"{word}: picks the session; use crew.py start --resume <sid>")
+
+
+def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
+    """Each --add-dir X or --add-dir=X's X before "--"."""
+    i = 0
+    while i < len(flags) and flags[i] != "--":
+        word, eq, value = flags[i].partition("=")
+        if word == "--add-dir":
+            if not eq:
+                i += 1
+                value = flags[i] if i < len(flags) else ""
+            yield value
+        i += 1
+
+
+def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
+    for i, flag in enumerate(_before_end(flags)):
+        if flag == "--settings":
+            value, end = (flags[i + 1] if i + 1 < len(flags) else ""), i + 2
+        elif flag.startswith("--settings="):
+            value, end = flag.removeprefix("--settings="), i + 1
+        else:
+            continue
+        try:
+            settings = json.loads(value)
+        except (ValueError, RecursionError):
+            settings = None
+        own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
+        if not isinstance(own, dict) or not all(isinstance(own.get(e, []), list) for e in hooks):
+            raise ConfigError(
+                f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
+            )
+        for event, entries in hooks.items():
+            own[event] = [*own.get(event, []), *entries]
+        return settings, (*flags[:i], *flags[end:])
+    return {"hooks": dict(hooks)}, flags
 
 
 def number(value) -> float | None:
@@ -133,7 +192,8 @@ class ClaudeCommon:
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
-        self._env = {**self.ENV, **config.get("env", {})}
+        self.config_env = dict(config.get("env", {}))
+        self._env = {**self.ENV, **self.config_env}
 
     def model(self, tier: int | None) -> str | None:
         if tier is None:
@@ -227,6 +287,31 @@ class ClaudeCommon:
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
             resume=self.resume(cwd, sid, spec.workdir, access.env),
+        )
+
+    def plain(self, spec: Spec, resume: bool, hooks: Mapping, tail: tuple[str, ...] = ()) -> Launch:
+        sid = self.uuid(spec.sid)
+        model, effort = self.model(spec.tier), self.effort(spec.effort)
+        settings, flags = _merged(spec.flags, hooks)
+        cwd = spec.access.cwd or spec.workdir
+        argv = (
+            "claude",
+            "--resume" if resume else "--session-id",
+            sid,
+            *(("--model", model) if model is not None else ()),
+            *(("--effort", effort) if effort is not None else ()),
+            *(("--name", spec.name) if spec.name is not None else ()),
+            "--settings",
+            json.dumps(settings),
+            *flags,
+            *tail,
+        )
+        return Launch(
+            argv,
+            env=dict(self.config_env),
+            unset=self.UNSET,
+            transcript=self.transcript(cwd, sid),
+            resume=self.resume(cwd, sid),
         )
 
     def probe(self) -> Launch:

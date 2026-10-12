@@ -135,8 +135,8 @@ def _exit(status) -> int | None:
 class TuiMode:
     """One tui session, driver.api's Mode, acting on its session's pane by id."""
 
-    def __init__(self, name: str, run: Tui, sid: str, events: str | None):
-        self.name, self.run, self.sid, self.events = name, run, sid, events
+    def __init__(self, name: str, run: Tui, sid: str, events: str | None, runtime: str):
+        self.name, self.run, self.sid, self.events, self.runtime = name, run, sid, events, runtime
         self.dir = session_dir(name)
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
         self.bound, self.reply, self.blocked = "", None, False
@@ -153,6 +153,7 @@ class TuiMode:
         *,
         runtime: str,
         workdir: str,
+        tmux: str,
     ) -> "TuiMode":
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
@@ -165,6 +166,7 @@ class TuiMode:
             "resume": info.resume,
             "events": events,
             "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
+            "tmux_path": tmux,
         }
         for field, check in tui_hook.SESSION_STATE.items():
             if not check(state[field]):
@@ -175,7 +177,7 @@ class TuiMode:
         if status == tmux_host.UNKNOWN:
             raise DriverError(f"tui session {name}: its tmux state is unknown")
         _tui_dir()
-        mode = cls(name, run, info.sid, events)
+        mode = cls(name, run, info.sid, events, runtime)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
@@ -200,7 +202,8 @@ class TuiMode:
     def begin(
         self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], status_line: bool = False
     ) -> None:
-        """Starts argv tagged with the sid, then takes its pane; failing, ends it and removes the dir prepare made."""
+        """Starts argv tagged with the sid and runtime, then takes its pane; failing, ends it and removes the dir prepare
+        made."""
         try:
             tmux_host.start(
                 self.name,
@@ -209,7 +212,7 @@ class TuiMode:
                 env=dict(env),
                 events=self.events,
                 status_line=status_line,
-                tags={"@sid": self.sid},
+                tags={"@sid": self.sid, "@runtime": self.runtime},
             )
         except tmux_host.TuiError as e:
             self._unmake()
@@ -236,7 +239,7 @@ class TuiMode:
             tagged = pane = None
         if tagged != state["sid"]:
             raise DriverError(f"no tui session {name}")
-        mode = cls(name, run, state["sid"], state["events"])
+        mode = cls(name, run, state["sid"], state["events"], state["runtime"])
         mode._pane = pane
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1

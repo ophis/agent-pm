@@ -4,8 +4,9 @@
 # cannot drop a key this file sets, so a local [output] or [adapters.<name>] keeps this file's other keys in that table.
 #
 # Each layer reads only its own keys: the Composer (src/agent_pm/composer/) the run keys, [output], [roles.<role>],
-# trusted_dirs and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; the Driver
-# (src/agent_pm/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
+# trusted_dirs and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; src/agent_pm/roster.py runtime
+# (the default of src/agent_pm/crew.py's workers); the Driver (src/agent_pm/driver/registry.py) [adapters.<name>],
+# status_line, workers_per_column and grid_retile.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -135,7 +136,8 @@ effort = "low"
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
-# [adapters.claude]  Claude Code (src/agent_pm/adapters/claude/); each key optional
+# [adapters.claude]  Claude Code (src/agent_pm/adapters/claude/); each key optional; a plain session
+#                    (src/agent_pm/adapters/base.py) gets neither flags nor allow
 #   flags            claude flags added to every session command; never --setting-sources (the Driver's)
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read rules
 #   env              variables added to every command's environment, over the adapter's defaults

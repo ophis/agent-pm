@@ -1,7 +1,8 @@
 """The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the payload JSON on
 stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
-word (tmux_host.mark). Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and always
-exits 0 (a runtime may read both). Python 3.9, stdlib only, standalone."""
+word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH. Payload strs are cut to CUT chars
+unless the word is done. Never prints on stdout and always exits 0 (a runtime may read both). Python 3.9, stdlib only,
+standalone."""
 
 from __future__ import annotations
 
@@ -44,6 +45,7 @@ SESSION_STATE = {
     "transcript": lambda v: v == "" or _abs(v),
     "project": lambda v: isinstance(v, bool),
     "resume": lambda v: isinstance(v, str),
+    "tmux_path": _abs,
 }
 
 
@@ -63,9 +65,10 @@ def main(argv: list[str], stdin) -> None:
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
     if word:
+        tmux = check_tmux(state["tmux_path"])
         tmux_host = load_tmux_host()
         try:
-            tmux_host.mark(word, state["events"])
+            tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
             raise HookError(str(e)) from None
 
@@ -121,6 +124,20 @@ def read_state(path: str) -> dict:
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
     return state
+
+
+def check_tmux(path: str) -> str:
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        raise HookError(f"tmux {path}: {e.strerror}") from None
+    if (
+        not stat.S_ISREG(st.st_mode)
+        or st.st_uid not in (0, os.getuid())
+        or not os.access(path, os.X_OK)
+    ):
+        raise HookError(f"tmux {path}: not a regular executable file owned by you or root")
+    return path
 
 
 def cut(value):

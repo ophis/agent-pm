@@ -9,7 +9,7 @@ from agent_pm.adapters.base import ConfigError, Launch, LimitHit, Tui
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from . import sessions
-from .common import LIMIT_PREFIXES, flags, native_id, reset_at
+from .common import LIMIT_PREFIXES, added_dirs, flags, native_id, passed, refuse, reset_at
 from .hook_schema import HOOKS
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
@@ -33,12 +33,13 @@ class CodexTui(Tui):
         self.native = ""
 
     def launch(self, prompt, spec, resume, hook):
+        refuse(spec.flags)
         common = self.adapter.common
         self.state = common.prepare(spec, resume, persist=False)
         snapshot = self.state.snapshot
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.interactive_unset()
+        unset = common.interactive_unset() if spec.role_policy else self.adapter.identity_env
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
         store = sessions.store_root()
@@ -56,9 +57,11 @@ class CodexTui(Tui):
             exe,
             store,
             *(word for word in hook if os.path.isabs(word)),
+            *spec.protect,
         ]
+        added = [] if spec.role_policy else added_dirs(spec.flags, snapshot["cwd"])
         try:
-            sessions.protect(self.state, dependencies, effective_env)
+            sessions.protect(self.state, dependencies, effective_env, added)
         except sessions.RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
         if not resume:
@@ -97,16 +100,19 @@ class CodexTui(Tui):
             'tui.notification_method="bel"',
             *flags(snapshot, interactive=True),
             *hook_flags,
+            *spec.flags,
             *(["--", prompt] if prompt else []),
         ]
         data = {
             "argv": argv,
             "hook": list(hook),
             "commands": commands,
-            "hook_flags": hook_flags,
+            "hook_flags": [*hook_flags, *passed(spec.flags)],
             "workdir": self.state.workdir,
             "sid": self.state.sid,
             "store": store,
+            "protect": list(spec.protect),
+            "add_dirs": added,
         }
         return Launch(
             (

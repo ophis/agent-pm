@@ -35,6 +35,7 @@ from new.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+TMUX = "/opt/tmux/bin/tmux"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 
@@ -104,6 +105,34 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return base.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
 
 
+LAUNCHED: list[api.Spec] = []
+
+
+class InnerAdapter(fake_adapter.FakeAdapter):
+    """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its spec in LAUNCHED,
+    unsets LAUNCH_DROP and sets LAUNCH_SET."""
+
+    session_env = "INNER_SESSION"
+    identity_env = ("INNER_SESSION", "INNER_ID")
+    child_defaults = {"PAGER": "cat", "NO_COLOR": "1"}
+
+    def tui(self):
+        return InnerTui(self)
+
+
+class InnerTui(fake_adapter.FakeTui):
+    def launch(self, prompt, spec, resume, hook):
+        LAUNCHED.append(spec)
+        launch = super().launch(prompt, spec, resume, hook)
+        return dataclasses.replace(launch, env={"LAUNCH_SET": "1"}, unset=("LAUNCH_DROP",))
+
+
+class OtherAdapter(fake_adapter.FakeAdapter):
+    session_env = "OTHER_SESSION"
+    identity_env = ("OTHER_SESSION", "OTHER_ID")
+    child_defaults = {"OTHER_MODE": "on"}
+
+
 class EnvAdapter(ProbeAdapter):
     """The probe adapter whose session launches carry spec.access.env, as claude's and codex's do."""
 
@@ -141,6 +170,8 @@ PACKAGES = {
             ("quiet", QuietAdapter),
             ("probe", ProbeAdapter),
             ("checked", CheckedAdapter),
+            ("inner", InnerAdapter),
+            ("other", OtherAdapter),
             ("env", EnvAdapter),
         )
     },
@@ -168,16 +199,19 @@ class Base(Case):
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump(list(steps), f)
 
-    def configure(self, runtime="fake", settings=None, **extra):
-        """A table per PACKAGES name, each with this test's scenario and log; `extra` keys go into runtime's; settings:
-        the config's global keys."""
+    def configure(self, runtime="fake", settings=None, tables=None, **extra):
+        """A table per PACKAGES name, each with this test's scenario and log, plus `tables`; `extra` keys go into
+        runtime's; settings: the config's global keys."""
         tables = {
-            name: {
-                "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
-                "scenario": self.scenario,
-                "log": self.log,
-            }
-            for name in PACKAGES
+            **{
+                name: {
+                    "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+                for name in PACKAGES
+            },
+            **(tables or {}),
         }
         tables[runtime].update(extra)
         registry.configure({"adapters": tables, **(settings or {})})
@@ -292,6 +326,31 @@ class ChecksTest(Base):
                     "spec.sid is set by start(): pass sid= or resume=",
                     lambda: self.start(spec=self.spec(sid="s1"), **kwargs),
                 )
+
+    def test_refuses_a_caller_set_spec_name_in_every_mode(self):
+        self.configure(tui=True)
+        for runtime, mode in (("fake", "headless"), ("fake", "tui"), ("checked", "in_process")):
+            with self.subTest(mode=mode):
+                self.refused(
+                    api.ConfigError,
+                    "spec.name is set by start()",
+                    lambda: self.start(runtime, mode, spec=self.spec(name="w1")),
+                )
+
+    def test_flags_env_protect_and_a_plain_session_are_tui_only(self):
+        for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
+            for fields in (
+                {"flags": ("--x",)},
+                {"env": {"PAGER": "cat"}, "role_policy": False},
+                {"protect": ("/p",)},
+                {"role_policy": False},
+            ):
+                with self.subTest(mode=mode, fields=fields):
+                    self.refused(
+                        api.ConfigError,
+                        "flags, env, protect and role_policy=False: tui mode only",
+                        lambda: self.start(runtime, mode, spec=self.spec(**fields)),
+                    )
 
     def test_a_registry_error_passes_through(self):
         self.refused(
@@ -1014,7 +1073,7 @@ class WritableDirsTest(Base):
 
 def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), sessions [], option None, pane %1."""
+    (absent), listing [], own_session None, option None, pane %1, tmux_path TMUX."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -1022,9 +1081,11 @@ def fake_host() -> mock.Mock:
     host.attach_command.side_effect = tmux_host.attach_command
     host.events_file.side_effect = tmux_host.events_file
     host.status.return_value = None
-    host.sessions.return_value = []
+    host.listing.return_value = []
+    host.own_session.return_value = None
     host.option.return_value = None
     host.pane.return_value = "%1"
+    host.tmux_path.return_value = TMUX
     return host
 
 
@@ -1090,7 +1151,8 @@ class TuiStartTest(TuiBase):
         handle = self.tui(name="w1", sid=SID, events=self.events)
         self.assertEqual(order, [("status", False), ("start", ["session"])])
         self.assertEqual(
-            [c[0] for c in self.host.mock_calls], ["events_file", "status", "start", "pane"]
+            [c[0] for c in self.host.mock_calls],
+            ["events_file", "tmux_path", "status", "start", "pane"],
         )
         self.assertEqual(
             (handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui")
@@ -1108,7 +1170,7 @@ class TuiStartTest(TuiBase):
                 "env": None,
                 "events": self.events,
                 "status_line": False,
-                "tags": {"@sid": SID},
+                "tags": {"@sid": SID, "@runtime": "fake"},
             },
         )
         self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
@@ -1117,15 +1179,22 @@ class TuiStartTest(TuiBase):
             {
                 k: v
                 for k, v in tui.read_state("w1").items()
-                if k in ("runtime", "sid", "events", "words")
+                if k in ("runtime", "sid", "events", "words", "tmux_path")
             },
             {
                 "runtime": "fake",
                 "sid": SID,
                 "events": self.events,
                 "words": {"stop": "done", "ask": "blocked", "tool": "working"},
+                "tmux_path": TMUX,
             },
         )
+
+    def test_no_tmux_on_path_is_a_driver_error_with_nothing_started(self):
+        self.host.tmux_path.return_value = None
+        self.refused(api.DriverError, "tmux not found", lambda: self.tui(name="w1"))
+        self.assertEqual(self.host.mock_calls, [mock.call.tmux_path()])
+        self.assertFalse(os.path.lexists(self.root))
 
     def test_the_names_lock_is_held_from_prepare_to_begin(self):
         held = []
@@ -1220,6 +1289,92 @@ class TuiStartTest(TuiBase):
         handle.stop()
         self.host.kill.assert_called_once_with("%1")
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+
+class PlainTest(TuiBase):
+    """Tui sessions of the inner runtime: the spec its launch gets, and the env tmux starts it with, os.environ only
+    HOME plus each test's variables."""
+
+    def setUp(self):
+        super().setUp()
+        LAUNCHED.clear()
+
+    def environ(self, **values):
+        patch = mock.patch.dict(os.environ, {"HOME": os.environ["HOME"], **values}, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def env(self, name, **fields) -> dict[str, str]:
+        """The env inner tui session `name` started with under spec `fields`, but HOME and PWD (the workdir)."""
+        self.tui(runtime="inner", name=name, spec=self.spec(**fields))
+        env = dict(self.host.start.call_args.kwargs["env"])
+        self.assertEqual((env.pop("HOME"), env.pop("PWD")), (os.environ["HOME"], self.workdir))
+        return env
+
+    def test_spec_name_is_the_session_name_and_protect_gains_the_hook_paths(self):
+        self.tui(runtime="inner", name="w1", spec=self.spec(protect=("/c",)), events=self.events)
+        self.tui(runtime="inner", sid=SID, spec=self.spec(role_policy=False))
+        first, second = LAUNCHED
+        self.assertEqual((first.name, first.protect), ("w1", ("/c", TMUX, self.events, self.root)))
+        self.assertEqual((second.name, second.protect), ("inner-0f8fad5b", (TMUX, self.root)))
+        self.assertEqual((second.sid, first.role_policy, second.role_policy), (SID, True, False))
+
+    def test_a_role_run_keeps_its_env(self):
+        self.environ(INNER_SESSION="1", INNER_ID="i", OTHER_ID="o", PAGER="cat", LAUNCH_DROP="x")
+        kept = {"INNER_SESSION": "1", "INNER_ID": "i", "OTHER_ID": "o", "PAGER": "cat"}
+        self.assertEqual(self.env("w1"), {**kept, "LAUNCH_SET": "1"})
+
+    def test_a_plain_env_drops_every_adapters_identity_then_applies_the_launch_then_spec_env(self):
+        self.environ(INNER_ID="i", OTHER_SESSION="", OTHER_ID="o", LAUNCH_DROP="x", KEEP="k")
+        self.assertEqual(self.env("w1", role_policy=False), {"KEEP": "k", "LAUNCH_SET": "1"})
+        self.assertEqual(
+            self.env("w2", role_policy=False, env={"PAGER": "less", "OTHER_MODE": "off"}),
+            {"KEEP": "k", "LAUNCH_SET": "1", "PAGER": "less", "OTHER_MODE": "off"},
+        )
+
+    def test_a_child_default_is_dropped_only_inside_its_runtime_and_at_its_value(self):
+        self.environ(PAGER="cat", NO_COLOR="1", OTHER_MODE="on")
+        both = {"PAGER": "cat", "NO_COLOR": "1", "OTHER_MODE": "on", "LAUNCH_SET": "1"}
+        self.assertEqual(self.env("w1", role_policy=False), both)
+        self.environ(INNER_SESSION="1", PAGER="cat", NO_COLOR="0", OTHER_MODE="on")
+        self.assertEqual(
+            self.env("w2", role_policy=False),
+            {"NO_COLOR": "0", "OTHER_MODE": "on", "LAUNCH_SET": "1"},
+        )
+        self.environ(OTHER_SESSION="1", PAGER="cat", NO_COLOR="1", OTHER_MODE="on")
+        self.assertEqual(
+            self.env("w3", role_policy=False),
+            {"PAGER": "cat", "NO_COLOR": "1", "LAUNCH_SET": "1"},
+        )
+        self.assertEqual(self.env("w4", role_policy=False, env={"OTHER_MODE": "on"}), both)
+
+    def test_a_plain_env_key_no_adapter_defaults_is_refused(self):
+        self.refused(
+            api.ConfigError,
+            "env EDITOR: want one of NO_COLOR, OTHER_MODE, PAGER",
+            lambda: self.tui(
+                runtime="inner",
+                name="w1",
+                spec=self.spec(
+                    role_policy=False, env={"PAGER": "less", "ZED": "1", "EDITOR": "vi"}
+                ),
+            ),
+        )
+        self.host.start.assert_not_called()
+        self.assertEqual(LAUNCHED, [])
+
+    def test_an_adapter_failing_to_load_fails_a_plain_start_not_a_role_run(self):
+        self.configure(
+            tui=True, tables={"broken": {"implementation": "adapters.broken:BrokenAdapter"}}
+        )
+        self.refused(
+            api.ConfigError,
+            "adapter 'broken' has no package adapters.broken",
+            lambda: self.tui(runtime="inner", name="w1", spec=self.spec(role_policy=False)),
+        )
+        self.host.start.assert_not_called()
+        self.tui(runtime="inner", name="w1")
+        self.host.start.assert_called_once()
 
 
 class SessionEnvTest(TuiBase):
@@ -1366,40 +1521,90 @@ class AttachTest(TuiBase):
         self.host.option.assert_not_called()
 
 
+def listed(name, **fields) -> dict:
+    """A tmux_host.listing row of a live session with no tags, but `fields`."""
+    return {
+        "name": name,
+        "sid": None,
+        "runtime": None,
+        "state": None,
+        "pane": None,
+        "opener": None,
+        "dead": False,
+        "shown": None,
+        "last_lines": None,
+        **fields,
+    }
+
+
 class SessionsTest(TuiBase):
-    def test_the_sessions_with_the_prefix_from_tmux(self):
-        self.host.sessions.return_value = ["w1", "w2"]
-        self.assertEqual(api.sessions("w"), api.Sessions("w", ("w1", "w2")))
-        self.assertEqual(api.sessions(), api.Sessions("", ("w1", "w2")))
-        self.assertEqual(self.host.mock_calls, [mock.call.sessions("w"), mock.call.sessions("")])
+    def test_a_row_per_listed_session_in_its_order(self):
+        self.host.listing.return_value = [
+            listed("mgr"),
+            listed("w1", sid=SID, runtime="fake", state="done", pane="%3", opener="mgr", shown="m"),
+            listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
+            listed("w3", runtime="x-y", state="dead"),
+            listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
+            listed("w5", runtime="fake9_", state="other", dead=None),
+        ]
+        self.host.own_session.return_value = "mgr"
+        row = api.SessionRow
+        self.assertEqual(
+            api.sessions(),
+            [
+                row("mgr", None, None, "working", None, None, None, None, True),
+                row("w1", SID, "fake", "done", "%3", "mgr", "m", None, False),
+                row("w2", None, None, "blocked", None, None, "", None, False),
+                row("w3", None, None, "working", None, None, None, None, False),
+                row("w4", None, "fake", "dead", None, None, None, "bye", False),
+                row("w5", None, "fake9_", "working", None, None, None, None, False),
+            ],
+        )
+        self.assertEqual(self.host.mock_calls, [mock.call.listing(None), mock.call.own_session()])
 
-    def test_no_server_is_no_names_and_a_tmux_failure_unknown(self):
-        self.assertEqual(api.sessions("w").state("w1"), "absent")
-        self.host.sessions.return_value = None
-        self.assertEqual(api.sessions("w"), api.Sessions("w", None))
-        self.assertEqual(api.sessions("w").state("w1"), "unknown")
+    def test_match_is_compiled_for_the_listing_to_fullmatch(self):
+        self.assertEqual(api.sessions(r"w[0-9]+"), [])
+        ((pattern,),) = [c.args for c in self.host.listing.call_args_list]
+        self.assertEqual(pattern.pattern, r"w[0-9]+")
+        self.assertEqual(
+            [n for n in ("w1", "w12", "xw1", "w1x") if pattern.fullmatch(n)], ["w1", "w12"]
+        )
 
-    def test_a_bad_prefix_is_refused(self):
-        for bad in ("a b", "../", "w\n", None, 5):
+    def test_no_server_is_no_rows_without_reading_tmux_pane(self):
+        self.assertEqual(api.sessions(), [])
+        self.host.own_session.assert_not_called()
+
+    def test_a_non_str_or_invalid_match_is_refused(self):
+        for bad, message in (
+            (5, "match must be a regular expression, got 5"),
+            (b"w", "match must be a regular expression, got b'w'"),
+            ("(", "match '(': missing ), unterminated subpattern at position 0"),
+            ("[", "match '[': unterminated character set at position 0"),
+        ):
             with self.subTest(bad=bad), self.assertRaises(api.ConfigError) as caught:
                 api.sessions(bad)
-            self.assertEqual(
-                str(caught.exception), f"prefix must match [A-Za-z0-9_-]*, got {bad!r:.80}"
-            )
+            self.assertEqual(str(caught.exception), message)
         self.nothing_hosted()
 
-    def test_state_of_a_name_with_the_prefix_and_no_collection_protocol(self):
-        found = api.Sessions("w", ("w1", "w2"))
+    def test_tmux_failing_or_a_bad_tmux_pane_is_a_driver_error_never_no_rows(self):
+        self.host.listing.return_value = None
+        with self.assertRaises(api.DriverError) as caught:
+            api.sessions()
+        self.assertEqual(str(caught.exception), "tmux sessions unknown: tmux failed")
+        self.host.listing.return_value = [listed("w1")]
+        self.host.own_session.side_effect = tmux_host.TuiError("bad $TMUX_PANE 'x'")
+        with self.assertRaises(api.DriverError) as caught:
+            api.sessions()
+        self.assertEqual(str(caught.exception), "tmux sessions unknown: bad $TMUX_PANE 'x'")
+
+    def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
-            [found.state(n) for n in ("w1", "w2", "w3", "w")], ["live", "live", "absent", "absent"]
+            [f.name for f in dataclasses.fields(api.SessionRow)],
+            ["name", "sid", "runtime", "state", "pane", "opener", "shown", "last_lines", "own"],
         )
-        for name in ("x1", "", None):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                found.state(name)
-        for dunder in ("__iter__", "__len__", "__bool__", "__contains__"):
-            self.assertFalse(hasattr(api.Sessions, dunder), dunder)
+        found = api.SessionRow("w1", None, None, "working", None, None, None, None, False)
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            found.names = ()
+            found.state = "done"
 
 
 class CloseTest(TuiBase):
@@ -1627,7 +1832,7 @@ class ExportsTest(Case):
             "session",
             "DriverError",
             "Mode",
-            "Sessions",
+            "SessionRow",
             "attach",
             "close",
             "sessions",
@@ -1642,6 +1847,7 @@ class ExportsTest(Case):
                 self.assertIn(name, api.__all__)
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
         self.assertFalse(hasattr(api, "NO_TUI"))
+        self.assertFalse(hasattr(api, "Sessions"))
         self.assertEqual(
             (api.MODES, api.STATES, api.POLL),
             (("headless", "tui", "in_process"), ("live", "absent", "unknown"), 0.5),

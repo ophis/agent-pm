@@ -1,15 +1,18 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
-Launch whose env (last) and resume carry spec.access.env, and the runtime's output into the frozen event set (Event)
-plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at its next
-yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env. Access.dirs
-are granted write, Access.reads only read. Times are epoch seconds. Starts no process."""
+Launch whose env (last) and resume carry a role run's Access.env, and the runtime's output into the frozen event
+set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped
+at its next yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env.
+Access.dirs are granted write, Access.reads only read. Times are epoch seconds. Starts no process. role_policy=False
+(plain session): no role-run policy, flags unchanged, its env is Spec.env (per start, Driver-applied, allow-listed);
+temporary (TASK-356), as are session_env, identity_env and child_defaults."""
 
 import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from agent_pm.utils.paths import printable_abs
 
@@ -20,7 +23,7 @@ ACTIVITY = "activity"
 
 
 class ConfigError(Exception):
-    """A config or spec error."""
+    pass
 
 
 def _strings(value) -> bool:
@@ -70,6 +73,11 @@ class Spec:
     tier: int | None = None
     effort: str | None = None
     sid: str | None = None
+    flags: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+    role_policy: bool = True
+    name: str | None = None
+    protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -86,6 +94,21 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
+        if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
+            raise ConfigError("flags must be a tuple of strings without NUL")
+        if not env_ok(self.env):
+            raise ConfigError("env must map variable names to strings without NUL")
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        if type(self.role_policy) is not bool:
+            raise ConfigError("role_policy must be a bool")
+        if not self.role_policy and self.access.env:
+            raise ConfigError("access env: not for a plain session; use env")
+        if self.role_policy and self.env:
+            raise ConfigError("env: plain sessions only (role_policy=False)")
+        if self.name is not None and not isinstance(self.name, str):
+            raise ConfigError("name must be None or a string")
+        if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
+            raise ConfigError("protect must be a tuple of printable absolute paths")
 
 
 @dataclass(frozen=True)
@@ -203,6 +226,9 @@ class Key:
 class Adapter(ABC):
     keys: frozenset[str] = frozenset()
     runtime_note: str = ""
+    session_env: str = ""
+    identity_env: tuple[str, ...] = ()
+    child_defaults: Mapping[str, str] = {}
 
     def __init__(self, config: Mapping):
         if extra := sorted(set(config) - self.keys):
@@ -285,7 +311,6 @@ class Tui(ABC):
         return ""
 
     def blocked_reason(self, payload: dict) -> str:
-        """A BLOCKED hook's reason."""
         return ""
 
     def session_id(self, payload: dict) -> str:

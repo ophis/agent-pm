@@ -161,6 +161,117 @@ class SpecTest(Refusals):
         self.assertEqual(
             (spec.access, spec.tier, spec.effort, spec.sid), (Access(), None, None, None)
         )
+        self.assertEqual(
+            (spec.flags, spec.env, spec.role_policy, spec.name, spec.protect),
+            ((), {}, True, None, ()),
+        )
+
+    def plain(self, **fields):
+        return Spec(
+            workdir="/w",
+            flags=("--model", "x", "--", "-p"),
+            env={"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"},
+            role_policy=False,
+            name="worker-1",
+            protect=("/p", "/q r/ü"),
+            **fields,
+        )
+
+    def test_accepts_the_plain_session_fields(self):
+        spec = self.plain()
+        self.assertEqual(
+            (spec.flags, dict(spec.env), spec.role_policy, spec.name, spec.protect),
+            (
+                ("--model", "x", "--", "-p"),
+                {"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"},
+                False,
+                "worker-1",
+                ("/p", "/q r/ü"),
+            ),
+        )
+        self.assertEqual(
+            Spec(workdir="/w", env=MappingProxyType({"A": "1"}), role_policy=False).env, {"A": "1"}
+        )
+        self.assertEqual(Spec(workdir="/w", name="").name, "")
+
+    def test_env_is_an_immutable_copy_and_specs_compare_by_value(self):
+        source = {"A": "1"}
+        spec = Spec(workdir="/w", env=source, role_policy=False)
+        source["B"] = "2"
+        self.assertEqual(dict(spec.env), {"A": "1"})
+        with self.assertRaises(TypeError):
+            spec.env["C"] = "3"
+        self.assertEqual(spec, Spec(workdir="/w", env={"A": "1"}, role_policy=False))
+        self.assertNotEqual(spec, Spec(workdir="/w", env={"A": "2"}, role_policy=False))
+        self.assertEqual(self.plain(), self.plain())
+
+    def test_replace_keeps_the_plain_session_fields(self):
+        spec = dataclasses.replace(self.plain(), tier=2, sid="s")
+        self.assertEqual(spec, self.plain(tier=2, sid="s"))
+        self.assertEqual(dict(spec.env), {"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"})
+
+    def test_refuses_flags_that_are_not_a_tuple_of_strings_without_nul(self):
+        for bad in (["-x"], ("-x\0",), ("-x", 1), "-x", None):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda: Spec(workdir="/w", flags=bad),
+                    "flags must be a tuple of strings without NUL",
+                )
+
+    def test_refuses_env_that_does_not_map_variable_names_to_strings_without_nul(self):
+        for bad in (
+            {"A": 1},
+            {"A": None},
+            {"A": "b\0"},
+            {1: "a"},
+            {"": "a"},
+            {"1A": "a"},
+            {"A-B": "a"},
+            {"A B": "a"},
+            {"A=": "a"},
+            {"A\n": "a"},
+            {"A\0": "a"},
+            {"Ä": "a"},
+            [("A", "b")],
+            "A=b",
+            None,
+        ):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda: Spec(workdir="/w", env=bad),
+                    "env must map variable names to strings without NUL",
+                )
+
+    def test_each_session_kind_has_its_own_env_and_refuses_the_others(self):
+        self.assertEqual(Spec(workdir="/w", access=Access(env={"A": "1"})).access.env, {"A": "1"})
+        self.refused(
+            lambda: self.plain(access=Access(env={"A": "1"})),
+            "access env: not for a plain session; use env",
+        )
+        self.refused(
+            lambda: Spec(workdir="/w", env={"A": "1"}),
+            "env: plain sessions only (role_policy=False)",
+        )
+
+    def test_refuses_a_role_policy_other_than_a_bool(self):
+        for bad in (0, 1, None, "False"):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda: Spec(workdir="/w", role_policy=bad), "role_policy must be a bool"
+                )
+
+    def test_refuses_a_name_other_than_none_or_a_string(self):
+        for bad in (5, b"w", ("w",)):
+            with self.subTest(bad=bad):
+                self.refused(lambda: Spec(workdir="/w", name=bad), "name must be None or a string")
+
+    def test_refuses_protect_that_is_not_a_tuple_of_printable_absolute_paths(self):
+        for bad in (["/p"], ("p",), ("",), ("/p\n",), ("/p\0",), ("/p", 1), (b"/p",), "/p", None):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda: Spec(workdir="/w", protect=bad),
+                    "protect must be a tuple of printable absolute paths",
+                )
 
     def test_keyword_only_and_frozen(self):
         with self.assertRaises(TypeError):
@@ -363,6 +474,9 @@ class AdapterTest(Refusals):
 
     def test_defaults(self):
         self.assertEqual((Adapter.keys, Adapter.runtime_note, Tui.dialogs), (frozenset(), "", ()))
+        self.assertEqual(
+            (Adapter.session_env, Adapter.identity_env, Adapter.child_defaults), ("", (), {})
+        )
         adapter = StubAdapter({})
         self.assertIsNone(adapter.usage_probe())
         for output in ("", "garbage", '{"type": "rate_limit_event"}'):

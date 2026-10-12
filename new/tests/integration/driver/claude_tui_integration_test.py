@@ -107,9 +107,7 @@ class Live(tui_live.Live):
         return len(self.server.panes(f"={MANAGER}:"))
 
     def closed(self, handle: api.Handle) -> None:
-        self.assertEqual(
-            (handle.state(), api.sessions("w").state(handle.name)), ("absent", "absent")
-        )
+        self.assertEqual((handle.state(), api.sessions(handle.name)), ("absent", []))
         self.assertFalse(os.path.lexists(tui.session_dir(handle.name)))
 
 
@@ -151,7 +149,8 @@ class TurnsTest(Live):
         border = self.server.tmux("show-options", "-wqv", "-t", "=w1:", "pane-border-format").stdout
         self.assertEqual(border, tmux_host.BORDER + "\n")
         self.assertEqual(
-            (handle.state(), api.sessions("w").state("w1"), self.panes()), ("live", "live", 1)
+            (handle.state(), [r.name for r in api.sessions("w1")], self.panes()),
+            ("live", ["w1"], 1),
         )
 
 
@@ -230,7 +229,9 @@ class DeadTest(Live):
         self.assertEqual(stream.next(poke=self.poke), Exited(-signal.SIGTERM))
         self.lines("w1 done", "w1 dead")
         self.assertEqual(self.server.option("w1", "@state"), "dead")
-        self.assertEqual((handle.state(), api.sessions("w").state("w1")), ("live", "live"))
+        self.assertEqual(
+            (handle.state(), [r.state for r in api.sessions("w1")]), ("live", ["dead"])
+        )
         for call in (lambda: handle.send("more"), handle.screen):
             with self.assertRaises(api.DriverError):
                 call()
@@ -245,7 +246,7 @@ class DeadTest(Live):
         self.assertEqual(self.server.option("w2", "@state"), "dead")
         pane = self.server.tmux("capture-pane", "-p", "-J", "-t", "=w2:").stdout
         self.assertIn("claude: error: unrecognized arguments: --bogus", pane)
-        self.assertEqual(api.sessions("w").state("w2"), "live")
+        self.assertEqual([r.state for r in api.sessions("w2")], ["dead"])
         with self.assertRaises(api.DriverError):
             handle.screen()
         api.close("w2")

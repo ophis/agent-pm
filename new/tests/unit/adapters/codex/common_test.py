@@ -15,6 +15,30 @@ from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class CommonTest(Base):
+    def test_the_env_attributes(self):
+        self.assertEqual(self.adapter.session_env, "CODEX_THREAD_ID")
+        self.assertEqual(
+            self.adapter.identity_env,
+            (
+                "CODEX_THREAD_ID",
+                "CODEX_SESSION_ID",
+                "CODEX_VERSION",
+                "CODEX_SANDBOX",
+                "CODEX_SANDBOX_NETWORK_DISABLED",
+                "CODEX_PERMISSION_PROFILE",
+            ),
+        )
+        self.assertEqual(
+            self.adapter.child_defaults,
+            {
+                "NO_COLOR": "1",
+                "CODEX_CI": "1",
+                "PAGER": "cat",
+                "GIT_PAGER": "cat",
+                "GH_PAGER": "cat",
+            },
+        )
+
     def test_durable_snapshot_and_first_binding(self):
         with mock.patch("os.fsync", wraps=os.fsync) as sync:
             state = self.prepare()
@@ -576,3 +600,86 @@ class InspectionTest(Base):
             False,
         )
         self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+
+
+class PlainTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.plain = dataclasses.replace(self.spec, role_policy=False)
+
+    def bound(self, spec):
+        state = self.common.prepare(spec, False)
+        self.common.bind(str(self.work), spec.sid, NATIVE)
+        self.rollout()
+        return state
+
+    def test_plain_roots_are_the_cwd_the_flags_add_dirs_and_codex_home(self):
+        second = self.root / "second"
+        flags = ("--add-dir", "../../added", f"--add-dir={second}", "--", "--add-dir", "/ignored")
+        spec = dataclasses.replace(self.plain, flags=flags)
+        expected = [str(self.cwd), str(self.root / "added"), str(second), str(self.codex_home)]
+        dirs = self.adapter.writable_dirs(spec, False)
+        self.assertEqual(list(dirs[:4]), expected)
+        for path in (str(self.work), str(self.extra), "/ignored"):
+            self.assertNotIn(path, dirs)
+        self.assertFalse((self.home / ".agent-pm").exists())
+        state = self.bound(spec)
+        self.assertEqual(state.writable_roots, expected)
+        self.assertFalse(state.snapshot["role_policy"])
+        resumed = self.common.prepare(spec, True)
+        self.assertEqual(resumed.writable_roots, expected)
+        self.assertEqual(resumed.native_id, NATIVE)
+        self.assertEqual(list(self.adapter.writable_dirs(spec, True)[:4]), expected)
+        third = self.root / "third"
+        resumed = dataclasses.replace(
+            spec, flags=("--add-dir", "../../third", f"--add-dir={third}/")
+        )
+        self.assertEqual(
+            list(self.adapter.writable_dirs(resumed, True)[:5]), [*expected, str(third)]
+        )
+
+    def test_a_plain_record_still_needs_roots_covering_cwd_and_home(self):
+        self.common.prepare(self.plain, False)
+        self.edit_record(writable_roots=[str(self.codex_home)])
+        with self.assertRaisesRegex(ConfigError, "no recorded root covers"):
+            self.common.load(str(self.work), self.plain.sid)
+
+    def test_plain_sessions_skip_the_untrusted_project_guard(self):
+        (self.cwd / ".codex").mkdir()
+        outside = dataclasses.replace(self.spec.access, cwd=str(self.extra))
+        for index, access in enumerate((self.spec.access, outside)):
+            spec = dataclasses.replace(self.plain, sid=f"plain-{index}", access=access)
+            with self.subTest(cwd=access.cwd):
+                with self.assertRaisesRegex(ConfigError, "project.*settings|outside"):
+                    self.common.prepare(dataclasses.replace(spec, role_policy=True), False)
+                self.common.prepare(spec, False)
+        self.bound(self.plain)
+        self.assertEqual(self.common.prepare(self.plain, True).native_id, NATIVE)
+
+    def test_a_resume_with_another_role_policy_is_refused(self):
+        for started in (True, False):
+            spec = dataclasses.replace(self.spec, sid=f"started-{started}", role_policy=started)
+            self.common.prepare(spec, False)
+            with self.subTest(started=started), self.assertRaises(ConfigError) as caught:
+                self.common.prepare(dataclasses.replace(spec, role_policy=not started), True)
+            self.assertEqual(
+                str(caught.exception),
+                f"Codex session {spec.sid} was started with role_policy={started}",
+            )
+
+    def test_a_snapshot_without_role_policy_is_a_role_run(self):
+        state = self.bound(self.spec)
+        self.assertTrue(state.snapshot["role_policy"])
+        snapshot = state.snapshot.copy()
+        snapshot.pop("role_policy")
+        self.edit_record(snapshot=snapshot)
+        self.assertTrue(self.common.prepare(self.spec, True).snapshot["role_policy"])
+        with self.assertRaisesRegex(ConfigError, "started with role_policy=True"):
+            self.common.prepare(self.plain, True)
+
+    def test_a_saved_role_policy_other_than_a_bool_fails_closed(self):
+        state = self.common.prepare(self.spec, False)
+        for value in (None, 0, 1, "False", []):
+            self.edit_record(snapshot=state.snapshot | {"role_policy": value})
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "role_policy"):
+                self.common.load(str(self.work), self.spec.sid)

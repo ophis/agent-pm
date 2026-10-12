@@ -4,6 +4,7 @@ and --tui's show on a fake Driver api, each Linear call's identity and the usage
 import io
 import json
 import os
+import re
 import signal
 import unittest
 from contextlib import redirect_stderr
@@ -40,6 +41,7 @@ DONE_RESULT = Result(0, DONE)
 NOW = "2026-10-04T10:00:00+08:00"
 CMD = f"resume {SID}"
 TUI = f"engineer-{ID}-{SID[:8]}"
+MATCH = re.escape(f"engineer-{ID}-") + ".*"
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 NO_OUTCOME = Result(0, None, "the agent run returned no outcome")
 RUNNING = f"running · #1 · {NOW}"
@@ -402,7 +404,7 @@ class Tui(Case):
                 self.assertEqual(
                     self.order[:4],
                     [
-                        ("sessions", f"engineer-{ID}-"),
+                        ("sessions", MATCH),
                         *(("close", x) for x in self.MINE),
                         "run",
                     ],
@@ -419,7 +421,7 @@ class Tui(Case):
         self.api.live = None
         self.assertEqual(self.main(), 0)
         self.assertEqual(self.said()[1], "run tui-error TASK-7 msg=tmux sessions unknown")
-        self.assertEqual(self.order[:2], [("sessions", f"engineer-{ID}-"), "run"])
+        self.assertEqual(self.order[:2], [("sessions", MATCH), "run"])
 
     def test_a_close_error_is_logged_and_the_others_still_close(self):
         self.api.live = self.MINE
