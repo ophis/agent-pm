@@ -12,6 +12,8 @@ from adapters.claude.tui import ClaudeTui
 class ClaudeAdapter(Adapter):
     keys = frozenset({"flags", "allow", "tiers", "efforts", "env"})
     runtime_note = ClaudeCommon.NOTE
+    session_env = "CLAUDECODE"
+    identity_env = ClaudeCommon.UNSET
 
     def __init__(self, config):
         super().__init__(config)

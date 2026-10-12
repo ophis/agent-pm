@@ -3,16 +3,20 @@ Its Headless (a fresh one per session: launch may keep state for parse) or Tui t
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
 environ, signals), applying spec.access.cwd itself. Access.dirs are granted write, Access.reads only read. Times are
-epoch seconds. Starts no process."""
+epoch seconds. Starts no process. Spec.role_policy=False (plain session): no role-run policy, flags and env unchanged;
+it and Adapter's session_env, identity_env and child_defaults are temporary (TASK-356)."""
 
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
@@ -57,6 +61,11 @@ class Spec:
     tier: int | None = None
     effort: str | None = None
     sid: str | None = None
+    flags: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+    role_policy: bool = True
+    name: str | None = None
+    protect: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -73,6 +82,20 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
+        if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
+            raise ConfigError("flags must be a tuple of strings without NUL")
+        env = self.env
+        if not isinstance(env, Mapping) or not all(
+            isinstance(k, str) and ENV_NAME.fullmatch(k) and _clean(v) for k, v in env.items()
+        ):
+            raise ConfigError("env must map variable names to strings without NUL")
+        object.__setattr__(self, "env", MappingProxyType(dict(env)))
+        if type(self.role_policy) is not bool:
+            raise ConfigError("role_policy must be a bool")
+        if self.name is not None and not isinstance(self.name, str):
+            raise ConfigError("name must be None or a string")
+        if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
+            raise ConfigError("protect must be a tuple of printable absolute paths")
 
 
 @dataclass(frozen=True)
@@ -186,6 +209,9 @@ class Key:
 class Adapter(ABC):
     keys: frozenset[str] = frozenset()
     runtime_note: str = ""
+    session_env: str = ""
+    identity_env: tuple[str, ...] = ()
+    child_defaults: Mapping[str, str] = {}
 
     def __init__(self, config: Mapping):
         if extra := sorted(set(config) - self.keys):

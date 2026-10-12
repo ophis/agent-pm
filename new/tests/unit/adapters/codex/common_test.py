@@ -12,6 +12,30 @@ from adapters.codex import CodexAdapter
 
 
 class CommonTest(Base):
+    def test_the_env_attributes(self):
+        self.assertEqual(self.adapter.session_env, "CODEX_THREAD_ID")
+        self.assertEqual(
+            self.adapter.identity_env,
+            (
+                "CODEX_THREAD_ID",
+                "CODEX_SESSION_ID",
+                "CODEX_VERSION",
+                "CODEX_SANDBOX",
+                "CODEX_SANDBOX_NETWORK_DISABLED",
+                "CODEX_PERMISSION_PROFILE",
+            ),
+        )
+        self.assertEqual(
+            self.adapter.child_defaults,
+            {
+                "NO_COLOR": "1",
+                "CODEX_CI": "1",
+                "PAGER": "cat",
+                "GIT_PAGER": "cat",
+                "GH_PAGER": "cat",
+            },
+        )
+
     def test_durable_snapshot_and_first_binding(self):
         with mock.patch("os.fsync", wraps=os.fsync) as sync:
             state = self.prepare()

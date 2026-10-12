@@ -12,6 +12,9 @@ class CodexAdapter(Adapter):
     runtime_note = (
         "Run each shell call separately. Command approvals follow Codex automatic review."
     )
+    session_env = "CODEX_THREAD_ID"
+    identity_env = tuple(key for key in CodexCommon.unset if key != "CLAUDECODE")
+    child_defaults = CodexCommon.defaults
 
     def __init__(self, config):
         super().__init__(config)

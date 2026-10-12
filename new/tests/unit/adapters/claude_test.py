@@ -169,6 +169,13 @@ class ConfigTest(Base):
                     "--setting-sources is the Driver's: remove it from [adapters.claude].flags",
                 )
 
+    def test_the_env_attributes(self):
+        adapter = ClaudeAdapter({})
+        self.assertEqual(
+            (adapter.session_env, adapter.identity_env, adapter.child_defaults),
+            ("CLAUDECODE", UNSET, {}),
+        )
+
 
 class ModelEffortTest(Base):
     def test_none_omits_the_flag_and_a_value_is_the_tables(self):
