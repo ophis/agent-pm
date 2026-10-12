@@ -2,7 +2,7 @@
 file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
 pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 
-from new.tests import fake_claude, hermetic, live_tmux
+from new.tests import case, fake_claude, live_tmux
 
 import glob
 import json
@@ -42,7 +42,7 @@ def gone(pid: int) -> bool:
     return res.stdout.strip() == "" or res.stdout.strip().startswith("Z")
 
 
-class Case(unittest.TestCase):
+class Case(case.Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -561,7 +561,7 @@ class Steps(Case):
 
 class Pane(Case):
     def test_lines_typed_into_a_tmux_pane_are_turns(self):
-        server = live_tmux.Server(self, os.path.dirname(hermetic.home(self)))
+        server = live_tmux.Server(self, self.home)
         server.start("mgr")
         self.scene(steps=["Hi."], turns=[["Again."]])
         hook = {

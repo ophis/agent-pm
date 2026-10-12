@@ -1,8 +1,8 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
 drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake."""
 
-from new.tests import fake_adapter, hermetic
-from new.tests.case import PY, child_env
+from new.tests import fake_adapter
+from new.tests.case import PY, Case, child_env
 from new.tests.unit.delegate.runner_test import (
     DONE,
     START,
@@ -68,11 +68,10 @@ class RefusingRun(fake_adapter.FakeInProcess):
         raise base.ConfigError("refused by check")
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work` (not made)."""
 
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
@@ -83,7 +82,6 @@ class Base(unittest.TestCase):
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
-        self.addCleanup(registry.reset)
         registry.configure(
             {
                 "adapters": {

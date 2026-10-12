@@ -1,6 +1,6 @@
 """new/core/src/utils/files.py: read_regular."""
 
-from new.tests import hermetic  # noqa: F401
+from new.tests.case import Case
 
 import errno
 import os
@@ -15,7 +15,7 @@ from agent_pm.utils import files
 DATA = b"0123456789"
 
 
-class ReadRegular(unittest.TestCase):
+class ReadRegular(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

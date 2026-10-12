@@ -1,14 +1,14 @@
-from new.tests import CORE, NEW, guards
+from new.tests import guards
+from new.tests.case import CORE, NEW, Case
 
 import os
 import tempfile
-import unittest
 from pathlib import Path
 
 PKG = "src/agent_pm"
 
 
-class UtilsImportsTest(unittest.TestCase):
+class UtilsImportsTest(Case):
     def tree(self, files):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)

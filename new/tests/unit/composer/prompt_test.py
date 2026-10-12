@@ -2,7 +2,7 @@
 Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral Return, the resume prefix, and
 reference_errors and the method files on the real team (its References and Methods tests)."""
 
-from new.tests import hermetic
+from new.tests.case import Case
 from new.tests.unit.composer.run_test import CONFIG
 from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 
@@ -100,7 +100,7 @@ def item(text, name):
     return m.group(1) if m else ""
 
 
-class Fake(unittest.TestCase):
+class Fake(Case):
     """A team root, config and local file in a temp dir; a HOME of the test's own for team dirs."""
 
     def setUp(self):
@@ -113,7 +113,6 @@ class Fake(unittest.TestCase):
         self.write(FILES | TEXTS)
         with open(self.config, "w") as f:
             f.write(CONFIG)
-        self.home = hermetic.home(self)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -564,13 +563,13 @@ class TeamDirs(Fake):
     """Team dirs under the test's HOME, passed as a Team."""
 
     def with_dir(self, files, name="team"):
-        """The Team of the team root and one team dir of `files`, <home>/<name>."""
-        top = os.path.realpath(os.path.join(self.home, name))
+        """The Team of the team root and one team dir of `files`, ~/.agent-pm/<name>."""
+        top = os.path.realpath(os.path.join(self.agent_pm, name))
         self.write(files, top)
         return team(self.root, (top,))
 
     def path(self, rel, name="team"):
-        return os.path.join(os.path.realpath(os.path.join(self.home, name)), rel)
+        return os.path.join(os.path.realpath(os.path.join(self.agent_pm, name)), rel)
 
     def test_a_new_roles_charter_and_its_tasks_dir(self):
         found = self.with_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
@@ -663,7 +662,7 @@ class TeamDirs(Fake):
                     )
 
 
-class References(unittest.TestCase):
+class References(Case):
     def errors(self, text):
         """The errors in `text` as a method file beside the real engineer prompt and task files."""
         own, tasks, methods = role_sources("engineer")
@@ -782,7 +781,7 @@ class References(unittest.TestCase):
         )
 
 
-class Methods(unittest.TestCase):
+class Methods(Case):
     def test_voting_has_its_home_in_ultracode_and_pipeline_shares_its_start(self):
         deep, ultra = (method(m) for m in METHOD_NAMES)
         for m, text in zip(METHOD_NAMES, (deep, ultra), strict=False):

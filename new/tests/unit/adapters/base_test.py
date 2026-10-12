@@ -1,7 +1,7 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
 Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
 
-from new.tests import hermetic  # noqa: F401
+from new.tests.case import Case
 
 import dataclasses
 import inspect
@@ -95,7 +95,7 @@ class NativeIdTui(LabeledTui):
         return payload.get("thread", "")
 
 
-class Refusals(unittest.TestCase):
+class Refusals(Case):
     def refused(self, build, message):
         with self.assertRaises(ConfigError) as caught:
             build()
@@ -229,7 +229,7 @@ class SpecTest(Refusals):
                 )
 
 
-class SidErrorTest(unittest.TestCase):
+class SidErrorTest(Case):
     def test_none_for_a_non_empty_printable_string_without_a_slash(self):
         for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
             with self.subTest(sid=sid):
@@ -284,7 +284,7 @@ class LaunchTest(Refusals):
                     )
 
 
-class EventsTest(unittest.TestCase):
+class EventsTest(Case):
     def test_the_frozen_set_is_the_seven_events(self):
         self.assertEqual(
             typing.get_args(base.Event),
@@ -303,7 +303,7 @@ class EventsTest(unittest.TestCase):
                 setattr(event, name, "x")
 
 
-class ReportsTest(unittest.TestCase):
+class ReportsTest(Case):
     def test_usage_window_and_session_status_are_frozen_records(self):
         window = Window(used_percent=120.5, resets_at=None)
         self.assertEqual((window.used_percent, window.resets_at), (120.5, None))
@@ -363,7 +363,7 @@ class AdapterTest(Refusals):
         self.assertIs(adapter.tui().adapter, adapter)
 
 
-class HeadlessTest(unittest.TestCase):
+class HeadlessTest(Case):
     def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
         lines = [
             '{"texts": ["a"]}\n',
@@ -382,7 +382,7 @@ class HeadlessTest(unittest.TestCase):
         )
 
 
-class InProcessTest(unittest.TestCase):
+class InProcessTest(Case):
     def test_run_is_its_only_abstract_method(self):
         self.assertEqual(InProcess.__abstractmethods__, frozenset({"run"}))
         with self.assertRaises(TypeError):
@@ -397,7 +397,7 @@ class InProcessTest(unittest.TestCase):
                 self.assertIsNone(run.check("p", Spec(workdir="/w", sid="s"), resume))
 
 
-class TuiTest(unittest.TestCase):
+class TuiTest(Case):
     def setUp(self):
         self.run = DetailedTui(StubAdapter({}))
         self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
@@ -508,7 +508,7 @@ class TuiTest(unittest.TestCase):
         self.assertEqual(run.hook_events("work", {"session_id": "n1"}), [Activity("")])
 
 
-class NoProcessTest(unittest.TestCase):
+class NoProcessTest(Case):
     def test_nothing_starts_a_process(self):
         with (
             mock.patch("subprocess.Popen", side_effect=AssertionError("Popen")) as popen,

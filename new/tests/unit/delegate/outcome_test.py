@@ -1,6 +1,8 @@
 """delegate/outcome.py: main's drive.validate cases with the same results (FR-20), read with deliverable_file (FR-19),
 and main's save cases."""
 
+from new.tests.case import Case
+
 import dataclasses
 import json
 import os
@@ -37,7 +39,7 @@ def schema():
         return json.load(f)
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -66,7 +68,7 @@ class Base(unittest.TestCase):
         return path
 
 
-class Schema(unittest.TestCase):
+class Schema(Case):
     def test_schema_and_validate_agree(self):
         s = schema()
         self.assertEqual(tuple(s["properties"]["status"]["enum"]), STATUSES)
@@ -349,7 +351,7 @@ class ReadRace(Base):
         self.assertIn("replaced while it was opened", str(cm.exception))
 
 
-class Save(unittest.TestCase):
+class Save(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

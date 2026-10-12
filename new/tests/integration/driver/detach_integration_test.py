@@ -2,7 +2,8 @@
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter."""
 
-from new.tests import hermetic, live_tmux
+from new.tests import live_tmux
+from new.tests.case import Case
 
 import json
 import os
@@ -27,10 +28,9 @@ for _ in range(600):
 """
 
 
-class DetachTest(unittest.TestCase):
+class DetachTest(Case):
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
-        self.server = live_tmux.Server(self, home)
+        self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()

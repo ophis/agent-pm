@@ -1,7 +1,7 @@
 """composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
 TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
 
-from new.tests import hermetic
+from new.tests.case import Case
 
 import os
 import re
@@ -77,7 +77,7 @@ TINY_LINE = "- `tiny-note` (`<tasks>/tiny-note.md`): a tiny note; rarely; light.
 FRONT = '---\ncommands: ["rm *"]\n---\n'
 
 
-class Fake(unittest.TestCase):
+class Fake(Case):
     """A team root, config and local file in a temp dir; a HOME of the test's own for team dirs."""
 
     def setUp(self):
@@ -89,8 +89,7 @@ class Fake(unittest.TestCase):
         self.local_file = os.path.join(tmp.name, "local.toml")
         self.write(self.root, FILES)
         self.configure(CONFIG)
-        self.home = hermetic.home(self)
-        os.chmod(self.home, 0o755)
+        os.chmod(self.agent_pm, 0o755)
 
     @staticmethod
     def write(top, files):
@@ -123,8 +122,8 @@ class Fake(unittest.TestCase):
         return str(cm.exception)
 
     def team_dir(self, files, name="team"):
-        """Writes {rel: text} under <home>/<name> (files 0o644, dirs 0o755) and returns its real path."""
-        top = os.path.realpath(os.path.join(self.home, name))
+        """Writes {rel: text} under ~/.agent-pm/<name> (files 0o644, dirs 0o755) and returns its real path."""
+        top = os.path.realpath(os.path.join(self.agent_pm, name))
         for rel, text in files.items():
             path = os.path.join(top, rel)
             for d in (top, os.path.dirname(path)):
@@ -140,7 +139,7 @@ class Fake(unittest.TestCase):
         return team(self.root, (self.team_dir(files, name),))
 
     def path(self, rel, name="team"):
-        return os.path.join(os.path.realpath(os.path.join(self.home, name)), rel)
+        return os.path.join(os.path.realpath(os.path.join(self.agent_pm, name)), rel)
 
 
 class Index(Fake):
@@ -258,7 +257,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write("malformed = [\n")
 
     def test_team_dirs(self):
@@ -314,7 +313,7 @@ class TeamDirs(Fake):
         self.assertEqual(team_dirs(self.config, self.local_file), ())
 
     def test_no_team_dir_is_found_from_the_cwd(self):
-        cwd = os.path.join(self.home, "cwd")
+        cwd = os.path.join(self.agent_pm, "cwd")
         self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE}, "cwd/.agent-pm/team")
         here = os.getcwd()
         os.chdir(cwd)
@@ -600,10 +599,10 @@ class TeamDirChecks(Fake):
         )
 
     def test_a_team_dir_overlapping_a_dir_the_run_can_write(self):
-        inside, home = os.path.join(self.top, "w"), os.path.realpath(self.home)
+        inside, home = os.path.join(self.top, "w"), os.path.realpath(self.agent_pm)
         for writes, want in (
             ([("the workdir", inside)], f"{self.top} overlaps the workdir {inside}"),
-            ([("the workdir", self.home)], f"{self.top} overlaps the workdir {home}"),
+            ([("the workdir", self.agent_pm)], f"{self.top} overlaps the workdir {home}"),
             (
                 [("the cwd", self.tmp), (f"write dir {inside}", inside)],
                 f"{self.top} overlaps write dir {inside} {inside}",

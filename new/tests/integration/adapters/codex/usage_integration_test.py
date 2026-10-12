@@ -38,7 +38,6 @@ class UsageIntegrationTest(Base):
                 },
             )
         )
-        self.addCleanup(registry.reset)
 
     def probe(self, case="normal", **env):
         registry.configure(

@@ -7,7 +7,8 @@ run; claude and codex, from the committed config, refuse it. The Mode protocol, 
 fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
 detach) over tmux_host autospecced (no tmux runs)."""
 
-from new.tests import fake_adapter, hermetic
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 import contextlib
 import dataclasses
@@ -146,9 +147,9 @@ PACKAGES = {
 }
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.probe_dir = os.path.join(hermetic.home(self), "probe")
+        self.probe_dir = os.path.join(self.agent_pm, "probe")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -161,7 +162,6 @@ class Base(unittest.TestCase):
         )
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(registry.reset)
         self.configure()
 
     def steps(self, *steps):
@@ -627,7 +627,7 @@ class InProcessTest(Base):
         self.assertFalse(os.path.exists(self.log))
 
 
-class ModeTest(unittest.TestCase):
+class ModeTest(Case):
     def test_the_protocols_methods_and_the_headless_and_in_process_modes_have_each_with_its_parameters(
         self,
     ):
@@ -693,7 +693,7 @@ class StubMode:
         self.calls.append(("stop",))
 
 
-class HandleOverAModeTest(unittest.TestCase):
+class HandleOverAModeTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -1435,7 +1435,7 @@ class DetachTest(TuiBase):
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
 
-class ExportsTest(unittest.TestCase):
+class ExportsTest(Case):
     def test_reexports_and_constants(self):
         for name in (
             "Access",

@@ -4,7 +4,8 @@ drive_test Start, HostFailure and Sinks cases: records, saving, the missing star
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
 in_process-only fake, with no child process."""
 
-from new.tests import fake_adapter, hermetic
+from new.tests import fake_adapter
+from new.tests.case import Case
 from new.tests.unit.driver.api_test import SPAWNS
 
 import contextlib
@@ -125,11 +126,10 @@ class FakeHandle:
             raise self.stop_fail
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd the workdir."""
 
     def setUp(self):
-        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
@@ -142,7 +142,6 @@ class Base(unittest.TestCase):
         patch = mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(registry.reset)
         registry.configure(
             {
                 "adapters": {

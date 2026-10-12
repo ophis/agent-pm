@@ -1,4 +1,4 @@
-from new.tests import NEW
+from new.tests.case import NEW, ROOT, Case
 from new.tests.integration.adapters.codex import fake_app_server
 
 import json
@@ -8,11 +8,10 @@ import subprocess
 import sys
 import tempfile
 import time
-import unittest
 from pathlib import Path
 
 
-class AccountProbeIntegrationTest(unittest.TestCase):
+class AccountProbeIntegrationTest(Case):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))).resolve()
         self.home, self.work, self.bin = (self.root / name for name in ("home", "work", "bin"))
@@ -43,7 +42,7 @@ class AccountProbeIntegrationTest(unittest.TestCase):
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
             FAKE_LOG=str(self.log),
         )
-        self.script = Path(NEW) / "core" / "src" / "adapters" / "codex" / "account_probe.py"
+        self.script = Path(ROOT) / "agent_pm" / "adapters" / "codex" / "account_probe.py"
         self.addCleanup(self.cleanup)
 
     def cleanup(self):

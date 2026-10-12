@@ -3,7 +3,8 @@ Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
 
-from new.tests import fake_adapter, hermetic
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 import importlib.abc
 import importlib.util
@@ -59,13 +60,11 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         exec(self.source, vars(module))
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.home = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.addCleanup(registry.reset)
 
     def write(self, name, content) -> str:
         path = os.path.join(self.dir, name)
@@ -75,7 +74,7 @@ class Base(unittest.TestCase):
 
     def local(self, text):
         """`text` as this test's ~/.agent-pm/core-new.local.toml."""
-        with open(os.path.join(self.home, "core-new.local.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def configure(self, text):

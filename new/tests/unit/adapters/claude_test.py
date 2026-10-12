@@ -2,7 +2,7 @@
 ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
 committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
-from new.tests import hermetic
+from new.tests.case import Case
 
 import json
 import os
@@ -88,9 +88,8 @@ WHAT = {
 }
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.home = os.path.dirname(hermetic.home(self))
         self.tmp = self.dir()
         self.config_dir = os.path.join(self.tmp, "config")
         self.env({"CLAUDE_CONFIG_DIR": self.config_dir})
@@ -586,7 +585,7 @@ def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
 
-class ParseUsageTest(unittest.TestCase):
+class ParseUsageTest(Case):
     def test_router_gate_cases(self):
         rows = (
             (['{"type":"system"}', "garbage"], False),
@@ -1164,7 +1163,7 @@ def epoch(stamp, zone=LA) -> float:
 NOW = epoch("2026-10-11 10:00")  # a Sunday
 
 
-class LimitTest(unittest.TestCase):
+class LimitTest(Case):
     def limit(self, screen):
         with mock.patch("time.time", return_value=NOW):
             return ClaudeAdapter({}).tui().limit(screen)
@@ -1338,7 +1337,6 @@ class CommittedConfigTest(Base):
             },
         )
         registry.configure({"adapters": tables})
-        self.addCleanup(registry.reset)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (

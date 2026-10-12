@@ -2,8 +2,7 @@
 `codex`); HOME, its recovery store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from
 any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
 
-from new.tests import NEW
-from new.tests.case import child_env
+from new.tests.case import NEW, Case, child_env
 from new.tests.integration.adapters.codex import fake_codex
 from new.tests.integration.delegate.cli_integration_test import (
     CLI,
@@ -35,7 +34,7 @@ def said(*texts) -> list[dict]:
     return [*map(fake_codex.message, texts), END]
 
 
-class Integration(unittest.TestCase):
+class Integration(Case):
     def setUp(self):
         home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         tmp = tempfile.TemporaryDirectory()

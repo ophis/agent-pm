@@ -1,6 +1,6 @@
 """new/core/src/utils/config_file.py: merge, read_config and the core config's pair (CONFIG, LOCAL)."""
 
-from new.tests import CORE, NEW, hermetic
+from new.tests.case import CORE, NEW, Case
 
 import copy
 import os
@@ -15,7 +15,7 @@ from agent_pm.utils.config_file import CONFIG, LOCAL, merge, read_config
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
 
 
-class ConfigFileTest(unittest.TestCase):
+class ConfigFileTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)
@@ -79,9 +79,8 @@ class ConfigFileTest(unittest.TestCase):
             read_config(str(self.path), str(self.local))
 
 
-class Defaults(unittest.TestCase):
+class Defaults(Case):
     def setUp(self):
-        self.home = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.path = os.path.join(tmp.name, "config.toml")
@@ -90,7 +89,7 @@ class Defaults(unittest.TestCase):
 
     def local(self, text, name="core-new.local.toml"):
         """`text` as this test's ~/.agent-pm/<name>."""
-        with open(os.path.join(self.home, name), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.agent_pm, name), "w", encoding="utf-8") as f:
             f.write(text)
 
     def test_the_new_cores_config_pair(self):

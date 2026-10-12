@@ -1,5 +1,7 @@
 """utils/args.py: Once."""
 
+from new.tests.case import Case
+
 import argparse
 import io
 import unittest
@@ -8,7 +10,7 @@ from unittest import mock
 from agent_pm.utils.args import Once
 
 
-class OnceTest(unittest.TestCase):
+class OnceTest(Case):
     def parser(self):
         ap = argparse.ArgumentParser(prog="p")
         ap.add_argument("--dir", action=Once)

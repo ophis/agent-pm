@@ -1,7 +1,7 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
 dir checks (TeamRuns), for a custom team and for the configured team dirs."""
 
-from new.tests import NEW, hermetic
+from new.tests.case import NEW, Case
 from new.tests.unit.composer.team_test import POET, VERSE
 
 import io
@@ -48,7 +48,7 @@ def write_team(top, files=TEAM_FILES):
         os.chmod(path, 0o644)
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     """A real temp dir for the workdir `work` (not made) and a HOME of the test's own (self.agent_pm)."""
 
     def setUp(self):
@@ -57,7 +57,6 @@ class Base(unittest.TestCase):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.agent_pm = hermetic.home(self)
 
     def local(self, text):
         with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:

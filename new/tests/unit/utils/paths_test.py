@@ -1,7 +1,6 @@
 """new/core/src/agent_pm/utils/paths.py: IMPORT_ROOT, CORE, real_dirs, under, temp_dirs and printable_abs."""
 
-from new.tests import NEW
-from new.tests.case import ROOT
+from new.tests.case import NEW, ROOT, Case
 
 import os
 import subprocess
@@ -13,7 +12,7 @@ from unittest import mock
 from agent_pm.utils.paths import CORE, IMPORT_ROOT, printable_abs, real_dirs, temp_dirs, under
 
 
-class PathsTest(unittest.TestCase):
+class PathsTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)
@@ -84,7 +83,7 @@ class PathsTest(unittest.TestCase):
                 self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
 
 
-class Roots(unittest.TestCase):
+class Roots(Case):
     def test_the_import_root_holds_the_package_and_the_core_dir_holds_it(self):
         self.assertEqual(IMPORT_ROOT, ROOT)
         self.assertEqual(IMPORT_ROOT, os.path.join(NEW, "core", "src"))
@@ -93,7 +92,7 @@ class Roots(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(CORE, "config.toml")))
 
 
-class PrintableAbs(unittest.TestCase):
+class PrintableAbs(Case):
     def test_a_printable_absolute_str_only(self):
         for value in ("/", "/a/b", "/a b/é", "/x/../y"):
             with self.subTest(value=value):

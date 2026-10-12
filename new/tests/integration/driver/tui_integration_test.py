@@ -4,8 +4,8 @@ send, the idle timer and its Blocked pause, attach from another process, stop, a
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
 a start while another process closes the name."""
 
-from new.tests import fake_adapter, hermetic, live_tmux
-from new.tests.case import PY, child_env
+from new.tests import fake_adapter, live_tmux
+from new.tests.case import PY, Case, child_env
 
 import itertools
 import json
@@ -103,10 +103,9 @@ class Stream:
             raise AssertionError(f"an event within {seconds} s: {self.queue.get()!r}")
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
-        home = os.path.dirname(hermetic.home(self))
-        self.server = live_tmux.Server(self, home)
+        self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()
@@ -130,7 +129,6 @@ class Live(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure(self.config)
-        self.addCleanup(registry.reset)
 
     def start(self, name: str, *steps, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""

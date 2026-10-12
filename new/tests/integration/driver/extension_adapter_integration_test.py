@@ -4,8 +4,8 @@ config.toml, nothing else changed, runs a headless session through driver.api.st
 PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
 anything starts."""
 
-from new.tests import CORE, fake_adapter
-from new.tests.case import PY, child_env
+from new.tests import fake_adapter
+from new.tests.case import CORE, PY, Case, child_env
 
 import json
 import os
@@ -30,7 +30,7 @@ print(json.dumps({"sid": handle.sid, "events": events,
 """
 
 
-class ExtensionAdapterIntegration(unittest.TestCase):
+class ExtensionAdapterIntegration(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

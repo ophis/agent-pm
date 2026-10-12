@@ -1,19 +1,37 @@
-"""new/tests/guards.py: each guard on the real tree, and on violating samples written to temp trees."""
+"""new/tests/guards.py: each guard on the real tree, and on violating samples written to temp trees; every test
+is a Case, with no class or module fixture."""
 
-from new.tests import CORE, NEW, guards
-from new.tests.case import ROOT
+from new.tests import guards
+from new.tests.case import CORE, NEW, ROOT, Case
 
+import ast
 import importlib
 import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 OLD = "/".join(("core", "src"))
 PKG = "src/agent_pm"
+FIXTURES = ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
 
 
-class Sample(unittest.TestCase):
+def fixtures(root: str) -> list[str]:
+    return sorted(
+        f"{path.relative_to(root)}:{node.lineno}: {node.name}"
+        for path in Path(root).rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name in FIXTURES
+    )
+
+
+def flat(suite):
+    for test in suite:
+        yield from flat(test) if isinstance(test, unittest.TestSuite) else (test,)
+
+
+class Sample(Case):
     def tree(self, files: dict[str, str]) -> str:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -25,7 +43,7 @@ class Sample(unittest.TestCase):
         return tmp.name
 
 
-class RealTree(unittest.TestCase):
+class RealTree(Case):
     def test_each_guard_is_clean(self):
         for guard, root in (
             (guards.layer_imports, CORE),
@@ -56,6 +74,36 @@ class RealTree(unittest.TestCase):
             if file:
                 self.assertNotEqual(os.path.commonpath([old, os.path.realpath(file)]), old, name)
         self.assertNotIn(old, {os.path.realpath(p) for p in sys.path if p})
+
+
+class EveryTest(Sample):
+    def test_is_a_case(self):
+        loader, found = unittest.TestLoader(), []
+        for suite in ("unit", "integration"):
+            tests = loader.discover(
+                os.path.join(NEW, "tests", suite), "*_test.py", os.path.dirname(NEW)
+            )
+            found += [test.id() for test in flat(tests) if not isinstance(test, Case)]
+        self.assertEqual((loader.errors, found), ([], []))
+
+    def test_has_no_class_or_module_fixture(self):
+        self.assertEqual(fixtures(os.path.join(NEW, "tests")), [])
+        root = self.tree(
+            {
+                "a.py": "class A:\n    @classmethod\n    def setUpClass(cls): pass\n"
+                "    @classmethod\n    async def tearDownClass(cls): pass\n",
+                "b/c.py": "def setUpModule(): pass\ndef tearDownModule(): pass\ndef setUp(): pass\n",
+            }
+        )
+        self.assertEqual(
+            fixtures(root),
+            [
+                "a.py:3: setUpClass",
+                "a.py:5: tearDownClass",
+                "b/c.py:1: setUpModule",
+                "b/c.py:2: tearDownModule",
+            ],
+        )
 
 
 class LayerImports(Sample):

@@ -3,8 +3,8 @@ time.sleep patched), with a temp HOME: the session dir and session.json, the nam
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
 
-from new.tests import fake_adapter, hermetic
-from new.tests.case import ROOT
+from new.tests import fake_adapter
+from new.tests.case import ROOT, Case
 
 import errno
 import fcntl
@@ -98,9 +98,8 @@ class ScanTui(fake_adapter.FakeTui):
         return payload.get("why", "")
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         self.root = os.path.join(self.agent_pm, "tui")
         self.dir = os.path.join(self.root, NAME)
         self.hooks = os.path.join(self.dir, "hooks.jsonl")
@@ -1108,7 +1107,7 @@ class AttachTest(Base):
         self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
 
 
-class ModeTest(unittest.TestCase):
+class ModeTest(Case):
     def test_tui_mode_has_each_mode_method_with_its_parameters(self):
         def params(function):
             return [

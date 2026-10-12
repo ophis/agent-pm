@@ -1,6 +1,6 @@
 """new/core/src/driver/records.py: run.jsonl writes, reads and attempt completeness."""
 
-from new.tests import hermetic  # noqa: F401
+from new.tests.case import Case
 
 import errno
 import io
@@ -19,7 +19,7 @@ from agent_pm.driver import records
 SID = "4f1c2b9e-0d6a-4c1e-9b7a-2e5f8a3d6c10"
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -57,14 +57,14 @@ class Base(unittest.TestCase):
         return out["value"]
 
 
-class Stamp(unittest.TestCase):
+class Stamp(Case):
     def test_is_local_iso_8601_with_offset_to_the_millisecond(self):
         text = records.stamp()
         self.assertRegex(text, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d$")
         self.assertIsNotNone(datetime.fromisoformat(text).utcoffset())
 
 
-class RecordPath(unittest.TestCase):
+class RecordPath(Case):
     def test_is_run_jsonl_in_the_absolute_workdir(self):
         self.assertEqual(records.CHANNEL, "run.jsonl")
         self.assertEqual(records.path("w"), os.path.join(os.path.abspath("w"), "run.jsonl"))

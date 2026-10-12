@@ -1,7 +1,7 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
 dir added; its catalog row; a read dir holding the team dir refused."""
 
-from new.tests import NEW
+from new.tests.case import NEW
 from new.tests.integration.composer import child
 
 import json

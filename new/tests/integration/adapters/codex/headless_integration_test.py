@@ -1,4 +1,4 @@
-from new.tests import NEW
+from new.tests.case import NEW, Case
 from new.tests.integration.adapters.codex import fake_codex
 
 import dataclasses
@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +32,7 @@ CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "Hello.\n"}
 
 
-class HeadlessIntegrationTest(unittest.TestCase):
+class HeadlessIntegrationTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)
@@ -88,7 +87,6 @@ class HeadlessIntegrationTest(unittest.TestCase):
             )
         )
         registry.configure(self.config)
-        self.addCleanup(registry.reset)
 
     def scene(self, steps=None, **fields):
         if steps is not None:

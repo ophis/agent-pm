@@ -1,9 +1,9 @@
+from new.tests.case import Case
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import json
 import os
 import sys
-import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -45,7 +45,7 @@ class InspectionTest(Base):
         self.assertEqual(self.adapter.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
 
-class UsageTest(unittest.TestCase):
+class UsageTest(Case):
     def setUp(self):
         self.enterContext(
             mock.patch(

@@ -3,7 +3,7 @@ neutral Return and Parameters, the FR-31 destinations, the package API, the root
 text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
 
-from new.tests import CORE, NEW, hermetic
+from new.tests.case import CORE, NEW, Case
 from new.tests.unit.composer.prompt_test import (
     RUN,
     composed,
@@ -193,7 +193,7 @@ def team_texts():
     return out
 
 
-class Package(unittest.TestCase):
+class Package(Case):
     def test_the_api_is_the_modules_names(self):
         self.assertEqual(composer.__all__, API)
         self.assertEqual([name for name in DROPPED if hasattr(composer, name)], [])
@@ -208,7 +208,7 @@ class Package(unittest.TestCase):
         )
 
 
-class Acceptance(unittest.TestCase):
+class Acceptance(Case):
     """The shipped config alone (no local file)."""
 
     def test_every_role_and_task_composes_with_no_reference_error(self):
@@ -297,7 +297,7 @@ class Acceptance(unittest.TestCase):
                 self.assertNotIn("are in English", prompt, role)
 
 
-class Shipped(unittest.TestCase):
+class Shipped(Case):
     """The team's text, the core config's comments and the composer's strings."""
 
     def test_tickets_finds_an_id_beyond_the_examples(self):
@@ -485,15 +485,14 @@ class Shipped(unittest.TestCase):
         self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
 
-class RealCore(unittest.TestCase):
+class RealCore(Case):
     """The real core with FIXTURE as the local file."""
 
     def setUp(self):
-        self.home = hermetic.home(self)
         self.local(FIXTURE)
 
     def local(self, text):
-        with open(os.path.join(self.home, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write(text)
 
     def test_the_config_renders_the_language_and_progress_rules_once(self):

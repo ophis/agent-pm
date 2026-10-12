@@ -1,6 +1,6 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
 
-from new.tests import CORE
+from new.tests.case import CORE, Case
 
 import os
 import unittest
@@ -9,7 +9,7 @@ from agent_pm.composer import base
 from agent_pm.utils import config_file
 
 
-class Paths(unittest.TestCase):
+class Paths(Case):
     def test_team_root_schema_and_config_and_no_src(self):
         self.assertEqual(base.TEAM, os.path.join(CORE, "team"))
         self.assertTrue(os.path.isfile(os.path.join(base.TEAM, "guide.md")))
@@ -20,7 +20,7 @@ class Paths(unittest.TestCase):
         self.assertEqual(base.CONFIG, os.path.join(CORE, "config.toml"))
 
 
-class Fill(unittest.TestCase):
+class Fill(Case):
     def test_a_default_is_used_when_the_value_is_missing_and_a_value_beats_it(self):
         for text, values, want in (
             ("https://{{host|github.com}}/{{repo}}", {"repo": "o/n"}, "https://github.com/o/n"),
@@ -34,7 +34,7 @@ class Fill(unittest.TestCase):
             base.fill("{{repo}}", {}, "t")
 
 
-class Anchor(unittest.TestCase):
+class Anchor(Case):
     def test_github_style(self):
         self.assertEqual(base.anchor("Light Research"), "light-research")
         self.assertEqual(base.anchor("Template: `x.md`"), "template-xmd")
@@ -63,7 +63,7 @@ text **not** an item
 """
 
 
-class Outline(unittest.TestCase):
+class Outline(Case):
     def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
         steps = ("Role", "Steps")
         self.assertEqual(

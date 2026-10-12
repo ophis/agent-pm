@@ -1,7 +1,7 @@
 """A headless session's prompt and access intent, composed in a child process (child.Case) as its caller would for a new
 run and a resume."""
 
-from new.tests import NEW
+from new.tests.case import NEW
 from new.tests.integration.composer import child
 
 import os

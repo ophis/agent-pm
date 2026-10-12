@@ -2,8 +2,8 @@
 payload on stdin, $TMUX_PANE set, PATH only a stub tmux that logs each call (no tmux runs here); in process for its one
 locked write and its load of tmux_host; and the file standing alone."""
 
-from new.tests import guards, hermetic  # noqa: F401
-from new.tests.case import ROOT
+from new.tests import guards
+from new.tests.case import ROOT, Case
 
 import ast
 import fcntl
@@ -59,7 +59,7 @@ def write_state(folder: str, value) -> None:
         f.write(data)
 
 
-class Hook(unittest.TestCase):
+class Hook(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -363,7 +363,7 @@ class Hook(unittest.TestCase):
         self.assertNothingWritten()
 
 
-class InProcess(unittest.TestCase):
+class InProcess(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -423,7 +423,7 @@ class InProcess(unittest.TestCase):
         self.assertNotIn("tmux_host", set(sys.modules) - modules)
 
 
-class Standalone(unittest.TestCase):
+class Standalone(Case):
     def setUp(self):
         with open(HOOK) as f:
             self.source = f.read()

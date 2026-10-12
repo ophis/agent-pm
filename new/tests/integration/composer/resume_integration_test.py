@@ -1,7 +1,7 @@
 """The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a run whose role picks
 its task, a draft left at the deliverable's path."""
 
-from new.tests import NEW
+from new.tests.case import NEW
 from new.tests.integration.composer import child
 
 import os

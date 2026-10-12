@@ -1,7 +1,7 @@
 """new/core/src/driver/modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
 
-from new.tests import hermetic  # noqa: F401
+from new.tests.case import Case
 
 import signal
 import threading
@@ -41,7 +41,7 @@ def ended(*_):
     return [Reply("a")]
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def begin(self, script, resume=False):
         self.mode = InProcessMode(StubRun(script))
         self.mode.begin("hi", SPEC, resume)

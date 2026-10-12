@@ -3,8 +3,8 @@ registry.configure, runs new/tests/fake_claude.py (on PATH as `claude`) through 
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
 
-from new.tests import fake_claude, hermetic
-from new.tests.case import PY, child_env
+from new.tests import fake_claude
+from new.tests.case import PY, Case, child_env
 
 import json
 import os
@@ -88,9 +88,8 @@ def kill(pid: int) -> None:
         pass
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        self.agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -110,7 +109,6 @@ class Base(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure({"adapters": {"claude": TABLE}})
-        self.addCleanup(registry.reset)
         self.scenario()
 
     def scenario(self, **fields):

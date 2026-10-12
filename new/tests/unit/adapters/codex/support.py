@@ -1,9 +1,8 @@
-from new.tests import NEW
+from new.tests.case import NEW, Case
 
 import json
 import os
 import tempfile
-import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -14,7 +13,7 @@ NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         self.addCleanup(tmp.cleanup)

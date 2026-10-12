@@ -5,7 +5,8 @@ record and resume steps. The fake adapter, a subclass whose launch takes env, un
 whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
 given to registry.configure."""
 
-from new.tests import fake_adapter, hermetic
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 import dataclasses
 import io
@@ -106,9 +107,8 @@ def kill(pid: int) -> None:
         pass
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
-        hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
@@ -126,7 +126,6 @@ class Base(unittest.TestCase):
         )
         patch.start()
         self.addCleanup(patch.stop)
-        self.addCleanup(registry.reset)
         self.configure()
 
     def steps(self, *steps):

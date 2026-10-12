@@ -2,7 +2,7 @@
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
 
-from new.tests import hermetic
+from new.tests.case import Case
 from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 
 import inspect
@@ -52,7 +52,7 @@ TIER = "tier must be an integer 1–4"
 RUNTIME = "runtime must be a non-empty one-line name, got "
 
 
-class Fake(unittest.TestCase):
+class Fake(Case):
     """A team root, config and local file in a temp dir; a HOME of the test's own."""
 
     def setUp(self):
@@ -64,7 +64,6 @@ class Fake(unittest.TestCase):
         self.local_file = os.path.join(self.tmp, "local.toml")
         self.write(FILES)
         self.configure(CONFIG)
-        hermetic.home(self)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -439,7 +438,7 @@ class TeamRoles(Fake):
         )
 
 
-class Params(unittest.TestCase):
+class Params(Case):
     def test_its_fields(self):
         self.assertEqual([f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume"])
 
@@ -507,7 +506,7 @@ class ExplicitPaths(Fake):
         self.assertEqual(trusted_dirs(self.config, os.devnull), frozenset())
 
 
-class Bind(unittest.TestCase):
+class Bind(Case):
     def test_repo_is_the_repo_dir_else_dropped_and_any_other_entry_a_path(self):
         self.assertEqual(bind("repo", "/r/x/.."), "/r")
         self.assertIsNone(bind("repo", None))

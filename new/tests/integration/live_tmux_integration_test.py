@@ -1,7 +1,8 @@
 """new/tests/live_tmux.py against a real tmux server: its env, control-mode client, readers, cleanup, grid assertion,
 wait, and the skip without tmux."""
 
-from new.tests import hermetic, live_tmux
+from new.tests import live_tmux
+from new.tests.case import Case
 
 import os
 import shutil
@@ -11,9 +12,8 @@ import unittest
 from unittest import mock
 
 
-class Live(unittest.TestCase):
+class Live(Case):
     def setUp(self):
-        self.home = os.path.dirname(hermetic.home(self))
         self.server = live_tmux.Server(self, self.home)
 
     def ok(self, *args) -> str:
@@ -22,15 +22,14 @@ class Live(unittest.TestCase):
         return res.stdout.strip()
 
 
-class NoTmux(unittest.TestCase):
+class NoTmux(Case):
     def test_skips_before_making_anything(self):
-        home = os.path.dirname(hermetic.home(self))
         with (
             mock.patch.object(live_tmux.shutil, "which", return_value=None),
             mock.patch.object(live_tmux.tempfile, "mkdtemp") as mkdtemp,
             self.assertRaises(unittest.SkipTest) as cm,
         ):
-            live_tmux.Server(self, home)
+            live_tmux.Server(self, self.home)
         self.assertEqual(str(cm.exception), "tmux not installed")
         mkdtemp.assert_not_called()
 
@@ -138,13 +137,12 @@ class Readers(Live):
         self.assertEqual(live_tmux.events(path), ["12:00:00 w1 done", "12:00:01 w1 dead"])
 
 
-class Cleanup(unittest.TestCase):
+class Cleanup(Case):
     def test_cleanups_kill_the_server_and_client_and_remove_the_root(self):
-        home = os.path.dirname(hermetic.home(self))
         seen = {}
 
         def body():
-            server = live_tmux.Server(nested, home)
+            server = live_tmux.Server(nested, self.home)
             server.start("mgr")
             server.attach("mgr")
             seen.update(server=server, pid=int(server.inside("mgr")["TMUX"].split(",")[1]))
@@ -213,7 +211,7 @@ class Grid(Live):
                 live_tmux.assert_grid(self, self.server, "mgr", columns, manager_width=width)
 
 
-class Wait(unittest.TestCase):
+class Wait(Case):
     def test_returns_the_truthy_value(self):
         values = iter([0, "", None, "yes"])
         self.assertEqual(live_tmux.wait(lambda: next(values)), "yes")

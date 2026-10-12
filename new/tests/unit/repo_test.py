@@ -1,7 +1,7 @@
 """new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
 helpers' cases: unit/utils/)."""
 
-from new.tests import hermetic
+from new.tests.case import Case
 
 import io
 import json
@@ -116,7 +116,7 @@ def upstream(wt):
     return res.stdout.strip() if res.returncode == 0 else None
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -142,7 +142,7 @@ class Base(unittest.TestCase):
         return path
 
 
-class Parse(unittest.TestCase):
+class Parse(Case):
     def test_forms(self):
         for spec, want in (
             ("o/n", ("github.com", "o", "n")),
@@ -184,7 +184,7 @@ class Parse(unittest.TestCase):
                 self.assertEqual((repo.url_slug(url), repo.origin(url)), (None, None))
 
 
-class ErrText(unittest.TestCase):
+class ErrText(Case):
     def test_userinfo_is_redacted(self):
         res = fail(
             "fatal: could not read Password for 'https://SECRETTOK@github.com': no\n"
@@ -208,7 +208,7 @@ class ErrText(unittest.TestCase):
                 )
 
 
-class TrustedDirs(unittest.TestCase):
+class TrustedDirs(Case):
     def test_unset_is_empty_and_paths_are_real_paths(self):
         self.assertEqual(repo.trusted_dirs({}), frozenset())
         with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
@@ -510,7 +510,7 @@ class Worktree(Base):
                 self.assertIn(want, self.refused(argv))
 
 
-class Retry(unittest.TestCase):
+class Retry(Case):
     LOCKS = (
         "fatal: Unable to create '/w/.git/index.lock': File exists.",
         "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
@@ -561,7 +561,7 @@ class Retry(unittest.TestCase):
         sleep.assert_not_called()
 
 
-class Clone(unittest.TestCase):
+class Clone(Case):
     """A real clone of a bare repo, its origin reading as github.com/o/n."""
 
     def setUp(self):
@@ -1071,7 +1071,7 @@ class CommonDir(Clone):
                 self.assertIsNone(repo.common_dir(path))
 
 
-class PlanDocs(unittest.TestCase):
+class PlanDocs(Case):
     def test_nested_checkouts_node_modules_and_git_are_skipped_but_not_dot_dirs(self):
         """A subdir holding a .git file (a worktree) or dir (a clone) is a checkout of its own."""
         tmp = tempfile.TemporaryDirectory()
@@ -1176,7 +1176,7 @@ class Status(Base):
                 {"created_at": "2026-10-03T01:00:00Z", "user": {"login": "Alice"}, "body": "do Y"},
             ]
         ]
-        with open(os.path.join(hermetic.home(self), LOCAL), "w") as f:
+        with open(os.path.join(self.agent_pm, LOCAL), "w") as f:
             f.write("malformed = [\n")
         local = os.path.join(self.dir, "local.toml")
         with open(local, "w") as f:

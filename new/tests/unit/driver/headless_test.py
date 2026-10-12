@@ -1,7 +1,7 @@
 """new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
 
-from new.tests import hermetic  # noqa: F401
+from new.tests.case import Case
 
 import json
 import os
@@ -92,7 +92,7 @@ class StubRun(Headless):
             yield Reply(record["text"])
 
 
-class Base(unittest.TestCase):
+class Base(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -306,7 +306,7 @@ class Returncode(Base):
         self.assertIsNone(self.promptly(lambda: self.mode.returncode(0)))
 
 
-class Probe(unittest.TestCase):
+class Probe(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
