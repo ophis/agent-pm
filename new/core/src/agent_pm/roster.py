@@ -6,7 +6,7 @@ its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the n
 (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
 Sessions are reached only through driver.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
 default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client. A worker entry runs
-crew as a module (CREW_MODULE, PYTHONPATH the import root); recovery rewrites an entry naming a crew.py or workers.py
+crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
 script to that form."""
 
 import contextlib

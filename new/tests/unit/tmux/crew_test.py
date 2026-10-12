@@ -220,6 +220,7 @@ class CrewCase(Case):
             self.enterContext(mock.patch.object(api, name, functools.partial(self.call, name)))
         self.sleep = self.enterContext(mock.patch.object(crew.time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": ROOT}))
         self.local('runtime = "rt0"\n')
 
     def call(self, fn, /, *args, **kw):
@@ -580,6 +581,19 @@ class RestartTest(WorkerCase):
         self.assertEqual(self.entries()["w1"]["resume"], entry["resume"])
         self.assertEqual(self.entries()["w1"]["note"], "keep")
 
+    def test_a_restarted_worker_sees_the_callers_pythonpath_without_the_import_root(self):
+        self.started()
+        seen, fake = [], self.api.start
+
+        def start(*args, **kw):
+            seen.append(os.environ.get("PYTHONPATH"))
+            return fake(*args, **kw)
+
+        self.api.start = start
+        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u1"}):
+            self.assertEqual(self.run_main("restart", "w1")[0], 0)
+        self.assertEqual(seen, ["/u1"])
+
     def test_a_bad_name_touches_nothing(self):
         with self.assertRaises(crew.WorkersError):
             crew.restart("a b", own=None)
@@ -775,6 +789,7 @@ class MainTest(WorkerCase):
             "w1": (f"{ROOT}:/u1:{rel}:{link}:{ROOT}/:/u2", "/u1:/u2"),
             "w2": (f"{rel}:{ROOT}", None),
             "w3": ("/u1", "/u1"),
+            "w4": (f"{ROOT}:", None),
         }
         seen, fake = [], self.api.start
 
@@ -1793,6 +1808,17 @@ class AttachTest(RosterCase):
             ["env", f"PYTHONPATH={ROOT}", PY, *MODULE, "; rm -rf ~"],
         )
 
+    def test_a_worker_entrys_resume_line_names_the_import_root_then_the_callers_pythonpath(self):
+        e = entry(resume=started("w1", "--client", "rt0"))
+        self.seed(w1=e)
+        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u 1"}):
+            out = self.synced(self.server())
+        (line,) = (x for x in out.splitlines() if x.startswith("resume w1: "))
+        self.assertEqual(
+            shlex.split(line.removeprefix("resume w1: ")),
+            ["env", f"PYTHONPATH={ROOT}:/u 1", *roster.recovery(e)],
+        )
+
     def test_a_worker_entry_without_a_client_recovers_with_the_configs_runtime(self):
         resume = [PY, "/x/crew.py", "start", "w1", "--manager", "mgr"]
         self.seed(w1=entry(resume=resume))
@@ -2499,7 +2525,7 @@ class ResumeTest(RosterCase):
             {n: shlex.split(cmd) for n, cmd in printed.items()},
             {
                 **{
-                    n: [*(["env", f"PYTHONPATH={ROOT}"] if env[n] else []), *argv]
+                    n: [*(["env", f"PYTHONPATH={env[n]['PYTHONPATH']}"] if env[n] else []), *argv]
                     for n, argv in ran.items()
                 },
                 "B": ["cd", cwd, "&&", *ran["B"]],
@@ -2704,24 +2730,26 @@ class CursorTest(RosterCase):
             ),
         )
 
-    def test_attach_names_the_crew_module_on_its_import_root(self):
-        rc, out, err = self.attach()
-        self.assertEqual((rc, err), (0, ""))
-        lines = out.splitlines()[-2:]
-        self.assertEqual(
-            [line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"]
-        )
-        self.assertEqual(
-            [shlex.split(line.split(": ", 1)[1])[:6] for line in lines],
-            [["env", f"PYTHONPATH={ROOT}", "python3", *MODULE]] * 2,
-        )
+    def test_attach_names_the_crew_module_on_its_import_root_then_the_callers_pythonpath(self):
+        for given, want in ((ROOT, ROOT), (f"{ROOT}:/u 1", f"{ROOT}:/u 1")):
+            with self.subTest(given=given), mock.patch.dict(os.environ, {"PYTHONPATH": given}):
+                rc, out, err = self.attach()
+                self.assertEqual((rc, err), (0, ""))
+                lines = out.splitlines()[-2:]
+                self.assertEqual(
+                    [line.split(": ", 1)[0] for line in lines], ["monitor expired", "next-event"]
+                )
+                self.assertEqual(
+                    [shlex.split(line.split(": ", 1)[1])[:6] for line in lines],
+                    [["env", f"PYTHONPATH={want}", "python3", *MODULE]] * 2,
+                )
 
     def test_attach_quotes_the_paths_it_prints(self):
         home = os.path.join(self.dir, "it's a home")
         os.mkdir(home)
         root = os.path.join(self.dir, "my src")
         with (
-            mock.patch.dict(os.environ, {"HOME": home}),
+            mock.patch.dict(os.environ, {"HOME": home, "PYTHONPATH": root}),
             mock.patch.object(crew, "IMPORT_ROOT", root),
         ):
             rc, out, err = self.attach()

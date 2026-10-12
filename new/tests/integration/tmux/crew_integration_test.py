@@ -176,7 +176,7 @@ class Live(Case):
             )
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
-        return self.call(*CREW, *args, PYTHONPATH=ROOT, **kw)
+        return self.call(*CREW, *args, **{"PYTHONPATH": ROOT, **kw})
 
     def attach(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.ok(self.workers("attach", *args, **kw))
@@ -730,6 +730,20 @@ class RosterTest(Live):
         (loser,) = set(procs) - {winner}
         self.assertEqual(out[winner], (f"{crew.HEADER}\n{tail(self.directory)}", ""))
         self.assertEqual((procs[loser].returncode, out[loser]), (1, ("", self.held(winner))))
+
+    def test_a_printed_resume_line_gives_the_recovered_worker_the_callers_pythonpath(self):
+        user = os.path.join(self.root, "user lib")
+        given = f"{ROOT}{os.pathsep}{user}"
+        claude = self.dumping("claude", fake_claude.__file__)
+        self.attach(PYTHONPATH=given)
+        self.started("w1", PYTHONPATH=given)
+        self.wait_event("w1", "done")
+        self.kill("w1")
+        out = self.attach(PYTHONPATH=given).stdout
+        (line,) = (x for x in out.splitlines() if x.startswith("resume w1: "))
+        self.ok(self.call("sh", "-c", line.removeprefix("resume w1: "), **self.scene("w1")))
+        live_tmux.wait(lambda: len(logged(claude)) > 1, what="the recovered worker's claude run")
+        self.assertEqual([e["env"].get("PYTHONPATH") for e in logged(claude)], [user, user])
 
     def test_killed_worker_gone_then_recovered(self):
         self.attach()

@@ -55,6 +55,9 @@ class TuiTest(Base):
         self.assertIn("gpt-test", data["argv"])
         self.assertEqual(data["hook"], list(HOOK))
         self.assertEqual(set(data["commands"]), set(run.hooks))
+        hook = os.path.join(os.path.dirname(launch.argv[2]), "tui_hook.py")
+        for command in data["commands"].values():
+            self.assertEqual(shlex.split(command)[:3], [launch.argv[0], "-I", hook])
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
     def test_resume_uses_shared_saved_policy_and_native_file(self):
