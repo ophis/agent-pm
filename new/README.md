@@ -6,7 +6,8 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 
 | Path | What |
 |---|---|
-| `core/src/` | the layers, one package each: `adapters/`, `composer/`, `driver/`, `delegate/`. `repo.py`, a module outside the layers |
+| `core/src/` | the layers, one package each: `adapters/`, `composer/`, `driver/`, `delegate/` |
+| `core/src/agent_pm/agent_tools/` | agent-run CLIs (git/gh side effects), outside the layers: `repo.py`, which agent sessions run as `python3 -P -m agent_pm.agent_tools.repo worktree …` / `status …` (`core/config.toml` `commands`) |
 | `core/src/delegate/` | the Delegate: one role's run through the Composer and the Driver, read from its replies; `cli.py` its command line and the exit codes' home: `python3 new/core/src/delegate/cli.py --role ROLE --input TEXT --out PATH --workdir DIR`, `… --list` |
 | `core/src/utils/` | shared utilities; `config_file.py` loads and merges TOML files; `paths.py` normalizes paths and checks containment, temporary roots and printable absolute paths (`printable_abs`); `files.py` reads regular files (`read_regular`); `markdown.py` finds Markdown code fences; `args.py` holds argparse helpers (`Once`) |
 | `core/src/adapters/claude/` | Claude Code's Adapter, runtime `claude` |
@@ -17,7 +18,7 @@ The new core, under construction ([TASK-314](https://linear.app/ophis-workgroup/
 | `tests/` | `unit/`, `integration/`, `fake_adapter/` (the test-only runtime `fake`), `fake_claude.py` (a fake `claude` for the integration tests), `live_tmux.py` (private tmux servers for them), `guards.py` |
 | `~/.agent-pm/tui/<name>/` | tui session `<name>`'s dir: `session.json` (its state, which `driver.api.attach` reads), `hooks.jsonl` (its hook records); `driver.api.close` removes it. `~/.agent-pm/tui/<name>.lock` serializes a name's starts, closes and stops |
 
-Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; any module → `utils/`, which imports only the standard library. `tests/guards.py` (`layer_imports`, `pure_utils`) enforces it, with the other rules in its docstring.
+Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; any module → `utils/`, which imports only the standard library; `agent_tools/` imports only the standard library and `utils/`, and nothing imports it. `tests/guards.py` (`layer_imports`, `pure_utils`) enforces it, with the other rules in its docstring.
 
 ## Tests
 

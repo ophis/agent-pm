@@ -232,10 +232,14 @@ class Acceptance(Case):
                 self.assertNotRegex(block, RUNTIME)
 
     def test_each_requested_command_runs_the_repo_module_from_the_import_root(self):
-        self.assertTrue(os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "repo.py")))
+        self.assertTrue(
+            os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "agent_tools", "repo.py"))
+        )
         for role in roles():
             for command in composed(role)[1].commands:
-                self.assertTrue(command.startswith("python3 -P -m agent_pm.repo "), (role, command))
+                self.assertTrue(
+                    command.startswith("python3 -P -m agent_pm.agent_tools.repo "), (role, command)
+                )
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
         for dest in ("local", "orchestrator"):
@@ -754,7 +758,9 @@ class RealCore(Case):
         for role in roles():
             prompt, _ = composed(role)
             text = prompt + "".join(task_text(t) for t in catalog()[role])
-            cmds = re.findall(r"`python3 -P -m agent_pm\.repo (worktree|status) ([^`]*)`", text)
+            cmds = re.findall(
+                r"`python3 -P -m agent_pm\.agent_tools\.repo (worktree|status) ([^`]*)`", text
+            )
             self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]
             for cmd, args in cmds:
@@ -871,9 +877,9 @@ class RealCore(Case):
             merge,
         )
 
-    def test_the_pull_request_destination_reads_pr_from_repo_py_status(self):
+    def test_the_pull_request_destination_reads_pr_from_agent_tools_repo_status(self):
         self.assertIn(
-            "3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0]
+            "3. By `agent_tools.repo status`'s `pr`: null → `gh pr create", composed("engineer")[0]
         )
 
     def test_a_run_reads_the_methods_dir_its_text_names(self):

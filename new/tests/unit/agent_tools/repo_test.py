@@ -1,5 +1,5 @@
-"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
-helpers' cases: unit/utils/)."""
+"""new/core/src/agent_pm/agent_tools/repo.py, ported from the old core's tests (its tmux display helpers dropped; its
+config and path helpers' cases: unit/utils/)."""
 
 from new.tests.case import Case
 
@@ -13,7 +13,7 @@ import threading
 import unittest
 import unittest.mock
 
-from agent_pm import repo
+from agent_pm.agent_tools import repo
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40

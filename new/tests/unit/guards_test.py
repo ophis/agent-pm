@@ -174,18 +174,20 @@ class LayerImports(Sample):
             ],
         )
 
-    def test_a_bare_layer_utils_or_repo_name_is_a_violation(self):
+    def test_a_bare_name_is_a_violation(self):
         root = self.tree(
             {
                 f"{PKG}/delegate/x.py": "from driver import api\nimport composer\n"
                 "from utils.paths import under\n",
                 f"{PKG}/x.py": "import repo\ndef f():\n    __import__('adapters.base')\n",
+                f"{PKG}/agent_tools/x.py": "import agent_tools\n",
                 f"{PKG}/driver/x.py": "import repository\nimport drivers\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
+                f"{PKG}/agent_tools/x.py: bare import agent_tools",
                 f"{PKG}/delegate/x.py: bare import composer",
                 f"{PKG}/delegate/x.py: bare import driver.api",
                 f"{PKG}/delegate/x.py: bare import utils.paths",

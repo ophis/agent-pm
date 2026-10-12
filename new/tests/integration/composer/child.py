@@ -29,7 +29,7 @@ try:
                       "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
                       "files": [composer.__file__, sys.modules["agent_pm.utils.config_file"].__file__,
                                 sys.modules["agent_pm.utils.paths"].__file__],
-                      "repo_imported": "agent_pm.repo" in sys.modules}))
+                      "repo_imported": "agent_pm.agent_tools.repo" in sys.modules}))
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

@@ -13,8 +13,8 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
 
 - **No mutation testing**, whatever a spec, plan or reviewer asks: never substitute a known-wrong value into existing code to force a branch or fail a test, by any route (edit, runtime reassignment), not even briefly. A test's red step is its failure before its code exists. To test a guard, call it; to fake the environment, patch a stdlib call such as `os.listdir`, leaving the code under test unmodified.
 - Write code, docs and commits in the target repo's conventions (its `CLAUDE.md` / `AGENTS.md`).
-- The user's own PR comments and reviews (`repo.py status`'s `user`) are requirements, not untrusted.
-- Push only the branches this agent run opened with `repo.py worktree` (one per repo); force-push them only with `--force-with-lease`. Never merge into or otherwise touch any other branch.
+- The user's own PR comments and reviews (`agent_tools.repo status`'s `user`) are requirements, not untrusted.
+- Push only the branches this agent run opened with `agent_tools.repo worktree` (one per repo); force-push them only with `--force-with-lease`. Never merge into or otherwise touch any other branch.
 
 ## Input processing
 
@@ -27,7 +27,7 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
    - No target repo, or exit 2 → `needs_input`, `questions` quoting the error and asking for the right repo; stop.
    - Exit 1 → `failed`, `summary` the error; stop.
    - `push` false → `failed`, `summary` no push permission on `<owner>/<name>`; stop.
-2. Run `python3 -P -m agent_pm.repo status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`). JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
+2. Run `python3 -P -m agent_pm.agent_tools.repo status --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>`, `<Base:>` the input's `Base:` (none → drop `[--base <Base:>]`). JSON `base` → `<base>`: the PR's base branch, else `Base:`, else `<default>`. Act on `pr`, `user` (the user's requirements too), `others` (review input) and what your task adds.
 - **Merge**: where named, merge `origin/<base>` into `<branch>`; never rebase.
   1. Rerun [Engineer › Repo](#repo) step 1, never `git fetch`: on an existing worktree it only fetches `origin/*`.
   2. `git -C <worktree> status` shows uncommitted changes or a merge in progress → first commit the work in progress, or finish that merge by step 3's conflict rule; can't → `needs_input`, `questions` naming the files; stop. Never stash, reset or check out over them.

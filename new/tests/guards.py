@@ -1,12 +1,12 @@
 """The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), none imports repo or a BARE name, nested, relative or
-                      import_module'd
+layer_imports(core)   imports go one way (new/README.md), none imports agent_tools or a BARE name, nested, relative
+                      or import_module'd
 runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no string constant naming OLD
 adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      utils imports only the standard library and itself
+pure_utils(core)      utils and agent_tools import only the standard library and utils
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
@@ -30,7 +30,9 @@ ALLOWED = {
     ("driver", "adapters"),
     (OUTSIDE, "driver"),
 }
-BARE = (*LAYERS, "utils", "repo")
+TOOLS = "agent_tools"
+PURE = ("utils", TOOLS)
+BARE = (*LAYERS, *PURE, "repo")
 RUNTIME = re.compile(r"claude|codex", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -55,7 +57,7 @@ def layer_imports(core: str) -> list[str]:
             first = inner.split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
-            elif first == "repo" or (
+            elif first == TOOLS or (
                 first in LAYERS
                 and first != layer
                 and ((layer, first) not in ALLOWED or first == "driver" and inner != "driver.api")
@@ -67,9 +69,9 @@ def layer_imports(core: str) -> list[str]:
 def pure_utils(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        if names and names[0] == "utils":
+        if names and names[0] in PURE:
             found.update(
-                f"{rel}: utils imports {m}"
+                f"{rel}: {names[0]} imports {m}"
                 for m, inner in imports
                 if inner.split(".")[0] != "utils" and m.split(".")[0] not in sys.stdlib_module_names
             )

@@ -4,8 +4,8 @@
 # cannot drop a key this file sets, so a local [output] or [adapters.<name>] keeps this file's other keys in that table.
 #
 # Each layer reads only its own keys: the Composer (src/composer/) the run keys, [output], [roles.<role>], trusted_dirs
-# and team_dirs; src/repo.py users and trusted_dirs; the Driver (src/driver/registry.py) [adapters.<name>], status_line,
-# workers_per_column and grid_retile.
+# and team_dirs; src/agent_pm/agent_tools/repo.py users and trusted_dirs; the Driver (src/driver/registry.py)
+# [adapters.<name>], status_line, workers_per_column and grid_retile.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -90,7 +90,7 @@ type = "local"
 [roles.researcher]
 templates = ["research-report"]
 read = ["{{methods}}"]
-commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: [roles.researcher.output]
@@ -102,7 +102,7 @@ commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
 # ── PM ──────────────────────────────────────────────────
 [roles.pm]
 templates = ["prd"]
-commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *"]
 # local: [roles.pm.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
@@ -112,7 +112,7 @@ commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *"]
 # ── Engineer ────────────────────────────────────────────
 [roles.engineer]
 effort = "xhigh"
-commands = ["python3 -P -m agent_pm.repo worktree --dir {{workdir}}/src *", "python3 -P -m agent_pm.repo status --dir {{workdir}}/src *"]
+commands = ["python3 -P -m agent_pm.agent_tools.repo worktree --dir {{workdir}}/src *", "python3 -P -m agent_pm.agent_tools.repo status --dir {{workdir}}/src *"]
 
 [roles.engineer.output]
 type = "pull-request"
