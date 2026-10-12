@@ -158,6 +158,32 @@ class AppendLine(Base):
         files.append_line(self.path, json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n")
         self.assertEqual(self.content(), b'{"text": "a?b"}\n')
 
+    def test_own_refuses_another_owners_file_and_writes_nothing(self):
+        files.append_line(self.path, "keep\n")
+        with unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaises(OSError) as e:
+                files.append_line(self.path, "x\n", own=True)
+        self.assertEqual(
+            (e.exception.errno, e.exception.strerror, e.exception.filename),
+            (errno.EPERM, "not owned by you", self.path),
+        )
+        self.assertEqual(self.content(), b"keep\n")
+
+    def test_own_appends_to_your_own_file(self):
+        files.append_line(self.path, "one\n")
+        files.append_line(self.path, "two\n", own=True)
+        self.assertEqual(self.content(), b"one\ntwo\n")
+
+    def test_by_default_the_owner_is_not_checked(self):
+        files.append_line(self.path, "one\n")
+        with unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
+            files.append_line(self.path, "two\n")
+        self.assertEqual(self.content(), b"one\ntwo\n")
+
+    def test_own_with_an_empty_text_creates_a_missing_file_owner_only(self):
+        files.append_line(self.path, "", own=True)
+        self.assertEqual((stat.S_IMODE(os.stat(self.path).st_mode), self.content()), (0o600, b""))
+
 
 class Save(Base):
     def setUp(self):
