@@ -1,9 +1,5 @@
-"""driver.api.start() end to end over the real fake runtime (new/tests/fake_adapter/runtime.py): the frozen event set
-streamed to the Driver's Exited and the run records (acceptance), the idle timer (FR-11), exits, stop(), failures, and
-the launch's environment; then stop() of a process group and a process that outlives its pipes; the fake's own limit
-record and resume steps. The fake adapter, a subclass whose launch takes env, unset and cwd from its config, and one
-whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
-given to registry.configure."""
+"""driver.api over fake runtimes: events, idle timeouts, exits, stop, process groups, inherited pipes,
+launch environment, limits and resume. Custom adapters use registry.configure with in-process module tables."""
 
 import dataclasses
 import io

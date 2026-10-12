@@ -1,6 +1,6 @@
 """agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a manager runs it, on a private tmux
 server (new/tests/live_tmux.py) with a control-mode client on the manager. Workers are plain tui sessions of the real
-Adapters running new/tests/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
+Adapters running new/tests/integration/adapters/claude/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
 through the Driver's tmux_host.py send. HOME and the server's root lie under AGENT_PM_TEST_TMP (else new/), outside
 the temp dirs a plain Codex session can write."""
 
@@ -20,8 +20,9 @@ from unittest import mock
 
 from agent_pm.manager import crew, roster
 
-from new.tests import fake_claude, live_tmux
+from new.tests import live_tmux
 from new.tests.case import NEW, PY, ROOT, Case
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
 CREW = [*PY, "-m", "agent_pm.manager.crew"]
@@ -662,7 +663,7 @@ class ManagersTest(Live):
         self.assertTrue(self.gone("w1"))
 
 
-class RosterTest(Live):
+class RosterLive(Live):
     ATTACH = False
 
     def held(self, holder: str) -> str:
@@ -689,6 +690,8 @@ class RosterTest(Live):
             out, rf"\A{re.escape(crew.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z"
         )
 
+
+class RosterTest(RosterLive):
     def test_second_manager_after_release(self):
         self.attach()
         self.second()
@@ -745,6 +748,122 @@ class RosterTest(Live):
         live_tmux.wait(lambda: len(logged(claude)) > 1, what="the recovered worker's claude run")
         self.assertEqual([e["env"].get("PYTHONPATH") for e in logged(claude)], [user, user])
 
+    def test_stop_all_stops_what_mgr_opened_and_only_that(self):
+        self.attach()
+        self.started("w1")
+        self.started("w2")
+        self.attach(inside="w1")
+        self.started("w3", inside="w1")
+        self.role(self.cwd, ROLE_DRIVER, ROLE_TUI)
+        self.second()
+        self.ok(self.server.tmux("new-session", "-d", "-s", "o1", *live_tmux.IDLE))
+        self.ok(self.server.tmux("set-option", "-t", "=o1:", "@opener", SECOND))
+        mine = ["w3", ROLE_TUI, ROLE_DRIVER, "w1", "w2"]
+        res = self.ok(self.workers("stop-all", "--dry-run"))
+        self.assertEqual(res.stdout, "".join(f"would stop {n}\n" for n in mine))
+        self.assertTrue(self.live(*mine, "o1"))
+        res = self.ok(self.workers("stop-all"))
+        self.assertEqual(res.stdout, "".join(f"stopped {n}\n" for n in mine))
+        self.assertTrue(self.gone(*mine))
+        self.assertTrue(self.live(MANAGER, SECOND, "o1"))
+        self.assertEqual(self.roster()["entries"], {})
+        self.assertEqual(self.roster(os.path.dirname(self.events_of("w1")))["entries"], {})
+        self.assertEqual(
+            self.ok(self.workers("stop-all")).stdout, "workers: stop-all: nothing to stop\n"
+        )
+
+    def test_stop_a_role_run_by_its_tui_session(self):
+        self.attach()
+        self.role(self.cwd, ROLE_DRIVER, ROLE_TUI)
+        self.assertEqual(list(self.roster()["entries"]), [ROLE_DRIVER])
+        self.assertEqual(self.ok(self.workers("stop", ROLE_TUI)).stdout, "")
+        self.assertTrue(self.gone(ROLE_DRIVER, ROLE_TUI))
+        self.assertEqual(self.roster()["entries"], {})
+
+    def test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume(self):
+        self.attach()
+        work = os.path.join(self.root, "role-work")
+        os.mkdir(work)
+        with open(os.path.join(work, "run.jsonl"), "w") as f:
+            f.write(json.dumps({"kind": "result", "outcome": {"status": "needs_input"}}) + "\n")
+        self.role(work)
+        table = f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
+        self.assertEqual(self.attach().stdout, table + tail(self.directory))
+        self.assertEqual(self.attach("--resume").stdout, table + tail(self.directory))
+        self.assertEqual(self.roster()["entries"][ROLE_DRIVER]["state"], "waiting")
+
+    def test_take_over_resumes_from_the_cursor(self):
+        self.attach()
+        self.started("w1", steps=["One."], turns=[["Two."], ["Three."], ["Four."]])
+        (one,) = self.wait_event("w1", "done")
+        self.assertEqual(self.next_event(0), (1, one, "One."))
+        self.send("w1", "more")
+        n, two, content = self.next_event(1)
+        self.assertEqual((n, content), (2, "Two."))
+        self.send("w1", "more")
+        *_, three = self.wait_event("w1", "done", 3)
+        resumed = tail(self.directory, 2, 0, f"3 {three}")
+        self.after_w1(self.attach("--after", "2", "--gen", "0").stdout, resumed)
+        self.kill(MANAGER)
+        self.second()
+        self.after_w1(self.attach("--manager", MANAGER, inside=SECOND).stdout, resumed)
+        self.assertEqual(self.roster()["holder"]["session"], SECOND)
+        self.assertEqual(
+            self.next_event(2, "--manager", MANAGER, inside=SECOND), (3, three, "Three.")
+        )
+        waiting = subprocess.Popen(
+            [*CREW, "next-event", "--manager", MANAGER, "--after", "3", "--gen", "0"],
+            env=self.server.env(PYTHONPATH=ROOT, **self.server.inside(SECOND)),
+            cwd=self.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(waiting.communicate)  # cleanups run last first: after the kill, reaps it
+        self.addCleanup(waiting.kill)
+        live_tmux.wait(lambda: self.roster()["cursor"] == 3, what="next-event's cursor 3")
+        self.send("w1", "more", inside=SECOND)
+        out, err = waiting.communicate(timeout=TIMEOUT)
+        *head, four = live_tmux.events(self.events)
+        self.assertEqual(head, [one, two, three])
+        self.assertTrue(is_event(four, "w1", "done"), four)
+        self.assertEqual((waiting.returncode, out, err), (0, f"4 {four}\nFour.\n", ""))
+
+    def test_rotation_keeps_the_unhandled_lines(self):
+        self.attach()
+        self.started("w1", turns=[["Again."]])
+        self.wait_event("w1", "done")
+        kept = filler("k", 3)
+        with open(self.events, "a") as f:
+            f.write(
+                "".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept)
+            )
+        total = len(live_tmux.events(self.events))
+        old, original, ino = f"{self.events}.1", raw(self.events), os.lstat(self.events).st_ino
+        backlog = [f"{i} {line}" for i, line in enumerate(kept, 1)]
+        res = self.attach("--after", str(total - 3), "--gen", "0")
+        self.after_w1(res.stdout, tail(self.directory, 0, 1, *backlog))
+        self.assertEqual((os.lstat(old).st_ino, raw(old)), (ino, original))
+        self.assertEqual(live_tmux.events(self.events), kept)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.events).st_mode), 0o600)
+        before = self.roster()
+        self.assertEqual((before["cursor"], before["gen"]), (0, 1))
+        res = self.workers("next-event", "--after", str(total - 3), "--gen", "0")
+        self.assertEqual(
+            (res.returncode, res.stdout, res.stderr),
+            (1, "workers: stale line numbers (gen 0, now 1): run crew.py attach\n", ""),
+        )
+        self.assertEqual(self.roster(), before)
+        self.send("w1", "more")
+        n, event, content = self.next_event(3, gen=1)
+        self.assertEqual((n, content), (4, "Again."))
+        self.assertTrue(is_event(event, "w1", "done"), event)
+        self.assertEqual(live_tmux.events(self.events), [*kept, event])
+        self.assertEqual(raw(old), original)
+
+
+class RosterRecoveryTest(RosterLive):
     def test_killed_worker_gone_then_recovered(self):
         self.attach()
         sid = self.started("w1")
@@ -823,50 +942,6 @@ class RosterTest(Live):
             {n: e["state"] for n, e in self.roster()["entries"].items()}, {"w1": "working"}
         )
 
-    def test_stop_all_stops_what_mgr_opened_and_only_that(self):
-        self.attach()
-        self.started("w1")
-        self.started("w2")
-        self.attach(inside="w1")
-        self.started("w3", inside="w1")
-        self.role(self.cwd, ROLE_DRIVER, ROLE_TUI)
-        self.second()
-        self.ok(self.server.tmux("new-session", "-d", "-s", "o1", *live_tmux.IDLE))
-        self.ok(self.server.tmux("set-option", "-t", "=o1:", "@opener", SECOND))
-        mine = ["w3", ROLE_TUI, ROLE_DRIVER, "w1", "w2"]
-        res = self.ok(self.workers("stop-all", "--dry-run"))
-        self.assertEqual(res.stdout, "".join(f"would stop {n}\n" for n in mine))
-        self.assertTrue(self.live(*mine, "o1"))
-        res = self.ok(self.workers("stop-all"))
-        self.assertEqual(res.stdout, "".join(f"stopped {n}\n" for n in mine))
-        self.assertTrue(self.gone(*mine))
-        self.assertTrue(self.live(MANAGER, SECOND, "o1"))
-        self.assertEqual(self.roster()["entries"], {})
-        self.assertEqual(self.roster(os.path.dirname(self.events_of("w1")))["entries"], {})
-        self.assertEqual(
-            self.ok(self.workers("stop-all")).stdout, "workers: stop-all: nothing to stop\n"
-        )
-
-    def test_stop_a_role_run_by_its_tui_session(self):
-        self.attach()
-        self.role(self.cwd, ROLE_DRIVER, ROLE_TUI)
-        self.assertEqual(list(self.roster()["entries"]), [ROLE_DRIVER])
-        self.assertEqual(self.ok(self.workers("stop", ROLE_TUI)).stdout, "")
-        self.assertTrue(self.gone(ROLE_DRIVER, ROLE_TUI))
-        self.assertEqual(self.roster()["entries"], {})
-
-    def test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume(self):
-        self.attach()
-        work = os.path.join(self.root, "role-work")
-        os.mkdir(work)
-        with open(os.path.join(work, "run.jsonl"), "w") as f:
-            f.write(json.dumps({"kind": "result", "outcome": {"status": "needs_input"}}) + "\n")
-        self.role(work)
-        table = f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
-        self.assertEqual(self.attach().stdout, table + tail(self.directory))
-        self.assertEqual(self.attach("--resume").stdout, table + tail(self.directory))
-        self.assertEqual(self.roster()["entries"][ROLE_DRIVER]["state"], "waiting")
-
     def test_unshown_worker_reopened(self):
         self.attach()
         sid = self.started("w1")
@@ -891,76 +966,6 @@ class RosterTest(Live):
         self.assertEqual(res.stderr, "tui: session w1: tmux attach -t '=w1'\n")
         e = self.roster()["entries"]["w1"]
         self.assertEqual((e["pane"], e["opener"]), (pane, MANAGER))
-
-    def test_take_over_resumes_from_the_cursor(self):
-        self.attach()
-        self.started("w1", steps=["One."], turns=[["Two."], ["Three."], ["Four."]])
-        (one,) = self.wait_event("w1", "done")
-        self.assertEqual(self.next_event(0), (1, one, "One."))
-        self.send("w1", "more")
-        n, two, content = self.next_event(1)
-        self.assertEqual((n, content), (2, "Two."))
-        self.send("w1", "more")
-        *_, three = self.wait_event("w1", "done", 3)
-        resumed = tail(self.directory, 2, 0, f"3 {three}")
-        self.after_w1(self.attach("--after", "2", "--gen", "0").stdout, resumed)
-        self.kill(MANAGER)
-        self.second()
-        self.after_w1(self.attach("--manager", MANAGER, inside=SECOND).stdout, resumed)
-        self.assertEqual(self.roster()["holder"]["session"], SECOND)
-        self.assertEqual(
-            self.next_event(2, "--manager", MANAGER, inside=SECOND), (3, three, "Three.")
-        )
-        waiting = subprocess.Popen(
-            [*CREW, "next-event", "--manager", MANAGER, "--after", "3", "--gen", "0"],
-            env=self.server.env(PYTHONPATH=ROOT, **self.server.inside(SECOND)),
-            cwd=self.cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.addCleanup(waiting.communicate)  # cleanups run last first: after the kill, reaps it
-        self.addCleanup(waiting.kill)
-        live_tmux.wait(lambda: self.roster()["cursor"] == 3, what="next-event's cursor 3")
-        self.send("w1", "more", inside=SECOND)
-        out, err = waiting.communicate(timeout=TIMEOUT)
-        *head, four = live_tmux.events(self.events)
-        self.assertEqual(head, [one, two, three])
-        self.assertTrue(is_event(four, "w1", "done"), four)
-        self.assertEqual((waiting.returncode, out, err), (0, f"4 {four}\nFour.\n", ""))
-
-    def test_rotation_keeps_the_unhandled_lines(self):
-        self.attach()
-        self.started("w1", turns=[["Again."]])
-        self.wait_event("w1", "done")
-        kept = filler("k", 3)
-        with open(self.events, "a") as f:
-            f.write(
-                "".join(f"{line}\n" for line in filler("f", roster.EVENTS_MAX // WIDTH + 1) + kept)
-            )
-        total = len(live_tmux.events(self.events))
-        old, original, ino = f"{self.events}.1", raw(self.events), os.lstat(self.events).st_ino
-        backlog = [f"{i} {line}" for i, line in enumerate(kept, 1)]
-        res = self.attach("--after", str(total - 3), "--gen", "0")
-        self.after_w1(res.stdout, tail(self.directory, 0, 1, *backlog))
-        self.assertEqual((os.lstat(old).st_ino, raw(old)), (ino, original))
-        self.assertEqual(live_tmux.events(self.events), kept)
-        self.assertEqual(stat.S_IMODE(os.lstat(self.events).st_mode), 0o600)
-        before = self.roster()
-        self.assertEqual((before["cursor"], before["gen"]), (0, 1))
-        res = self.workers("next-event", "--after", str(total - 3), "--gen", "0")
-        self.assertEqual(
-            (res.returncode, res.stdout, res.stderr),
-            (1, "workers: stale line numbers (gen 0, now 1): run crew.py attach\n", ""),
-        )
-        self.assertEqual(self.roster(), before)
-        self.send("w1", "more")
-        n, event, content = self.next_event(3, gen=1)
-        self.assertEqual((n, content), (4, "Again."))
-        self.assertTrue(is_event(event, "w1", "done"), event)
-        self.assertEqual(live_tmux.events(self.events), [*kept, event])
-        self.assertEqual(raw(old), original)
 
 
 if __name__ == "__main__":

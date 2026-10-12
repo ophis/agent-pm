@@ -14,8 +14,9 @@ from urllib.parse import quote
 
 from agent_pm_linear import linear
 
-from new.tests import fake_claude, live_tmux
+from new.tests import live_tmux
 from new.tests.case import ORCH_ROOT, PY, Case, child_env
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.orchestrator import fake_gh, fake_linear
 from new.tests.unit.orchestrator import board_ids, run_fixtures
 from new.tests.unit.orchestrator.run_fixtures import ID, SID

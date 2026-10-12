@@ -18,12 +18,12 @@ The new identity is one of:
 | CR | `new.tests.integration.composer.resume_integration_test` |
 | CE | `new.tests.integration.composer.extension_runtime_integration_test` |
 | CTD | `new.tests.integration.composer.team_dirs_integration_test` |
-| DCL | `new.tests.integration.driver.claude_integration_test` |
+| DCL | `new.tests.integration.adapters.claude.claude_integration_test` |
 | DEA | `new.tests.integration.driver.extension_adapter_integration_test` |
 | H | `new.tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
 | T | `new.tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
 | K | `new.tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |
-| F | `new.tests.integration.fake_claude_integration_test` |
+| F | `new.tests.integration.adapters.claude.fake_claude_integration_test` |
 | L | `new.tests.integration.live_tmux_integration_test` |
 | C | `new.tests.integration.tmux.crew_integration_test` |
 | OGH | `new.tests.integration.orchestrator.fake_gh_integration_test` |
@@ -34,7 +34,7 @@ The new identity is one of:
 | ORT | `new.tests.integration.orchestrator.router_integration_test.Router` |
 | OTU | `new.tests.integration.orchestrator.run_tui_integration_test.Tui` |
 | DTH | `new.tests.integration.driver.tmux_host_integration_test` |
-| DCT | `new.tests.integration.driver.claude_tui_integration_test` |
+| DCT | `new.tests.integration.adapters.claude.claude_tui_integration_test` |
 | UCR | `new.tests.unit.tmux.crew_test` |
 | URO | `new.tests.unit.roster_test` |
 | UDA | `new.tests.unit.driver.api_test` |
@@ -321,14 +321,14 @@ C runs crew's CLI as subprocesses on a private tmux server, the real Adapters ov
 | `tests.integration.tmux.crew_integration_test.Roster.test_second_manager_after_release` | `C.RosterTest.test_second_manager_after_release` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_second_manager_after_the_holder_ends` | `C.RosterTest.test_second_manager_after_the_holder_ends` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_concurrent_attaches_one_holds` | `C.RosterTest.test_concurrent_attaches_one_holds` | Complete. |
-| `tests.integration.tmux.crew_integration_test.Roster.test_killed_worker_gone_then_recovered` | `C.RosterTest.test_killed_worker_gone_then_recovered` | Complete. |
+| `tests.integration.tmux.crew_integration_test.Roster.test_killed_worker_gone_then_recovered` | `C.RosterRecoveryTest.test_killed_worker_gone_then_recovered` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_stop_all_stops_what_mgr_opened_and_only_that` | `C.RosterTest.test_stop_all_stops_what_mgr_opened_and_only_that` | Workers, a sub-manager's worker and a role entry's two sessions stopped; another manager's session kept. The role entry is written by the test; the role run's TUI in the grid: `DD.Tui.test_from_the_manager_shown_in_its_grid_turn_ends_then_one_outcome_done`. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_killed_role_run_gone_then_recovered` | `not ported: (b)` ([entry](#b-task-356-layers)) | Role recovery argv and its run: `URO.RosterTest.test_recovery_forms_each_a_copy`, `UCR.ResumeTest.test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order`. |
-| `tests.integration.tmux.crew_integration_test.Roster.test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one` | `C.RosterTest.test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one` | Complete. |
+| `tests.integration.tmux.crew_integration_test.Roster.test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one` | `C.RosterRecoveryTest.test_attach_resume_brings_back_a_killed_worker_not_a_stopped_one` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_stop_a_role_run_by_its_tui_session` | `C.RosterTest.test_stop_a_role_run_by_its_tui_session` | Complete over a role entry the test writes. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume` | `C.RosterTest.test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume`; `DD.Headless.test_needs_input_one_outcome_line_the_driver_session_gone` | `waiting` from the run's `run.jsonl` result, left alone by `attach --resume`; the entry and that result are written by the test. A detached headless run ending on `needs_input`, its outcome line, its Driver session gone: DD. |
-| `tests.integration.tmux.crew_integration_test.Roster.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker` | `not ported: (b)` ([entry](#b-task-356-layers)) | Covered for workers: `C.RosterTest.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker`. |
-| `tests.integration.tmux.crew_integration_test.Roster.test_unshown_worker_reopened` | `C.RosterTest.test_unshown_worker_reopened`; `DTH.GridTest.test_an_unshown_session_reopens_in_the_grid` | Complete. |
+| `tests.integration.tmux.crew_integration_test.Roster.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker` | `not ported: (b)` ([entry](#b-task-356-layers)) | Covered for workers: `C.RosterRecoveryTest.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker`. |
+| `tests.integration.tmux.crew_integration_test.Roster.test_unshown_worker_reopened` | `C.RosterRecoveryTest.test_unshown_worker_reopened`; `DTH.GridTest.test_an_unshown_session_reopens_in_the_grid` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_take_over_resumes_from_the_cursor` | `C.RosterTest.test_take_over_resumes_from_the_cursor` | Complete. |
 | `tests.integration.tmux.crew_integration_test.Roster.test_rotation_keeps_the_unhandled_lines` | `C.RosterTest.test_rotation_keeps_the_unhandled_lines` | Complete. |
 
@@ -370,7 +370,7 @@ C runs crew's CLI as subprocesses on a private tmux server, the real Adapters ov
   - Requirement: `crew run <name> -- <Delegate CLI> --mode tui --detach …` records the role run's Record; after its sessions are killed, `crew attach` lists it gone with its resume command, and `crew resume <name>` brings back its Driver and TUI sessions on the same sid, the TUI in the manager's grid; the three C tests above start their role run through `crew run` instead of writing its entry.
 - `tests.integration.tmux.crew_integration_test.Roster.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker`
   - Behavior: with a worker, a stopped worker, a tui role run and a pipeline (a `router.py --tui --manager` stand-in) recorded, the tmux server dies; on a new server `crew attach --resume` resumes the pipeline, the role run and the worker (`resumed <name>: exit 0` each), each runtime resumes its own sid, the stopped worker stays gone and no entry is left `gone`.
-  - New code lacks: recovery is tested for workers only (`C.RosterTest.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker`); no role-run or pipeline Record is recorded (the entry above; the pipeline's Record: the `test_b8` entry under [(a)](#a-task-332-router---tui)).
+  - New code lacks: recovery is tested for workers only (`C.RosterRecoveryTest.test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker`); no role-run or pipeline Record is recorded (the entry above; the pipeline's Record: the `test_b8` entry under [(a)](#a-task-332-router---tui)).
   - Requirement: after the tmux server is lost, `crew resume` of each recorded worker, role run and pipeline brings it back on its own sid by running its Record's resume; a stopped worker is not resumed; no entry is left `gone`.
 
 ### (c) No ticket
