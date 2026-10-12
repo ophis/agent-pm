@@ -1,11 +1,13 @@
 """The test-only Adapter, runtime `fake`, importing only adapters.base: a test registers it in-process
 (sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a TuiRun).
-Its runtime is runtime.py (RUNTIME), run by this Python; an exit record parses to Exited(99), which the Driver drops."""
+Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
+record to Exited(99), which the Driver drops."""
 import os
 import shlex
 import sys
 
-from adapters.base import Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, Reply, SessionBound, TuiRun, TurnEnd
+from adapters.base import (Activity, Adapter, Blocked, Exited, HeadlessRun, Launch, LimitHit, Reply, SessionBound,
+                           TuiRun, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -44,6 +46,8 @@ class FakeHeadlessRun(HeadlessRun):
             yield Blocked(record.get("reason", ""))
         elif kind == "result":
             yield TurnEnd(record.get("text", ""), record.get("pending", 0))
+        elif kind == "limit":
+            yield LimitHit(record.get("resets_at"))
         elif kind == "exit":
             yield Exited(99)
 

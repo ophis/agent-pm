@@ -6,8 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
-from composer.base import CONFIG, LOCAL, SRC, ConfigError, _title, fill
-from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
+from composer.base import CONFIG, LOCAL, SRC, ConfigError, fill, title_of
+from composer.teams import Team, index, no_charter, role_tables, tasks_path, team_or_default
 from utils.config_file import read_config
 from utils.paths import real_dirs
 
@@ -75,6 +75,7 @@ class RunParams:
 @dataclass(frozen=True)
 class Intent:
     dirs: tuple[str, ...]
+    writes: tuple[str, ...]
     commands: tuple[str, ...]
     gate: str
     cwd: str
@@ -97,10 +98,10 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] = (),
             label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None,
             config: str = CONFIG) -> RunConfig:
-    overlays, team = tuple(overlays), _team(team)
-    known = set(_roles(config)) | {name for kind, name in team.files if kind == "roles"}
+    overlays, team = tuple(overlays), team_or_default(team)
+    known = set(role_tables(config)) | {name for kind, name in team.files if kind == "roles"}
     if role not in known:
-        raise _no_charter(role, {}, team)
+        raise no_charter(role, {}, team)
     source, where = label
     for overlay in overlays:
         try:
@@ -115,12 +116,12 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
     for overlay in overlays:
         run = replace(run, **_run_keys(overlay, role))
     if not (charter := team.charter(role)):
-        raise _no_charter(role, cfg, team)
+        raise no_charter(role, cfg, team)
     tasks = index(role, team, config)
     if task and task not in tasks:
         raise team.misnamed_error("tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
-    return replace(run, role_title=_title(*charter))
+    return replace(run, role_title=title_of(*charter))
 
 
 def trusted_dirs(config: str = CONFIG) -> frozenset[str]:
@@ -140,17 +141,20 @@ def access(run: RunConfig, workdir: str, *, cwd: str, project: bool, repo_dir: s
            team: Team | None = None) -> Intent:
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
-    team, workdir = _team(team), os.path.abspath(workdir)
+    team, workdir = team_or_default(team), os.path.abspath(workdir)
     dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks_path(run.role, team)]
-    methods = os.path.join(team.root, "methods")
+    methods, writes = os.path.join(team.root, "methods"), []
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, {"methods": methods}, key), repo_dir)
             if p and p not in dirs:
                 dirs.append(p)
+            if p and key == "write" and p not in writes:
+                writes.append(p)
     values = {"scripts": SRC, "workdir": workdir}
-    return Intent(dirs=tuple(dirs), commands=tuple(fill(c, values, "commands") for c in run.commands), gate=run.gate,
-                  cwd=cwd, project=project)
+    return Intent(dirs=tuple(dirs), writes=tuple(writes),
+                  commands=tuple(fill(c, values, "commands") for c in run.commands), gate=run.gate, cwd=cwd,
+                  project=project)
 
 
 def _check(cfg: Mapping) -> None:

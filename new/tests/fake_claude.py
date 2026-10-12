@@ -3,7 +3,9 @@ PATH. Stdlib only. An option src/adapters/claude/ never emits exits 2.
 
 Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
   steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use; {"kind": "limit", "resets_at": T}: a
-              rejected rate_limit_event, then the assistant text LIMIT with error "rate_limit"
+              rejected rate_limit_event, then the assistant text LIMIT with error "rate_limit";
+              {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd)
+  resume      steps run instead of `steps` on --resume
   rate_limit  a rate_limit_info, printed after init
   exit        the exit code
   hang        true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
@@ -20,7 +22,7 @@ import uuid
 
 ENV = "FAKE_CLAUDE_SCENARIO"
 HANG_CAP = 120
-DEFAULTS = {"steps": [], "rate_limit": None, "exit": 0, "hang": False, "log": None}
+DEFAULTS = {"steps": [], "resume": None, "rate_limit": None, "exit": 0, "hang": False, "log": None}
 LIMIT = "You've hit your usage limit."
 
 
@@ -43,11 +45,19 @@ def _step(step) -> bool:
     kind = step.get("kind") if isinstance(step, dict) else None
     if kind == "tool":
         return set(step) == {"kind", "name"} and isinstance(step["name"], str)
+    if kind == "write":
+        return (set(step) == {"kind", "path", "text"} and isinstance(step["path"], str) and step["path"] != ""
+                and isinstance(step["text"], str))
     return kind == "limit" and set(step) == {"kind", "resets_at"} and (
         step["resets_at"] is None or _number(step["resets_at"]))
 
 
-CHECKS = {"steps": lambda v: isinstance(v, list) and all(map(_step, v)),
+def _steps(value) -> bool:
+    return isinstance(value, list) and all(map(_step, value))
+
+
+CHECKS = {"steps": _steps,
+          "resume": lambda v: v is None or _steps(v),
           "rate_limit": lambda v: v is None or isinstance(v, dict),
           "exit": lambda v: isinstance(v, int) and not isinstance(v, bool),
           "hang": lambda v: isinstance(v, bool),
@@ -135,12 +145,17 @@ def main(argv: list[str]) -> int:
     if s["rate_limit"] is not None:
         say({"type": "rate_limit_event", "rate_limit_info": s["rate_limit"]})
     keep("user", a.prompt)
-    for k, step in enumerate(s["steps"]):
+    steps = s["resume"] if a.resume and s["resume"] is not None else s["steps"]
+    for k, step in enumerate(steps):
         if isinstance(step, str):
             last = step
             assistant([{"type": "text", "text": step}])
         elif step["kind"] == "tool":
             assistant([{"type": "tool_use", "id": f"toolu_{k}", "name": step["name"], "input": {}}])
+        elif step["kind"] == "write":
+            os.makedirs(os.path.dirname(os.path.abspath(step["path"])), exist_ok=True)
+            with open(step["path"], "w", encoding="utf-8") as f:
+                f.write(step["text"])
         else:
             resets = {} if step["resets_at"] is None else {"resetsAt": step["resets_at"]}
             say({"type": "rate_limit_event",

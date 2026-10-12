@@ -25,7 +25,7 @@ class Sample(unittest.TestCase):
 class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
-                            (guards.adapters_key, CORE), (guards.syntax_311, NEW)):
+                            (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.private_imports, CORE)):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
 
@@ -127,6 +127,19 @@ class AdaptersKey(Sample):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
         root = self.tree({"src/composer/x.py": sample, "src/driver/x.py": sample})
         self.assertEqual(guards.adapters_key(root), ['src/composer/x.py:2: literal key "adapters"'])
+
+
+class PrivateImports(Sample):
+    def test_an_underscore_name_from_another_module(self):
+        root = self.tree({"src/a.py": "from b import _x\nfrom . import _y\n",
+                          "src/c.py": "import b.d\nfrom e import f as g\n\ndef h():\n    return b.d._z, g._w\n"})
+        self.assertEqual(guards.private_imports(root), ["src/a.py:1: private b._x", "src/a.py:2: private ._y",
+                                                        "src/c.py:5: private b.d._z", "src/c.py:5: private g._w"])
+
+    def test_an_alias_dunders_and_other_objects_are_clean(self):
+        root = self.tree({"src/a.py": "import b as _b\nfrom c import d as _d\n_b.e, _d.f, _b.__file__\n\n"
+                                      "class G:\n    def h(self, i):\n        return self._j, i._k\n"})
+        self.assertEqual(guards.private_imports(root), [])
 
 
 class Syntax311(Sample):

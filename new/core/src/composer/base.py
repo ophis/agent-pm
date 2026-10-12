@@ -3,6 +3,8 @@ import os
 import re
 from collections.abc import Mapping
 
+from utils import markdown
+
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(os.path.dirname(SRC), "config.toml")
 LOCAL = "~/.agent-pm/core-new.local.toml"
@@ -11,7 +13,6 @@ OUTPUT = "output"
 SCHEMA = os.path.join(TEAM, OUTPUT, "outcome.schema.json")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")
 METHOD = re.compile(r"<methods>/([\w-]+)\.md")
-FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")
 BOLD_ITEM = re.compile(r"^\s*(?:(?:[-*]|\d+\.) )?\*\*(.+?)\*\*")
 ANCHOR_LINE = re.compile(r'<a id="([^"]+)"></a>')
@@ -41,23 +42,9 @@ def anchor(heading: str) -> str:
     return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
-def unfenced(text: str) -> list[tuple[int, str]]:
-    out, fence = [], None
-    for i, line in enumerate(text.split("\n")):
-        shut = line.strip()
-        if fence:
-            if len(shut) >= fence[1] and shut == fence[0] * len(shut):
-                fence = None
-        elif m := FENCE.match(line):
-            fence = (m[1][0], len(m[1]))
-        else:
-            out.append((i, line))
-    return out
-
-
 def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
     out, stack, section, last = [], [], "", (-2, "")
-    for i, line in unfenced(text):
+    for i, line in markdown.unfenced(text):
         if m := HEADING.match(line):
             level, title = len(m[1]), m[2].strip()
             while stack and stack[-1][0] >= level:
@@ -72,7 +59,7 @@ def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
     return out
 
 
-def _text(path: str) -> str:
+def read_text(path: str) -> str:
     try:
         with open(path) as f:
             return f.read().strip() + "\n"
@@ -82,30 +69,8 @@ def _text(path: str) -> str:
         raise ConfigError(f"{path}: not UTF-8 text") from None
 
 
-def _read(root: str, rel: str) -> str:
-    path = os.path.join(root, rel)
-    if not os.path.isfile(path):
-        raise ConfigError(f"missing file {rel}")
-    with open(path) as f:
-        return f.read().strip() + "\n"
-
-
-def _without(text: str, placeholder: str) -> str:
-    return "".join(line for line in text.splitlines(True) if placeholder not in line)
-
-
-def _title(text: str, rel: str) -> str:
+def title_of(text: str, rel: str) -> str:
     first = text.splitlines()[0] if text.strip() else ""
     if not first.startswith("# "):
         raise ConfigError(f"{rel}: must start with a '# ' heading")
     return first[2:].strip()
-
-
-def _fence(text: str, least: int = 3) -> str:
-    ticks = max([len(r) + 1 for r in re.findall(r"`+", text)] + [least])
-    return "`" * ticks
-
-
-def _code(value: str) -> str:
-    f, pad = _fence(value, 1), " " if "`" in value else ""
-    return f"{f}{pad}{value}{pad}{f}"

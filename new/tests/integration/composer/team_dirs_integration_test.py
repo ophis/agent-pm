@@ -7,14 +7,14 @@ import shutil
 import tempfile
 import unittest
 
-import repo
-from composer.prompt import RESUME, RETURN
 from new.tests import NEW
 from new.tests.integration.composer import child
+from composer.prompt import RESUME, RETURN
+from utils.paths import temp_dirs, under
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
-IN_TEMP = repo.under(os.path.realpath(TEAMS), repo.temp_dirs()) is not None
+IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(NEW, "core", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
 NOTE = (f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
@@ -24,10 +24,11 @@ WRITER = ("# Writer\n\nYou write notes.\n\n## Tasks\n\n"
           "- `note` (`<tasks>/note.md`): a short note; always; light.\n")
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """import repo
+CATALOG = """from composer.base import CONFIG, LOCAL
+from utils.config_file import read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(repo.read_config(composer.CONFIG))
+team.check_all(read_config(CONFIG, LOCAL))
 params = composer.RunParams(input="", out=os.path.join(sys.argv[2], "out.md"), workdir=sys.argv[2])
 rows = {}
 for role, tasks in composer.catalog(team).items():
@@ -39,24 +40,30 @@ print(json.dumps(rows))
 """
 
 
+def make_team(case: unittest.TestCase) -> str:
+    """A team dir of TEAM's files under TEAMS, removed after `case`'s test."""
+    os.makedirs(TEAMS, mode=0o700, exist_ok=True)
+    if os.path.realpath(TEAMS) != TEAMS:
+        raise RuntimeError(f"{TEAMS} must not contain symlinks")
+    os.chmod(TEAMS, 0o700)
+    team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
+    case.addCleanup(shutil.rmtree, team, ignore_errors=True)
+    os.chmod(team, 0o755)
+    for rel, text in TEAM.items():
+        path = os.path.join(team, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.chmod(os.path.dirname(path), 0o755)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(path, 0o644)
+    return team
+
+
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class TeamDirs(child.Case):
     def setUp(self):
         super().setUp()
-        os.makedirs(TEAMS, mode=0o700, exist_ok=True)
-        if os.path.realpath(TEAMS) != TEAMS:
-            raise RuntimeError(f"{TEAMS} must not contain symlinks")
-        os.chmod(TEAMS, 0o700)
-        self.team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
-        self.addCleanup(shutil.rmtree, self.team, ignore_errors=True)
-        os.chmod(self.team, 0o755)
-        for rel, text in TEAM.items():
-            path = os.path.join(self.team, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            os.chmod(os.path.dirname(path), 0o755)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
-            os.chmod(path, 0o644)
+        self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
         self.local(f"team_dirs = {json.dumps([self.team])}\n")
 

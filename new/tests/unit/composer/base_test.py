@@ -2,8 +2,7 @@
 import os
 import unittest
 
-from new.tests import SRC
-import repo
+from new.tests import CORE, SRC
 from composer import base
 
 
@@ -14,7 +13,7 @@ class Paths(unittest.TestCase):
         self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertEqual(base.SRC, SRC)
         self.assertTrue(os.path.isdir(os.path.join(base.SRC, "composer")))
-        self.assertEqual(base.CONFIG, repo.CONFIG)
+        self.assertEqual(base.CONFIG, os.path.join(CORE, "config.toml"))
 
 
 class Fill(unittest.TestCase):
@@ -59,13 +58,6 @@ text **not** an item
 
 
 class Outline(unittest.TestCase):
-    def test_unfenced_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
-        for text, want in (("a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
-                            [(0, "a"), (12, "e")]),
-                           ("``\nx", [(0, "``"), (1, "x")])):
-            with self.subTest(text=text):
-                self.assertEqual(base.unfenced(text), want)
-
     def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
         steps = ("Role", "Steps")
         self.assertEqual(base.outline(OUTLINED), [

@@ -1,8 +1,8 @@
 """The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...]. Stdlib only.
 
-Logs {"argv", "pid", "cwd", "env": {"PWD", "FAKE_ENV"}} as a JSON line, then runs the scenario, a JSON list of steps:
-{"out": obj} prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n}; then
-exits 0. HOOK is logged, never run."""
+Logs {"argv", "pid", "cwd", "env": {"PWD", "FAKE_ENV"}} as a JSON line, then runs the scenario, a JSON list of steps (or
+{"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj} prints obj as JSON, {"raw": text} prints
+text, {"err": text} to stderr, {"sleep": s}, {"exit": n}; then exits 0. HOOK is logged, never run."""
 import argparse
 import json
 import os
@@ -22,7 +22,10 @@ def main() -> int:
         f.write(json.dumps({"argv": sys.argv[1:], "pid": os.getpid(), "cwd": os.getcwd(),
                             "env": {k: os.environ.get(k) for k in ("PWD", "FAKE_ENV")}}) + "\n")
     with open(args.scenario, encoding="utf-8") as f:
-        steps = json.load(f)
+        scenario = json.load(f)
+    if isinstance(scenario, list):
+        scenario = {"steps": scenario}
+    steps = scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
