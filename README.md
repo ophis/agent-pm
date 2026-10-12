@@ -15,7 +15,7 @@ flowchart LR
 
 ### Core architecture (planned)
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` holds shared pure tools any layer may import; it imports no layer. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, an import of `utils/`, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. `utils/` holds shared pure tools any layer may import; it imports no layer. `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; dotted: implemented by, an import of `utils/`, or an adapter wrapping its runtime (launch command, output, hooks; the Driver starts and hosts it); thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory, so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
 
 ```mermaid
 flowchart TB
@@ -36,6 +36,7 @@ flowchart TB
   subgraph L2["role runs (role · task)"]
     D["delegate/<br>API · CLI · reply parsing · run policy"]
     C["composer/<br>prompt · run spec · resolve"]
+    T["core/team/<br>roles · tasks · methods · principles · templates<br>output/: output.md · destinations · outcome.schema.json"]
   end
   subgraph L3[sessions]
     DR["driver/<br>api · registry · records<br>modes: headless_run · tui_run<br>tmux_host"]
@@ -60,6 +61,8 @@ flowchart TB
   CF -->|resolve| C
   OR -->|"sessions · usage · session_info · detach · show · close"| DR
   D --> C
+  C -->|reads| T
+  D -->|"outcome.schema.json"| T
   D <==>|"start · events, replies"| DR
   DR -->|"loads; headless_run() / tui_run()"| B
   B -.->|implemented by| CL & CX & PP2
