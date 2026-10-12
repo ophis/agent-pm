@@ -19,7 +19,7 @@
 #                   overlay may set it per role. The Composer passes it through unchecked
 #   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
 #   show            local: tui mode only: how the agent run's TUI window opens.
-#                   unset        → open a pane: a tmux grid, else stacked (the Driver's tui mode)
+#                   unset        → open a pane: a tmux grid, else stacked (the Driver's show)
 #                   ""           → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory

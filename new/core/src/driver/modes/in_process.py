@@ -72,7 +72,7 @@ class InProcessMode:
         raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
-        # stop cannot interrupt a run blocked in a call: the daemon thread is left until its next yield or process exit.
+        # A run blocked in a call goes on until its next yield or the process exits.
         with self.lock:
             if not self.begun or self.stopped:
                 return

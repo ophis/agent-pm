@@ -2,7 +2,9 @@
 starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
 `stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record.
-attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a new tmux session."""
+attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a tmux session of its
+own."""
+import contextlib
 import logging
 import os
 import signal
@@ -14,9 +16,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, Headless, InProcess,
-                           Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd,
-                           Usage, Window, sid_error)
+from adapters.base import (RESUMABLE, Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, Headless,
+                           InProcess, Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr,
+                           Tui, TurnEnd, Usage, Window, sid_error)
 from driver import records, registry, tmux_host
 from driver.errors import DriverError
 from driver.modes import headless, in_process, tui
@@ -182,40 +184,114 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     if spec.sid is not None:
         raise ConfigError("spec.sid is set by start(): pass sid= or resume=")
     adapter = registry.adapter(runtime)
-    run = {"headless": adapter.headless, "tui": adapter.tui, "in_process": adapter.in_process}[mode]()
+    kind = _STEPS[mode]
+    run = kind.run_of(adapter)
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
     sid = resume or sid or str(uuid.uuid4())
-    if mode == "tui":
-        settings = registry.tui()
-        name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
-        events = _events(events)
-    else:
-        for key, value in (("name", name), ("events", events)):
-            if value is not None:
-                raise ConfigError(f"{key}: tui mode only")
+    steps = kind(run, runtime, sid, name, events)
     spec = replace(spec, sid=sid)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
-    resumed = resume is not None
-    if mode == "headless":
-        launch = run.launch(prompt, spec, resumed)
-        info = _launch_info(runtime, spec, launch)
-        _record_session(spec.workdir, info)
-        host = _begin_headless(run, launch, info.cwd)
-    elif mode == "tui":
-        launch = run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(name)))
-        info = _launch_info(runtime, spec, launch)
-        with tui.lock(name):
-            host = tui.TuiMode.prepare(name, run, info, events, runtime=runtime, workdir=spec.workdir)
-            _record_session(spec.workdir, info)
-            host.begin(launch.argv, cwd=info.cwd, env=_child_env(launch, info.cwd), status_line=settings.status_line)
-    elif mode == "in_process":
-        run.check(prompt, spec, resumed)
-        info = SessionInfo(sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", "")
-        _record_session(spec.workdir, info)
-        host = _begin_in_process(run, prompt, spec, resumed)
-    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info, name=name)
+    info = steps.info(prompt, spec, resume is not None)
+    with steps.prepared(info, spec.workdir) as host:
+        os.makedirs(spec.workdir, exist_ok=True)
+        records.note(records.path(spec.workdir), "session", sid=sid, cwd=info.cwd, project=info.project,
+                     transcript=info.transcript, resume=info.resume)
+        steps.begin(host)
+    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info,
+                  name=steps.name)
+
+
+def _no_tui_keys(name, events) -> None:
+    for key, value in (("name", name), ("events", events)):
+        if value is not None:
+            raise ConfigError(f"{key}: tui mode only")
+
+
+class _LaunchSteps:
+    """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd for begin()."""
+
+    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        self.command = launch = self.launch(prompt, spec, resumed)
+        if not launch.argv:
+            raise ConfigError(f"runtime {self.runtime!r} gave no command")
+        self.cwd = launch.cwd or spec.access.cwd or spec.workdir
+        return SessionInfo(spec.sid, "", self.cwd, spec.access.project, launch.transcript, launch.resume)
+
+
+class _HeadlessSteps(_LaunchSteps):
+    name = None
+
+    @staticmethod
+    def run_of(adapter: Adapter) -> Headless | None:
+        return adapter.headless()
+
+    def __init__(self, run: Headless, runtime: str, sid: str, name, events):
+        _no_tui_keys(name, events)
+        self.run, self.runtime = run, runtime
+
+    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
+        return self.run.launch(prompt, spec, resumed)
+
+    def prepared(self, info: SessionInfo, workdir: str) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
+        return contextlib.nullcontext(headless.HeadlessMode(self.run))
+
+    def begin(self, host: headless.HeadlessMode) -> None:
+        launch = self.command
+        try:
+            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd))
+        except (OSError, ValueError) as e:
+            raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
+
+
+class _TuiSteps(_LaunchSteps):
+    @staticmethod
+    def run_of(adapter: Adapter) -> Tui | None:
+        return adapter.tui()
+
+    def __init__(self, run: Tui, runtime: str, sid: str, name, events):
+        self.run, self.runtime, self.settings = run, runtime, registry.tui()
+        self.name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
+        self.events = _events(events)
+
+    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
+        return self.run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(self.name)))
+
+    @contextlib.contextmanager
+    def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
+        with tui.lock(self.name):
+            yield tui.TuiMode.prepare(self.name, self.run, info, self.events, runtime=self.runtime, workdir=workdir)
+
+    def begin(self, host: tui.TuiMode) -> None:
+        launch = self.command
+        host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd), status_line=self.settings.status_line)
+
+
+class _InProcessSteps:
+    name = None
+
+    @staticmethod
+    def run_of(adapter: Adapter) -> InProcess | None:
+        return adapter.in_process()
+
+    def __init__(self, run: InProcess, runtime: str, sid: str, name, events):
+        _no_tui_keys(name, events)
+        self.run = run
+
+    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        self.run.check(prompt, spec, resumed)
+        self.args = prompt, spec, resumed
+        return SessionInfo(spec.sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", "")
+
+    def prepared(self, info: SessionInfo, workdir: str) -> contextlib.AbstractContextManager[in_process.InProcessMode]:
+        return contextlib.nullcontext(in_process.InProcessMode(self.run))
+
+    def begin(self, host: in_process.InProcessMode) -> None:
+        host.begin(*self.args)
+
+
+_STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
 
 
 def _idle(idle_timeout) -> None:
@@ -239,34 +315,6 @@ def _events(events) -> str | None:
         return tmux_host.events_file(events)
     except tmux_host.TuiError as e:
         raise ConfigError(str(e)) from None
-
-
-def _launch_info(runtime: str, spec: Spec, launch: Launch) -> SessionInfo:
-    if not launch.argv:
-        raise ConfigError(f"runtime {runtime!r} gave no command")
-    return SessionInfo(spec.sid, "", launch.cwd or spec.access.cwd or spec.workdir, spec.access.project,
-                       launch.transcript, launch.resume)
-
-
-def _record_session(workdir: str, info: SessionInfo) -> None:
-    os.makedirs(workdir, exist_ok=True)
-    records.note(records.path(workdir), "session", sid=info.sid, cwd=info.cwd, project=info.project,
-                 transcript=info.transcript, resume=info.resume)
-
-
-def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.HeadlessMode:
-    host = headless.HeadlessMode(run)
-    try:
-        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
-    except (OSError, ValueError) as e:
-        raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
-    return host
-
-
-def _begin_in_process(run: InProcess, prompt: str, spec: Spec, resume: bool) -> in_process.InProcessMode:
-    host = in_process.InProcessMode(run)
-    host.begin(prompt, spec, resume)
-    return host
 
 
 def attach(name: str, idle_timeout: float | None = None) -> Handle:
