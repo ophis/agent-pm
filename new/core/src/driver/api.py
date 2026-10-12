@@ -1,9 +1,9 @@
 """The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
 starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
-`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record.
-attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a tmux session of its
-own."""
+`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record;
+writable_dirs() the dirs a runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
+tui session by name; detach() runs a command in a tmux session of its own."""
 
 import contextlib
 import logging
@@ -88,6 +88,7 @@ __all__ = [
     "show",
     "start",
     "usage",
+    "writable_dirs",
 ]
 
 MODES = ("headless", "tui", "in_process")
@@ -600,3 +601,16 @@ def session_info(runtime: str, sid: str, cwd: str) -> SessionStatus:
         return adapter.session_status(sid, cwd)
     except OSError:
         return SessionStatus("unknown", None, "")
+
+
+def writable_dirs(runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
+    """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails closed."""
+    if spec.sid is not None:
+        raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
+    if resume is not None and (error := sid_error(resume)):
+        raise ConfigError(error)
+    adapter = registry.adapter(runtime)
+    try:
+        return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
+    except OSError as e:
+        raise ConfigError(f"{runtime}'s writable dirs: {e}") from e

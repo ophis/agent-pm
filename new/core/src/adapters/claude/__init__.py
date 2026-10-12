@@ -1,6 +1,8 @@
 """Claude Code's Adapter, runtime `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the rest is
 ClaudeCommon's."""
 
+import os
+
 from adapters.base import Adapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless import ClaudeHeadless
@@ -29,3 +31,7 @@ class ClaudeAdapter(Adapter):
 
     def session_status(self, sid, cwd):
         return self.common.session_status(sid, cwd)
+
+    def writable_dirs(self, spec, resume):
+        dirs = (spec.access.cwd or spec.workdir, *spec.access.dirs)
+        return tuple(dict.fromkeys(map(os.path.realpath, dirs)))
