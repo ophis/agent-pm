@@ -119,10 +119,10 @@ class TurnEnds(TuiRun):
     def test_after_the_nudge_stop_limit_turn_ends_without_an_outcome_give_up_the_session_left_open(self):
         result = self.go(steps=[START], turns=[[*[stop("Working.")] * (STOP_LIMIT - 1), "Working."]])
         self.assertEqual(result, GAVE_UP)
-        self.assertIn(f"delegate: no outcome after 3 turn ends; {LEFT_OPEN}", self.err)
+        self.assertIn(f"delegate: no outcome after {STOP_LIMIT} turn ends; {LEFT_OPEN}", self.err)
         self.assertEqual(self.users(), [NUDGE])
         self.assertEqual(self.kinds(), [*TURN_1, "nudge", "give_up", "result", "end"])
-        self.assertEqual(self.last("give_up")["reason"], "no outcome after 3 turn ends")
+        self.assertEqual(self.last("give_up")["reason"], f"no outcome after {STOP_LIMIT} turn ends")
         self.left_open()
 
     def test_turn_ends_with_work_pending_neither_nudge_nor_count(self):

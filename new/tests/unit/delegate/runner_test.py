@@ -78,9 +78,11 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 class FakeHandle:
     """driver.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
-    left: AssertionError); send (raising `fail`) and stop recorded in `calls`. start: driver.api.start's stand-in."""
-    def __init__(self, events, fail=None):
-        self.left, self.fail, self.calls, self.name, self.sid = iter(events), fail, [], NAME, None
+    left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
+    driver.api.start's stand-in."""
+    def __init__(self, events, fail=None, stop_fail=None):
+        self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
+        self.name, self.sid = NAME, None
 
     def start(self, runtime, mode, prompt, spec, **kw):
         os.makedirs(spec.workdir, exist_ok=True)
@@ -101,6 +103,8 @@ class FakeHandle:
 
     def stop(self):
         self.calls.append(("stop",))
+        if self.stop_fail:
+            raise self.stop_fail
 
 
 class Base(unittest.TestCase):
@@ -523,8 +527,8 @@ class TuiPolicy(Base):
         self.enterContext(mock.patch.dict(os.environ))
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
-    def faked(self, *events, fail=None, mode="tui", **kw) -> Result:
-        self.handle = FakeHandle(events, fail)
+    def faked(self, *events, fail=None, stop_fail=None, mode="tui", **kw) -> Result:
+        self.handle = FakeHandle(events, fail, stop_fail)
         with mock.patch.object(runner.api, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
@@ -656,6 +660,33 @@ class TuiPolicy(Base):
             self.faked(turn(START), on_event=boom)
         self.assertEqual(self.handle.calls, [("stop",)])
         self.assertEqual(self.last("result")["error"], "stopped: RuntimeError: boom")
+
+    def test_a_failed_stop_is_printed_and_the_runs_exception_raised(self):
+        for error in (RuntimeError("boom"), KeyboardInterrupt()):
+            def raise_(event, error=error):
+                if isinstance(event, Progress):
+                    raise error
+            with self.subTest(error=error):
+                self.fresh()
+                with self.assertRaises(type(error)) as cm:
+                    self.faked(turn(START), on_event=raise_, stop_fail=api.DriverError("gone"))
+                self.assertIs(cm.exception, error)
+                self.assertEqual((self.handle.calls, self.err.count("delegate: tui: gone\n")), ([("stop",)], 1))
+                self.assertTrue(self.last("result")["error"].startswith(f"stopped: {type(error).__name__}"))
+
+    def test_a_failed_stop_is_printed_and_never_replaces_the_limit_or_stale_out_result(self):
+        gone = api.DriverError("gone")
+        r = self.faked(api.LimitHit(None), stop_fail=gone)
+        self.assertEqual(r, Result(0, None, "usage limit; reset time unknown", Limit(None)))
+        self.assertEqual((self.handle.calls, self.err.count("delegate: tui: gone\n")), ([("stop",)], 1))
+        self.assertEqual(self.kinds(), ["input", "limit", "result", "end"])
+        blocker = os.path.join(self.tmp, "file")
+        self.write(blocker, "")
+        self.fresh()
+        r = self.faked(turn(START, block(DONE)), stop_fail=gone, out=os.path.join(blocker, "out.md"))
+        self.assertEqual((r.returncode, r.outcome, self.events, self.handle.calls), (1, None, [], [("stop",)]))
+        self.assertRegex(r.error, r"^cannot remove the stale out: ")
+        self.assertEqual(self.err.count("delegate: tui: gone\n"), 1)
 
     def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
         os.makedirs(self.work)

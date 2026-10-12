@@ -200,7 +200,7 @@ class _Attempts:
             stale = self.drop_stale_out()
             self.note("input", text=p.params.input)
             if stale:
-                handle.stop()
+                self.stop(handle)
                 return Result(1, None, stale)
             self.on_event(Begun(p.sid))
             fixed = False
@@ -226,8 +226,17 @@ class _Attempts:
                     continue
                 return self.finish(outcome, rc)
         except BaseException:
-            handle.stop()
+            self.stop(handle)
             raise
+
+    def stop(self, handle: api.Handle) -> bool:
+        """A DriverError is printed, never the run's result or exception; False then, the session maybe running."""
+        try:
+            handle.stop()
+        except api.DriverError as e:
+            _say(f"delegate: {self.plan.mode}: {e}")
+            return False
+        return True
 
     def drop_stale_out(self) -> str:
         """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
@@ -260,8 +269,9 @@ class _Attempts:
                     answer = self.policy.idle(event.seconds)
             elif isinstance(event, api.LimitHit):
                 self.note("limit", resets_at=event.resets_at)
-                handle.stop()
                 limit = Limit(event.resets_at)
+                if not self.stop(handle):
+                    break
             elif isinstance(event, api.Exited):
                 rc = event.returncode
             if isinstance(answer, GiveUp):
