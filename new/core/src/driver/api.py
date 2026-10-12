@@ -15,9 +15,9 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from adapters.base import (RESUMABLE, Access, Activity, Blocked, ConfigError, Event, Exited, Headless, Launch,
-                           LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, TurnEnd, Usage,
-                           Window, sid_error)
+from adapters.base import (RESUMABLE, Access, Activity, Adapter, Blocked, ConfigError, Event, Exited, Headless,
+                           Launch, LimitHit, Reply, SessionBound, SessionInfo, SessionStatus, Spec, Stderr, Tui,
+                           TurnEnd, Usage, Window, sid_error)
 from driver import records, registry, tmux_host
 from driver.errors import DriverError
 from driver.modes import headless, tui
@@ -182,38 +182,78 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
     if spec.sid is not None:
         raise ConfigError("spec.sid is set by start(): pass sid= or resume=")
     adapter = registry.adapter(runtime)
-    run = adapter.headless() if mode == "headless" else adapter.tui()
+    kind = _STEPS[mode]
+    run = kind.run_of(adapter)
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
     sid = resume or sid or str(uuid.uuid4())
-    if mode == "headless":
-        for key, value in (("name", name), ("events", events)):
-            if value is not None:
-                raise ConfigError(f"{key}: tui mode only")
-    else:
-        settings = registry.tui()
-        name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
-        events = _events(events)
+    steps = kind(run, runtime, sid, name, events)
     spec = replace(spec, sid=sid)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
-    launch = (run.launch(prompt, spec, resume is not None) if mode == "headless" else
-              run.launch(prompt, spec, resume is not None, tui.hook_argv(tui.session_dir(name))))
+    launch = steps.launch(prompt, spec, resume is not None)
     if not launch.argv:
         raise ConfigError(f"runtime {runtime!r} gave no command")
     cwd = launch.cwd or spec.access.cwd or spec.workdir
     info = SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume)
-    with tui.lock(name) if mode == "tui" else contextlib.nullcontext():
-        if mode == "tui":
-            host = tui.TuiMode.prepare(name, run, info, events, runtime=runtime, workdir=spec.workdir)
+    with steps.prepared(info, spec.workdir) as host:
         os.makedirs(spec.workdir, exist_ok=True)
         records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
                      transcript=launch.transcript, resume=launch.resume)
-        if mode == "headless":
-            host = _begin_headless(run, launch, cwd)
-        else:
-            host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=settings.status_line)
-    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info, name=name)
+        steps.begin(host, launch, cwd)
+    return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info,
+                  name=steps.name)
+
+
+class _HeadlessSteps:
+    name = None
+
+    @staticmethod
+    def run_of(adapter: Adapter) -> Headless | None:
+        return adapter.headless()
+
+    def __init__(self, run: Headless, runtime: str, sid: str, name, events):
+        for key, value in (("name", name), ("events", events)):
+            if value is not None:
+                raise ConfigError(f"{key}: tui mode only")
+        self.run = run
+
+    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
+        return self.run.launch(prompt, spec, resumed)
+
+    def prepared(self, info: SessionInfo, workdir: str) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
+        return contextlib.nullcontext(headless.HeadlessMode(self.run))
+
+    def begin(self, host: headless.HeadlessMode, launch: Launch, cwd: str) -> None:
+        try:
+            host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
+        except (OSError, ValueError) as e:
+            raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
+
+
+class _TuiSteps:
+    @staticmethod
+    def run_of(adapter: Adapter) -> Tui | None:
+        return adapter.tui()
+
+    def __init__(self, run: Tui, runtime: str, sid: str, name, events):
+        self.run, self.runtime, self.settings = run, runtime, registry.tui()
+        self.name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
+        self.events = _events(events)
+
+    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
+        return self.run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(self.name)))
+
+    @contextlib.contextmanager
+    def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
+        with tui.lock(self.name):
+            yield tui.TuiMode.prepare(self.name, self.run, info, self.events, runtime=self.runtime, workdir=workdir)
+
+    def begin(self, host: tui.TuiMode, launch: Launch, cwd: str) -> None:
+        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=self.settings.status_line)
+
+
+_STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps}
 
 
 def _idle(idle_timeout) -> None:
@@ -237,15 +277,6 @@ def _events(events) -> str | None:
         return tmux_host.events_file(events)
     except tmux_host.TuiError as e:
         raise ConfigError(str(e)) from None
-
-
-def _begin_headless(run: Headless, launch: Launch, cwd: str) -> headless.HeadlessMode:
-    host = headless.HeadlessMode(run)
-    try:
-        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd))
-    except (OSError, ValueError) as e:
-        raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
-    return host
 
 
 def attach(name: str, idle_timeout: float | None = None) -> Handle:

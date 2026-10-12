@@ -103,6 +103,14 @@ def grid_set(window, manager, n=3, hooks=True, retile="all"):
                         else (";", "set-hook", "-u", "-w", "-t", window, h)))]
 
 
+def mute(window):
+    return ["tmux", "set-option", "-w", "-t", window, "@grid-busy", window]
+
+
+def unmute(window):
+    return ["tmux", "set-option", "-u", "-w", "-t", window, "@grid-busy"]
+
+
 def environ(**values):
     return unittest.mock.patch.dict(os.environ, values, clear=True)
 
@@ -464,7 +472,6 @@ class Start(unittest.TestCase):
                 for call in (lambda: self.start(fake, session=name), lambda: tmux_host.status(name, proc=fake),
                              lambda: tmux_host.detach(name, ["tool"], cwd=self.cwd, env={"PATH": self.bin},
                                                       proc=fake, sleep=self.sleep),
-                             lambda: tmux_host.decorate(name, proc=fake),
                              lambda: tmux_host.kill(name, proc=fake),
                              lambda: tmux_host.send(name, "x", proc=fake, sleep=self.sleep),
                              lambda: tmux_host.paste(name, "x", proc=fake),
@@ -838,27 +845,6 @@ class EventsFile(unittest.TestCase):
                     self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: tmux would misread"):
                 tmux_host.events_file(path)
             self.assertFalse(os.path.exists(path))
-
-
-class Decorate(unittest.TestCase):
-    def test_tmux_calls(self):
-        for events in (None, "/a b/e"):
-            with self.subTest(events=events):
-                fake = Tmux()
-                tmux_host.decorate("s", events, proc=fake)
-                self.assertEqual(fake.calls, decorations("s", events))
-                self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
-        fake = Tmux()
-        tmux_host.decorate("s", status_line=True, proc=fake)
-        self.assertEqual(fake.calls, decorations("s", status="on"))
-
-    def test_failure(self):
-        for events, step in ((None, "set-hook"), ("/e", "set-option")):
-            with self.subTest(events=events):
-                fake = Tmux(fail={step})
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
-                    tmux_host.decorate("s", events, proc=fake)
-                self.assertEqual(len(fake.calls), 1)
 
 
 class Status(unittest.TestCase):
@@ -1675,6 +1661,10 @@ class GridOpen(unittest.TestCase):
         with environ(**env), which(), redirect_stderr(self.stderr):
             return tmux_host.show("s", proc=fake, retile=retile, **kw)
 
+    def split(self, flag, pane, window="@1"):
+        """A grid split: the window's hooks muted first, so a previous mode's hook starts no tile; grid_set unmutes."""
+        return [mute(window), split_window(flag, pane)]
+
     def opened(self, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
         """What follows a grid split: the records, the grid's options and hooks, then tile (none under off)."""
         return [*record(opener, "%20"), grid_set(window, manager, n, hooks, retile),
@@ -1684,14 +1674,14 @@ class GridOpen(unittest.TestCase):
         # plain tmux in iTerm2 ($ITERM_SESSION_ID set, iTerm2 running): a tmux split all the same
         fake = self.fake({"%3": self.NEW})
         self.assertIsNone(self.show(fake))
-        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"), split_window("-h", "%3"),
+        self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"), *self.split("-h", "%3"),
                                       *self.opened()])
         self.assertEqual(self.stderr.getvalue(), ATTACH)
         # its @pane gone: still a root
         fake = self.fake({"%3": self.NEW}, [("$1", "mgr", "", "%77")])
         self.assertIsNone(self.show(fake))
         self.assertEqual(fake.calls, [OWN, SESSIONS, grid_read("%77"), clients_of("mgr"), grid_read("%3"),
-                                      split_window("-h", "%3"), *self.opened()])
+                                      *self.split("-h", "%3"), *self.opened()])
 
     def test_the_largest_pane_but_the_managers_splits_below(self):
         for workers, target in (([("%10", "80", "24"), ("%11", "80", "23")], "%10"),
@@ -1700,14 +1690,14 @@ class GridOpen(unittest.TestCase):
             with self.subTest(target=target, workers=workers):
                 fake = self.fake({"%3": [("@1", "%3", "%3", "79", "48"), *(("@1", "%3", *w) for w in workers)]})
                 self.assertIsNone(self.show(fake))
-                self.assertEqual(fake.calls[3:], [grid_read("%3"), split_window("-v", target), *self.opened()])
+                self.assertEqual(fake.calls[3:], [grid_read("%3"), *self.split("-v", target), *self.opened()])
 
     def test_a_stored_manager_not_a_pane_of_the_window_starts_a_new_grid_at_the_anchor(self):
         for manager in ("%99", "x", "%3;", " %3"):
             with self.subTest(manager=manager):
                 fake = self.fake({"%3": [("@1", manager, "%3", "79", "48"), ("@1", manager, "%5", "80", "48")]})
                 self.assertIsNone(self.show(fake))
-                self.assertEqual(fake.calls[3:], [grid_read("%3"), split_window("-v", "%5"), *self.opened()])
+                self.assertEqual(fake.calls[3:], [grid_read("%3"), *self.split("-v", "%5"), *self.opened()])
 
     def test_a_root_not_the_callers_anchors_at_its_clients_pane(self):
         # the most recently active client's pane; a control-mode client (iTerm2's tmux -CC) too
@@ -1716,17 +1706,17 @@ class GridOpen(unittest.TestCase):
             with self.subTest(env=env):
                 fake = self.fake({"%9": [("@2", "", "%9", "160", "48")]}, own="drv", clients=clients)
                 self.assertIsNone(self.show(fake, env, opener="mgr"))
-                self.assertEqual(fake.calls, [*head, grid_read("%9"), split_window("-h", "%9"),
+                self.assertEqual(fake.calls, [*head, grid_read("%9"), *self.split("-h", "%9", "@2"),
                                               *self.opened("@2", "%9")])
         # the client's pane in a grid window: that grid
         fake = self.fake({"%9": [("@1", "%3", "%3", "79", "48"), ("@1", "%3", "%9", "80", "48")]}, own="drv")
         self.assertIsNone(self.show(fake, opener="mgr"))
-        self.assertEqual(fake.calls[3:], [grid_read("%9"), split_window("-v", "%9"), *self.opened()])
+        self.assertEqual(fake.calls[3:], [grid_read("%9"), *self.split("-v", "%9"), *self.opened()])
 
     def test_a_given_opener_that_is_the_callers_session_anchors_at_its_pane(self):
         fake = self.fake({"%3": self.NEW})
         self.assertIsNone(self.show(fake, opener="mgr"))
-        self.assertEqual(fake.calls, [SESSIONS, clients_of("mgr"), OWN, grid_read("%3"), split_window("-h", "%3"),
+        self.assertEqual(fake.calls, [SESSIONS, clients_of("mgr"), OWN, grid_read("%3"), *self.split("-h", "%3"),
                                       *self.opened()])
 
     def test_a_member_opens_a_sub_worker_in_its_window(self):
@@ -1736,7 +1726,7 @@ class GridOpen(unittest.TestCase):
             with self.subTest(**kw):
                 fake = self.fake({"%10": window}, rows, own="w1")
                 self.assertIsNone(self.show(fake, **kw))
-                self.assertEqual(fake.calls, [*head, grid_read("%10"), split_window("-v", "%10"),
+                self.assertEqual(fake.calls, [*head, grid_read("%10"), *self.split("-v", "%10"),
                                               *self.opened(opener="w1")])
 
     def test_todays_path_for_a_detached_root_or_a_member_outside_a_grid(self):
@@ -1772,7 +1762,7 @@ class GridOpen(unittest.TestCase):
                 fake = self.fake({"%3": self.NEW})
                 self.assertIsNone(self.show(fake, **kw))
                 self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"),
-                                              split_window("-h", "%3"), *self.opened()])
+                                              *self.split("-h", "%3"), *self.opened()])
                 self.assertEqual(self.stderr.getvalue(), ATTACH + self.NOTICE)
 
     def test_split_honored_outside_the_grid(self):
@@ -1783,10 +1773,14 @@ class GridOpen(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_a_failed_split_changes_nothing_else(self):
+        # the hooks unmuted again, after a split that raises too
         fake = self.fake({"%3": self.NEW}, **{"split-window": (1, "", "no space for new pane\n")})
         self.assertEqual(self.show(fake), "tmux: no space for new pane")
-        self.assertEqual(fake.calls[-1], split_window("-h", "%3"))
+        self.assertEqual(fake.calls[3:], [grid_read("%3"), *self.split("-h", "%3"), unmute("@1")])
         self.assertEqual(self.stderr.getvalue(), ATTACH + "tui: show: tmux: no space for new pane\n")
+        fake = self.fake({}, **{"list-panes": lambda argv: (0, "@1\t\t%3\t160\t48\t/tmp/a#b\n")})
+        self.assertEqual(self.show(fake), "tmux would misread '/tmp/a#b'" + WATCH)
+        self.assertEqual(fake.calls[3:], [grid_read("%3"), mute("@1"), unmute("@1")])
 
     def test_hooks_need_paths_tmux_takes_verbatim(self):
         for target, name, bad in ((sys, "executable", "/a b/python3"), (sys, "executable", "/a#b/python3"),
@@ -1809,7 +1803,7 @@ class GridOpen(unittest.TestCase):
                 fake = self.fake({"%3": self.NEW})
                 self.assertIsNone(self.show(fake, retile=retile))
                 self.assertEqual(fake.calls, [OWN, SESSIONS, clients_of("mgr"), grid_read("%3"),
-                                              split_window("-h", "%3"), *self.opened(retile=mode)])
+                                              *self.split("-h", "%3"), *self.opened(retile=mode)])
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_retile_modes_with_a_hook_path_tmux_would_misread(self):
@@ -1820,7 +1814,7 @@ class GridOpen(unittest.TestCase):
                 with self.subTest(retile=retile):
                     fake = self.fake({"%3": self.NEW})
                     self.assertIsNone(self.show(fake, retile=retile))
-                    self.assertEqual(fake.calls[5:], self.opened(retile=retile, hooks=False))
+                    self.assertEqual(fake.calls[6:], self.opened(retile=retile, hooks=False))
                     self.assertEqual(self.stderr.getvalue(), ATTACH + printed)
 
     def test_bad_retile_raises_before_tmux(self):
