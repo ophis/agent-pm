@@ -12,16 +12,17 @@ import unittest
 from pathlib import Path
 
 from new.tests import guards
-from new.tests.case import CORE, NEW, ROOT, Case
+from new.tests.case import CORE, NEW, ORCH_ROOT, PY, ROOT, Case, child_env
 
 OLD = "/".join(("core", "src"))
 PKG = "src/agent_pm"
+ORCH = os.path.dirname(ORCH_ROOT)
+OPKG = "src/agent_pm_orchestrator"
 FIXTURES = ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
 ORCH_GUARDS = (guards.orchestrator_imports, guards.orchestrator_text, guards.config_once)
 PROBE = (
     "import importlib, json, sys\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "modules = {n: importlib.import_module(n).__file__ for n in sys.argv[2:]}\n"
+    "modules = {n: importlib.import_module(n).__file__ for n in sys.argv[1:]}\n"
     "files = [getattr(m, '__file__', None) for m in list(sys.modules.values())]\n"
     "print(json.dumps({'modules': modules, 'files': files, 'path': sys.path}))\n"
 )
@@ -66,10 +67,11 @@ class RealTree(Case):
             (guards.tmux_calls, CORE),
             (guards.syntax_39, CORE),
             (guards.import_hygiene, NEW),
-            *((guard, ORCHESTRATOR) for guard in ORCH_GUARDS),
-            (guards.private_imports, ORCHESTRATOR),
-            (guards.syntax_311, ORCHESTRATOR),
-            (guards.old_core, ORCHESTRATOR),
+            (guards.python_commands, NEW),
+            *((guard, ORCH) for guard in ORCH_GUARDS),
+            (guards.private_imports, ORCH),
+            (guards.syntax_311, ORCH),
+            (guards.old_core, ORCH),
         ):
             with self.subTest(guard.__name__, root=root):
                 self.assertEqual(guard(root), [])
@@ -86,20 +88,27 @@ class RealTree(Case):
         files = [getattr(m, "__file__", None) for m in list(sys.modules.values())]
         self.assert_no_old_core(files, sys.path)
 
-    def test_orchestrator_loads_from_its_src_and_never_the_old_core(self):
-        # A fresh interpreter: a src/ script that puts its own dir on sys.path (codex tui_hook.py)
-        # shadows bare names such as `sessions` for the rest of this process.
-        names = sorted(f[:-3] for f in os.listdir(ORCH_SRC) if f.endswith(".py"))
+    def test_orchestrator_loads_from_its_root_and_never_the_old_core(self):
+        package = os.path.join(ORCH_ROOT, "agent_pm_orchestrator")
+        names = sorted(
+            "agent_pm_orchestrator" + ("" if f == "__init__.py" else f".{f[:-3]}")
+            for f in os.listdir(package)
+            if f.endswith(".py")
+        )
+        self.assertIn("agent_pm_orchestrator.run", names)
         out = subprocess.run(
-            [sys.executable, "-I", "-c", PROBE, ORCH_SRC, *names],
+            [*PY, "-c", PROBE, *names],
+            env=child_env(None, ORCH_ROOT),
             capture_output=True,
             text=True,
             check=True,
         ).stdout
         loaded = json.loads(out)
-        orch = os.path.realpath(ORCH_SRC)
         for name in names:
-            self.assertEqual(os.path.dirname(os.path.realpath(loaded["modules"][name])), orch)
+            self.assertEqual(
+                os.path.dirname(os.path.realpath(loaded["modules"][name])),
+                os.path.realpath(package),
+            )
         self.assert_no_old_core(loaded["files"], loaded["path"])
 
     def assert_no_old_core(self, files, path):
@@ -228,6 +237,25 @@ class LayerImports(Sample):
             ],
         )
 
+    def test_importing_the_orchestrator_is_a_violation(self):
+        root = self.tree(
+            {
+                f"{PKG}/delegate/x.py": "from agent_pm_orchestrator.config import load\n",
+                f"{PKG}/driver/x.py": "from agent_pm_orchestrator import config\n",
+                f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm_orchestrator')\n",
+                f"{PKG}/x.py": "import agent_pm_orchestrator.run\n",
+            }
+        )
+        self.assertEqual(
+            guards.layer_imports(root),
+            [
+                f"{PKG}/delegate/x.py: delegate imports agent_pm_orchestrator.config",
+                f"{PKG}/driver/x.py: driver imports agent_pm_orchestrator.config",
+                f"{PKG}/utils/x.py: outside the layers imports agent_pm_orchestrator",
+                f"{PKG}/x.py: outside the layers imports agent_pm_orchestrator.run",
+            ],
+        )
+
     def test_the_package_is_the_one_dir_under_src(self):
         root = self.tree(
             {
@@ -252,9 +280,9 @@ class RuntimeNames(Sample):
         )
 
     def test_print_prompt_is_a_runtime_name(self):
-        root = self.tree({"src/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
+        root = self.tree({f"{PKG}/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
         self.assertEqual(
-            guards.runtime_names(root), ["src/delegate/x.py:1: runtime name print_prompt"]
+            guards.runtime_names(root), [f"{PKG}/delegate/x.py:1: runtime name print_prompt"]
         )
 
     def test_adapters_subpackage_is_exempt(self):
@@ -540,63 +568,141 @@ class ImportHygiene(Sample):
             [f"{src}/{entry}: not agent_pm" for entry in ("README", "other", "repo.py")],
         )
 
+    def test_the_orchestrator_root_holds_only_its_package(self):
+        src = "orchestrator/src"
+        names = (
+            "agent_pm_orchestrator/__init__.py",
+            "__pycache__/x.pyc",
+            "config.py",
+            "agent_pm/__init__.py",
+        )
+        root = self.tree({f"{src}/{name}": "" for name in names})
+        self.assertEqual(
+            guards.import_hygiene(root),
+            [f"{src}/{entry}: not agent_pm_orchestrator" for entry in ("agent_pm", "config.py")],
+        )
+
+
+class PythonCommands(Sample):
+    def test_a_python_command_other_than_p_m_agent_pm(self):
+        root = self.tree(
+            {
+                "core/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n'
+                "# python3 -P -m agent_pm.agent_tools.repo\n",
+                "orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
+                "core/skills/a/SKILL.md": "Run `python3.11 x.py`.\n"
+                "- Bash(python -P -m agent_pm.delegate.cli --list)\n",
+                "core/team/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
+                "3. `env PYTHONPATH=x python3 -P -m agent_pm_orchestrator.run`\n",
+            }
+        )
+        self.assertEqual(
+            guards.python_commands(root),
+            [
+                'core/config.toml:1: python command "python3 -m agent_pm.x"',
+                'core/config.toml:1: python command "python3 x.py"',
+                'core/skills/a/SKILL.md:1: python command "python3.11 x.py"',
+                'core/team/roles/r.md:1: python command "python3 -P agent_pm.x"',
+                'core/team/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
+                'orchestrator/config.toml:1: python command "python3 -P -m agent_pmx.y"',
+            ],
+        )
+
+    def test_other_words_and_files_are_clean(self):
+        root = self.tree(
+            {
+                "core/team/a.md": "pythonic, my_python3 x.py, Python 3.11\n",
+                "core/skills/a/notes.txt": "python3 x.py\n",
+                "core/README.md": "python3 x.py\n",
+                "orchestrator/other.toml": 'x = "python3 x.py"\n',
+                "tests/a.md": "python3 x.py\n",
+            }
+        )
+        self.assertEqual(guards.python_commands(root), [])
+
 
 class OrchestratorImports(Sample):
     def test_forbidden_imports_name_the_file_and_line(self):
         root = self.tree(
             {
-                "src/a.py": "import adapters\nfrom driver.modes import x\nimport tmux_host\nimport repo\n",
-                "src/b.py": "from delegate import runner\nfrom delegate.outcome import Outcome\nimport core\n"
-                "import attended\n",
-                "src/run.py": "from composer import resolve\n",
+                f"{OPKG}/a.py": "import agent_pm.adapters\nfrom agent_pm.driver.modes import x\n"
+                "from agent_pm.driver import tmux_host\nimport agent_pm.agent_tools.repo\n",
+                f"{OPKG}/b.py": "from agent_pm.delegate import runner\n"
+                "from agent_pm.delegate.outcome import Outcome\nimport core\nimport agent_pm\n",
+                f"{OPKG}/run.py": "from agent_pm.composer import resolve\nfrom agent_pm import composer\n",
             }
         )
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                "src/a.py:1: imports adapters",
-                "src/a.py:2: imports driver.modes.x",
-                "src/a.py:3: imports tmux_host",
-                "src/a.py:4: imports repo",
-                "src/b.py:1: imports delegate.runner",
-                "src/b.py:2: imports delegate.outcome.Outcome",
-                "src/b.py:3: imports core",
-                "src/b.py:4: imports attended",
-                "src/run.py:1: imports composer.resolve",
+                f"{OPKG}/a.py:1: imports agent_pm.adapters",
+                f"{OPKG}/a.py:2: imports agent_pm.driver.modes.x",
+                f"{OPKG}/a.py:3: imports agent_pm.driver.tmux_host",
+                f"{OPKG}/a.py:4: imports agent_pm.agent_tools.repo",
+                f"{OPKG}/b.py:1: imports agent_pm.delegate.runner",
+                f"{OPKG}/b.py:2: imports agent_pm.delegate.outcome.Outcome",
+                f"{OPKG}/b.py:3: imports core",
+                f"{OPKG}/b.py:4: imports agent_pm",
+                f"{OPKG}/run.py:1: imports agent_pm.composer.resolve",
+                f"{OPKG}/run.py:2: imports agent_pm.composer",
             ],
         )
 
-    def test_submodules_by_attribute_other_forms_and_module_names(self):
+    def test_bare_and_relative_names(self):
         root = self.tree(
             {
-                "src/a.py": "import delegate as d\nd.runner.run()\nimport driver.api\nfrom . import b\n"
-                "import third_party\n__import__('adapters.base')\n",
-                "src/config.py": "import composer\ncomposer.run.resolve()\n",
-                "src/utils.py": "",
-                "src/attended.py": "",
+                f"{OPKG}/a.py": "import config\nfrom linear import use_logs\nfrom driver import api\n"
+                "import utils.shell\nimport delegate\nfrom . import b\nfrom .c import d\n",
             }
         )
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                "src/a.py:2: uses delegate.runner",
-                "src/a.py:3: imports driver.api",
-                "src/a.py:4: imports .b",
-                "src/a.py:5: imports third_party",
-                "src/a.py:6: imports adapters.base",
-                "src/attended.py: module named attended",
-                "src/config.py:2: uses composer.run",
-                "src/utils.py: module named utils",
+                f"{OPKG}/a.py:1: imports config",
+                f"{OPKG}/a.py:2: imports linear.use_logs",
+                f"{OPKG}/a.py:3: imports driver.api",
+                f"{OPKG}/a.py:4: imports utils.shell",
+                f"{OPKG}/a.py:5: imports delegate",
+                f"{OPKG}/a.py:6: imports .b",
+                f"{OPKG}/a.py:7: imports .c.d",
+            ],
+        )
+
+    def test_submodules_by_attribute_and_other_forms(self):
+        root = self.tree(
+            {
+                f"{OPKG}/a.py": "from agent_pm import delegate as d\nd.runner.run()\n"
+                "import agent_pm.driver.api\nimport third_party\n__import__('agent_pm.adapters.base')\n"
+                "import agent_pm.delegate\nagent_pm.delegate.outcome.x\n"
+                "from agent_pm.driver.api import start\n",
+                f"{OPKG}/config.py": "from agent_pm import composer\ncomposer.run.resolve()\n",
+            }
+        )
+        self.assertEqual(
+            guards.orchestrator_imports(root),
+            [
+                f"{OPKG}/a.py:2: uses agent_pm.delegate.runner",
+                f"{OPKG}/a.py:3: imports agent_pm.driver.api",
+                f"{OPKG}/a.py:4: imports third_party",
+                f"{OPKG}/a.py:5: imports agent_pm.adapters.base",
+                f"{OPKG}/a.py:7: uses agent_pm.delegate.outcome",
+                f"{OPKG}/a.py:8: imports agent_pm.driver.api.start",
+                f"{OPKG}/config.py:2: uses agent_pm.composer.run",
             ],
         )
 
     def test_allowed_imports_are_clean(self):
         root = self.tree(
             {
-                "src/config.py": "import os\nfrom composer import resolve\nimport composer\n"
-                "composer.index()\nfrom utils.files import save\n",
-                "src/run.py": "import config\nfrom delegate import run, Result\nimport delegate\n"
-                "delegate.Begun\nfrom driver import api\nimport utils.shell\n",
+                f"{OPKG}/config.py": "import os\nfrom agent_pm.composer import resolve\n"
+                "from agent_pm import composer\ncomposer.index()\nimport agent_pm.composer\n"
+                "from agent_pm.utils.files import save\n",
+                f"{OPKG}/run.py": "from agent_pm_orchestrator import config\n"
+                "from agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
+                "delegate.Begun\nimport agent_pm.delegate as d\nd.Finished\n"
+                "from agent_pm.driver import api\nimport agent_pm.utils.shell\nfrom agent_pm import utils\n"
+                "import agent_pm_orchestrator.linear\nfrom agent_pm_orchestrator.config import TASKS\n",
+                f"{OPKG}/utils.py": "",
             }
         )
         self.assertEqual(guards.orchestrator_imports(root), [])
@@ -606,8 +712,9 @@ class OrchestratorText(Sample):
     def test_runtime_names_and_tool_strings_name_the_file_and_line(self):
         root = self.tree(
             {
-                "src/router.py": 'X = "codex"\n',
-                "src/a.py": 'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n# Claude\n',
+                f"{OPKG}/router.py": 'X = "codex"\n',
+                f"{OPKG}/a.py": 'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n'
+                "# Claude\n",
                 "config.toml": '# claude\nx = "tmux"\ny = \'adapters\'\nz = "tmux ls"  # "tmux"\n',
             }
         )
@@ -617,17 +724,17 @@ class OrchestratorText(Sample):
                 "config.toml:1: runtime name claude",
                 'config.toml:2: str constant "tmux"',
                 'config.toml:3: str constant "adapters"',
-                'src/a.py:2: str constant "tmux"',
-                'src/a.py:3: str constant "adapters"',
-                "src/a.py:4: runtime name Claude",
-                "src/router.py:1: runtime name codex",
+                f'{OPKG}/a.py:2: str constant "tmux"',
+                f'{OPKG}/a.py:3: str constant "adapters"',
+                f"{OPKG}/a.py:4: runtime name Claude",
+                f"{OPKG}/router.py:1: runtime name codex",
             ],
         )
 
     def test_claude_md_and_longer_strings_are_clean(self):
         root = self.tree(
             {
-                "src/a.py": '"""Reads CLAUDE.md."""\nP = "CLAUDE.md"\nH = "tmux attach"\n',
+                f"{OPKG}/a.py": '"""Reads CLAUDE.md."""\nP = "CLAUDE.md"\nH = "tmux attach"\n',
                 "config.toml": '# see CLAUDE.md\nx = "tmux attach"\n',
             }
         )
@@ -636,9 +743,11 @@ class OrchestratorText(Sample):
     def test_handoff_literals_only_in_issues(self):
         root = self.tree(
             {
-                "src/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
-                "src/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
-                "src/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
+                f"{OPKG}/issues.py": 'H = "Handoff from"\n'
+                'S = ("## Source", "## Instructions", "## Comments")\n',
+                f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
+                f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
+                "src/issues.py": 'H = "Handoff from"\n',
                 "config.toml": 'x = "## Comments"\n',
                 "tests/a_test.py": 'X = "Handoff from ## Source"\n',
             }
@@ -646,46 +755,76 @@ class OrchestratorText(Sample):
         self.assertEqual(
             guards.orchestrator_text(root),
             [
-                "src/promote.py:1: Handoff literal Handoff from",
-                "src/promote.py:2: Handoff literal ## Comments",
-                "src/target.py:1: Handoff literal ## Instructions",
-                "src/target.py:2: Handoff literal ## Source",
+                f"{OPKG}/promote.py:1: Handoff literal Handoff from",
+                f"{OPKG}/promote.py:2: Handoff literal ## Comments",
+                f"{OPKG}/target.py:1: Handoff literal ## Instructions",
+                f"{OPKG}/target.py:2: Handoff literal ## Source",
+                "src/issues.py:1: Handoff literal Handoff from",
             ],
         )
 
 
 class ConfigOnce(Sample):
+    LOAD = "calls agent_pm_orchestrator.config.load outside an entry main"
+    USE_LOGS = "calls agent_pm_orchestrator.linear.use_logs outside an entry main"
+
     def test_load_and_use_logs_outside_an_entry_main(self):
         root = self.tree(
             {
-                "src/run.py": "import config\nimport linear\n\ndef main():\n    config.load()\n"
-                "    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
-                "src/writeback.py": "import config\nfrom linear import use_logs\n\ndef main():\n"
+                f"{OPKG}/run.py": "from agent_pm_orchestrator import config, linear\n\ndef main():\n"
+                "    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                f"{OPKG}/writeback.py": "from agent_pm_orchestrator import config\n"
+                "from agent_pm_orchestrator.linear import use_logs\n\ndef main():\n"
                 "    config.load()\n    use_logs(None)\n",
-                "src/promote.py": "import config as c\n\nclass P:\n    def main(self):\n        c.load()\n",
+                f"{OPKG}/promote.py": "import agent_pm_orchestrator.config as c\n\nclass P:\n"
+                "    def main(self):\n        c.load()\n",
+                "src/run.py": "import agent_pm_orchestrator.config\n\ndef main():\n"
+                "    agent_pm_orchestrator.config.load()\n",
             }
         )
         self.assertEqual(
             guards.config_once(root),
             [
-                "src/promote.py:5: calls config.load outside an entry main",
-                "src/run.py:9: calls config.load outside an entry main",
-                "src/writeback.py:5: calls config.load outside an entry main",
-                "src/writeback.py:6: calls linear.use_logs outside an entry main",
+                f"{OPKG}/promote.py:5: {self.LOAD}",
+                f"{OPKG}/run.py:8: {self.LOAD}",
+                f"{OPKG}/writeback.py:5: {self.LOAD}",
+                f"{OPKG}/writeback.py:6: {self.USE_LOGS}",
+                f"src/run.py:4: {self.LOAD}",
             ],
+        )
+
+    def test_the_real_entries_calls_outside_an_entry(self):
+        files = {}
+        for name in ("run.py", "promote.py"):
+            with open(
+                os.path.join(ORCH_ROOT, "agent_pm_orchestrator", name), encoding="utf-8"
+            ) as f:
+                files[f"{OPKG}/not_{name}"] = f.read()
+        found = guards.config_once(self.tree(files))
+        self.assertEqual(
+            {(f.split(":")[0], f.split(": ", 1)[1]) for f in found},
+            {(rel, call) for rel in files for call in (self.LOAD, self.USE_LOGS)},
         )
 
     def test_load_helpers_outside_config_py(self):
         root = self.tree(
             {
-                "src/run.py": "import config\nconfig.runnable(1)\n",
-                "src/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n    docs()\n",
-                "src/promote.py": "import config\nimport linear\n\ndef main():\n    try:\n"
-                "        cfg = config.load()\n    except SystemExit:\n"
+                f"{OPKG}/run.py": "from agent_pm_orchestrator import config\nconfig.runnable(1)\n",
+                f"{OPKG}/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n"
+                "    docs()\n",
+                f"{OPKG}/promote.py": "from agent_pm_orchestrator import config, linear\n\n"
+                "def main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n"
                 "        linear.use_logs(None)\n",
+                "src/config.py": "def load():\n    runnable()\n",
             }
         )
-        self.assertEqual(guards.config_once(root), ["src/run.py:2: calls config.runnable"])
+        self.assertEqual(
+            guards.config_once(root),
+            [
+                f"{OPKG}/run.py:2: calls agent_pm_orchestrator.config.runnable",
+                "src/config.py:2: calls runnable",
+            ],
+        )
 
 
 class OrchestratorAbsent(Sample):

@@ -1,22 +1,23 @@
 """The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), none imports agent_tools or a BARE name, nested, relative
-                      or import_module'd
+layer_imports(core)   imports go one way (new/README.md), none imports agent_tools, ORCH or a BARE name, nested,
+                      relative or import_module'd
 runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no string constant naming OLD
 adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      utils and agent_tools import only the standard library and utils
+pure_utils(core)      utils and agent_tools import only stdlib and utils
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
 syntax_39(core)       STANDALONE files parse as Python 3.9
-import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; the import
-                      root holds only agent_pm
-orchestrator_imports(orch) src/ imports stdlib, siblings, utils, `from driver import api`, delegate's __all__ (and
-                      composer's, in config.py only); no module named as in NAMED
+import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
+                      src/ hold only their package
+python_commands(new)  PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
+orchestrator_imports(orch) src/ imports stdlib, ORCH, utils, `from driver import api`, EXPORTERS' __all__ (composer's
+                      in config.py only), no bare name; any module name (packages cannot clash)
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
-config_once(orch)     config.load, linear.use_logs only in main of ENTRIES; LOAD_HELPERS only in config.py
+config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
 
 import ast
@@ -52,16 +53,25 @@ STANDALONE = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
 CORE_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "src")
-EXPORTERS = ("delegate", "composer")
-DENIED = {"adapters", "repo", "roster", "core", "tmux_host", "attended"}
-NAMED = {*LAYERS, "utils", "repo", "attended"}
+CORE_PKG = "agent_pm"
+ORCH = "agent_pm_orchestrator"
+ORCH_SRC = f"src/{ORCH}/"
+ROOTS = (("core", CORE_PKG), ("orchestrator", ORCH))
+COMPOSER = f"{CORE_PKG}.composer"
+EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
+UTILS = f"{CORE_PKG}.utils"
+CONFIG_PY = f"{ORCH_SRC}config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
-ENTRIES = ("src/run.py", "src/promote.py", "src/router.py")
-ONCE = ("config.load", "linear.use_logs")
+ENTRIES = tuple(f"{ORCH_SRC}{name}.py" for name in ("run", "promote", "router"))
+ONCE = (f"{ORCH}.config.load", f"{ORCH}.linear.use_logs")
 LOAD_HELPERS = ("runnable", "run_config", "docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
-HANDOFF_HOME = "src/issues.py"
+HANDOFF_HOME = f"{ORCH_SRC}issues.py"
+COMMAND_FILES = ("core/config.toml", "orchestrator/config.toml")
+COMMAND_DOCS = ("core/skills/", "core/team/")
+PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
+PYTHON_OK = re.compile(rf"\S+[ \t]+-P[ \t]+-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w")
 
 
 def layer_imports(core: str) -> list[str]:
@@ -69,10 +79,10 @@ def layer_imports(core: str) -> list[str]:
     for rel, names, imports in _modules(core):
         layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
         for module, inner in imports:
-            first = inner.split(".")[0]
+            first = (inner or module).split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
-            elif first == TOOLS or (
+            elif first in (TOOLS, ORCH) or (
                 first in LAYERS
                 and first != layer
                 and ((layer, first) not in ALLOWED or first == "driver" and inner != "driver.api")
@@ -229,13 +239,26 @@ def import_hygiene(new: str) -> list[str]:
             for t in tokenize.generate_tokens(io.StringIO(text).readline)
             if t.type == tokenize.COMMENT and HYGIENE.search(t.string)
         )
-    src = os.path.join("core", "src")
-    root = os.path.join(new, src)
-    found.update(
-        f"{src}/{entry}: not agent_pm"
-        for entry in (os.listdir(root) if os.path.isdir(root) else ())
-        if entry not in ("agent_pm", "__pycache__")
-    )
+    for top, package in ROOTS:
+        root = os.path.join(new, top, "src")
+        found.update(
+            f"{top}/src/{entry}: not {package}"
+            for entry in (os.listdir(root) if os.path.isdir(root) else ())
+            if entry not in (package, "__pycache__")
+        )
+    return sorted(found)
+
+
+def python_commands(new: str) -> list[str]:
+    found = set()
+    for rel, text in _files(new, (".toml", ".md")):
+        if rel in COMMAND_FILES or rel.endswith(".md") and rel.startswith(COMMAND_DOCS):
+            found.update(
+                f'{rel}:{number}: python command "{m[0]}"'
+                for number, line in enumerate(text.splitlines(), 1)
+                for m in PYTHON.finditer(line)
+                if not PYTHON_OK.match(m[0])
+            )
     return sorted(found)
 
 
@@ -292,14 +315,13 @@ def _at_import(node):
 
 def orchestrator_imports(orch: str) -> list[str]:
     found = set()
-    src = {rel: text for rel, text in _files(orch, ".py") if rel.startswith("src/")}
-    siblings = {rel[4:-3] for rel in src if "/" not in rel[4:]}
-    found.update(f"{rel}: module named {rel[4:-3]}" for rel in src if rel[4:-3] in NAMED)
     exported = {package: _exported(package) for package in EXPORTERS}
-    for rel, text in src.items():
+    for rel, text in _files(orch, ".py"):
+        if not rel.startswith("src/"):
+            continue
         tree = ast.parse(text, rel)
         for line, module, name in _import_items(tree):
-            if _denied(rel, module, name, siblings, exported):
+            if _denied(rel, module, name, exported):
                 full = (
                     module
                     if name is None
@@ -309,14 +331,11 @@ def orchestrator_imports(orch: str) -> list[str]:
                 )
                 found.add(f"{rel}:{line}: imports {full}")
         bound = _bindings(tree)
-        found.update(
-            f"{rel}:{n.lineno}: uses {bound[n.value.id]}.{n.attr}"
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Attribute)
-            and isinstance(n.value, ast.Name)
-            and bound.get(n.value.id) in exported
-            and n.attr not in exported[bound[n.value.id]]
-        )
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Attribute):
+                base = _dotted(n.value, bound)
+                if base in exported and n.attr not in exported[base]:
+                    found.add(f"{rel}:{n.lineno}: uses {base}.{n.attr}")
     return sorted(found)
 
 
@@ -365,29 +384,32 @@ def config_once(orch: str) -> list[str]:
                 called = _dotted(node.func, bound)
                 if called in ONCE and id(node) not in mains:
                     found.add(f"{rel}:{node.lineno}: calls {called} outside an entry main")
-                elif called.rpartition(".")[2] in LOAD_HELPERS and rel != "src/config.py":
+                elif called.rpartition(".")[2] in LOAD_HELPERS and rel != CONFIG_PY:
                     found.add(f"{rel}:{node.lineno}: calls {called}")
     return sorted(found)
 
 
-def _denied(rel, module, name, siblings, exported):
+def _denied(rel, module, name, exported):
     top = module.split(".")[0]
-    if top in DENIED:
-        return True
-    if top in exported:
+    if top in sys.stdlib_module_names or top == ORCH:
+        return False
+    target = f"{module}.{name}" if module == CORE_PKG and name else module
+    if target in exported:
         return (
-            "." in module
-            or name is not None
-            and name not in exported[top]
-            or (top == "composer" and rel != "src/config.py")
+            module == target
+            and name is not None
+            and name not in exported[target]
+            or (target == COMPOSER and rel != CONFIG_PY)
         )
-    if top == "driver":
-        return (module, name) != ("driver", "api")
-    return not (top in sys.stdlib_module_names or top in siblings or top == "utils")
+    return not (
+        target == UTILS
+        or target.startswith(f"{UTILS}.")
+        or (module, name) == (f"{CORE_PKG}.driver", "api")
+    )
 
 
 def _exported(package):
-    with open(os.path.join(CORE_SRC, package, "__init__.py"), encoding="utf-8") as f:
+    with open(os.path.join(CORE_SRC, *package.split("."), "__init__.py"), encoding="utf-8") as f:
         tree = ast.parse(f.read())
     return next(
         set(ast.literal_eval(n.value))

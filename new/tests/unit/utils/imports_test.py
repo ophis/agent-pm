@@ -86,7 +86,8 @@ class UtilsImportsTest(Case):
     def test_utils_may_import_utils(self):
         root = self.tree(
             {
-                "src/utils/x.py": "from utils.shell import SHORT\nfrom . import git\nimport utils.text\n"
+                f"{PKG}/utils/x.py": "from agent_pm.utils.shell import SHORT\nfrom . import git\n"
+                "import agent_pm.utils.text\n"
             }
         )
         self.assertEqual(guards.pure_utils(root), [])
