@@ -28,6 +28,7 @@ SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
 MODULE = ["-P", "-m", "agent_pm.manager.crew"]
+PRE_MOVE = ["-P", "-m", "agent_pm.crew"]
 NOT_REGULAR = "{}: not a regular file owned by you"
 NOT_A_DIR = "not a directory owned by you"
 NO_RUNTIME = "core config: runtime: want a runtime name"
@@ -993,6 +994,19 @@ class RosterTest(Base):
                     got = roster.recovery(e)
                     self.assertEqual(got[:6], ["/usr/bin/python3", *MODULE, "start", "w1"])
                     self.assertEqual(e["resume"], resume)
+
+    def test_a_pre_move_crew_module_entry_is_kept_and_recovers_to_the_crew_module(self):
+        self.local('runtime = "rt9"\n')
+        resume = ["/usr/bin/python3", *PRE_MOVE, "start", "w1"]
+        self.store(self.doc(entries={"w1": good(resume=resume)}))
+        r, err = self.load()
+        self.assertEqual((r["entries"], err), ({"w1": good(resume=resume)}, ""))
+        self.assertEqual(
+            roster.recovery(r["entries"]["w1"]),
+            ["/usr/bin/python3", *MODULE, "start", "w1", "--client", "rt9"],
+        )
+        roster.put(self.dir, "w2", good())
+        self.assertEqual(self.entries(), {"w1": good(resume=resume), "w2": good()})
 
     def test_recovery_gives_a_worker_without_a_client_the_default_runtime(self):
         self.local('runtime = "rt9"\n')

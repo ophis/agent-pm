@@ -7,7 +7,7 @@ its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the n
 Sessions are reached only through driver.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
 default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client. A worker entry runs
 crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
-script to that form."""
+script, or the module agent_pm.crew, to that form."""
 
 import contextlib
 import errno
@@ -36,8 +36,9 @@ KINDS = ("worker", "role", "pipeline")
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
-# crew.py's old name, so an entry an older plugin version wrote still validates (recovery runs CREW_MODULE)
+# crew.py's old name and module, so an entry an older version wrote still validates (recovery runs CREW_MODULE)
 LEGACY = "workers.py"
+LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
 CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
 CREW_MODULE = ("-P", "-m", "agent_pm.manager.crew")
 TOP = ("version", "holder", "cursor", "gen", "entries")
@@ -248,7 +249,7 @@ def _resume_fault(resume) -> str | None:
         return _want("resume", resume, "a list of 2 or more printable strings")
     if not os.path.isabs(resume[0]):
         return _want("resume[0]", resume[0], "an absolute path")
-    if tuple(resume[1:4]) == CREW_MODULE:
+    if tuple(resume[1:4]) in (CREW_MODULE, LEGACY_MODULE):
         return None
     if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
         want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
@@ -547,6 +548,8 @@ def recovery(entry: dict) -> list[str] | None:
     resume = list(entry["resume"])
     if os.path.basename(resume[1]) in ("crew.py", LEGACY):
         resume[1:2] = CREW_MODULE
+    elif tuple(resume[1:4]) == LEGACY_MODULE:
+        resume[1:4] = CREW_MODULE
     options = resume[: resume.index("--")] if "--" in resume else resume
     start = 1 + (len(CREW_MODULE) if tuple(resume[1:4]) == CREW_MODULE else 1)
     if entry["kind"] == "worker" and len(resume) > start + 1 and "--client" not in options:

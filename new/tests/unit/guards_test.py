@@ -326,6 +326,23 @@ class LayerImports(Sample):
         )
 
 
+class PureUtils(Sample):
+    def test_config_imports_only_the_standard_library_and_utils(self):
+        root = self.tree(
+            {
+                f"{PKG}/config.py": "import os\nfrom agent_pm.utils.paths import CORE\n"
+                "from agent_pm.session.driver import api\nimport agent_pm.manager.crew\n"
+            }
+        )
+        self.assertEqual(
+            guards.pure_utils(root),
+            [
+                f"{PKG}/config.py: config imports agent_pm.manager.crew",
+                f"{PKG}/config.py: config imports agent_pm.session.driver.api",
+            ],
+        )
+
+
 class RoleSession(Sample):
     def test_a_session_import_but_a_name_in_session_all(self):
         root = self.tree(

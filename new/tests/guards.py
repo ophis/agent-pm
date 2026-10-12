@@ -11,7 +11,7 @@ runtime_names(core)   no runtime name (RUNTIME) outside session/adapters/ but a 
 old_core(new)         no `core` import, no str constant naming OLD
 adapters_key(core)    no str constant "adapters" outside session/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      each PURE package imports only stdlib and its PURE entry
+pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
@@ -52,6 +52,7 @@ UPWARD = {("session.adapters.print_prompt.in_process", "role.contract")}
 TOOLS = "role.agent_tools"
 PURE = {
     "utils": ("utils",),
+    "config": ("utils", "config"),
     "role.contract": SHARED,
     "role.repos": SHARED,
     TOOLS: ("utils", "config", "role.repos"),
