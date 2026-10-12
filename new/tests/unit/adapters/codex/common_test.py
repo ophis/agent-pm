@@ -202,7 +202,7 @@ class CommonTest(Base):
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         self.assertIn("CODEX_PERMISSION_PROFILE", launch.unset)
         self.assertIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
-        self.assertIsNone(adapter.tui())
+        self.assertIsNotNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):
         with self.assertRaisesRegex(ConfigError, "model|tier"):
@@ -287,6 +287,12 @@ class WritableDirsTest(Base):
         self.assertIn(str(target), adapter.writable_dirs(self.spec, False))
         adapter.common.prepare(self.spec, False)
         self.assertIn(str(target), adapter.writable_dirs(self.spec, True))
+
+    def test_fresh_query_translates_path_errors_without_persistence(self):
+        spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
+        with self.assertRaisesRegex(ConfigError, "absolute path"):
+            self.adapter.writable_dirs(spec, False)
+        self.assertFalse((self.home / ".agent-pm").exists())
 
 
 class InspectionTest(Base):
