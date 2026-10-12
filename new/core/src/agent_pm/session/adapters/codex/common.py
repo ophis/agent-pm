@@ -385,13 +385,7 @@ class CodexCommon:
         env = self.config.get("env", {}) if snapshot is None else snapshot["env"]
         return (
             *self.UNSET,
-            *(
-                key
-                for key, value in self.DEFAULTS.items()
-                if "CODEX_THREAD_ID" in os.environ
-                and os.environ.get(key) == value
-                and key not in env
-            ),
+            *(key for key in self.DEFAULTS if key not in env),
         )
 
     def probe(self) -> Launch:

@@ -100,22 +100,6 @@ class TuiTest(Base):
             self.adapter.tui().launch("again", self.spec, True, HOOK)
         which.assert_not_called()
 
-    def test_interactive_environment_preserves_external_default_values(self):
-        parent = {key: value for key, value in os.environ.items() if key not in self.common.UNSET}
-        for markers, color in (({"CLAUDECODE": "1"}, "1"), ({"CODEX_THREAD_ID": NATIVE}, "0")):
-            with (
-                self.subTest(markers=markers),
-                mock.patch.dict(
-                    os.environ,
-                    {**parent, **markers, "NO_COLOR": color, "PAGER": "less"},
-                    clear=True,
-                ),
-            ):
-                self.spec = dataclasses.replace(self.spec, sid=f"color-{color}")
-                _, launch, _ = self.launch()
-                self.assertNotIn("NO_COLOR", launch.unset)
-                self.assertNotIn("PAGER", launch.unset)
-
     def test_interactive_environment_drops_injected_defaults_and_parent_markers(self):
         with mock.patch.dict(
             os.environ, {"CODEX_CI": "1", "NO_COLOR": "1", "CODEX_THREAD_ID": NATIVE}
