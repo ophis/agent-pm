@@ -1444,7 +1444,7 @@ def listed(*rows):
 
 
 def captured(name):
-    return ["tmux", "capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-40"]
+    return ["tmux", "capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-2000"]
 
 
 def row(name, **fields):
@@ -1514,7 +1514,7 @@ class Listing(unittest.TestCase):
         )
         self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES, captured("w1")])
         self.assertEqual(fake.kwargs, [TMUX_KW] * 4)
-        self.assertEqual(tmux_host.LAST_LINES, 40)
+        self.assertEqual(tmux_host.LAST_LINES, 2000)
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(
@@ -1566,9 +1566,10 @@ class Listing(unittest.TestCase):
             "=d2:": (1, "", "boom\n"),
             "=d3:": (0, "\n \n"),
             "=d4:": FileNotFoundError(2, "No such file", "tmux"),
+            "=d5:": (0, "".join(f"{i}\n" for i in range(2001)) + "\n\n"),
         }
         got, fake = self.listing(
-            listed(*((n, "1") for n in ("d1", "d2", "d3", "d4")), ("live", "0"), ("odd", "")),
+            listed(*((n, "1") for n in ("d1", "d2", "d3", "d4", "d5")), ("live", "0"), ("odd", "")),
             capture=lambda argv: printed[argv[argv.index("-t") + 1]],
         )
         self.assertEqual(
@@ -1578,11 +1579,12 @@ class Listing(unittest.TestCase):
                 ("d2", None),
                 ("d3", None),
                 ("d4", None),
+                ("d5", "\n".join(map(str, range(1, 2001)))),
                 ("live", None),
                 ("odd", None),
             ],
         )
-        self.assertEqual(fake.calls[2:], [captured(n) for n in ("d1", "d2", "d3", "d4")])
+        self.assertEqual(fake.calls[2:], [captured(n) for n in ("d1", "d2", "d3", "d4", "d5")])
 
     def test_shown_by_the_most_recent_client_in_its_host_session(self):
         names = ("a", "b", "c", "d", "e", "f", "g", "h", "i")

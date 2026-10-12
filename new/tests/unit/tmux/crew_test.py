@@ -496,6 +496,11 @@ class EarlyWatchTest(WorkerCase):
             ("dead", self.dies(), DEAD_MSG),
             ("blank lines dropped, the last 20 kept", self.dies(lines), exited + "\n".join(kept)),
             ("fewer than 20 lines", self.dies("\n\none\n\n\ntwo\n\n"), exited + "one\ntwo"),
+            (
+                "an error above 40 blank rows",
+                self.dies("usage: x\nx: error: bad\n" + "\n" * 41 + "Pane is dead (status 2)"),
+                exited + "usage: x\nx: error: bad\nPane is dead (status 2)",
+            ),
             ("a signal", self.dies(code=137), DEAD_MSG.replace("exited 1 ", "exited 137 ")),
             ("no last lines", self.dies(""), exited),
             (
@@ -1212,7 +1217,7 @@ class NextEventTest(Case):
 
 class NextEventContentTest(Case):
     PANE = [f"pane {i}" for i in range(40)]
-    DEAD = [f"dead {i}" for i in range(40)]
+    DEAD = [f"dead {i}" for i in range(45)]
 
     def setUp(self):
         super().setUp()
@@ -1241,7 +1246,7 @@ class NextEventContentTest(Case):
     def test_done_without_a_reply_prints_the_pane(self):
         for why, made, lines in (
             ("no turn yet", lambda: self.live(None), self.PANE),
-            ("not a tui session, dead", self.dead, self.DEAD),
+            ("not a tui session, dead", self.dead, self.DEAD[-40:]),
         ):
             with self.subTest(why):
                 self.api.tuis.clear()
@@ -1252,7 +1257,7 @@ class NextEventContentTest(Case):
         for kind in ("blocked", "dead"):
             for state, made, lines in (
                 ("live", self.live, self.PANE),
-                ("dead", self.dead, self.DEAD),
+                ("dead", self.dead, self.DEAD[-40:]),
             ):
                 with self.subTest(kind=kind, state=state):
                     self.api = Api(None)
@@ -1262,6 +1267,13 @@ class NextEventContentTest(Case):
                         self.api.ran("screen"), [("w1", 40)] if state == "live" else []
                     )
                     self.assertEqual(self.api.ran("attach"), ["w1"] if state == "live" else [])
+
+    def test_a_dead_pane_prints_only_its_last_40_lines_blank_ones_kept(self):
+        lines = ["error", *[""] * 40, "Pane is dead (status 2)"]
+        got = self.run_event(
+            "10:00:01 w1 dead", row("w1", SID, "dead", last_lines="\n".join(lines))
+        )
+        self.assertEqual(got, (0, nl("1 10:00:01 w1 dead", *lines[-40:]), ""))
 
     def test_other_events_print_nothing_more(self):
         for event in ("10:00:01 w1-drive outcome done", "10:00:01 w1 new kind"):

@@ -412,7 +412,7 @@ def content(event: str) -> str:
     if row is None:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
-        return row.last_lines or ""
+        return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
     with _driver():
         return api.attach(name).screen(PANE_LINES)
 
