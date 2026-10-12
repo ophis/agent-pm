@@ -82,9 +82,10 @@ type = "local"
 #                 (Read; Grep and Glob best-effort), so a file-tool write there is denied headless (-p) and prompts in
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
-#                 nothing: its -s workspace-write sandbox reads the whole disk, and Codex has no read-only grant usable
-#                 with -s. A dir also in write, or inside the cwd, the workdir or a write dir, stays writable; shell
-#                 commands can write there regardless
+#                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
+#                 default danger-full-access can write there too (new/README.md › Codex sandbox). A dir also in write,
+#                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
+#                 regardless
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the runtime's Adapter decides how
 #                 they are approved. {{scripts}} is new/core/src/, {{workdir}} the agent run's workdir; unset → none
@@ -161,6 +162,9 @@ max = "max"
 
 [adapters.codex]
 implementation = "adapters.codex:CodexAdapter"
+# danger-full-access (default) or workspace-write; both use on-request + auto_review approvals.
+# Full access disables shell_network, writable-root boundaries and team-dir protection; see new/README.md.
+sandbox = "danger-full-access"
 shell_network = false
 
 [adapters.codex.tiers]

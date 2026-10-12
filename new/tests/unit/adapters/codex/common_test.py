@@ -201,7 +201,7 @@ class CommonTest(Base):
         self.assertEqual(launch.env["NO_COLOR"], "1")
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         self.assertIn("CODEX_PERMISSION_PROFILE", launch.unset)
-        self.assertIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
+        self.assertNotIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
         self.assertIsNotNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):
@@ -254,20 +254,26 @@ class WritableDirsTest(Base):
     def test_read_dirs_are_never_added_saved_or_writable(self):
         read = self.root / "read"
         read.mkdir()
+        adapter = CodexAdapter(self.adapter.config | {"sandbox": "workspace-write"})
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
-        argv = self.adapter.headless().launch("hi", spec, False).argv
+        argv = adapter.headless().launch("hi", spec, False).argv
         self.assertEqual(
             [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
         )
         self.assertEqual(
-            self.common.load(str(self.work), spec.sid).snapshot["dirs"], [str(self.extra)]
+            adapter.common.load(str(self.work), spec.sid).snapshot["dirs"], [str(self.extra)]
         )
         for resume in (False, True):
             with self.subTest(resume=resume):
-                dirs = self.adapter.writable_dirs(spec, resume)
+                dirs = adapter.writable_dirs(spec, resume)
                 self.assertIn(str(self.extra), dirs)
                 self.assertNotIn(str(read), dirs)
+
+    def test_full_access_adds_no_dir_read_or_written(self):
+        access = dataclasses.replace(self.spec.access, reads=(str(self.root),))
+        spec = dataclasses.replace(self.spec, access=access)
+        self.assertNotIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
 
     def test_a_resume_without_saved_state_is_refused(self):
         with self.assertRaisesRegex(

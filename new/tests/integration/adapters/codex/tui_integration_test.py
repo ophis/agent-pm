@@ -254,6 +254,19 @@ class TuiIntegrationTest(Live):
             ["--no-daemon", "-C", str(self.cwd), "-c", 'tui.notification_method="bel"'],
         )
         self.assertEqual(
+            call["argv"][5:11],
+            [
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ],
+        )
+        self.assertNotIn("--add-dir", call["argv"])
+        self.assertFalse(any(word.startswith("sandbox_workspace_write.") for word in call["argv"]))
+        self.assertEqual(
             call["argv"][-2:],
             ["--", "quoted ' prompt\nnext\n\n" + registry.adapter("codex").runtime_note],
         )
@@ -381,6 +394,40 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.attach()[2:], ["root", self.bound().native_id])
         stream.quiet()
 
+    def test_workspace_write_flags_and_saved_policy_through_driver(self):
+        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        registry.configure(self.config)
+        handle = self.start()
+        Stream(self, handle).until(TurnEnd)
+        native = self.bound().native_id
+        handle.stop()
+        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        registry.configure(self.config)
+        resumed = self.start(resume=self.sid)
+        Stream(self, resumed).until(TurnEnd)
+        first, second = self.calls()
+        expected = [
+            "-s",
+            "workspace-write",
+            "-c",
+            'approval_policy="on-request"',
+            "-c",
+            'approvals_reviewer="auto_review"',
+            "-c",
+            "sandbox_workspace_write.network_access=false",
+            "-c",
+            "sandbox_workspace_write.writable_roots=[]",
+            "-m",
+            "gpt-test",
+            "-c",
+            "model_reasoning_effort=low",
+            "--add-dir",
+            str(self.extra),
+        ]
+        self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
+        self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
+        self.assertEqual(self.bound().snapshot["sandbox"], "workspace-write")
+
     def test_resume_keeps_native_id_cwd_home_model_effort_dirs_network_and_commands(self):
         handle = self.start()
         stream = Stream(self, handle)
@@ -390,7 +437,12 @@ class TuiIntegrationTest(Live):
         changed = self.root / "changed"
         changed.mkdir()
         cfg = self.config["adapters"]["codex"]
-        cfg.update(tiers={"1": "changed"}, efforts={"low": "high"}, shell_network=True)
+        cfg.update(
+            tiers={"1": "changed"},
+            efforts={"low": "high"},
+            shell_network=True,
+            sandbox="workspace-write",
+        )
         cfg["env"]["CODEX_HOME"] = str(changed)
         registry.configure(self.config)
         spec = dataclasses.replace(

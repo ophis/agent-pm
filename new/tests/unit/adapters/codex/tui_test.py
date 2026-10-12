@@ -45,7 +45,7 @@ class TuiTest(Base):
         self.assertEqual(data["argv"][:4], ["/protected/codex", "--no-daemon", "-C", str(self.cwd)])
         self.assertEqual(data["argv"][-2:], ["--", "quoted ' prompt\nnext"])
         self.assertIn('tui.notification_method="bel"', data["argv"])
-        self.assertIn("sandbox_workspace_write.writable_roots=[]", data["argv"])
+        self.assertNotIn("sandbox_workspace_write.writable_roots=[]", data["argv"])
         self.assertIn("model_reasoning_effort=low", data["argv"])
         self.assertIn("gpt-test", data["argv"])
         self.assertEqual(data["hook"], list(HOOK))
@@ -53,7 +53,9 @@ class TuiTest(Base):
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
     def test_resume_uses_shared_saved_policy_and_native_file(self):
-        saved = self.prepare()
+        saved = CodexAdapter(self.adapter.config | {"sandbox": "workspace-write"}).common.prepare(
+            self.spec, False
+        )
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         other = CodexAdapter({"shell_network": True, "env": {"CODEX_HOME": str(self.extra)}})

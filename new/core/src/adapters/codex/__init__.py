@@ -8,7 +8,7 @@ from .tui import CodexTuiRun
 
 
 class CodexAdapter(Adapter):
-    keys = frozenset({"tiers", "efforts", "shell_network", "env"})
+    keys = frozenset({"tiers", "efforts", "shell_network", "sandbox", "env"})
     runtime_note = (
         "Run each shell call separately. Command approvals follow Codex automatic review."
     )

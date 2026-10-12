@@ -1,5 +1,5 @@
-"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config and path
-helpers' cases: unit/utils/)."""
+"""new/core/src/repo.py, ported from the old core's tests (its tmux display helpers dropped; its config, path, shell,
+git and repo spec helpers' cases: unit/utils/)."""
 
 from new.tests import hermetic
 
@@ -14,6 +14,8 @@ import unittest
 import unittest.mock
 
 import repo
+from utils import git as git_utils
+from utils import repos, shell
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40
@@ -140,70 +142,32 @@ class Base(unittest.TestCase):
         return path
 
 
-class Parse(unittest.TestCase):
-    def test_forms(self):
-        for spec, want in (
-            ("o/n", ("github.com", "o", "n")),
-            ("ghe.example.com/o/n", ("ghe.example.com", "o", "n")),
-            ("https://github.com/o/n.git", ("github.com", "o", "n")),
-            ("https://GHE.io/o/n/", ("ghe.io", "o", "n")),
+class Moved(unittest.TestCase):
+    def test_the_moved_helpers_are_the_utils_ones(self):
+        for module, names in (
+            (shell, ("SHORT", "LONG", "Runner", "sh", "USERINFO", "redact", "err_text")),
+            (git_utils, ("GUARD", "common_dir")),
+            (
+                repos,
+                (
+                    "OWNER",
+                    "NAME",
+                    "HOST",
+                    "SPEC",
+                    "URL",
+                    "SLUG",
+                    "Invalid",
+                    "Repo",
+                    "url_slug",
+                    "origin",
+                    "resolve",
+                    "check_slug",
+                    "checkout",
+                ),
+            ),
         ):
-            self.assertEqual(repo.Repo.parse(spec), repo.Repo(*want), spec)
-
-    def test_unreadable(self):
-        for spec in ("n", "o/..", "https://o/n", "o/n; rm -rf /", "-o/n"):
-            with self.assertRaises(repo.Invalid, msg=spec):
-                repo.Repo.parse(spec)
-
-    def test_url_forms(self):
-        """url_slug keeps the case as written; origin lowercases it."""
-        for url, want in (
-            ("git@GitHub.com:O/N.git", "GitHub.com/O/N"),
-            ("https://ghe.io/o/n", "ghe.io/o/n"),
-            ("ssh://git@ghe.io:2222/o/n.git", "ghe.io/o/n"),
-            ("ssh://ghe.io/o/n", "ghe.io/o/n"),
-            ("https://user@github.com/o/n", "github.com/o/n"),
-            ("https://user:tok@github.com/o/n.git", "github.com/o/n"),
-            ("http://ghe.io/o/n/", "ghe.io/o/n"),
-            ("https://ghe.io:8443/o/n", "ghe.io:8443/o/n"),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(repo.url_slug(url), want)
-                self.assertEqual(repo.origin(url), want.lower())
-                repo.Repo.parse(want)
-        for url in (
-            "/tmp/origin.git",
-            "ftp://ghe.io/o/n",
-            "https://ghe.io/o",
-            "ssh://git@ghe.io:x/o/n",
-            "https://ghe.io/o/n/extra",
-        ):
-            with self.subTest(url=url):
-                self.assertEqual((repo.url_slug(url), repo.origin(url)), (None, None))
-
-
-class ErrText(unittest.TestCase):
-    def test_userinfo_is_redacted(self):
-        res = fail(
-            "fatal: could not read Password for 'https://SECRETTOK@github.com': no\n"
-            "fatal: unable to access 'https://u:SECRET2@ghe.io/o/n/'"
-        )
-        text = repo.err_text(res)
-        self.assertNotIn("SECRET", text)
-        self.assertIn("'https://***@github.com'", text)
-        self.assertIn("'https://***@ghe.io/o/n/'", text)
-
-    def test_trimmed_and_capped(self):
-        for stderr, want in (
-            (None, ""),
-            ("", ""),
-            ("  HTTP 404: Not Found \n", "HTTP 404: Not Found"),
-            ("x" * 300, "x" * 200),
-        ):
-            with self.subTest(stderr=stderr):
-                self.assertEqual(
-                    repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want
-                )
+            for name in names:
+                self.assertIs(getattr(repo, name), getattr(module, name), name)
 
 
 class TrustedDirs(unittest.TestCase):
@@ -370,15 +334,6 @@ class Worktree(Base):
                         self.assertEqual((code, run.calls), (2, []))
                         self.assertIn("unsafe checkout name", err)
         self.assertEqual(os.listdir(self.dir), ["clone"])
-
-    def test_checkout_is_the_path_rule(self):
-        self.assertEqual(repo.checkout("/b", "o", "n", "TASK-1"), "/b/o/n-TASK-1")
-        self.assertEqual(
-            repo.checkout("b", "o", "n", "x.y_z-1"),
-            os.path.join(os.getcwd(), "b", "o", "n-x.y_z-1"),
-        )
-        with self.assertRaises(repo.Invalid):
-            repo.checkout("/b", "o", "n", "a/b")
 
     def test_anything_else_in_the_way_is_invalid(self):
         def other_repo():
@@ -1001,68 +956,6 @@ class LocalSafety(Clone):
         git("-C", self.clone, "config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*")
         self.assertEqual(self.worktree()[0], 0)
         self.assertEqual(git("-C", self.clone, "rev-parse", "TASK-9-mine"), mine)
-
-
-class CommonDir(Clone):
-    def add(self, branch="TASK-1-x", opts=()):
-        wt = os.path.join(self.tmp, "w", branch)
-        git("-C", self.clone, "worktree", "add", "-q", *opts, "-b", branch, wt)
-        return wt
-
-    def test_a_worktree_names_its_clones_git_dir(self):
-        common = os.path.join(self.clone, ".git")
-        self.assertEqual(repo.common_dir(self.add()), common)
-        self.assertEqual(repo.common_dir(self.add("TASK-1-rel", ("--relative-paths",))), common)
-
-    def test_a_crlf_git_file_is_read_as_git_reads_it(self):
-        wt = self.add()
-        gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        with open(os.path.join(wt, ".git"), "w", newline="") as f:
-            f.write(f"gitdir: {gitdir}\r\n")
-        self.assertEqual(repo.common_dir(wt), os.path.join(self.clone, ".git"))
-
-    def test_trailing_whitespace_is_part_of_the_path_as_for_git(self):
-        wt = self.add()
-        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        fake, other = os.path.join(self.tmp, "fake-admin"), os.path.join(self.tmp, "other", ".git")
-        os.makedirs(fake)
-        os.makedirs(other)
-        with open(os.path.join(fake, "commondir"), "w") as f:
-            f.write(other + "\n")
-        a = os.path.join(self.tmp, "a")
-        os.makedirs(a)
-        os.symlink(admin, os.path.join(a, "sym"))
-        os.symlink(fake, os.path.join(a, "sym "))
-        with open(os.path.join(wt, ".git"), "w") as f:
-            f.write(f"gitdir: {a}/sym \n")
-        self.assertEqual(repo.common_dir(wt), other)
-
-    def test_no_worktree_names_no_clone(self):
-        wt = self.add()
-        plain, linked, junk, orphan, bare = (
-            os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare")
-        )
-        for d in (plain, linked, junk, orphan, bare):
-            os.makedirs(d)
-        os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
-        for d, text in (
-            (junk, "nonsense\n"),
-            (orphan, f"gitdir: {self.tmp}/gone\n"),
-            (bare, f"gitdir: {self.bare}\n"),
-        ):
-            with open(os.path.join(d, ".git"), "w") as f:
-                f.write(text)
-        for path in (
-            self.clone,
-            plain,
-            linked,
-            junk,
-            orphan,
-            bare,
-            os.path.join(self.tmp, "missing"),
-        ):
-            with self.subTest(path=path):
-                self.assertIsNone(repo.common_dir(path))
 
 
 class PlanDocs(unittest.TestCase):
