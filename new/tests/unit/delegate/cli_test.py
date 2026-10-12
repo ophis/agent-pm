@@ -44,6 +44,7 @@ KEYS = {
     "cwd",
     "project",
     "dirs",
+    "reads",
     "commands",
     "tier",
     "effort",
@@ -305,7 +306,7 @@ class DryRun(Base):
         shown = json.loads(out)
         self.assertEqual(set(shown), KEYS)
         self.assertEqual(
-            {k: v for k, v in shown.items() if k not in ("dirs", "commands", "prompt")},
+            {k: v for k, v in shown.items() if k not in ("dirs", "reads", "commands", "prompt")},
             {
                 "runtime": "fake",
                 "mode": "headless",
@@ -317,8 +318,10 @@ class DryRun(Base):
                 "effort": "low",
             },
         )
-        self.assertIn(os.path.join(composer.TEAM, "tasks"), shown["dirs"])
-        self.assertEqual(shown["commands"], [])
+        self.assertEqual(
+            (shown["dirs"], shown["reads"], shown["commands"]),
+            ([self.work], [os.path.join(composer.TEAM, "tasks")], []),
+        )
         self.assertIn("**Your task**: `echo` (`<tasks>/echo.md`).", shown["prompt"])
         self.assertTrue(shown["prompt"].endswith("\n# Input\n\nHello.\n"))
         self.assertEqual(

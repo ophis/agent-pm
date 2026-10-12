@@ -19,10 +19,8 @@ try:
     team = composer.team(composer.TEAM, composer.team_dirs())
     run = composer.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()), team=team)
     intent = composer.access(run, req["workdir"], cwd=req["cwd"], project=False, team=team)
-    own = team.tasks_dir(run.role)
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
-    writes += [("a dir the run adds", d) for d in intent.dirs
-               if not own or os.path.realpath(d) != os.path.realpath(own)]
+    writes += [("a dir the run adds", d) for d in intent.dirs]
     composer.check_team_dirs(team.dirs, writes=writes)
     params = composer.RunParams(input=req["input"], out=req["out"], workdir=req["workdir"],
                                 resume=req.get("resume", False))

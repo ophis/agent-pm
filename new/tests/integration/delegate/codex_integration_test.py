@@ -35,6 +35,8 @@ def said(*texts) -> list[dict]:
 
 
 class Integration(unittest.TestCase):
+    ROLE, TASK = "dummy-tester", "echo"
+
     def setUp(self):
         home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", NEW))
         tmp = tempfile.TemporaryDirectory()
@@ -73,9 +75,9 @@ class Integration(unittest.TestCase):
             "--runtime",
             "codex",
             "--role",
-            "dummy-tester",
+            self.ROLE,
             "--task",
-            "echo",
+            self.TASK,
             "--input",
             "Hello.",
             "--out",

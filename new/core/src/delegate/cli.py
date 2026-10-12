@@ -129,6 +129,7 @@ def _shown(p: Plan) -> dict:
         "cwd": access.cwd,
         "project": access.project,
         "dirs": access.dirs,
+        "reads": access.reads,
         "commands": access.commands,
         "tier": p.spec.tier,
         "effort": p.spec.effort,

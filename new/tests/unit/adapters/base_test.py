@@ -106,18 +106,26 @@ class AccessTest(Refusals):
     def test_defaults(self):
         access = Access()
         self.assertEqual(
-            (access.dirs, access.commands, access.cwd, access.project), ((), (), "", False)
+            (access.dirs, access.commands, access.cwd, access.project, access.reads),
+            ((), (), "", False, ()),
         )
 
     def test_accepts_tuples_of_strings(self):
-        access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True)
-        self.assertEqual((access.dirs, access.commands), (("/a",), ("git",)))
+        access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",))
+        self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
 
-    def test_refuses_dirs_or_commands_that_are_not_a_tuple_of_strings(self):
+    def test_reads_is_the_last_positional_field(self):
+        self.assertEqual(
+            Access(("/a",), ("git",), "/c", True, ("/r",)),
+            Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",)),
+        )
+
+    def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
             with self.subTest(bad=bad):
                 self.refused(lambda: Access(dirs=bad), "dirs must be a tuple of strings")
                 self.refused(lambda: Access(commands=bad), "commands must be a tuple of strings")
+                self.refused(lambda: Access(reads=bad), "reads must be a tuple of strings")
 
 
 class SpecTest(Refusals):
