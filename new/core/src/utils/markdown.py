@@ -1,13 +1,12 @@
-"""Markdown code fences: FENCE matches an opening fence line, unfenced gives the lines outside fences, fenced the
-blocks inside them."""
+"""Markdown code fences: 3+ backticks or tildes, closed by a line of only that char, as many or more; an unclosed one
+runs to the end."""
 import re
 
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def unfenced(text: str) -> list[tuple[int, str]]:
-    """(line index, line) of each line of `text` outside fences, fence lines excluded. A fence opens at 3+ backticks or
-    tildes and closes at a line of only that char, as many times or more; one never closed runs to the end."""
+    """(index, line) of each line outside fences."""
     out, fence = [], None
     for i, line in enumerate(text.split("\n")):
         shut = line.strip()
@@ -22,9 +21,7 @@ def unfenced(text: str) -> list[tuple[int, str]]:
 
 
 def fenced(text: str) -> list[tuple[str, str]]:
-    """(info string, body) of each fenced block of `text`, in order: fences open and close as in unfenced; the info
-    string is the rest of the opening line, stripped; the body the lines between the fence lines (to the end when never
-    closed), so a fence line inside a longer block is body."""
+    """(info string, body) of each fenced block."""
     out, fence, info, body = [], None, "", []
     for line in text.split("\n"):
         shut = line.strip()

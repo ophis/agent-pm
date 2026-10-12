@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-"""The Delegate's command line: one role's headless run (delegate.run), its plan (--dry-run) or the team (--list), the
-team being the built-in one and the core config's team_dirs. Ported from the old core's driver (main, listing).
-
-cli.py --role ROLE [--task TASK] --input TEXT|- --out PATH --workdir DIR [--repo DIR] [--runtime NAME]
-       [--sid SID] [--resume] [--mode headless|tui] [--dry-run]
-    runs ROLE on TASK (unset: the agent run picks one from its index) and the input (text even when it names a file;
-    -: stdin's) in DIR, the deliverable saved to PATH; --runtime once, default the role's (core config); --resume needs
-    --sid. --dry-run prints the plan as JSON {runtime, mode, sid, resume, cwd, project, dirs, commands, tier, effort,
-    prompt} and writes nothing.
-cli.py --list
-    each role `<role>  <output type>  <source>`, then each of its tasks `  <task>: <description>  [<source>]`; takes no
-    other option.
-Messages go to stderr, each starting `delegate: `, agent text printable. Exits 0 on a valid outcome, even when the
-client exited non-zero; 1 on none, the client exiting 0; 2 on a config or usage error (nothing started, stdout empty); 3
-when the client exited non-zero or failed to start without a valid outcome, or on a usage limit."""
+"""The Delegate's command line: one role's headless run, its plan as JSON (--dry-run, writing nothing) or the team
+(--list: the built-in one and the core config's team_dirs). --task unset: the agent run picks one from its index.
+Exits 0 on a valid outcome, even when the client exited non-zero; 1 on none, the client exiting 0; 2 on a config or
+usage error (nothing started, stdout empty); 3 when the client exited non-zero or failed to start without a valid
+outcome, or on a usage limit."""
 import argparse
 import json
 import os
@@ -82,8 +72,7 @@ def main(argv: list[str]) -> int:
 
 
 def listing(team: Team) -> str:
-    """Each role of `team` and its tasks with their sources, every file checked; renders each role's prompt, writing
-    nothing."""
+    """Each role and its tasks with their sources; checks every file and prompt, writing nothing."""
     composer.check_team_dirs(team.dirs, writes=[])
     team.check_all({})
     lines = []

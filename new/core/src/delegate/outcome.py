@@ -1,8 +1,6 @@
-"""An agent run's outcome (FR-19, FR-20): read parses an outcome block's body (JSON), swaps its deliverable_file for
-that file's text and validates the result (validate: the Composer's outcome schema, SCHEMA, read on each call, and what
-it can't say); save writes a file atomically. Ported from the old core's driver (validate, _conform, _url, _file, save)
-with identical rules and messages. An outcome's text stays untrusted: an agent's path is shown as its repr, at most 200
-characters."""
+"""An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates it against SCHEMA
+and what SCHEMA can't say; save writes a file atomically. Its text stays untrusted: a path is shown as a repr, at most
+200 characters."""
 import json
 import os
 import posixpath
@@ -39,8 +37,7 @@ class Outcome:
 
 
 def read(body: str, run: RunConfig, workdir: str) -> Outcome:
-    """The outcome an outcome block's `body` holds, its deliverable_file (a path, as validate's files) read in as its
-    deliverable; raises InvalidOutcome."""
+    """Raises InvalidOutcome."""
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
@@ -56,8 +53,7 @@ def read(body: str, run: RunConfig, workdir: str) -> Outcome:
 
 
 def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
-    """The outcome an agent run returned, once it holds; raises InvalidOutcome. Checks the schema (SCHEMA) and what it
-    can't. Its text stays untrusted."""
+    """Raises InvalidOutcome."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
@@ -86,7 +82,7 @@ def _schema() -> dict:
 
 
 def _conform(value, schema: Mapping, where: str) -> None:
-    """`value` against the subset of JSON Schema the outcome schema uses."""
+    """Only the subset of JSON Schema the outcome schema uses."""
     kind = schema.get("type")
     if kind == "object":
         if not isinstance(value, dict):
@@ -120,7 +116,6 @@ def _conform(value, schema: Mapping, where: str) -> None:
 
 
 def _url(url: str, run: RunConfig) -> str:
-    """The url, once it is a plain https link the agent run's destination can produce."""
     out = run.output
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
@@ -138,10 +133,9 @@ def _url(url: str, run: RunConfig) -> str:
 
 
 def _file(path, workdir: str) -> str:
-    """A regular .md file under the workdir with one link, symlinks resolved; a relative path is the workdir's."""
     base = Path(workdir).resolve()
     real = (base / path).resolve() if isinstance(path, str) and "\0" not in path else None
-    # A hard link is the same file under another name: it could carry, e.g., a key into the workdir.
+    # A hard link could bring an outside file (a key) into the workdir.
     if (real is None or real.suffix != ".md" or not real.is_relative_to(base) or not real.is_file()
             or real.stat().st_nlink != 1):
         raise InvalidOutcome(f"file {str(path)[:200]!r} is not a single-link .md file under the workdir")
@@ -149,10 +143,7 @@ def _file(path, workdir: str) -> str:
 
 
 def _read_file(real: str, workdir: str) -> str:
-    """The UTF-8 text of the file _file checked at `real`, read without a check-then-use race: opened without following
-    a symlink at `real` or blocking on a FIFO, then checked again through the open file (a regular file with one link,
-    `real` still under the workdir and still that file); at most 4 bytes per character of the schema's deliverable
-    maxLength."""
+    """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
     def invalid(reason: str) -> InvalidOutcome:
         return InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}")
 
@@ -178,10 +169,8 @@ def _read_file(real: str, workdir: str) -> str:
         raise invalid("not UTF-8 text") from None
 
 
-# The agent run controls its workdir, where the Delegate writes too: writes replace a symlink planted at the path, never
-# follow it.
 def save(path: str | Path, text: str) -> None:
-    """Writes `text` to `path` atomically, through a temp file renamed over it."""
+    """Writes `text` to `path` atomically; replaces a symlink planted there, never follows it."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:

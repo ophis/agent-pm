@@ -1,4 +1,4 @@
-"""argparse helpers: Once, an option's action that makes the option given twice an argparse error (exit 2)."""
+"""argparse helpers: Once, an option given twice is a usage error."""
 import argparse
 
 

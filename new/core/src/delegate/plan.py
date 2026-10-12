@@ -1,6 +1,5 @@
-"""One run's plan, every check before anything starts: its cwd (place), the Driver's Spec with the Access built from
-the Composer's Intent, its sid and its prompt (plan). Writes and creates nothing; a refusal is the Delegate's
-ConfigError, a Composer or Driver one keeping its message. Ported from the old core's driver (place, plan)."""
+"""One run's plan: its cwd, Spec, sid and prompt, every check before anything starts, writing nothing. A refusal is
+ConfigError, a Composer or Driver one keeping its message."""
 import functools
 import os
 import sys
@@ -12,7 +11,7 @@ from composer import RunConfig, RunParams, Team
 from driver import api
 from utils.paths import under
 
-DELIVERABLE = os.path.join("tmp", "deliverable.md")   # in the workdir: the prompt's deliverable without `out`
+DELIVERABLE = os.path.join("tmp", "deliverable.md")   # under the workdir, without `out`
 
 
 class ConfigError(Exception):
@@ -31,7 +30,7 @@ def _own(f):
 
 @dataclass(frozen=True)
 class Plan:
-    """`sid`: a resume's, else the caller's, else a new uuid4; `out` absolute, None: nothing is saved."""
+    """`out` None: nothing is saved."""
     runtime: str
     mode: str
     sid: str
@@ -45,12 +44,10 @@ class Plan:
 
 @_own
 def place(run: RunConfig, workdir: str, *, resume_sid: str | None, cwd: str | None) -> tuple[str, bool]:
-    """(the run's cwd, whether its project settings load), as the core config's `cwd` and `trusted_dirs` say. A new
-    run: `run.cwd`, else `cwd`, else the current directory; a resume: its session record's (driver.api.session), none:
-    the workdir, project off."""
+    """(cwd, whether its project settings load); a resume's from its session record."""
     workdir, trusted = os.path.abspath(workdir), composer.trusted_dirs()
     if resume_sid is not None:
-        # The agent run can append to run.jsonl: only the trusted_dirs re-check limits a forged record.
+        # The agent run can append to run.jsonl: this re-check limits a forged record.
         entry = api.session(workdir, resume_sid)
         here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
         if project and not under(os.path.realpath(here), trusted):
@@ -72,8 +69,7 @@ def place(run: RunConfig, workdir: str, *, resume_sid: str | None, cwd: str | No
 def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime: str, mode: str,
          sid: str | None = None, resume: str | None = None, name: str | None = None, events: str | None = None,
          out: str | None = None, repo: str | None = None, cwd: str | None = None, team: Team | None = None) -> Plan:
-    """The Plan of `run` on `task` (None: the run's own) and `input`; `resume` a session id to resume. `team` None: the
-    built-in team, the configured team dirs checked for overlap only (_check_team_dirs)."""
+    """`team` None: the built-in team, the configured team dirs checked for overlap only."""
     if mode not in api.MODES:
         raise ConfigError(f"mode must be headless or tui, got {mode!r}")
     if mode == "tui":
@@ -110,9 +106,7 @@ def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime:
 
 def _check_team_dirs(run: RunConfig, team: Team, guarded: tuple[str, ...], workdir: str, here: str,
                      write_dirs: tuple[str, ...], dirs: tuple[str, ...]) -> None:
-    """`team`'s dirs checked whole (composer.check_team_dirs), the `guarded` ones for overlap only, against what the run
-    can write: the workdir, the cwd, each write dir and each added dir but the role's own tasks dir. Dirs an Adapter
-    adds itself are its own to guard: driver.api exposes none."""
+    """Dirs an Adapter adds itself are unchecked: driver.api exposes none."""
     if not team.dirs and not guarded:
         return
     writes = [("the workdir", workdir), ("the cwd", here)] + [(f"write dir {p}", p) for p in write_dirs]

@@ -1,10 +1,6 @@
-"""One role's run to its Result (FR-17 to FR-22, FR-58): its plan, then the Driver session, each event handled as it
-comes: a reply printed, its mark lines recorded (`progress`), printed and passed to on_event; the last reply's outcome
-block read and validated, an invalid one fixed by one resume of the same session; a usage limit stopping the session
-and ending the run; the deliverable saved to `out`. Records `input`, `progress`, `idle`, `limit`, `invalid`, `missing`,
-then `result` and `end` however the run ends, in <workdir>/run.jsonl beside the Driver's. A Mode's policy (POLICIES)
-starts the session and its fix resume; the rest is mode-neutral. Ported from the old core's driver (start, _drive,
-terminal, printable)."""
+"""One role's run to its Result: the Driver session's events handled as they come; an invalid outcome gets one fix
+resume of the same session, a usage limit ends the run; the deliverable is saved to `out`. Records go to
+<workdir>/run.jsonl; `result` and `end` however the run ends. A Mode's policy (POLICIES) starts the session."""
 import os
 import sys
 from collections.abc import Callable
@@ -19,14 +15,14 @@ from delegate.plan import ConfigError, Plan, plan
 from delegate.reply import marks, outcome_block
 from driver import api
 
-IDLE_TIMEOUT = 2 * 60 * 60   # seconds: each span without an event is an `idle` record
+IDLE_TIMEOUT = 2 * 60 * 60   # seconds
 FIX = ("The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
        f"{OUTCOME} block; change nothing else.")
 
 
 @dataclass(frozen=True)
 class Limit:
-    """The usage limit that ended a run; resets_at: epoch seconds, None when not given."""
+    """resets_at: epoch seconds, None when not given."""
     resets_at: float | None
 
 
@@ -58,8 +54,6 @@ Event = Begun | Progress | Finished
 
 
 class Headless:
-    """The headless Mode's policy: each attempt is a process; the fix resume starts another on the same session."""
-
     def start(self, p: Plan) -> api.Handle:
         return api.start(p.runtime, p.mode, p.prompt, p.spec, resume=p.sid if p.resume else None,
                          sid=None if p.resume else p.sid, idle_timeout=IDLE_TIMEOUT)
@@ -72,7 +66,7 @@ POLICIES = {"headless": Headless}
 
 
 def printable(text: str) -> str:
-    """`text` without its control characters but tabs, so an agent run's output can't steer the terminal."""
+    """Without control characters but tabs: an agent run's output can't steer the terminal."""
     return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
@@ -84,9 +78,8 @@ def run(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime: 
         sid: str | None = None, resume: str | None = None, name: str | None = None, events: str | None = None,
         on_event: Callable[[Event], None] | None = None, out: str | None = None, repo: str | None = None,
         cwd: str | None = None, team: Team | None = None) -> Result:
-    """Runs `run` on `task` and `input` (plan's arguments) to its Result. on_event gets Begun once, a Progress per mark
-    line and Finished only with a valid outcome; an exception from it stops the session and propagates. A refusal is a
-    ConfigError before anything starts."""
+    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
+    the session and propagates."""
     p = plan(run, task, input, workdir, runtime=runtime, mode=mode, sid=sid, resume=resume, name=name, events=events,
              out=out, repo=repo, cwd=cwd, team=team)
     attempts = _Attempts(p, on_event or (lambda event: None))
@@ -114,19 +107,17 @@ def _resets(at: float | None) -> str:
 
 
 class _Attempts:
-    """One run's attempts: the first, then at most one fix resume (FR-21)."""
-
     def __init__(self, p: Plan, on_event: Callable[[Event], None]):
         self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.mode]()
         self.channel = api.records.path(p.spec.workdir)
-        self.seen: set[str] = set()   # mark names, every attempt's
-        self.refused = False          # the Driver refused the first start: nothing to close
+        self.seen: set[str] = set()
+        self.refused = False   # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
         api.records.note(self.channel, kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
-        """The `result` and `end` records, each best effort: an OSError is printed."""
+        """Best effort: an OSError is printed."""
         for kind, fields in (("result", result), ("end", {"sid": self.plan.sid, "rc": rc})):
             try:
                 self.note(kind, **fields)
@@ -178,8 +169,7 @@ class _Attempts:
             raise
 
     def drop_stale_out(self) -> str:
-        """Removes a new run's `out` once the Driver took the run (its refusal keeps it): an earlier deliverable never
-        stands for this run's. Returns why it could not, else ""."""
+        """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
         p = self.plan
         if p.out and not p.resume and not os.path.isdir(p.out):   # a resume keeps its session's draft
             try:
@@ -189,7 +179,6 @@ class _Attempts:
         return ""
 
     def attempt(self, handle: api.Handle) -> tuple[int, str | None, Limit | None]:
-        """Each event of `handle` handled as it comes, up to Exited: (its returncode, the last reply, a limit)."""
         rc = last = limit = None
         for event in handle.events():
             if isinstance(event, api.Reply):
@@ -209,7 +198,6 @@ class _Attempts:
         return rc, last, limit
 
     def reply(self, text: str) -> str:
-        """Prints `text`'s non-blank lines, then records, prints and passes on each of its marks; returns `text`."""
         for line in text.splitlines():
             if line.strip():
                 _say(line)
@@ -221,7 +209,6 @@ class _Attempts:
         return text
 
     def finish(self, outcome: Outcome, rc: int) -> Result:
-        """A valid outcome's Result: its deliverable saved to `out`, a missing start mark noted, Finished passed on."""
         p, kind = self.plan, self.plan.run.output["type"]
         if kind in SAVES_DELIVERABLE and outcome.deliverable and p.out:
             if not api.records.holds(p.out, outcome.deliverable):   # else the agent run wrote it there
