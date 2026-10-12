@@ -58,7 +58,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-          fetch-depth: 0   # real_test compares the root core/team/ with main
       - name: Set up Python 3.11
         uses: actions/setup-python@v7
         with:

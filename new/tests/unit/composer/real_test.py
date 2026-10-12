@@ -1,5 +1,5 @@
 """On the real new/core/team/ and new/core/config.toml: every built-in role × task composes with no reference error, the
-neutral Return and Parameters, the FR-31 destinations, the package API, the root core/team/ and the schema left as on main, and the shipped
+neutral Return and Parameters, the FR-31 destinations, the package API, the schema left as on main, and the shipped
 text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
 
@@ -8,7 +8,6 @@ import glob
 import hashlib
 import os
 import re
-import subprocess
 import tempfile
 import tomllib
 import types
@@ -268,18 +267,6 @@ class Acceptance(Case):
             text = task_text(name.removesuffix(".md"))
             self.assertEqual(len(START.findall(text)), 1, name)
             self.assertIn("## Resume", [line.rstrip() for _, line in unfenced(text)], name)
-
-    def test_the_root_core_team_is_unchanged_from_main(self):
-        def git(*args):
-            return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
-
-        base = git("merge-base", "origin/main", "HEAD")
-        self.assertEqual(
-            base.returncode, 0, f"needs main's history (git fetch origin main): {base.stderr}"
-        )
-        self.assertEqual(
-            git("diff", "--name-status", base.stdout.strip(), "--", "core/team/").stdout, ""
-        )
 
     def test_the_outcome_schema_is_mains(self):
         with open(composer.SCHEMA, "rb") as f:
