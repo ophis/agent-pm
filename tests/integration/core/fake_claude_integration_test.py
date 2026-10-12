@@ -1,3 +1,5 @@
+from tests.integration.core import fake_claude
+
 import glob
 import json
 import os
@@ -7,8 +9,6 @@ import sys
 import tempfile
 import time
 import unittest
-
-from tests.integration.core import fake_claude
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"
@@ -30,13 +30,20 @@ class Case(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        self.home, self.proj, self.bin = (os.path.join(self.root, d) for d in ("home", "proj", "bin"))
+        self.home, self.proj, self.bin = (
+            os.path.join(self.root, d) for d in ("home", "proj", "bin")
+        )
         for d in (self.home, self.proj, self.bin):
             os.mkdir(d)
-        self.scenario, self.hooklog, self.log = (os.path.join(self.root, f) for f in ("scenario.json", "hooks.jsonl",
-                                                                                     "log.jsonl"))
-        self.env = {"PATH": fake_claude.install(self.bin), "HOME": self.home, "PYTHONUTF8": "1",
-                    fake_claude.ENV: self.scenario}
+        self.scenario, self.hooklog, self.log = (
+            os.path.join(self.root, f) for f in ("scenario.json", "hooks.jsonl", "log.jsonl")
+        )
+        self.env = {
+            "PATH": fake_claude.install(self.bin),
+            "HOME": self.home,
+            "PYTHONUTF8": "1",
+            fake_claude.ENV: self.scenario,
+        }
 
     def scene(self, **scenario) -> None:
         with open(self.scenario, "w") as f:
@@ -44,25 +51,52 @@ class Case(unittest.TestCase):
 
     def settings(self, **entries) -> str:
         record = f"cat >> {shlex.quote(self.hooklog)}; echo >> {shlex.quote(self.hooklog)}"
-        return json.dumps({"hooks": {e: v if v else [{"hooks": [{"type": "command", "command": record}]}]
-                                     for e, v in entries.items()}})
+        return json.dumps(
+            {
+                "hooks": {
+                    e: v if v else [{"hooks": [{"type": "command", "command": record}]}]
+                    for e, v in entries.items()
+                }
+            }
+        )
 
     def prompt(self, workdir: str = "", report: bool = True) -> str:
         def code(value: str) -> str:
             return f"`` {value} ``" if "`" in value else f"`{value}`"
-        lines = [f"- `<Workdir>`: {code(workdir or self.root)}", f"- `<scripts>`: {code(self.root)}"]
+
+        lines = [
+            f"- `<Workdir>`: {code(workdir or self.root)}",
+            f"- `<scripts>`: {code(self.root)}",
+        ]
         if report:
             lines.append("- `report`: `python3 <scripts>/report.py --to <Workdir>/run.jsonl`")
-        return ("# Parameters\n\nEach name below stands for its value.\n\n" + "\n".join(lines)
-                + "\n\n# Output\n\n## Return\n\nReport with `report progress <name> <your report>`.\n")
+        return (
+            "# Parameters\n\nEach name below stands for its value.\n\n"
+            + "\n".join(lines)
+            + "\n\n# Output\n\n## Return\n\nReport with `report progress <name> <your report>`.\n"
+        )
 
     def run_fake(self, *args, stdin: str = "") -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, FAKE, *args], cwd=self.proj, env=self.env, input=stdin,
-                              capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            [sys.executable, FAKE, *args],
+            cwd=self.proj,
+            env=self.env,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def popen(self, *args) -> subprocess.Popen:
-        proc = subprocess.Popen([sys.executable, FAKE, *args], cwd=self.proj, env=self.env, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            [sys.executable, FAKE, *args],
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         self.addCleanup(self.reap, proc)
         return proc
 
@@ -82,8 +116,15 @@ class Case(unittest.TestCase):
         (path,) = self.transcripts()
         with open(path) as f:
             lines = [json.loads(line) for line in f]
-        return [(m["type"], m["message"]["content"] if m["type"] == "user" else m["message"]["content"][0]["text"])
-                for m in lines]
+        return [
+            (
+                m["type"],
+                m["message"]["content"]
+                if m["type"] == "user"
+                else m["message"]["content"][0]["text"],
+            )
+            for m in lines
+        ]
 
     def fired(self) -> list[dict]:
         try:
@@ -102,8 +143,16 @@ class Interactive(Case):
         res = self.run_fake("hello", *SESSION, stdin="line1\nline2\n")
         self.assertEqual(res.returncode, 3, res.stderr)
         self.assertEqual(res.stdout, "First.\nSecond.\n")
-        self.assertEqual(self.convo(), [("user", "hello"), ("assistant", "First."), ("user", "line1"),
-                                        ("assistant", "Second."), ("user", "line2")])
+        self.assertEqual(
+            self.convo(),
+            [
+                ("user", "hello"),
+                ("assistant", "First."),
+                ("user", "line1"),
+                ("assistant", "Second."),
+                ("user", "line2"),
+            ],
+        )
 
     def test_last_line_without_newline_is_a_line(self):
         self.scene()
@@ -119,8 +168,10 @@ class Interactive(Case):
         self.assertEqual(self.transcripts(), [])
         out, err = proc.communicate("go\nmore\n", timeout=30)
         self.assertEqual((proc.returncode, out), (2, "Hi.\nAgain.\n"), err)
-        self.assertEqual(self.convo(), [("user", "go"), ("assistant", "Hi."), ("user", "more"),
-                                        ("assistant", "Again.")])
+        self.assertEqual(
+            self.convo(),
+            [("user", "go"), ("assistant", "Hi."), ("user", "more"), ("assistant", "Again.")],
+        )
 
     def test_eof_before_any_turn(self):
         self.scene(exit=3)
@@ -159,8 +210,10 @@ class Reports(Case):
         self.stub = os.path.join(self.root, "report.py")
         self.calls = os.path.join(self.root, "calls.jsonl")
         with open(self.stub, "w") as f:
-            f.write(f"import json, sys\nwith open({self.calls!r}, 'a') as f:\n"
-                    f"    f.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+            f.write(
+                f"import json, sys\nwith open({self.calls!r}, 'a') as f:\n"
+                f"    f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            )
 
     def called(self) -> list[list[str]]:
         with open(self.calls) as f:
@@ -183,15 +236,19 @@ class Reports(Case):
         self.scene(steps=[self.STEP], turns=[[self.STEP]])
         res = self.run_fake(self.prompt(), *SESSION, stdin="a later turn\n")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(self.called(), [["--to", f"{self.root}/run.jsonl", "progress", "n", "t"]] * 2)
+        self.assertEqual(
+            self.called(), [["--to", f"{self.root}/run.jsonl", "progress", "n", "t"]] * 2
+        )
 
     def test_report_step_without_a_report_line_fails(self):
         self.scene(steps=[self.STEP])
         old_form = f"`python3 {self.stub} --to one`\n"
-        for name, prompt in {"no Parameters": "no command here\n" + old_form,
-                             "no report line": self.prompt(report=False) + old_form,
-                             "a line past Parameters": self.prompt(report=False)
-                             + f"\n# Input\n\n- `report`: `python3 {self.stub} --to one`\n"}.items():
+        for name, prompt in {
+            "no Parameters": "no command here\n" + old_form,
+            "no report line": self.prompt(report=False) + old_form,
+            "a line past Parameters": self.prompt(report=False)
+            + f"\n# Input\n\n- `report`: `python3 {self.stub} --to one`\n",
+        }.items():
             with self.subTest(name):
                 res = self.run_fake("-p", prompt, *SESSION)
                 self.assertEqual(res.returncode, 1)
@@ -204,7 +261,12 @@ class Files(Case):
         path = os.path.join(self.proj, "a.md")
         with open(path, "w") as f:
             f.write("old")
-        self.scene(steps=[{"kind": "write", "path": "a.md", "text": "x\ny"}, {"kind": "read", "path": path}])
+        self.scene(
+            steps=[
+                {"kind": "write", "path": "a.md", "text": "x\ny"},
+                {"kind": "read", "path": path},
+            ]
+        )
         res = self.run_fake("hi", *SESSION)
         self.assertEqual((res.returncode, res.stdout), (0, "x\ny\n"), res.stderr)
         with open(path) as f:
@@ -213,27 +275,44 @@ class Files(Case):
 
     def test_a_failing_write_or_read_goes_on(self):
         missing = os.path.join(self.root, "none", "a.md")
-        self.scene(steps=[{"kind": "write", "path": missing, "text": "x"}, {"kind": "read", "path": missing}, "After."])
+        self.scene(
+            steps=[
+                {"kind": "write", "path": missing, "text": "x"},
+                {"kind": "read", "path": missing},
+                "After.",
+            ]
+        )
         res = self.run_fake("hi", *SESSION)
         self.assertEqual((res.returncode, res.stdout), (0, "After.\n"), res.stderr)
-        self.assertEqual([line.split(":")[:2] for line in res.stderr.splitlines()],
-                         [["fake_claude.py", " write"], ["fake_claude.py", " read"]])
+        self.assertEqual(
+            [line.split(":")[:2] for line in res.stderr.splitlines()],
+            [["fake_claude.py", " write"], ["fake_claude.py", " read"]],
+        )
         self.assertEqual(self.convo(), [("user", "hi"), ("assistant", "After.")])
 
 
 class Hooks(Case):
     def test_payloads_and_order(self):
         self.scene(steps=[{"kind": "hook", "event": "Mark"}], turns=[["Next."]])
-        res = self.run_fake("hi", *SESSION, "--settings", self.settings(UserPromptSubmit=[], Mark=[], Stop=[]),
-                            stdin="next\n")
+        res = self.run_fake(
+            "hi",
+            *SESSION,
+            "--settings",
+            self.settings(UserPromptSubmit=[], Mark=[], Stop=[]),
+            stdin="next\n",
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         fired = self.fired()
-        self.assertEqual([h["hook_event_name"] for h in fired], ["UserPromptSubmit", "Mark", "Stop",
-                                                                 "UserPromptSubmit", "Stop"])
+        self.assertEqual(
+            [h["hook_event_name"] for h in fired],
+            ["UserPromptSubmit", "Mark", "Stop", "UserPromptSubmit", "Stop"],
+        )
         (path,) = self.transcripts()
         for h in fired:
-            self.assertEqual({k: h[k] for k in BASE - {"hook_event_name"}},
-                             {"session_id": SID, "transcript_path": path, "cwd": self.proj})
+            self.assertEqual(
+                {k: h[k] for k in BASE - {"hook_event_name"}},
+                {"session_id": SID, "transcript_path": path, "cwd": self.proj},
+            )
         submit, mark, stop = fired[:3]
         self.assertEqual(set(mark), BASE)
         self.assertEqual((submit["prompt"], fired[3]["prompt"]), ("hi", "next"))
@@ -245,12 +324,25 @@ class Hooks(Case):
         def tag(name: str) -> dict:
             return {"type": "command", "command": f"echo {name} >> {shlex.quote(self.hooklog)}"}
 
-        entries = [{"matcher": "^x$", "hooks": [tag("skipped")]}, {"matcher": None, "hooks": [tag("null")]}, "text",
-                   {"matcher": "*"}, {"hooks": "no list"},
-                   {"hooks": ["text", {"type": "command"}, {**tag("http"), "type": "http"},
-                              {**tag("five"), "command": 5}]},
-                   {"matcher": "*", "hooks": [tag("star")]}, {"matcher": "", "hooks": [tag("empty")]},
-                   {"hooks": [tag("absent")]}, {"hooks": [tag("a"), tag("b")]}]
+        entries = [
+            {"matcher": "^x$", "hooks": [tag("skipped")]},
+            {"matcher": None, "hooks": [tag("null")]},
+            "text",
+            {"matcher": "*"},
+            {"hooks": "no list"},
+            {
+                "hooks": [
+                    "text",
+                    {"type": "command"},
+                    {**tag("http"), "type": "http"},
+                    {**tag("five"), "command": 5},
+                ]
+            },
+            {"matcher": "*", "hooks": [tag("star")]},
+            {"matcher": "", "hooks": [tag("empty")]},
+            {"hooks": [tag("absent")]},
+            {"hooks": [tag("a"), tag("b")]},
+        ]
         self.scene()
         settings = json.dumps({"hooks": {"Stop": entries, "UserPromptSubmit": "not a list"}})
         res = self.run_fake("hi", *SESSION, "--settings", settings)
@@ -260,9 +352,15 @@ class Hooks(Case):
 
     def test_failing_hooks_do_not_stop_the_fake(self):
         marker = shlex.quote(self.hooklog)
-        commands = ["exit 1", "cat >/dev/null; kill -9 $$", "no-such-command-anywhere", f"echo after >> {marker}"]
-        settings = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": c}
-                                                             for c in commands]}]}})
+        commands = [
+            "exit 1",
+            "cat >/dev/null; kill -9 $$",
+            "no-such-command-anywhere",
+            f"echo after >> {marker}",
+        ]
+        settings = json.dumps(
+            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": c} for c in commands]}]}}
+        )
         self.scene(steps=["Hi."])
         res = self.run_fake("hi", *SESSION, "--settings", settings, stdin="again\n")
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -271,11 +369,19 @@ class Hooks(Case):
         self.assertEqual(self.users(), ["hi", "again"])
 
     def test_cwd_env_stdout_and_stderr(self):
-        command = 'echo "$PWD $MARK" >> ' + shlex.quote(self.hooklog) + "; echo to-stdout; echo to-stderr >&2"
+        command = (
+            'echo "$PWD $MARK" >> '
+            + shlex.quote(self.hooklog)
+            + "; echo to-stdout; echo to-stderr >&2"
+        )
         self.env["MARK"] = "m"
         self.scene()
-        res = self.run_fake("hi", *SESSION, "--settings", json.dumps(
-            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}))
+        res = self.run_fake(
+            "hi",
+            *SESSION,
+            "--settings",
+            json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}}),
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         with open(self.hooklog) as f:
             self.assertEqual(f.read(), f"{self.proj} m\n")
@@ -295,20 +401,30 @@ class PrintMode(Case):
     def test_stop_runs_once_before_the_result(self):
         self.scene(steps=["Hi.", {"kind": "hook", "event": "Mark"}], turns=[["Unused."]])
         record = f"cat >> {shlex.quote(self.hooklog)}; echo >> {shlex.quote(self.hooklog)}"
-        settings = json.dumps({"hooks": {
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": record}]}],
-            "Mark": [{"hooks": [{"type": "command", "command": record}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": "sleep 0.3; " + record}]}]}})
+        settings = json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": record}]}],
+                    "Mark": [{"hooks": [{"type": "command", "command": record}]}],
+                    "Stop": [{"hooks": [{"type": "command", "command": "sleep 0.3; " + record}]}],
+                }
+            }
+        )
         proc = self.popen(*self.ARGS, "--settings", settings)
         proc.stdin.close()
         seen = []
         for line in proc.stdout:
             seen.append(json.loads(line))
             if seen[-1]["type"] == "result":
-                self.assertEqual([h["hook_event_name"] for h in self.fired()], ["UserPromptSubmit", "Mark", "Stop"])
+                self.assertEqual(
+                    [h["hook_event_name"] for h in self.fired()],
+                    ["UserPromptSubmit", "Mark", "Stop"],
+                )
         self.assertEqual(proc.wait(timeout=30), 0)
         self.assertEqual([m["type"] for m in seen], ["system", "assistant", "result"])
-        self.assertEqual([h["hook_event_name"] for h in self.fired()], ["UserPromptSubmit", "Mark", "Stop"])
+        self.assertEqual(
+            [h["hook_event_name"] for h in self.fired()], ["UserPromptSubmit", "Mark", "Stop"]
+        )
 
     def test_hang_runs_no_stop(self):
         self.scene(steps=["Hi.", {"kind": "hook", "event": "Mark"}], hang=True)
@@ -361,14 +477,19 @@ class Gate(Case):
         self.open_gate()
         out, err = proc.communicate(timeout=30)
         self.assertEqual(proc.returncode, 0, err)
-        self.assertEqual([json.loads(line)["type"] for line in out.splitlines()], ["system", "assistant", "result"])
+        self.assertEqual(
+            [json.loads(line)["type"] for line in out.splitlines()],
+            ["system", "assistant", "result"],
+        )
 
     def test_no_hook_or_report_before_the_gate(self):
         stub, calls = os.path.join(self.root, "report.py"), os.path.join(self.root, "calls.jsonl")
         with open(stub, "w") as f:
             f.write(f"open({calls!r}, 'a').close()\n")
         self.scene(steps=[{"kind": "progress", "name": "n", "text": "t"}], gate=self.gate)
-        proc = self.parked(self.prompt(), *SESSION, "--settings", self.settings(UserPromptSubmit=[]))
+        proc = self.parked(
+            self.prompt(), *SESSION, "--settings", self.settings(UserPromptSubmit=[])
+        )
         self.assertEqual((self.fired(), os.path.exists(calls)), ([], False))
         self.open_gate()
         proc.communicate("", timeout=30)
@@ -398,8 +519,16 @@ class Gate(Case):
         err = os.path.join(self.root, "err.txt")
         self.scene(gate=self.gate)
         q = shlex.quote
-        parent = subprocess.Popen(["sh", "-c", f"{q(sys.executable)} {q(FAKE)} hello --session-id {SID} "
-                                               f"</dev/null >/dev/null 2>{q(err)} & wait"], cwd=self.proj, env=self.env)
+        parent = subprocess.Popen(
+            [
+                "sh",
+                "-c",
+                f"{q(sys.executable)} {q(FAKE)} hello --session-id {SID} "
+                f"</dev/null >/dev/null 2>{q(err)} & wait",
+            ],
+            cwd=self.proj,
+            env=self.env,
+        )
         self.addCleanup(lambda: (parent.kill(), parent.wait()))
         wait(lambda: os.path.isfile(self.log))
         parent.kill()
@@ -415,13 +544,22 @@ class Gate(Case):
 class BadScenario(Case):
     def test_bad_turns_and_steps_exit_1(self):
         hook = {"kind": "hook", "event": "Stop"}
-        for scenario in ({"turns": "x"}, {"turns": ["x"]}, {"turns": [[1]]}, {"turns": [["ok"], [{"kind": "nope"}]]},
-                         {"turns": [[{"kind": "hook"}]]}, {"steps": [{**hook, "extra": 1}]},
-                         {"steps": [{"kind": "hook", "event": ""}]}, {"steps": [{"kind": "hook", "event": 7}]},
-                         {"steps": [{"kind": ["hook"], "event": "Stop"}]}, {"steps": [{"kind": "write", "path": "a"}]},
-                         {"steps": [{"kind": "write", "path": "", "text": "x"}]},
-                         {"steps": [{"kind": "write", "path": "a", "text": 5}]}, {"steps": [{"kind": "read", "path": 7}]},
-                         {"steps": [{"kind": "read", "path": "a", "text": "x"}]}):
+        for scenario in (
+            {"turns": "x"},
+            {"turns": ["x"]},
+            {"turns": [[1]]},
+            {"turns": [["ok"], [{"kind": "nope"}]]},
+            {"turns": [[{"kind": "hook"}]]},
+            {"steps": [{**hook, "extra": 1}]},
+            {"steps": [{"kind": "hook", "event": ""}]},
+            {"steps": [{"kind": "hook", "event": 7}]},
+            {"steps": [{"kind": ["hook"], "event": "Stop"}]},
+            {"steps": [{"kind": "write", "path": "a"}]},
+            {"steps": [{"kind": "write", "path": "", "text": "x"}]},
+            {"steps": [{"kind": "write", "path": "a", "text": 5}]},
+            {"steps": [{"kind": "read", "path": 7}]},
+            {"steps": [{"kind": "read", "path": "a", "text": "x"}]},
+        ):
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
                 res = self.run_fake("hi", *SESSION)
@@ -440,7 +578,10 @@ class BadScenario(Case):
                 self.assertEqual(self.transcripts(), [])
 
     def test_valid_hook_steps(self):
-        self.scene(steps=[{"kind": "hook", "event": "Stop"}], turns=[[], [{"kind": "hook", "event": "Mark"}]])
+        self.scene(
+            steps=[{"kind": "hook", "event": "Stop"}],
+            turns=[[], [{"kind": "hook", "event": "Mark"}]],
+        )
         self.assertEqual(self.run_fake("hi", *SESSION).returncode, 0)
 
 

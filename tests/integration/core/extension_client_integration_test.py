@@ -1,3 +1,5 @@
+from tests.integration.core import live_tmux
+
 import json
 import os
 import shutil
@@ -6,8 +8,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-from tests.integration.core import live_tmux
 
 CORE = Path(__file__).resolve().parents[3] / "core"
 MANAGER = "mgr"
@@ -77,13 +77,35 @@ class ExtensionClientIntegration(unittest.TestCase):
 
     def drive(self, client):
         return subprocess.run(
-            [sys.executable, str(self.core / "src" / "drive.py"), "--client", client,
-             "--role", "dummy-tester", "--task", "echo", "--input", "Hello.",
-             "--out", str(self.work / "out.md"), "--workdir", str(self.work), "--dry-run"],
-            cwd=self.work, env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            [
+                sys.executable,
+                str(self.core / "src" / "drive.py"),
+                "--client",
+                client,
+                "--role",
+                "dummy-tester",
+                "--task",
+                "echo",
+                "--input",
+                "Hello.",
+                "--out",
+                str(self.work / "out.md"),
+                "--workdir",
+                str(self.work),
+                "--dry-run",
+            ],
+            cwd=self.work,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     def test_extension_module_and_config_support_dry_run_capability_catalog_and_resolution(self):
-        self.config('[clients.extension]\nimplementation = "CustomAdapter"\ntier = 4\nbanner = "Extension client handover."\n')
+        self.config(
+            '[clients.extension]\nimplementation = "CustomAdapter"\ntier = 4\nbanner = "Extension client handover."\n'
+        )
         result = self.drive("extension")
         self.assertEqual(result.returncode, 0, result.stderr)
         launch = json.loads(result.stdout)
@@ -91,13 +113,21 @@ class ExtensionClientIntegration(unittest.TestCase):
         self.assertIn("Extension client handover.", launch["argv"][5])
         self.assertIn("# Input\n\nHello.", launch["argv"][5])
 
-        script = ("import json, sys, clients, compose; "
-                  "root = sys.argv[1]; client = clients.get('extension', root); "
-                  "print(json.dumps({'handover': client.handover(), "
-                  "'tier': compose.resolve(root, client, 'dummy-tester', 'echo').tier, "
-                  "'catalog': clients.catalog('extension', root)}))")
-        api = subprocess.run([sys.executable, "-c", script, str(self.core)], cwd=self.work, env=self.env,
-                             capture_output=True, text=True, timeout=30)
+        script = (
+            "import json, sys, clients, compose; "
+            "root = sys.argv[1]; client = clients.get('extension', root); "
+            "print(json.dumps({'handover': client.handover(), "
+            "'tier': compose.resolve(root, client, 'dummy-tester', 'echo').tier, "
+            "'catalog': clients.catalog('extension', root)}))"
+        )
+        api = subprocess.run(
+            [sys.executable, "-c", script, str(self.core)],
+            cwd=self.work,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertEqual(api.returncode, 0, api.stderr)
         data = json.loads(api.stdout)
         self.assertEqual(data["handover"], "Extension client handover.")
@@ -126,7 +156,9 @@ class ExtensionWorkerIntegration(unittest.TestCase):
         self.crew = str(core / "skills" / "tmux" / "scripts" / "crew.py")
         script = self.root / "worker.py"
         script.write_text(SCRIPT)
-        (core / "src" / "clients" / f"{WORKER}.py").write_text(WORKER_MODULE.format(marker=MARKER, script=str(script)))
+        (core / "src" / "clients" / f"{WORKER}.py").write_text(
+            WORKER_MODULE.format(marker=MARKER, script=str(script))
+        )
         with (core / "config.toml").open("a") as f:
             f.write(f'\n[clients.{WORKER}]\nimplementation = "WorkerAdapter"\n')
         home = self.root / "home"
@@ -142,27 +174,45 @@ class ExtensionWorkerIntegration(unittest.TestCase):
 
     def crew_py(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
         env = self.server.env(**self.server.inside(MANAGER), EXTENSION_LOG=str(self.log), **extra)
-        return subprocess.run([sys.executable, self.crew, *args], env=env, cwd=self.work, capture_output=True,
-                              text=True, stdin=subprocess.DEVNULL, timeout=TIMEOUT)
+        return subprocess.run(
+            [sys.executable, self.crew, *args],
+            env=env,
+            cwd=self.work,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=TIMEOUT,
+        )
 
     def ok(self, res: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
-        self.assertEqual(res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}")
+        self.assertEqual(
+            res.returncode, 0, f"{res.args}\nstdout: {res.stdout}\nstderr: {res.stderr}"
+        )
         return res
 
     def start(self, *args: str, **extra: str) -> str:
-        out = self.ok(self.crew_py("start", "w1", "--manager", MANAGER, "--cwd", self.work, *args, **extra)).stdout
+        out = self.ok(
+            self.crew_py("start", "w1", "--manager", MANAGER, "--cwd", self.work, *args, **extra)
+        ).stdout
         name, _, sid = out.strip().partition(" ")
         self.assertEqual(name, "w1", out)
         return sid
 
     def logged(self, count: int) -> list[dict]:
         def read():
-            entries = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+            entries = (
+                [json.loads(line) for line in self.log.read_text().splitlines()]
+                if self.log.exists()
+                else []
+            )
             return entries if len(entries) >= count else None
+
         return live_tmux.wait(read, what=f"{count} entries in {self.log}")
 
     def pane_pid(self) -> int:
-        return int(self.ok(self.server.tmux("display-message", "-p", "-t", "=w1:", "#{pane_pid}")).stdout)
+        return int(
+            self.ok(self.server.tmux("display-message", "-p", "-t", "=w1:", "#{pane_pid}")).stdout
+        )
 
     def resume(self) -> list[str]:
         return json.loads(self.roster.read_text())["entries"]["w1"]["resume"]
@@ -170,13 +220,32 @@ class ExtensionWorkerIntegration(unittest.TestCase):
     def test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one(self):
         sid = self.start("--client", WORKER)
         (begun,) = self.logged(1)
-        self.assertEqual((begun["what"], begun["argv"], begun["cwd"]), ("start", ["new", sid, "w1"], self.work))
+        self.assertEqual(
+            (begun["what"], begun["argv"], begun["cwd"]), ("start", ["new", sid, "w1"], self.work)
+        )
         self.assertEqual(begun["env"], {MARKER: None, "EXTENSION_WORKER": "w1"})
         self.assertEqual(self.pane_pid(), begun["pid"])
-        self.assertEqual({k: self.server.option("w1", k) for k in ("@client", "@exe", "@env")},
-                         {"@client": WORKER, "@exe": sys.executable, "@env": "{}"})
-        self.assertEqual(self.resume(), [sys.executable, self.crew, "start", "w1", "--manager", MANAGER, "--client",
-                                         WORKER, "--resume", sid, "--cwd", self.work])
+        self.assertEqual(
+            {k: self.server.option("w1", k) for k in ("@client", "@exe", "@env")},
+            {"@client": WORKER, "@exe": sys.executable, "@env": "{}"},
+        )
+        self.assertEqual(
+            self.resume(),
+            [
+                sys.executable,
+                self.crew,
+                "start",
+                "w1",
+                "--manager",
+                MANAGER,
+                "--client",
+                WORKER,
+                "--resume",
+                sid,
+                "--cwd",
+                self.work,
+            ],
+        )
         self.ok(self.crew_py("restart", "w1"))
         _, ended, resumed = self.logged(3)
         self.assertEqual((ended["what"], ended["pid"]), ("exit", begun["pid"]))

@@ -1,30 +1,61 @@
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator.flow_fixtures import (
+    ENGINEER,
+    HARNESS_EMAIL,
+    HUMAN,
+    PROJECT,
+    TIMEOUT,
+    Flow,
+    live_tmux,
+)
+
 import os
 import signal
 import unittest
-
-from tests import hermetic  # noqa: F401
-from tests.integration.orchestrator.flow_fixtures import (ENGINEER, HARNESS_EMAIL, HUMAN, PROJECT, TIMEOUT, Flow,
-                                                          live_tmux)
 
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
 PR = "https://github.com/acme/widgets/pull/1"
 STARTED, READY = "Building the session registry.", "Added the session registry."
 START = {"kind": "progress", "name": "start", "text": STARTED}
-DONE = {"kind": "outcome", "outcome": {"status": "done", "title": "Session registry", "summary": READY, "url": PR}}
+DONE = {
+    "kind": "outcome",
+    "outcome": {"status": "done", "title": "Session registry", "summary": READY, "url": PR},
+}
 LEDGER = ["start", "comment", f"attach:{PR}", "move:in_review"]
 ATTACHMENT = {"url": PR, "title": "Session registry"}
-HARNESS_OPS = {"linear.Q_TEAM", "linear.Q_TASK_GROUP", "linear.Q_USER", "router.issues", "router.issues+relations",
-               "router.Q_RECHECK", "linear.M_STATE", "issues.Q_ISSUE", "sessions.Q_FIND", "linear.M_COMMENT",
-               "sessions.M_UPDATE"}
-ENGINEER_OPS = {"linear.M_COMMENT", "writeback.Q_ATTACHED", "linear.M_SUBSCRIBE", "writeback.M_ATTACH",
-                "linear.Q_ISSUE_STATE", "linear.M_STATE"}
+HARNESS_OPS = {
+    "linear.Q_TEAM",
+    "linear.Q_TASK_GROUP",
+    "linear.Q_USER",
+    "router.issues",
+    "router.issues+relations",
+    "router.Q_RECHECK",
+    "linear.M_STATE",
+    "issues.Q_ISSUE",
+    "sessions.Q_FIND",
+    "linear.M_COMMENT",
+    "sessions.M_UPDATE",
+}
+ENGINEER_OPS = {
+    "linear.M_COMMENT",
+    "writeback.Q_ATTACHED",
+    "linear.M_SUBSCRIBE",
+    "writeback.M_ATTACH",
+    "linear.Q_ISSUE_STATE",
+    "linear.M_STATE",
+}
 
 
 class Router(Flow):
     def setUp(self):
         super().setUp()
-        self.fake.issue(TITLE, identifier=ID, assignee=self.ids[ENGINEER], project=PROJECT,
-                        description="Add a session registry.")
+        self.fake.issue(
+            TITLE,
+            identifier=ID,
+            assignee=self.ids[ENGINEER],
+            project=PROJECT,
+            description="Add a session registry.",
+        )
 
     def claim(self, mode="start"):
         res = self.router("--issue", ID)
@@ -35,12 +66,16 @@ class Router(Flow):
 
     def assert_built(self, sid):
         self.assertEqual(self.state(ID), "in_review")
-        self.assertEqual(self.history(ID), [("todo", "in_progress", HARNESS_EMAIL),
-                                            ("in_progress", "in_review", ENGINEER)])
+        self.assertEqual(
+            self.history(ID),
+            [("todo", "in_progress", HARNESS_EMAIL), ("in_progress", "in_review", ENGINEER)],
+        )
         (author, session), *rest = self.comments(ID)
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertRegex(session, rf"^Run {sid} · done · .* · exit 0\n")
-        self.assertEqual(rest, [(ENGINEER, f"Build started: {STARTED}"), (ENGINEER, f"Build ready: {READY}")])
+        self.assertEqual(
+            rest, [(ENGINEER, f"Build started: {STARTED}"), (ENGINEER, f"Build ready: {READY}")]
+        )
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         self.assertEqual(self.subscribers(ID), [HUMAN])
         self.assertEqual(self.ledger(ID), {sid: LEDGER})
@@ -52,21 +87,31 @@ class Router(Flow):
         sid = self.claim()
         self.wait_end(sid, ID)
         self.assert_built(sid)
-        self.assertEqual(self.runs(), [{"kind": "start", "issue": ID, "sid": sid, "role": "engineer"}])
+        self.assertEqual(
+            self.runs(), [{"kind": "start", "issue": ID, "sid": sid, "role": "engineer"}]
+        )
         prompt = self.transcript(ID, sid)[0]
         self.assertEqual(prompt["type"], "user")
         lines = prompt["message"]["content"].splitlines()
         self.assertIn("Repo: acme/widgets", lines)
         self.assertIn(f"Branch: {BRANCH}", lines)
         self.assertEqual(self.problems(), [])
-        self.assertEqual({(r.op, r.account) for r in self.requests()},
-                         {(op, HARNESS_EMAIL) for op in HARNESS_OPS} | {(op, ENGINEER) for op in ENGINEER_OPS})
-        self.assertTrue(self.sent("sessions.M_UPDATE", HARNESS_EMAIL)[-1]["b"].startswith(f"Run {sid} · done · "))
+        self.assertEqual(
+            {(r.op, r.account) for r in self.requests()},
+            {(op, HARNESS_EMAIL) for op in HARNESS_OPS} | {(op, ENGINEER) for op in ENGINEER_OPS},
+        )
+        self.assertTrue(
+            self.sent("sessions.M_UPDATE", HARNESS_EMAIL)[-1]["b"].startswith(
+                f"Run {sid} · done · "
+            )
+        )
 
     def test_a_crash_mid_run_resumes_the_session(self):
         self.scene(steps=[START], hang=True)
         sid = self.claim()
-        live_tmux.wait(lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step")
+        live_tmux.wait(
+            lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step"
+        )
         driver = self.driver("engineer", ID)
         pane = self.server.tmux("list-panes", "-t", f"={driver}", "-F", "#{pane_pid}")
         self.assertEqual(pane.returncode, 0, pane.stderr)
@@ -86,13 +131,17 @@ class Router(Flow):
         self.scene(steps=[START, DONE])
         self.assertEqual(self.claim("resume"), sid)
         self.wait_end(sid, ID, ends=1)
-        self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)])
+        self.assertEqual(
+            [(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)]
+        )
         first, second = (c["argv"] for c in self.calls())
         self.assertEqual(first[first.index("--session-id") + 1], sid)
         self.assertEqual(second[second.index("--resume") + 1], sid)
         self.assertNotIn("--session-id", second)
         self.assert_built(sid)
-        started = [v for v in self.sent("linear.M_COMMENT", ENGINEER) if v["b"].startswith("Build started")]
+        started = [
+            v for v in self.sent("linear.M_COMMENT", ENGINEER) if v["b"].startswith("Build started")
+        ]
         self.assertEqual(len(started), 1)
         self.assertEqual(self.problems(), [])
 
@@ -106,15 +155,21 @@ class Router(Flow):
         self.assertEqual(self.comments(ID)[-1], (ENGINEER, f"Build ready: {READY}"))
         self.assertEqual(self.attachments(ID), [ATTACHMENT])
         [error] = [e for e in self.logged() if e["kind"] == "step-error"]
-        self.assertEqual((error["src"], error["issue"], error["sid"], error["step"]),
-                         ("writeback", ID, sid, "move:in_review"))
+        self.assertEqual(
+            (error["src"], error["issue"], error["sid"], error["step"]),
+            ("writeback", ID, sid, "move:in_review"),
+        )
         self.assertIn("503", error["error"])
 
         self.assertEqual(self.claim("resume"), sid)
         self.wait_end(sid, ID, ends=2)
-        self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)])
+        self.assertEqual(
+            [(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)]
+        )
         self.assert_built(sid)
-        ready = [v for v in self.sent("linear.M_COMMENT", ENGINEER) if v["b"].startswith("Build ready")]
+        ready = [
+            v for v in self.sent("linear.M_COMMENT", ENGINEER) if v["b"].startswith("Build ready")
+        ]
         self.assertEqual(len(ready), 1)
         self.assertEqual(len(self.sent("writeback.M_ATTACH", ENGINEER)), 1)
         self.assertEqual(self.problems(), [("linear.M_STATE", ENGINEER, "503")])
@@ -123,10 +178,14 @@ class Router(Flow):
         self.fake.fail("linear.Q_TEAM", "503")
         res = self.router(*argv)
         self.assertEqual((res.returncode, res.stdout, res.stderr), (1, "", ""))
-        self.assertEqual([(r.op, r.account, r.result) for r in self.requests()],
-                         [("linear.Q_TEAM", HARNESS_EMAIL, "503")])
-        self.assertEqual([{k: v for k, v in e.items() if k != "ts"} for e in self.logged()],
-                         [{"src": "router", "kind": "linear-error", "op": "teams", "status": 503}])
+        self.assertEqual(
+            [(r.op, r.account, r.result) for r in self.requests()],
+            [("linear.Q_TEAM", HARNESS_EMAIL, "503")],
+        )
+        self.assertEqual(
+            [{k: v for k, v in e.items() if k != "ts"} for e in self.logged()],
+            [{"src": "router", "kind": "linear-error", "op": "teams", "status": 503}],
+        )
         self.assertEqual(self.state(ID), "todo")
 
     def test_a_linear_outage_stops_the_tick(self):

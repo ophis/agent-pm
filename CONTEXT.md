@@ -45,7 +45,7 @@ The code that wraps one agent runtime (Claude Code, Codex) for the driver: its l
 _Avoid_: client, backend, vehicle
 
 **Mode**:
-How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits) or tui (its interactive command in a tmux session, ends when its caller stops it). In code: `--runner` (renamed by TASK-310).
+How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `--runner` (renamed by TASK-310).
 _Avoid_: runner
 
 **Attended run**:
