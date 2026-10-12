@@ -13,11 +13,11 @@ SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
 REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
 and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
 blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else tracking origin/B, else new from
-origin/BASE, else origin/<default>.
+origin/BASE (origin/<default> when BASE is omitted).
 Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
 second `--dir`.
-Exits 2 when REPO, B, SLUG or BASE is invalid or unusable (B the default branch or checked out elsewhere), 1
-on any other failure.
+Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), or BASE syntax
+is invalid. Exits 1 on other failures, including a missing origin/BASE.
 Errors mask URL userinfo.
 """
 
