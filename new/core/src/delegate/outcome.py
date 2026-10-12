@@ -1,13 +1,11 @@
 """An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates it against SCHEMA
-and what SCHEMA can't say; save writes a file atomically. Its text stays untrusted: a path is shown as a repr, at most
-200 characters."""
+and what SCHEMA can't say. Its text stays untrusted: a path is shown as a repr, at most 200 characters."""
 
 import json
 import os
 import posixpath
 import re
 import stat
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +13,7 @@ from typing import Literal, get_args
 from urllib.parse import unquote, urlsplit
 
 from composer import SCHEMA, RunConfig
+from utils.files import save  # noqa: F401
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
@@ -203,17 +202,3 @@ def _read_file(real: str, workdir: str) -> str:
         return data.decode()
     except UnicodeDecodeError:
         raise invalid("not UTF-8 text") from None
-
-
-def save(path: str | Path, text: str) -> None:
-    """Writes `text` to `path` atomically; replaces a symlink planted there, never follows it."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:
-        try:
-            f.write(text)
-            f.close()
-            os.replace(f.name, path)
-        except BaseException:
-            os.unlink(f.name)
-            raise
