@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/repos/git.py: common_dir over real git worktrees; git's lock retries."""
+"""core/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
 
 import os
 import subprocess
@@ -6,8 +6,8 @@ import tempfile
 import unittest
 import unittest.mock
 
-import agent_pm.utils.repos.git
-from agent_pm.utils.repos.git import common_dir
+import agent_pm.utils.git
+from agent_pm.utils.git import common_dir
 
 from tests.case import Case
 
@@ -126,9 +126,9 @@ class Retry(Case):
             calls.append(argv)
             return answers.pop(0)
 
-        with unittest.mock.patch.object(agent_pm.utils.repos.git.time, "sleep") as sleep:
+        with unittest.mock.patch.object(agent_pm.utils.git.time, "sleep") as sleep:
             try:
-                return agent_pm.utils.repos.git.git(run, "/w", *args), calls, sleep
+                return agent_pm.utils.git.git(run, "/w", *args), calls, sleep
             except RuntimeError as e:
                 return e, calls, sleep
 
@@ -170,7 +170,7 @@ class Retry(Case):
 
     def test_pre_options_go_before_the_worktree_and_the_timeout_is_passed(self):
         seen = []
-        agent_pm.utils.repos.git.git(
+        agent_pm.utils.git.git(
             lambda argv, t: seen.append((argv, t)) or ok(),
             "/w",
             "status",

@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from agent_pm.utils.repos.shell import SHORT, Runner
+from agent_pm.utils.shell import SHORT, Runner
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?"
 NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"

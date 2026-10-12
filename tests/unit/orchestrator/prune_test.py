@@ -15,8 +15,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, promote, prune
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import api
-from agent_pm.utils import paths
-from agent_pm.utils.repos import shell
+from agent_pm.utils import paths, shell
 
 from tests.case import Case
 from tests.unit.orchestrator import promote_test as tp

@@ -19,8 +19,8 @@ from agent_pm.linear_orchestrator.engine import config
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
-from agent_pm.utils.repos.git import GUARD
-from agent_pm.utils.repos.shell import SHORT
+from agent_pm.utils.git import GUARD
+from agent_pm.utils.shell import SHORT
 
 from tests.case import ORCH_ROOT, PY, Case, child_env
 from tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role

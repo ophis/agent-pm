@@ -15,9 +15,9 @@ import agent_pm.config
 from agent_pm.delegate import composer
 from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
+from agent_pm.utils.git import GUARD
 from agent_pm.utils.paths import temp_dirs, under
 from agent_pm.utils.repos import NAME, OWNER
-from agent_pm.utils.repos.git import GUARD
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")

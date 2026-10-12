@@ -31,9 +31,9 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
 )
 from agent_pm.session import api
+from agent_pm.utils.git import GUARD, common_dir, git
 from agent_pm.utils.paths import under
-from agent_pm.utils.repos.git import GUARD, common_dir, git
-from agent_pm.utils.repos.shell import SHORT
+from agent_pm.utils.shell import SHORT
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)

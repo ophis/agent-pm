@@ -22,8 +22,8 @@ from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, ta
 from agent_pm.linear_orchestrator.engine import run as run_py
 from agent_pm.linear_orchestrator.linear import issues, linear
 from agent_pm.session import api
-from agent_pm.utils.repos.git import GUARD
-from agent_pm.utils.repos.shell import SHORT
+from agent_pm.utils.git import GUARD
+from agent_pm.utils.shell import SHORT
 
 from tests.case import ORCH_ROOT, ROOT
 from tests.unit.orchestrator import run_fixtures

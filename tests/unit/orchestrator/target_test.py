@@ -13,7 +13,7 @@ import agent_pm.utils.repos
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config, target
 from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.utils.repos.shell import SHORT
+from agent_pm.utils.shell import SHORT
 
 from tests.case import Case
 

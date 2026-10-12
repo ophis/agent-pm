@@ -14,9 +14,8 @@ import unittest
 import unittest.mock
 
 from agent_pm.delegate.composer import TEAM
-from agent_pm.utils import repos
-from agent_pm.utils.repos import git as git_utils
-from agent_pm.utils.repos import shell
+from agent_pm.utils import git as git_utils
+from agent_pm.utils import repos, shell
 
 from tests.case import Case
 

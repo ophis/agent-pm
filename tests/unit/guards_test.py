@@ -76,7 +76,7 @@ class RealTree(Case):
                 self.assertEqual(guard(root), [])
 
     def test_utils_holds_none_of_the_modules_that_left_it(self):
-        moved = ("shell", "repos", "git", "protocol")
+        moved = ("protocol",)
         utils = os.listdir(os.path.join(ROOT, "agent_pm", "utils"))
         self.assertEqual([n for n in utils if n.endswith(".py") and n[:-3] in moved], [])
 
@@ -1012,7 +1012,7 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\n"
                 "from agent_pm import linear_orchestrator\nfrom agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
                 "delegate.Begun\nimport agent_pm.delegate as d\nd.Finished\n"
-                "from agent_pm.session import api\nimport agent_pm.utils.repos.shell\nfrom agent_pm import utils\n"
+                "from agent_pm.session import api\nimport agent_pm.utils.shell\nfrom agent_pm import utils\n"
                 "import agent_pm.linear_orchestrator.linear.linear\nfrom agent_pm.linear_orchestrator.engine.config import TASKS\n",
                 f"{OPKG}/utils.py": "",
             }
