@@ -109,10 +109,10 @@ APPLESCRIPT = """on run argv
 end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
-# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE and SIGXFSZ reset, an
-# OSError's errno written to the errpipe, which execve closes. `block` stays blocked across execve; a cwd it cannot
-# enter or no errpipe reader: handover untaken; it waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
-EXEC = f"""import json, os, signal, sys, time
+# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE and SIGXFSZ reset, any
+# error's errno (else EINVAL) sent to the errpipe, which execve closes. `block` stays blocked across execve; a cwd it
+# cannot enter or no errpipe reader: handover untaken; it waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
+EXEC = f"""import errno, json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
 w = os.open(sys.argv[2], os.O_WRONLY | os.O_NONBLOCK)
@@ -130,8 +130,8 @@ try:
     h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
     for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
     os.execve(h['argv'][0], h['argv'], h['env'])
-except OSError as e:
-    os.write(w, b'%d' % e.errno)
+except BaseException as e:
+    os.write(w, b'%d' % (isinstance(e, OSError) and e.errno or errno.EINVAL))
     raise"""
 
 

@@ -3000,6 +3000,14 @@ class Exec(unittest.TestCase):
                 self.assertEqual(self.piped(), b"%d" % number)
                 self.assertFalse(os.path.exists(self.path))
 
+    def test_any_other_exec_failure_writes_einval_and_argv_never_runs(self):
+        for env in ({"X": "a\0b"}, {"X": "\ud800"}, {"X=Y": "1"}):
+            with self.subTest(env=env):
+                res = self.run_exec([sys.executable, "-c", "print('ran')"], env, self.root, {})
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("Error: ", res.stderr)
+                self.assertEqual(self.piped(), b"%d" % errno.EINVAL)
+
     def test_a_cwd_it_cannot_enter_fails_it_leaving_the_handover_untaken(self):
         res = self.run_exec([sys.executable, "-c", "print('ran')"], {}, os.path.join(self.root, "missing"), {})
         self.assertEqual((res.returncode, res.stdout), (1, ""))

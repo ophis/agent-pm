@@ -1,6 +1,6 @@
 """driver.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
-taken name, a cwd it cannot enter, a script whose interpreter is missing."""
+taken name, a cwd it cannot enter, a script whose interpreter is missing, an env execve refuses."""
 import errno
 import json
 import os
@@ -103,6 +103,12 @@ class DetachTest(unittest.TestCase):
         with self.assertRaisesRegex(api.DriverError, "^" + re.escape(error) + "$"):
             api.detach("d1", [script], self.dir, self.server.env())
         live_tmux.wait(self.gone, what="no session left")
+
+    def test_an_env_execve_refuses_fails_it_leaving_no_session(self):
+        with self.assertRaisesRegex(api.DriverError, rf"^detach d1: cannot run .+: {os.strerror(errno.EINVAL)}$"):
+            api.detach("d1", self.argv("d1"), self.dir, {**self.server.env(), "X": "a\0b"})
+        live_tmux.wait(self.gone, what="no session left")
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "d1.json")))
 
 
 if __name__ == "__main__":
