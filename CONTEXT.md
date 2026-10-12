@@ -48,6 +48,12 @@ _Avoid_: client, backend, vehicle
 How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `--runner` (renamed by TASK-310).
 _Avoid_: runner
 
+**Host**:
+Where the session layer runs processes by name (e.g. in tmux sessions), keeping each one's Record and display; only a Displayable Host can show them. In code: `new/core/src/agent_pm/session/host.py`.
+
+**Record**:
+One JSON line naming a started thing (a worker, a role run, a pipeline) by its outermost starter: how to query it (its `ctl` command) and resume it (its `resume` command). In code: `new/core/src/agent_pm/utils/record.py`.
+
 **Attended run**:
 An agent run started by hand in tui mode so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
 
