@@ -51,7 +51,11 @@ P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000
 SLUG = "ophis/agent-pm"
 HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
-GATE = "python3 -P -m agent_pm_orchestrator.router --brake"
+ROOT_Q, CORE_SRC = shlex.quote(config.ROOT), "/".join(("core", "src"))  # guards.old_core
+GATE = (
+    f"env PYTHONPATH={ROOT_Q}/{CORE_SRC}:{ROOT_Q}/orchestrator/src "
+    "python3 -P -m agent_pm_orchestrator.router --brake researcher"
+)
 LABEL = ("orchestrator/config.toml", "core")
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 

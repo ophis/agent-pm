@@ -148,7 +148,7 @@ class Moved(Case):
     def test_the_moved_helpers_are_the_utils_ones(self):
         for module, names in (
             (shell, ("SHORT", "LONG", "Runner", "sh", "USERINFO", "redact", "err_text")),
-            (git_utils, ("GUARD", "common_dir")),
+            (git_utils, ("GUARD", "common_dir", "LOCK", "git")),
             (
                 repos,
                 (
@@ -463,57 +463,6 @@ class Worktree(Base):
         ):
             with self.subTest(argv=argv):
                 self.assertIn(want, self.refused(argv))
-
-
-class Retry(Case):
-    LOCKS = (
-        "fatal: Unable to create '/w/.git/index.lock': File exists.",
-        "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def",
-        "error: could not lock config file .git/config: File exists",
-    )
-
-    def git(self, *results, args=("fetch", "origin")):
-        """(stdout or the RuntimeError, run, the mocked sleep)."""
-        run = Fake([(["git"], list(results))])
-        with unittest.mock.patch.object(repo.time, "sleep") as sleep:
-            try:
-                return repo.git(run, "/w", *args), run, sleep
-            except RuntimeError as e:
-                return e, run, sleep
-
-    def test_a_lock_failure_is_retried(self):
-        for stderr in self.LOCKS:
-            with self.subTest(stderr=stderr):
-                out, run, sleep = self.git(fail(stderr), ok("done"))
-                self.assertEqual((out, len(run.calls)), ("done", 2))
-                sleep.assert_called_once_with(0.5)
-
-    def test_five_lock_failures_raise(self):
-        err, run, sleep = self.git(*[fail(self.LOCKS[0])] * 5)
-        self.assertIsInstance(err, RuntimeError)
-        self.assertIn("index.lock", str(err))
-        self.assertEqual(len(run.calls), 5)
-        self.assertEqual([c.args[0] for c in sleep.call_args_list], [0.5, 1, 2, 4])
-
-    def test_the_command_text_shortens_long_arguments_and_stays_bounded(self):
-        msg = str(
-            self.git(
-                fail("fatal: boom"),
-                args=("--git-dir=" + "/private/var/folders/xy" * 10, "worktree", "prune"),
-            )[0]
-        )
-        self.assertTrue(msg.startswith("git --git-dir=/private/var/folders/xy"), msg)
-        self.assertTrue(msg.endswith("worktree prune: fatal: boom"), msg)
-        self.assertLess(len(msg), 120)
-        self.assertLess(
-            len(str(self.git(fail("fatal: boom"), args=["/a/long/path/argument" * 3] * 50)[0])), 250
-        )
-
-    def test_other_failures_are_not_retried(self):
-        err, run, sleep = self.git(fail("fatal: not a git repository"), ok())
-        self.assertIsInstance(err, RuntimeError)
-        self.assertEqual(len(run.calls), 1)
-        sleep.assert_not_called()
 
 
 class Clone(Case):

@@ -1,8 +1,26 @@
-"""GUARD: git options that keep a checkout's fsmonitor and hooks from running; common_dir: a worktree's clone."""
+"""GUARD: git options that keep a checkout's fsmonitor and hooks from running; common_dir: a worktree's clone; git:
+runs git, retrying lock failures."""
 
 import os
+import re
+import time
+
+from agent_pm.utils.shell import SHORT, Runner, err_text
 
 GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
+LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
+
+
+def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
+    for i in range(5):
+        res = run(["git", *pre, "-C", wt, *args], timeout)
+        if res.returncode == 0:
+            return res.stdout
+        if i == 4 or not LOCK.search(res.stderr or ""):
+            break
+        time.sleep(0.5 * 2**i)
+    shown = " ".join(a if len(a) <= 40 else a[:37] + "..." for a in args)
+    raise RuntimeError(f"git {shown[:200]}: {err_text(res)}")
 
 
 def common_dir(wt: str) -> str | None:

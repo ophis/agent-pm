@@ -1,5 +1,6 @@
 """Linear's GraphQL API as the orchestrator's queries use it, in memory, served over HTTP for the AGENT_PM_LINEAR
-seam: each exact query text is an op (OPS), its answer projected to the query's selection."""
+seam: each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its answer
+projected to the query's selection."""
 
 import functools
 import hashlib
@@ -17,7 +18,16 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agent_pm_orchestrator import config, issues, linear, promote, sessions, writeback
+from agent_pm_orchestrator import (
+    config,
+    issues,
+    linear,
+    promote,
+    prune,
+    router,
+    sessions,
+    writeback,
+)
 
 from new.tests.unit.orchestrator.board_ids import STATES, TEAM
 
@@ -36,7 +46,14 @@ TYPES = {
 NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
-MODULES = {m.__name__.rpartition(".")[2]: m for m in (linear, issues, sessions, writeback, promote)}
+MODULES = {
+    m.__name__.rpartition(".")[2]: m
+    for m in (linear, router, issues, sessions, writeback, promote, prune)
+}
+BUILT = {
+    "router.issues": router.q_issues(),
+    "router.issues+relations": router.q_issues(router.RELATIONS),
+}
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}
 COMPARATORS = {
     "eq": lambda x, a: x == a,
@@ -116,7 +133,10 @@ def project(value, sel, op):
 
 
 def texts():
-    return {op: getattr(MODULES[op.split(".")[0]], op.split(".")[1]) for op in OPS}
+    return {
+        op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1])
+        for op in OPS
+    }
 
 
 def index(named):
@@ -527,6 +547,9 @@ class FakeLinear:
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
         return {"issueLabel": {**self._label(v["i"]), "children": {"nodes": children}}}
 
+    def _board(self, caller, v):
+        return self._list(caller, v.get("f") or {}, 100)
+
     def _handoff(self, caller, v):
         return self._list(
             caller,
@@ -541,6 +564,18 @@ class FakeLinear:
 
     def _child(self, caller, v):
         return self._list(caller, {"id": {"eq": v["c"]}}, 50, archived=True)
+
+    def _finished(self, caller, v):
+        return self._list(
+            caller,
+            {
+                "team": {"id": {"eq": v.get("t")}},
+                "state": {"id": {"in": v.get("s")}},
+                "assignee": {"id": {"in": v.get("a")}},
+            },
+            50,
+            v.get("c"),
+        )
 
     def _comment_create(self, caller, v, cid=None):
         self._comment(self._get(v["i"]), caller["id"], v["b"], stamp(), cid)
@@ -592,6 +627,10 @@ class FakeLinear:
             rec["attachments"].append({"url": v["u"], "title": v.get("t")})
         return {"attachmentLinkURL": {"success": True}}
 
+    def _archive(self, caller, v):
+        self._get(v["i"])["archived"] = True
+        return {"issueArchive": {"success": True}}
+
     def _unarchive(self, caller, v):
         self._get(v["i"])["archived"] = False
         return {"issueUnarchive": {"success": True}}
@@ -635,8 +674,8 @@ class FakeLinear:
         return {"issueRelationCreate": {"success": True}}
 
 
-# _teams, _handoff and _child hard-code their query's filter and page size: a changed filter in the text still
-# dispatches here, so change the handler with it.
+# _teams, _handoff, _child and _finished hard-code their query's filter and page size: a changed filter in the text
+# still dispatches here, so change the handler with it.
 OPS = {
     "linear.M_COMMENT": FakeLinear._comment_create,
     "linear.M_COMMENT_ID": FakeLinear._comment_create_id,
@@ -647,6 +686,11 @@ OPS = {
     "linear.Q_USER": FakeLinear._users,
     "linear.Q_TEAM": FakeLinear._teams,
     "linear.Q_TASK_GROUP": FakeLinear._label_group,
+    "router.Q_RELATIONS": FakeLinear._issue,
+    "router.Q_RECHECK": FakeLinear._issue,
+    "router.Q_HISTORY": FakeLinear._issue,
+    "router.issues": FakeLinear._board,
+    "router.issues+relations": FakeLinear._board,
     "issues.Q_ISSUE": FakeLinear._issue,
     "sessions.M_UPDATE": FakeLinear._comment_update,
     "writeback.M_TITLE": FakeLinear._set_title,
@@ -659,6 +703,9 @@ OPS = {
     "promote.Q_CHILD": FakeLinear._child,
     "promote.M_CREATE": FakeLinear._create,
     "promote.M_RELATE": FakeLinear._relate,
+    "prune.Q_ISSUE": FakeLinear._issue,
+    "prune.Q_FINISHED": FakeLinear._finished,
+    "prune.M_ARCHIVE": FakeLinear._archive,
 }
 TABLE = index(texts())
 

@@ -45,7 +45,6 @@ class Case(unittest.TestCase):
 
 
 def _foreign() -> str | None:
-    """The failure when agent_pm, or agent_pm_orchestrator if imported, is not from this tree's root, else None."""
     orch = sys.modules.get("agent_pm_orchestrator")
     orch_root = (
         os.path.dirname(os.path.dirname(getattr(orch, "__file__", None) or ""))
