@@ -1,9 +1,8 @@
 """The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...]. Stdlib only.
 
-Appends one JSON line {"argv" (without argv[0]), "pid", "cwd", "env": {"PWD", "FAKE_ENV"} (null: unset)} to the log,
-then runs the scenario, a JSON list, step by step: {"out": obj} prints obj as one JSON line, {"raw": text} prints text,
-{"err": text} prints text to stderr, {"sleep": s} sleeps s seconds, {"exit": n} exits n. Each line is flushed; after
-the last step it exits 0. A tui launch's HOOK argv follows PROMPT; it is logged, never run."""
+Logs {"argv", "pid", "cwd", "env": {"PWD", "FAKE_ENV"}} as a JSON line, then runs the scenario, a JSON list of steps:
+{"out": obj} prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n}; then
+exits 0. HOOK is logged, never run."""
 import argparse
 import json
 import os

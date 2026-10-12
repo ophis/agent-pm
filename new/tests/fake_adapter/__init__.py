@@ -1,11 +1,6 @@
-"""The test-only fake adapter, runtime `fake`: a whole Adapter in one package, importing only adapters.base, so a test
-can register it in-process (sys.modules["adapters.fake"]) or copy it to src/adapters/fake/ unchanged. Its runtime is
-runtime.py (RUNTIME), run by this Python.
-
-Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a TuiRun). FakeHeadlessRun.parse
-maps each JSON record by its "type": session {id} → SessionBound, activity {name} → Activity, message {text} → Reply,
-blocked {reason} → Blocked, result {text, pending} → TurnEnd, exit → Exited(99) (which the Driver drops); any other
-record → nothing."""
+"""The test-only Adapter, runtime `fake`, importing only adapters.base: a test registers it in-process
+(sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a TuiRun).
+Its runtime is runtime.py (RUNTIME), run by this Python; an exit record parses to Exited(99), which the Driver drops."""
 import os
 import shlex
 import sys

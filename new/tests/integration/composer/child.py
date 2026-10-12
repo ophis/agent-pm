@@ -1,7 +1,6 @@
 """The Composer in a child process: `python3 -I` with only new/core/src on its sys.path, the test's own HOME (its
 ~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
-agent run as its caller (the Delegate, a later step) would: the team with the local team_dirs, resolve, access, the
-team dirs checked against the dirs the run can write (its own tasks dir aside), render."""
+agent run as its caller (the Delegate) would."""
 import json
 import os
 import subprocess
@@ -11,10 +10,8 @@ import unittest
 
 from new.tests import SRC, hermetic
 
-TIMEOUT = 60   # seconds
+TIMEOUT = 60
 PRELUDE = "import json, os, sys\nsys.path.insert(0, sys.argv[1])\nimport composer\n"
-# After PRELUDE; argv[2]: {role, task?, overlays?, input, out, workdir, cwd, resume?}; prints {"error"} on a
-# ConfigError, else run, intent, prompt, the trusted dirs and the files composer and utils were loaded from.
 COMPOSE = """import dataclasses
 req = json.loads(sys.argv[2])
 try:
@@ -38,8 +35,6 @@ except composer.ConfigError as e:
 
 
 class Case(unittest.TestCase):
-    """A HOME of the test's own (self.agent_pm its ~/.agent-pm) and a temp root holding the workdir `work` and a
-    project dir `proj`."""
     def setUp(self):
         self.agent_pm = hermetic.home(self)
         self.home = os.path.dirname(self.agent_pm)
@@ -56,7 +51,6 @@ class Case(unittest.TestCase):
             f.write(text)
 
     def child(self, code: str, *args: str):
-        """The JSON value child `code` (after PRELUDE) prints, given `args` as argv[2:]."""
         res = subprocess.run([sys.executable, "-I", "-c", PRELUDE + code, SRC, *args], cwd=self.root,
                              env={**os.environ, "HOME": self.home}, stdin=subprocess.DEVNULL, capture_output=True,
                              text=True, timeout=TIMEOUT)
@@ -64,8 +58,6 @@ class Case(unittest.TestCase):
         return json.loads(res.stdout)
 
     def compose(self, role: str, task: str | None = None, **req) -> dict:
-        """COMPOSE's output for `role` and `task`; input "Hello.", out self.out, workdir self.work and cwd self.work
-        unless `req` says otherwise."""
         req = {"role": role, "task": task, "input": "Hello.", "out": self.out, "workdir": self.work, "cwd": self.work,
                **req}
         return self.child(COMPOSE, json.dumps(req))

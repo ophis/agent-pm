@@ -1,15 +1,7 @@
-"""Claude Code's headless Mode, `claude -p` with stream-json output: ClaudeHeadlessRun.
-
-launch binds Claude's session id to the sid (--session-id; --resume continues it), then: --model and --effort when the
-spec has a tier and effort, the config's flags, the setting sources (user; a project run adds project and local, and
-cwd's .mcp.json when it is a file), the plugin settings, each access dir (--add-dir), the pre-approved tools (each
-access command as Bash(<command>), then the config's allow), and the prompt last after "--", so a prompt starting with
-"-" stays the prompt. Its cwd is the spec's (Launch.cwd "").
-
-parse, a field of the wrong type counting as absent: system init → SessionBound(session_id); assistant → Reply(its
-text blocks joined by newlines) unless blank, then Activity(name) per tool_use block; result → TurnEnd(result); a
-rejected rate_limit_event or an assistant rate_limit error → LimitHit(the last rejected event's resetsAt), once per
-run."""
+"""Claude Code's headless Mode, `claude -p` with stream-json output. launch binds Claude's session id to the sid,
+grants each access dir (--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), adds the
+project and local setting sources only for a project run, and puts the prompt last after "--" so a leading "-" stays
+the prompt. parse turns init, assistant, result and rate-limit records into events, one LimitHit per run."""
 import json
 import os
 

@@ -1,11 +1,7 @@
-"""What every Claude Code Mode shares: ClaudeCommon, built from [adapters.claude] (keys: core/config.toml), which it
-validates: a wrong type or a --setting-sources flag is a ConfigError naming the key, never its value.
-
-It gives a tier's model and an effort's value; a command's env (ENV, then the config's env) and UNSET, the identity
-keys a parent Claude Code session sets, which a child must not inherit; the config dir (that env's CLAUDE_CONFIG_DIR,
-else the process's, else ~/.claude) and a session's transcript under it; a human's resume command; uuid(), Claude's sid
-rule (a canonical lowercase UUID: Claude takes the sid as its own session id); the usage probe (PROBE) and its stdout as
-Usage; a session's SessionStatus from its files. Starts no process."""
+"""What every Claude Code Mode shares: ClaudeCommon validates [adapters.claude] (an error names the key, never its
+value) and gives a tier's model, an effort's value, a command's env and UNSET (a parent session's identity keys, which
+a child must not inherit), a session's transcript and resume command, Claude's sid rule (a lowercase UUID: Claude takes
+the sid as its own session id), the usage probe and its reading, and a session's SessionStatus."""
 import json
 import math
 import os
@@ -23,7 +19,6 @@ UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 def number(value) -> float | None:
-    """A JSON number (not a bool) as a finite float; None for anything else."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
@@ -75,7 +70,6 @@ class ClaudeCommon:
         self._env = {**self.ENV, **config.get("env", {})}
 
     def model(self, tier: int | None) -> str | None:
-        """The model of `tier`; None: no tier, so no --model."""
         if tier is None:
             return None
         if (model := self.tiers.get(str(tier))) is None:
@@ -83,7 +77,6 @@ class ClaudeCommon:
         return model
 
     def effort(self, effort: str | None) -> str | None:
-        """The --effort value of `effort`; None: no effort, so no --effort."""
         if effort is None:
             return None
         if (value := self.efforts.get(effort)) is None:
@@ -98,13 +91,11 @@ class ClaudeCommon:
             or os.path.expanduser("~/.claude")
 
     def transcript(self, cwd: str, sid: str) -> str:
-        """Where Claude Code saves session `sid` started in `cwd`."""
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.config_dir(), "projects", project, f"{sid}.jsonl")
 
     @staticmethod
     def resume(cwd: str, sid: str, workdir: str | None = None) -> str:
-        """The shell command a human resumes session `sid` with: claude in its cwd, reaching a `workdir` elsewhere."""
         q = shlex.quote
         command = f"cd {q(cwd)} && claude --resume {q(sid)}"
         if workdir is not None and os.path.realpath(workdir) != os.path.realpath(cwd):
@@ -113,7 +104,6 @@ class ClaudeCommon:
 
     @staticmethod
     def uuid(sid) -> str:
-        """`sid` when it is a canonical lowercase UUID."""
         if isinstance(sid, str) and UUID.fullmatch(sid):
             return sid
         raise ConfigError(f"claude session ids are UUIDs, got {sid!r:.80}")
@@ -123,8 +113,6 @@ class ClaudeCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """The probe's last rate_limit_event as Usage; None when there is none or its five-hour utilization is no
-        number. A rejected status folds in: a seven_day* limit type fills the week, any other the five hours."""
         info = None
         for line in output.splitlines():
             try:
@@ -153,8 +141,6 @@ class ClaudeCommon:
         return Usage(five_hour, weekly_full, number(info.get("resetsAt")))
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
-        """Resumable when its transcript is a regular file; last active at the newest write of the transcript and the
-        files under its session dir (<transcript without .jsonl>/)."""
         try:
             self.uuid(sid)
         except ConfigError:

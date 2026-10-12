@@ -1,5 +1,5 @@
 """A headless run's prompt and access intent, composed in a child process (child.Case) as its caller would for a new run
-and a resume. Main's tests/integration/core/drive_integration_test.py, the Composer's part."""
+and a resume."""
 import os
 import unittest
 

@@ -1,6 +1,4 @@
-"""The new core's tests. NEW, CORE and SRC are the absolute paths of new/, new/core and new/core/src; SRC goes first on
-sys.path, then hermetic.py runs, so every test process has a temp HOME before any test module loads. Nothing here
-imports or adds the repo's tests/ or its old core."""
+"""The new core's tests: SRC goes first on sys.path, then hermetic.py runs, before any test module loads."""
 import os
 import sys
 
