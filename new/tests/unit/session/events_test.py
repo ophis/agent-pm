@@ -46,6 +46,12 @@ class Line(Case):
                 with self.assertRaises(ValueError):
                     Events.line(name, word, *fields, at=at)
 
+    def test_refuses_an_empty_field_naming_it(self):
+        for fields in (("",), ("ok", "")):
+            with self.subTest(fields=fields), self.assertRaises(ValueError) as caught:
+                Events.line("w1", "done", *fields, at=AT)
+            self.assertIn("event field:", str(caught.exception))
+
 
 class Write(Case):
     def setUp(self):

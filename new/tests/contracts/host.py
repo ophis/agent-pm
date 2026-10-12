@@ -66,6 +66,8 @@ def gone(pid: int) -> bool:
 
 
 class HostContract:
+    """TASK-365 (356-4) adds FR-47's cannot-display case (Session.displayable, NotDisplayable) with HostedSession."""
+
     def make_host(self) -> Host:
         raise NotImplementedError
 

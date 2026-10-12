@@ -70,7 +70,7 @@ class FakeProcess(HostProcess):
         return True
 
     def kill(self) -> None:
-        if (pid := self._pid()) is not None:
+        if (pid := self._pid()) is not None and self.alive():
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
         self.wait_exit(5)

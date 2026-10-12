@@ -87,6 +87,21 @@ class Scripted(Case):
         self.assertEqual(len(first.started), 1)
         self.start(second, name="w1")
 
+    def test_the_bare_class_plays_an_empty_script_on_state_no_subclass_shares(self):
+        session = self.start(FakeSession, name="w1")
+        self.addCleanup(FakeSession.started.clear)
+        self.addCleanup(session.close)
+        FakeSession.configure(adapters={}, hosts={}, default_host="fake")
+        self.addCleanup(setattr, FakeSession, "configured", None)
+        self.assertEqual(list(session.events()), [Exited(0)])
+        self.assertIs(FakeSession.attach("w1"), session)
+        self.assertEqual([row.name for row in FakeSession.list()], ["w1"])
+        self.assertEqual([call["name"] for call in FakeSession.started], ["w1"])
+        cls = FakeSession.scripted()
+        self.assertEqual((cls.started, cls.live, cls.configured), ([], {}, None))
+        self.start(cls, name="w1")
+        self.assertEqual(len(FakeSession.started), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

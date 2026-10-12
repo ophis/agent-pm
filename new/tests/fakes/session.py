@@ -1,6 +1,7 @@
-"""FakeSession, a Session in the caller's process with no Host (it cannot display). scripted(*events) makes the class
-to start: its sessions yield those events, then Exited(0) unless the script ends with Exited. Each subclass has its
-own started (start's arguments), live (name → session; stop and close remove it) and configured."""
+"""FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions yield the class's
+script (FakeSession's is empty; scripted(*events) makes a subclass with those), then Exited(0) unless it ends with
+Exited. FakeSession and each subclass have their own started (start's arguments), live (name → session; stop and
+close remove it) and configured."""
 
 from __future__ import annotations
 
@@ -22,14 +23,14 @@ from new.tests.fakes.host import FakeHost
 
 class FakeSession(Session):
     script: tuple = ()
-    started: list[dict]
-    live: dict[str, FakeSession]
+    started: list[dict] = []
+    live: dict[str, FakeSession] = {}
     configured: dict | None = None
     usage_result = None
 
     def __init_subclass__(cls, **kw):
         super().__init_subclass__(**kw)
-        cls.started, cls.live = [], {}
+        cls.started, cls.live, cls.configured = [], {}, None
 
     @classmethod
     def scripted(cls, *events) -> type[FakeSession]:

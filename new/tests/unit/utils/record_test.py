@@ -174,5 +174,16 @@ class StatusLine(Case):
         self.refused("[]", "Status line: want a JSON object")
 
 
+class DeepLine(Case):
+    def test_a_line_too_deep_to_decode_is_not_json(self):
+        for cls in (Record, Status):
+            for text in ("[" * 200000, '{"a":' * 200000):
+                with self.subTest(cls=cls, text=text[:5]):
+                    with self.assertRaises(RecordError) as caught:
+                        cls.parse(text)
+                    message = str(caught.exception)
+                    self.assertTrue(message.startswith(f"{cls.__name__} line: not JSON"), message)
+
+
 if __name__ == "__main__":
     unittest.main()

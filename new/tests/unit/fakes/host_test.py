@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 from agent_pm.session import DriverError
 from agent_pm.session.driver.api import Key, Paste
@@ -61,6 +62,13 @@ class FakeHostOnly(Case):
         for action in (Paste("x"), Key("Enter")):
             with self.subTest(action=action), self.assertRaises(DriverError):
                 terminal.send(action)
+
+    def test_kill_after_the_process_ended_signals_nothing(self):
+        ended = self.host.detach("w1", program("pass"), self.home, {})
+        self.assertTrue(ended.wait_exit(10))
+        with mock.patch.object(os, "killpg") as killpg:
+            ended.kill()
+        killpg.assert_not_called()
 
 
 if __name__ == "__main__":

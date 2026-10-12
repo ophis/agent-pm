@@ -122,6 +122,11 @@ class FakeCtl(Case):
                 self.assertTrue(done.stderr)
         self.assertEqual(self.status(record("w1")), [Status("w1", True, "working", None, None)])
 
+    def test_stdin_too_deep_to_decode_exits_2(self):
+        done = self.call(self.ctl, "status", stdin="[" * 200000 + "\n")
+        self.assertEqual((done.returncode, done.stdout), (2, ""))
+        self.assertIn("not JSON", done.stderr)
+
     def test_calls_logs_each_call_with_its_argv_and_names(self):
         self.assertEqual(ctl.calls(self.state), [])
         self.start("w1", "--display", "d")

@@ -10,10 +10,11 @@ from agent_pm.utils.files import append_line
 def _text(label: str, value, *, one_word: bool = False) -> str:
     if not (
         isinstance(value, str)
+        and value != ""
         and value.isprintable()
         and (not one_word or value.split() == [value])
     ):
-        want = "printable text without whitespace" if one_word else "printable text"
+        want = "printable text without whitespace" if one_word else "non-empty printable text"
         raise ValueError(f"event {label}: want {want}, not {value!r}")
     return value
 
