@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from agent_pm import composer
-from agent_pm.utils import config_file, repos
-from agent_pm.utils.git import GUARD
+import agent_pm.config
+from agent_pm.role import composer, repos
+from agent_pm.role.repos import NAME, OWNER
+from agent_pm.role.repos.git import GUARD
+from agent_pm.utils import config_file
 from agent_pm.utils.paths import temp_dirs, under
-from agent_pm.utils.repos import NAME, OWNER
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 CONFIG = os.path.join(ROOT, "orchestrator", "config.toml")
@@ -144,8 +145,8 @@ def load(
     *,
     path: str = CONFIG,
     local: str = LOCAL,
-    core: str = config_file.CONFIG,
-    core_local: str = config_file.LOCAL,
+    core: str = agent_pm.config.CONFIG,
+    core_local: str = agent_pm.config.LOCAL,
 ) -> Config:
     try:
         cfg = config_file.read_config(path, local)

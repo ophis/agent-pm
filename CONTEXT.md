@@ -31,17 +31,17 @@ The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill
 
 **Delegate**:
-The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the driver, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `new/core/src/agent_pm/delegate/`.
+The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the driver, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `new/core/src/agent_pm/role/delegate/`.
 
 **Composer**:
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Driver**:
-The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/driver/`.
+The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `new/core/src/agent_pm/session/driver/`.
 _Avoid_: facade, runtime, harness
 
 **Adapter**:
-The code that wraps one agent runtime (Claude Code, Codex) for the driver: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `new/core/src/agent_pm/adapters/`.
+The code that wraps one agent runtime (Claude Code, Codex) for the driver: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `new/core/src/agent_pm/session/adapters/`.
 _Avoid_: client, backend, vehicle
 
 **Mode**:

@@ -22,7 +22,7 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
-from agent_pm.driver import tmux_host
+from agent_pm.session.driver import tmux_host
 
 from new.tests import guards
 from new.tests.case import Case

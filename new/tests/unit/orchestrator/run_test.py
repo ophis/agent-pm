@@ -11,9 +11,9 @@ from contextlib import redirect_stderr
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm import delegate
-from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
-from agent_pm.driver import api
+from agent_pm.role import delegate
+from agent_pm.role.delegate import Begun, Finished, Limit, Outcome, Progress, Result
+from agent_pm.session.driver import api
 from agent_pm_orchestrator import config, linear, run, sessions, writeback
 
 from new.tests.unit.orchestrator.board_ids import STATES

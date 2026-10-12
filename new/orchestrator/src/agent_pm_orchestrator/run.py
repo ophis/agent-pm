@@ -10,8 +10,8 @@ import re
 import signal
 import sys
 
-from agent_pm import delegate
-from agent_pm.driver import api
+from agent_pm.role import delegate
+from agent_pm.session.driver import api
 from agent_pm.utils.text import printable
 
 from agent_pm_orchestrator import config, linear, runs, sessions, writeback

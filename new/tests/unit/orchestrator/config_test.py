@@ -12,10 +12,11 @@ import tomllib
 import unittest
 from unittest import mock
 
-from agent_pm import composer, delegate
+import agent_pm.config
+from agent_pm.role import composer, delegate
+from agent_pm.role.repos.git import GUARD
+from agent_pm.role.repos.shell import SHORT
 from agent_pm.utils import config_file
-from agent_pm.utils.git import GUARD
-from agent_pm.utils.shell import SHORT
 from agent_pm_orchestrator import config
 
 from new.tests.case import ORCH_ROOT, PY, Case, child_env
@@ -387,15 +388,18 @@ class Config(ConfigFile, Case):
                     None,
                     overlays=[overlay],
                     label=LABEL,
-                    config=config_file.CONFIG,
-                    local=config_file.LOCAL,
+                    config=agent_pm.config.CONFIG,
+                    local=agent_pm.config.LOCAL,
                 )
                 for r in roles
             ],
         )
         self.assertEqual(
             index.call_args_list,
-            [mock.call(r, config=config_file.CONFIG, local=config_file.LOCAL) for r in roles],
+            [
+                mock.call(r, config=agent_pm.config.CONFIG, local=agent_pm.config.LOCAL)
+                for r in roles
+            ],
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
@@ -541,13 +545,13 @@ class Runnable(ConfigFile, Case):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(config_file.CONFIG) as f:
+        with open(agent_pm.config.CONFIG) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
         with open(os.path.join(composer.TEAM, "output", "destinations", "github.md")) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
-        self.assertEqual(config_file.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
+        self.assertEqual(agent_pm.config.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
 
 
 CORE_TOML = """tier = 2
@@ -600,7 +604,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(
             fake.call_args_list,
             [
-                mock.call(r, config=self.core_path, local=config_file.LOCAL)
+                mock.call(r, config=self.core_path, local=agent_pm.config.LOCAL)
                 for r in ("researcher", "pm", "engineer")
             ],
         )

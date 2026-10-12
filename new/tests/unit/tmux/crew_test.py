@@ -1,4 +1,4 @@
-"""agent_pm.crew, the old core's crew_test ported onto a fake driver.api (Api): argv, env, tmux and the tui settings
+"""agent_pm.manager.crew, the old core's crew_test ported onto a fake driver.api (Api): argv, env, tmux and the tui settings
 are the Driver's now, and the worker record replaces the session options."""
 
 import contextlib
@@ -20,13 +20,13 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm import crew, roster
-from agent_pm.driver import api
+from agent_pm.manager import crew, roster
+from agent_pm.session.driver import api
 
 from new.tests.case import ROOT, Case
 
-CREW = os.path.join(ROOT, "agent_pm", "crew.py")
-MODULE = ["-P", "-m", "agent_pm.crew"]
+CREW = os.path.join(ROOT, "agent_pm", "manager", "crew.py")
+MODULE = ["-P", "-m", "agent_pm.manager.crew"]
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 SID2 = "1" + SID[1:]
 WHEN = "2026-10-09T12:00:00+00:00"
@@ -2697,7 +2697,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew"
+        me = f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.manager.crew"
         self.assertEqual(
             self.attach(),
             (

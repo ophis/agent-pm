@@ -9,7 +9,7 @@ import sys
 import time
 from unittest import mock
 
-from agent_pm.adapters.codex import sessions, tui_hook
+from agent_pm.session.adapters.codex import sessions, tui_hook
 
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 

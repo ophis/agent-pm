@@ -31,8 +31,8 @@ The core's and orchestrator's modules, entries and import rules: `new/README.md`
 - Where a rule goes: every role → `new/core/team/principles.md`; every task of one role → `new/core/team/roles/<role>.md`; a document format → `new/core/team/templates/`; a method → `new/core/team/methods/`; one task (claiming, failure, hand-off, resume) → `new/core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `new/core/team/guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
 - No em dashes (U+2014): use a colon, semicolon, comma or parentheses.
-- Every task has a `## Resume` section; shared text: `agent_pm.composer.prompt.RESUME`, then the charter's Resume item, if any (engineer: **Resume** in `## Repo`).
-- Add a task to a role: `new/core/team/tasks/<task>.md`, its line `` - `<task>` (`<tasks>/<task>.md`): … `` in the role's task index (format: `index` in `new/core/src/agent_pm/composer/teams.py`), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
+- Every task has a `## Resume` section; shared text: `agent_pm.role.composer.prompt.RESUME`, then the charter's Resume item, if any (engineer: **Resume** in `## Repo`).
+- Add a task to a role: `new/core/team/tasks/<task>.md`, its line `` - `<task>` (`<tasks>/<task>.md`): … `` in the role's task index (format: `index` in `new/core/src/agent_pm/role/composer/teams.py`), its label in the `Tasks` group and `<task> = "<label id>"` in `[task_labels]`.
 
 ## Gotchas
 
@@ -43,7 +43,7 @@ The core's and orchestrator's modules, entries and import rules: `new/README.md`
 - Skills and `new/core/config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:act-as`), never "the act-as skill" or `agent-pm:act-as`.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
-- Tmux calls: `new/core/src/agent_pm/driver/tmux_host.py` (`new/README.md` › Layout). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- Tmux calls: `new/core/src/agent_pm/session/driver/tmux_host.py` (`new/README.md` › Layout). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating). The plists are installed as copies (README › Setup).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 

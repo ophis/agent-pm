@@ -76,6 +76,11 @@ class RealTree(Case):
             with self.subTest(guard.__name__, root=root):
                 self.assertEqual(guard(root), [])
 
+    def test_utils_holds_none_of_the_modules_that_left_it(self):
+        moved = ("shell", "repos", "git", "protocol")
+        utils = os.listdir(os.path.join(ROOT, "agent_pm", "utils"))
+        self.assertEqual([n for n in utils if n.removesuffix(".py") in moved], [])
+
     def test_src_never_reaches_the_old_core(self):
         src = os.path.realpath(ROOT)
         for top, dirs, files in os.walk(ROOT):
@@ -150,35 +155,38 @@ class EveryTest(Sample):
 
 class LayerImports(Sample):
     def test_adapters_importing_driver_names_it(self):
-        root = self.tree({f"{PKG}/adapters/x.py": "import agent_pm.driver\n"})
+        root = self.tree({f"{PKG}/session/adapters/x.py": "import agent_pm.session.driver\n"})
         self.assertEqual(
-            guards.layer_imports(root), [f"{PKG}/adapters/x.py: adapters imports agent_pm.driver"]
+            guards.layer_imports(root),
+            [f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.session.driver"],
         )
 
     def test_driver_modes_outside_driver_names_it(self):
-        root = self.tree({f"{PKG}/delegate/x.py": "from agent_pm.driver.modes import headless\n"})
+        root = self.tree(
+            {f"{PKG}/role/delegate/x.py": "from agent_pm.session.driver.modes import headless\n"}
+        )
         self.assertEqual(
             guards.layer_imports(root),
-            [f"{PKG}/delegate/x.py: delegate imports agent_pm.driver.modes"],
+            [f"{PKG}/role/delegate/x.py: role.delegate imports agent_pm.session.driver.modes"],
         )
 
     def test_a_relative_import_is_resolved(self):
-        root = self.tree({f"{PKG}/composer/x.py": "from ..driver import api\n"})
+        root = self.tree({f"{PKG}/role/composer/x.py": "from ...session.driver import api\n"})
         self.assertEqual(
             guards.layer_imports(root),
-            [f"{PKG}/composer/x.py: composer imports agent_pm.driver.api"],
+            [f"{PKG}/role/composer/x.py: role.composer imports agent_pm.session.driver.api"],
         )
 
     def test_allowed_imports_are_clean(self):
         root = self.tree(
             {
-                f"{PKG}/delegate/x.py": "from agent_pm.driver.api import start\n"
-                "from agent_pm.composer import y\nfrom agent_pm.driver import api\n"
+                f"{PKG}/role/delegate/x.py": "from agent_pm.session.driver.api import start\n"
+                "from agent_pm.role.composer import y\nfrom agent_pm.session.driver import api\n"
                 "from agent_pm.utils.files import append_line\n",
-                f"{PKG}/driver/x.py": "import agent_pm.adapters.base\nfrom .modes import headless\n"
-                "from agent_pm.driver.modes import headless\n",
-                f"{PKG}/x.py": "from agent_pm.driver import api\nimport agent_pm.driver.api\n"
-                "from agent_pm.driver.api import start\nfrom .driver import api\nimport agent_pm\n",
+                f"{PKG}/session/driver/x.py": "import agent_pm.session.adapters.base\nfrom .modes import headless\n"
+                "from agent_pm.session.driver.modes import headless\n",
+                f"{PKG}/x.py": "from agent_pm.session.driver import api\nimport agent_pm.session.driver.api\n"
+                "from agent_pm.session.driver.api import start\nfrom .session.driver import api\nimport agent_pm\n",
             }
         )
         self.assertEqual(guards.layer_imports(root), [])
@@ -186,68 +194,68 @@ class LayerImports(Sample):
     def test_outside_the_layers_reaches_only_driver_api(self):
         root = self.tree(
             {
-                f"{PKG}/x.py": "import agent_pm.adapters\n",
-                f"{PKG}/y.py": "from agent_pm.driver import registry\n",
+                f"{PKG}/x.py": "import agent_pm.session.adapters\n",
+                f"{PKG}/y.py": "from agent_pm.session.driver import registry\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/x.py: outside the layers imports agent_pm.adapters",
-                f"{PKG}/y.py: outside the layers imports agent_pm.driver.registry",
+                f"{PKG}/x.py: outside the layers imports agent_pm.session.adapters",
+                f"{PKG}/y.py: outside the layers imports agent_pm.session.driver.registry",
             ],
         )
 
     def test_a_layer_reaches_outside_the_layers_only_utils(self):
         root = self.tree(
             {
-                f"{PKG}/delegate/x.py": "from agent_pm import roster\n",
-                f"{PKG}/driver/x.py": "import agent_pm.crew\n",
+                f"{PKG}/role/delegate/x.py": "from agent_pm.manager import roster\n",
+                f"{PKG}/session/driver/x.py": "import agent_pm.manager.crew\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/delegate/x.py: delegate imports agent_pm.roster",
-                f"{PKG}/driver/x.py: driver imports agent_pm.crew",
+                f"{PKG}/role/delegate/x.py: role.delegate imports agent_pm.manager.roster",
+                f"{PKG}/session/driver/x.py: session.driver imports agent_pm.manager.crew",
             ],
         )
 
     def test_nested_and_literal_imports_count(self):
         root = self.tree(
             {
-                f"{PKG}/adapters/x.py": "def f():\n    import importlib\n"
-                "    importlib.import_module('agent_pm.driver.registry')\n"
-                "    __import__('agent_pm.composer')\n"
-                "    from agent_pm.delegate import y\n"
+                f"{PKG}/session/adapters/x.py": "def f():\n    import importlib\n"
+                "    importlib.import_module('agent_pm.session.driver.registry')\n"
+                "    __import__('agent_pm.role.composer')\n"
+                "    from agent_pm.role.delegate import y\n"
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/adapters/x.py: adapters imports agent_pm.composer",
-                f"{PKG}/adapters/x.py: adapters imports agent_pm.delegate.y",
-                f"{PKG}/adapters/x.py: adapters imports agent_pm.driver.registry",
+                f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.role.composer",
+                f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.role.delegate.y",
+                f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.session.driver.registry",
             ],
         )
 
     def test_a_bare_name_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/delegate/x.py": "from driver import api\nimport composer\n"
+                f"{PKG}/role/delegate/x.py": "from driver import api\nimport composer\n"
                 "from utils.paths import under\n",
                 f"{PKG}/x.py": "import repo\ndef f():\n    __import__('adapters.base')\n",
-                f"{PKG}/agent_tools/x.py": "import agent_tools\n",
-                f"{PKG}/driver/x.py": "import repository\nimport drivers\n",
+                f"{PKG}/role/agent_tools/x.py": "import agent_tools\n",
+                f"{PKG}/session/driver/x.py": "import repository\nimport drivers\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/agent_tools/x.py: bare import agent_tools",
-                f"{PKG}/delegate/x.py: bare import composer",
-                f"{PKG}/delegate/x.py: bare import driver.api",
-                f"{PKG}/delegate/x.py: bare import utils.paths",
+                f"{PKG}/role/agent_tools/x.py: bare import agent_tools",
+                f"{PKG}/role/delegate/x.py: bare import composer",
+                f"{PKG}/role/delegate/x.py: bare import driver.api",
+                f"{PKG}/role/delegate/x.py: bare import utils.paths",
                 f"{PKG}/x.py: bare import adapters.base",
                 f"{PKG}/x.py: bare import repo",
             ],
@@ -256,8 +264,8 @@ class LayerImports(Sample):
     def test_importing_the_orchestrator_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/delegate/x.py": "from agent_pm_orchestrator.config import load\n",
-                f"{PKG}/driver/x.py": "from agent_pm_orchestrator import config\n",
+                f"{PKG}/role/delegate/x.py": "from agent_pm_orchestrator.config import load\n",
+                f"{PKG}/session/driver/x.py": "from agent_pm_orchestrator import config\n",
                 f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm_orchestrator')\n",
                 f"{PKG}/x.py": "import agent_pm_orchestrator.run\n",
             }
@@ -265,8 +273,8 @@ class LayerImports(Sample):
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/delegate/x.py: delegate imports agent_pm_orchestrator.config",
-                f"{PKG}/driver/x.py: driver imports agent_pm_orchestrator.config",
+                f"{PKG}/role/delegate/x.py: role.delegate imports agent_pm_orchestrator.config",
+                f"{PKG}/session/driver/x.py: session.driver imports agent_pm_orchestrator.config",
                 f"{PKG}/utils/x.py: outside the layers imports agent_pm_orchestrator",
                 f"{PKG}/x.py: outside the layers imports agent_pm_orchestrator.run",
             ],
@@ -275,34 +283,35 @@ class LayerImports(Sample):
     def test_the_package_is_the_one_dir_under_src(self):
         root = self.tree(
             {
-                "src/pkg/adapters/x.py": "import pkg.driver\n",
-                "src/pkg/delegate/x.py": "from pkg.driver import api\nimport agent_pm.adapters\n",
+                "src/pkg/session/adapters/x.py": "import pkg.session.driver\n",
+                "src/pkg/role/delegate/x.py": "from pkg.session.driver import api\nimport agent_pm.session.adapters\n",
             }
         )
         self.assertEqual(
-            guards.layer_imports(root), ["src/pkg/adapters/x.py: adapters imports pkg.driver"]
+            guards.layer_imports(root),
+            ["src/pkg/session/adapters/x.py: session.adapters imports pkg.session.driver"],
         )
 
 
 class RuntimeNames(Sample):
     def test_a_name_anywhere_in_a_module_outside_adapters(self):
-        root = self.tree({f"{PKG}/driver/x.py": 'NAME = "Claude"\n# codex\n'})
+        root = self.tree({f"{PKG}/session/driver/x.py": 'NAME = "Claude"\n# codex\n'})
         self.assertEqual(
             guards.runtime_names(root),
             [
-                f"{PKG}/driver/x.py:1: runtime name Claude",
-                f"{PKG}/driver/x.py:2: runtime name codex",
+                f"{PKG}/session/driver/x.py:1: runtime name Claude",
+                f"{PKG}/session/driver/x.py:2: runtime name codex",
             ],
         )
 
     def test_print_prompt_is_a_runtime_name(self):
-        root = self.tree({f"{PKG}/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
+        root = self.tree({f"{PKG}/role/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
         self.assertEqual(
-            guards.runtime_names(root), [f"{PKG}/delegate/x.py:1: runtime name print_prompt"]
+            guards.runtime_names(root), [f"{PKG}/role/delegate/x.py:1: runtime name print_prompt"]
         )
 
     def test_adapters_subpackage_is_exempt(self):
-        root = self.tree({f"{PKG}/adapters/claude/x.py": 'NAME = "claude"\n'})
+        root = self.tree({f"{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'})
         self.assertEqual(guards.runtime_names(root), [])
 
     def test_toml_table_header_implementation_line_and_comments_are_exempt(self):
@@ -375,9 +384,11 @@ class OldCore(Sample):
 class AdaptersKey(Sample):
     def test_the_literal_key_only_inside_driver(self):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
-        root = self.tree({f"{PKG}/composer/x.py": sample, f"{PKG}/driver/x.py": sample})
+        root = self.tree(
+            {f"{PKG}/role/composer/x.py": sample, f"{PKG}/session/driver/x.py": sample}
+        )
         self.assertEqual(
-            guards.adapters_key(root), [f'{PKG}/composer/x.py:2: literal key "adapters"']
+            guards.adapters_key(root), [f'{PKG}/role/composer/x.py:2: literal key "adapters"']
         )
 
 
@@ -385,31 +396,31 @@ class ModesImportApi(Sample):
     def test_a_mode_importing_driver_api_any_way_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/driver/modes/a.py": "from agent_pm.driver import api\n",
-                f"{PKG}/driver/modes/b.py": "import agent_pm.driver.api\n",
-                f"{PKG}/driver/modes/c.py": "from ..api import DriverError\n",
-                f"{PKG}/driver/modes/d.py": "def f():\n    from .. import api\n",
-                f"{PKG}/driver/modes/__init__.py": "__import__('agent_pm.driver.api')\n",
+                f"{PKG}/session/driver/modes/a.py": "from agent_pm.session.driver import api\n",
+                f"{PKG}/session/driver/modes/b.py": "import agent_pm.session.driver.api\n",
+                f"{PKG}/session/driver/modes/c.py": "from ..api import DriverError\n",
+                f"{PKG}/session/driver/modes/d.py": "def f():\n    from .. import api\n",
+                f"{PKG}/session/driver/modes/__init__.py": "__import__('agent_pm.session.driver.api')\n",
             }
         )
         self.assertEqual(
             guards.modes_import_api(root),
             [
-                f"{PKG}/driver/modes/__init__.py: imports agent_pm.driver.api",
-                f"{PKG}/driver/modes/a.py: imports agent_pm.driver.api",
-                f"{PKG}/driver/modes/b.py: imports agent_pm.driver.api",
-                f"{PKG}/driver/modes/c.py: imports agent_pm.driver.api",
-                f"{PKG}/driver/modes/d.py: imports agent_pm.driver.api",
+                f"{PKG}/session/driver/modes/__init__.py: imports agent_pm.session.driver.api",
+                f"{PKG}/session/driver/modes/a.py: imports agent_pm.session.driver.api",
+                f"{PKG}/session/driver/modes/b.py: imports agent_pm.session.driver.api",
+                f"{PKG}/session/driver/modes/c.py: imports agent_pm.session.driver.api",
+                f"{PKG}/session/driver/modes/d.py: imports agent_pm.session.driver.api",
             ],
         )
 
     def test_driver_errors_in_a_mode_and_driver_api_outside_modes_are_clean(self):
         root = self.tree(
             {
-                f"{PKG}/driver/modes/a.py": "from agent_pm.driver.errors import DriverError\n"
-                "from agent_pm.driver import records\nfrom ..errors import DriverError\n",
-                f"{PKG}/driver/x.py": "from agent_pm.driver import api\n",
-                f"{PKG}/y.py": "import agent_pm.driver.api\n",
+                f"{PKG}/session/driver/modes/a.py": "from agent_pm.session.driver.errors import DriverError\n"
+                "from agent_pm.session.driver import records\nfrom ..errors import DriverError\n",
+                f"{PKG}/session/driver/x.py": "from agent_pm.session.driver import api\n",
+                f"{PKG}/y.py": "import agent_pm.session.driver.api\n",
             }
         )
         self.assertEqual(guards.modes_import_api(root), [])
@@ -420,9 +431,9 @@ class TmuxCalls(Sample):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
         root = self.tree(
             {
-                f"{PKG}/driver/tmux_host.py": sample,
-                f"{PKG}/driver/modes/x.py": sample,
-                f"{PKG}/composer/y.py": 'TOOL = "tmux"\n',
+                f"{PKG}/session/driver/tmux_host.py": sample,
+                f"{PKG}/session/driver/modes/x.py": sample,
+                f"{PKG}/role/composer/y.py": 'TOOL = "tmux"\n',
                 "src/driver/tmux_host.py": sample,
                 "tests/z.py": sample,
             }
@@ -430,8 +441,8 @@ class TmuxCalls(Sample):
         self.assertEqual(
             guards.tmux_calls(root),
             [
-                f'{PKG}/composer/y.py:1: str constant "tmux"',
-                f'{PKG}/driver/modes/x.py:2: str constant "tmux"',
+                f'{PKG}/role/composer/y.py:1: str constant "tmux"',
+                f'{PKG}/session/driver/modes/x.py:2: str constant "tmux"',
                 'src/driver/tmux_host.py:2: str constant "tmux"',
                 'tests/z.py:2: str constant "tmux"',
             ],
@@ -439,7 +450,7 @@ class TmuxCalls(Sample):
 
     def test_tmux_inside_a_longer_string_is_clean(self):
         root = self.tree(
-            {f"{PKG}/driver/x.py": 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'}
+            {f"{PKG}/session/driver/x.py": 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'}
         )
         self.assertEqual(guards.tmux_calls(root), [])
 
@@ -448,24 +459,26 @@ class Syntax39(Sample):
     def test_newer_syntax_in_a_standalone_file_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/driver/tmux_host.py": "def f(x: int | None): pass\nmatch x:\n    case _: pass\n",
-                f"{PKG}/driver/api.py": "match x:\n    case _: pass\n",
+                f"{PKG}/session/driver/tmux_host.py": "def f(x: int | None): pass\nmatch x:\n    case _: pass\n",
+                f"{PKG}/session/driver/api.py": "match x:\n    case _: pass\n",
             }
         )
         found = guards.syntax_39(root)
         self.assertEqual(len(found), 1, found)
-        self.assertTrue(found[0].startswith(f"{PKG}/driver/tmux_host.py: "), found)
+        self.assertTrue(found[0].startswith(f"{PKG}/session/driver/tmux_host.py: "), found)
 
     def test_the_tui_hook_is_standalone_too(self):
-        root = self.tree({f"{PKG}/driver/modes/tui_hook.py": "match x:\n    case _: pass\n"})
+        root = self.tree(
+            {f"{PKG}/session/driver/modes/tui_hook.py": "match x:\n    case _: pass\n"}
+        )
         found = guards.syntax_39(root)
         self.assertEqual(len(found), 1, found)
-        self.assertTrue(found[0].startswith(f"{PKG}/driver/modes/tui_hook.py: "), found)
+        self.assertTrue(found[0].startswith(f"{PKG}/session/driver/modes/tui_hook.py: "), found)
 
     def test_3_9_syntax_is_clean(self):
         root = self.tree(
             {
-                f"{PKG}/driver/tmux_host.py": "from __future__ import annotations\n"
+                f"{PKG}/session/driver/tmux_host.py": "from __future__ import annotations\n"
                 "def f(x: int | None) -> list[str]: return []\n"
             }
         )
@@ -604,10 +617,10 @@ class PythonCommands(Sample):
         root = self.tree(
             {
                 "core/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n'
-                "# python3 -P -m agent_pm.agent_tools.repo\n",
+                "# python3 -P -m agent_pm.role.agent_tools.repo\n",
                 "orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "core/skills/a/SKILL.md": "Run `python3.11 x.py`.\n"
-                "- Bash(python -P -m agent_pm.delegate.cli --list)\n",
+                "- Bash(python -P -m agent_pm.role.delegate.cli --list)\n",
                 "core/team/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
                 "3. `env PYTHONPATH=x python3 -P -m agent_pm_orchestrator.run`\n",
             }
@@ -641,26 +654,26 @@ class OrchestratorImports(Sample):
     def test_forbidden_imports_name_the_file_and_line(self):
         root = self.tree(
             {
-                f"{OPKG}/a.py": "import agent_pm.adapters\nfrom agent_pm.driver.modes import x\n"
-                "from agent_pm.driver import tmux_host\nimport agent_pm.agent_tools.repo\n",
-                f"{OPKG}/b.py": "from agent_pm.delegate import runner\n"
-                "from agent_pm.delegate.outcome import Outcome\nimport core\nimport agent_pm\n",
-                f"{OPKG}/run.py": "from agent_pm.composer import resolve\nfrom agent_pm import composer\n",
+                f"{OPKG}/a.py": "import agent_pm.session.adapters\nfrom agent_pm.session.driver.modes import x\n"
+                "from agent_pm.session.driver import tmux_host\nimport agent_pm.role.agent_tools.repo\n",
+                f"{OPKG}/b.py": "from agent_pm.role.delegate import runner\n"
+                "from agent_pm.role.delegate.outcome import Outcome\nimport core\nimport agent_pm\n",
+                f"{OPKG}/run.py": "from agent_pm.role.composer import resolve\nfrom agent_pm.role import composer\n",
             }
         )
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                f"{OPKG}/a.py:1: imports agent_pm.adapters",
-                f"{OPKG}/a.py:2: imports agent_pm.driver.modes.x",
-                f"{OPKG}/a.py:3: imports agent_pm.driver.tmux_host",
-                f"{OPKG}/a.py:4: imports agent_pm.agent_tools.repo",
-                f"{OPKG}/b.py:1: imports agent_pm.delegate.runner",
-                f"{OPKG}/b.py:2: imports agent_pm.delegate.outcome.Outcome",
+                f"{OPKG}/a.py:1: imports agent_pm.session.adapters",
+                f"{OPKG}/a.py:2: imports agent_pm.session.driver.modes.x",
+                f"{OPKG}/a.py:3: imports agent_pm.session.driver.tmux_host",
+                f"{OPKG}/a.py:4: imports agent_pm.role.agent_tools.repo",
+                f"{OPKG}/b.py:1: imports agent_pm.role.delegate.runner",
+                f"{OPKG}/b.py:2: imports agent_pm.role.delegate.outcome.Outcome",
                 f"{OPKG}/b.py:3: imports core",
                 f"{OPKG}/b.py:4: imports agent_pm",
-                f"{OPKG}/run.py:1: imports agent_pm.composer.resolve",
-                f"{OPKG}/run.py:2: imports agent_pm.composer",
+                f"{OPKG}/run.py:1: imports agent_pm.role.composer.resolve",
+                f"{OPKG}/run.py:2: imports agent_pm.role.composer",
             ],
         )
 
@@ -687,36 +700,36 @@ class OrchestratorImports(Sample):
     def test_submodules_by_attribute_and_other_forms(self):
         root = self.tree(
             {
-                f"{OPKG}/a.py": "from agent_pm import delegate as d\nd.runner.run()\n"
-                "import agent_pm.driver.api\nimport third_party\n__import__('agent_pm.adapters.base')\n"
-                "import agent_pm.delegate\nagent_pm.delegate.outcome.x\n"
-                "from agent_pm.driver.api import start\n",
-                f"{OPKG}/config.py": "from agent_pm import composer\ncomposer.run.resolve()\n",
+                f"{OPKG}/a.py": "from agent_pm.role import delegate as d\nd.runner.run()\n"
+                "import agent_pm.session.driver.api\nimport third_party\n__import__('agent_pm.session.adapters.base')\n"
+                "import agent_pm.role.delegate\nagent_pm.role.delegate.outcome.x\n"
+                "from agent_pm.session.driver.api import start\n",
+                f"{OPKG}/config.py": "from agent_pm.role import composer\ncomposer.run.resolve()\n",
             }
         )
         self.assertEqual(
             guards.orchestrator_imports(root),
             [
-                f"{OPKG}/a.py:2: uses agent_pm.delegate.runner",
-                f"{OPKG}/a.py:3: imports agent_pm.driver.api",
+                f"{OPKG}/a.py:2: uses agent_pm.role.delegate.runner",
+                f"{OPKG}/a.py:3: imports agent_pm.session.driver.api",
                 f"{OPKG}/a.py:4: imports third_party",
-                f"{OPKG}/a.py:5: imports agent_pm.adapters.base",
-                f"{OPKG}/a.py:7: uses agent_pm.delegate.outcome",
-                f"{OPKG}/a.py:8: imports agent_pm.driver.api.start",
-                f"{OPKG}/config.py:2: uses agent_pm.composer.run",
+                f"{OPKG}/a.py:5: imports agent_pm.session.adapters.base",
+                f"{OPKG}/a.py:7: uses agent_pm.role.delegate.outcome",
+                f"{OPKG}/a.py:8: imports agent_pm.session.driver.api.start",
+                f"{OPKG}/config.py:2: uses agent_pm.role.composer.run",
             ],
         )
 
     def test_allowed_imports_are_clean(self):
         root = self.tree(
             {
-                f"{OPKG}/config.py": "import os\nfrom agent_pm.composer import resolve\n"
-                "from agent_pm import composer\ncomposer.index()\nimport agent_pm.composer\n"
+                f"{OPKG}/config.py": "import os\nfrom agent_pm.role.composer import resolve\n"
+                "from agent_pm.role import composer\ncomposer.index()\nimport agent_pm.role.composer\n"
                 "from agent_pm.utils.files import save\n",
                 f"{OPKG}/run.py": "from agent_pm_orchestrator import config\n"
-                "from agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
-                "delegate.Begun\nimport agent_pm.delegate as d\nd.Finished\n"
-                "from agent_pm.driver import api\nimport agent_pm.utils.shell\nfrom agent_pm import utils\n"
+                "from agent_pm.role.delegate import run, Result\nfrom agent_pm.role import delegate\n"
+                "delegate.Begun\nimport agent_pm.role.delegate as d\nd.Finished\n"
+                "from agent_pm.session.driver import api\nimport agent_pm.role.repos.shell\nfrom agent_pm import utils\n"
                 "import agent_pm_orchestrator.linear\nfrom agent_pm_orchestrator.config import TASKS\n",
                 f"{OPKG}/utils.py": "",
             }

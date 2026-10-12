@@ -12,8 +12,9 @@ from datetime import timedelta
 from functools import partial
 from unittest import mock
 
-from agent_pm.driver import api
-from agent_pm.utils import paths, shell
+from agent_pm.role.repos import shell
+from agent_pm.session.driver import api
+from agent_pm.utils import paths
 from agent_pm_orchestrator import config, linear, promote, prune
 
 from new.tests.case import Case

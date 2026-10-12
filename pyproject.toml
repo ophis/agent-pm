@@ -1,7 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-per-file-target-version = { "new/core/src/agent_pm/driver/tmux_host.py" = "py39", "new/core/src/agent_pm/driver/modes/tui_hook.py" = "py39" }
+per-file-target-version = { "new/core/src/agent_pm/session/driver/tmux_host.py" = "py39", "new/core/src/agent_pm/session/driver/modes/tui_hook.py" = "py39" }
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
@@ -15,6 +15,6 @@ ignore = [
 # SIM117: merging nested `with` blocks would only reindent test bodies
 "new/tests/**" = ["B023", "SIM117"]
 # B027: InProcess.check is an optional hook whose default does nothing
-"new/core/src/agent_pm/adapters/base.py" = ["B027"]
+"new/core/src/agent_pm/session/adapters/base.py" = ["B027"]
 
 [tool.ruff.format]

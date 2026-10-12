@@ -1,4 +1,4 @@
-"""agent_pm/adapters/print_prompt/: PrintPromptAdapter's factory and keys; PrintPromptInProcess's check, its run's
+"""agent_pm/session/adapters/print_prompt/: PrintPromptAdapter's factory and keys; PrintPromptInProcess's check, its run's
 replies and the prompt file it writes, with every process spawn patched to fail."""
 
 import contextlib
@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
-from agent_pm.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.adapters.print_prompt.in_process import PrintPromptInProcess
-from agent_pm.delegate.reply import marks, outcome_block
+from agent_pm.role.delegate.reply import marks, outcome_block
+from agent_pm.session.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
+from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
 
 from new.tests.case import Case
 

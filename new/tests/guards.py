@@ -1,12 +1,14 @@
 """The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
 layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS but
-                      utils, none imports agent_tools, ORCH or a BARE name, nested, relative or import_module'd
-runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
+                      SHARED, a session layer no role module but UPWARD, none imports TOOLS, ORCH or a BARE name,
+                      nested, relative or import_module'd
+runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/session/adapters/ but a .toml's comments and
+                      Adapter lines
 old_core(new)         no `core` import, no string constant naming OLD
-adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
+adapters_key(core)    no string constant "adapters" outside src/agent_pm/session/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      utils and agent_tools import only stdlib and utils
+pure_utils(core)      each PURE package imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
@@ -14,8 +16,8 @@ syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
                       src/ hold only their package
 python_commands(new)  PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, utils, `from driver import api`, EXPORTERS' __all__ (composer's
-                      in config.py only), no bare name; any module name (packages cannot clash)
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session.driver import api`, EXPORTERS' __all__
+                      (composer's in config.py only), no bare name; any module name (packages cannot clash)
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
@@ -27,17 +29,29 @@ import re
 import sys
 import tokenize
 
-LAYERS = ("adapters", "driver", "composer", "delegate")
+GROUPS = ("session", "role", "manager")
+DRIVER = "session.driver"
+DRIVER_API = f"{DRIVER}.api"
+MODES = f"{DRIVER}.modes"
+LAYERS = ("session.adapters", DRIVER, "role.composer", "role.delegate")
 OUTSIDE = "outside the layers"
 ALLOWED = {
-    ("delegate", "composer"),
-    ("delegate", "driver"),
-    ("driver", "adapters"),
-    (OUTSIDE, "driver"),
+    ("role.delegate", "role.composer"),
+    ("role.delegate", DRIVER),
+    (DRIVER, "session.adapters"),
+    (OUTSIDE, DRIVER),
 }
-TOOLS = "agent_tools"
-PURE = ("utils", TOOLS)
-BARE = (*LAYERS, *PURE, "repo")
+SHARED = ("utils", "config", "role.contract", "role.repos")
+# until TASK-366 (356-5) deletes print_prompt
+UPWARD = {("session.adapters.print_prompt.in_process", "role.contract")}
+TOOLS = "role.agent_tools"
+PURE = {
+    "utils": ("utils",),
+    "role.contract": SHARED,
+    "role.repos": SHARED,
+    TOOLS: ("utils", "config", "role.repos"),
+}
+BARE = (*GROUPS, *(layer.rpartition(".")[2] for layer in LAYERS), "utils", "agent_tools", "repo")
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -47,8 +61,8 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))  # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
-TMUX_HOST = "src/agent_pm/driver/tmux_host.py"
-TUI_HOOK = "src/agent_pm/driver/modes/tui_hook.py"
+TMUX_HOST = "src/agent_pm/session/driver/tmux_host.py"
+TUI_HOOK = "src/agent_pm/session/driver/modes/tui_hook.py"
 STANDALONE = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
@@ -57,9 +71,8 @@ CORE_PKG = "agent_pm"
 ORCH = "agent_pm_orchestrator"
 ORCH_SRC = f"src/{ORCH}/"
 ROOTS = (("core", CORE_PKG), ("orchestrator", ORCH))
-COMPOSER = f"{CORE_PKG}.composer"
-EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
-UTILS = f"{CORE_PKG}.utils"
+COMPOSER = f"{CORE_PKG}.role.composer"
+EXPORTERS = (f"{CORE_PKG}.role.delegate", COMPOSER)
 CONFIG_PY = f"{ORCH_SRC}config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
@@ -77,20 +90,24 @@ PYTHON_OK = re.compile(rf"\S+[ \t]+-P[ \t]+-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w")
 def layer_imports(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
+        name = ".".join(names or ())
+        layer = next((each for each in LAYERS if name.startswith(f"{each}.")), OUTSIDE)
         for module, inner in imports:
-            first = (inner or module).split(".")[0]
+            unit = _unit(inner) if inner else module.split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
             elif (
-                first in (TOOLS, ORCH)
-                or (layer != OUTSIDE and inner and first not in (*LAYERS, "utils"))
+                unit in (TOOLS, ORCH)
+                or (layer != OUTSIDE and inner and unit not in (*LAYERS, *SHARED))
                 or (
-                    first in LAYERS
-                    and first != layer
-                    and (
-                        (layer, first) not in ALLOWED or first == "driver" and inner != "driver.api"
-                    )
+                    _within(layer, "session")
+                    and _within(unit, "role")
+                    and (name, unit) not in UPWARD
+                )
+                or (
+                    unit in LAYERS
+                    and unit != layer
+                    and ((layer, unit) not in ALLOWED or unit == DRIVER and inner != DRIVER_API)
                 )
             ):
                 found.add(f"{rel}: {layer} imports {module}")
@@ -100,18 +117,20 @@ def layer_imports(core: str) -> list[str]:
 def pure_utils(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        if names and names[0] in PURE:
+        package = next((p for p in PURE if _within(".".join(names or ()), p)), None)
+        if package:
             found.update(
-                f"{rel}: {names[0]} imports {m}"
+                f"{rel}: {package} imports {m}"
                 for m, inner in imports
-                if inner.split(".")[0] != "utils" and m.split(".")[0] not in sys.stdlib_module_names
+                if not any(_within(inner, u) for u in PURE[package])
+                and m.split(".")[0] not in sys.stdlib_module_names
             )
     return sorted(found)
 
 
 def runtime_names(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/adapters/"):
+    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/session/adapters/"):
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
@@ -143,7 +162,7 @@ def old_core(new: str) -> list[str]:
 
 def adapters_key(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/agent_pm/driver/"):
+    for rel, text in _files(core, ".py", skip="src/agent_pm/session/driver/"):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -165,11 +184,9 @@ def syntax_311(new: str) -> list[str]:
 def modes_import_api(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        if names and names[:2] == ["driver", "modes"]:
+        if names and _within(".".join(names), MODES):
             found.update(
-                f"{rel}: imports {m}"
-                for m, inner in imports
-                if inner.split(".")[:2] == ["driver", "api"]
+                f"{rel}: imports {m}" for m, inner in imports if _within(inner, DRIVER_API)
             )
     return sorted(found)
 
@@ -399,7 +416,8 @@ def _denied(rel, module, name, exported):
     top = module.split(".")[0]
     if top in sys.stdlib_module_names or top == ORCH:
         return False
-    target = f"{module}.{name}" if module == CORE_PKG and name else module
+    packages = (CORE_PKG, *(f"{CORE_PKG}.{g}" for g in GROUPS))
+    target = f"{module}.{name}" if module in packages and name else module
     if target in exported:
         return (
             module == target
@@ -408,9 +426,8 @@ def _denied(rel, module, name, exported):
             or (target == COMPOSER and rel != CONFIG_PY)
         )
     return not (
-        target == UTILS
-        or target.startswith(f"{UTILS}.")
-        or (module, name) == (f"{CORE_PKG}.driver", "api")
+        any(_within(target, f"{CORE_PKG}.{s}") for s in SHARED)
+        or (module, name) == (f"{CORE_PKG}.{DRIVER}", "api")
     )
 
 
@@ -481,6 +498,14 @@ def _modules(core):
         yield rel, names, [(m, _inner(m, top)) for m in imports]
 
 
+def _unit(inner):
+    return next((u for u in (*LAYERS, *SHARED, TOOLS) if _within(inner, u)), inner.split(".")[0])
+
+
+def _within(name, unit):
+    return name == unit or name.startswith(f"{unit}.")
+
+
 def _inner(module, top):
     return module[len(top) + 1 :] if top and module.startswith(f"{top}.") else ""
 
@@ -508,7 +533,8 @@ def _imports(tree, package, top=None):
                 )
             else:
                 parts = node.module.split(".")
-            if len(parts) > 1 + (parts[0] == top):
+            grouped = parts[0] == top and len(parts) > 1 and parts[1] in GROUPS
+            if len(parts) > 1 + (parts[0] == top) + grouped:
                 yield ".".join(parts)
             else:
                 yield from (

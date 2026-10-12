@@ -44,7 +44,9 @@ class AccountProbeIntegrationTest(Case):
             PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
             FAKE_LOG=str(self.log),
         )
-        self.script = Path(ROOT) / "agent_pm" / "adapters" / "codex" / "account_probe.py"
+        self.script = (
+            Path(ROOT) / "agent_pm" / "session" / "adapters" / "codex" / "account_probe.py"
+        )
         self.addCleanup(self.cleanup)
 
     def cleanup(self):

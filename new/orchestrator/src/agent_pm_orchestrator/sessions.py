@@ -5,7 +5,7 @@ status: a session's SessionStatus at its recorded cwd."""
 import re
 import threading
 
-from agent_pm.driver import api
+from agent_pm.session.driver import api
 
 from agent_pm_orchestrator import config, linear
 

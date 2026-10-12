@@ -1,5 +1,5 @@
 """A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose` (print) or neither
-(interactive); install() puts it on PATH. An option src/agent_pm/adapters/claude/ never emits exits 2.
+(interactive); install() puts it on PATH. An option src/agent_pm/session/adapters/claude/ never emits exits 2.
 Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs the next of [steps, *turns] between the
 UserPromptSubmit and Stop hooks. Stdin's end exits `exit`; orphaned or HANG_CAP s idle, 1.
 

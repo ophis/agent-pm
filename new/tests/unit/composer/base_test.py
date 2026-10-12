@@ -3,8 +3,8 @@
 import os
 import unittest
 
-from agent_pm.composer import base
-from agent_pm.utils import config_file
+import agent_pm.config
+from agent_pm.role.composer import base
 
 from new.tests.case import CORE, Case
 
@@ -16,7 +16,7 @@ class Paths(Case):
         self.assertEqual(base.SCHEMA, os.path.join(base.TEAM, "output", "outcome.schema.json"))
         self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertFalse(hasattr(base, "SRC"))
-        self.assertEqual(base.CONFIG, config_file.CONFIG)
+        self.assertEqual(base.CONFIG, agent_pm.config.CONFIG)
         self.assertEqual(base.CONFIG, os.path.join(CORE, "config.toml"))
 
 

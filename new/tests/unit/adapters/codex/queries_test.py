@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.adapters.base import Launch, SessionStatus, Usage, Window
-from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.base import Launch, SessionStatus, Usage, Window
+from agent_pm.session.adapters.codex import CodexAdapter
 
 from new.tests.case import Case
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base

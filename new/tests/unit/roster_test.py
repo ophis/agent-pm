@@ -1,4 +1,4 @@
-"""agent_pm.roster, the old core's roster_test ported onto a fake driver.api (Tmux): LEGACY_CLIENT's cases became
+"""agent_pm.manager.roster, the old core's roster_test ported onto a fake driver.api (Tmux): LEGACY_CLIENT's cases became
 FR-28's default runtime; worker_dir, default_runtime and the crew module's entries are new."""
 
 import contextlib
@@ -18,16 +18,16 @@ import types
 import unittest
 import unittest.mock
 
-from agent_pm import roster
-from agent_pm.driver import api
-from agent_pm.utils import config_file
+import agent_pm.config
+from agent_pm.manager import roster
+from agent_pm.session.driver import api
 
 from new.tests.case import PY, ROOT, Case, child_env
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
-MODULE = ["-P", "-m", "agent_pm.crew"]
+MODULE = ["-P", "-m", "agent_pm.manager.crew"]
 NOT_REGULAR = "{}: not a regular file owned by you"
 NOT_A_DIR = "not a directory owned by you"
 NO_RUNTIME = "core config: runtime: want a runtime name"
@@ -313,7 +313,7 @@ class ManagerTest(Base):
 
 CHILD = """
 import sys
-from agent_pm import roster
+from agent_pm.manager import roster
 for i in range(15):
     roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
 """
@@ -321,8 +321,8 @@ for i in range(15):
 LEASE_CHILD = """
 import sys
 from unittest import mock
-from agent_pm import roster
-from agent_pm.driver import api
+from agent_pm.manager import roster
+from agent_pm.session.driver import api
 d, own = sys.argv[1], sys.argv[2]
 live = [api.SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()
@@ -376,7 +376,7 @@ VALID = {
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
-RESUME_1 = "-P -m agent_pm.crew or an absolute path named crew.py, drive.py or router.py"
+RESUME_1 = "-P -m agent_pm.manager.crew or an absolute path named crew.py, drive.py or router.py"
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 ID = "null or a printable string of 1–200 characters without whitespace"
@@ -407,8 +407,8 @@ INVALID = [
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
     ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
     ("resume", ["/p", "-P", "-m"], f"resume[1]: '-P': want {RESUME_1}"),
-    ("resume", ["/p", "-P", "-m", "agent_pm.roster"], f"resume[1]: '-P': want {RESUME_1}"),
-    ("resume", ["/p", "-m", "agent_pm.crew"], f"resume[1]: '-m': want {RESUME_1}"),
+    ("resume", ["/p", "-P", "-m", "agent_pm.manager.roster"], f"resume[1]: '-P': want {RESUME_1}"),
+    ("resume", ["/p", "-m", "agent_pm.manager.crew"], f"resume[1]: '-m': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"),
     ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
     ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"),
@@ -981,7 +981,9 @@ class RosterTest(Base):
                     self.assertEqual(e["resume"], resume)
 
     def test_recovery_runs_the_crew_module_for_a_crew_py_or_legacy_workers_py_entry(self):
-        self.assertEqual(roster.CREW, os.path.realpath(os.path.join(ROOT, "agent_pm", "crew.py")))
+        self.assertEqual(
+            roster.CREW, os.path.realpath(os.path.join(ROOT, "agent_pm", "manager", "crew.py"))
+        )
         self.assertTrue(os.path.isfile(roster.CREW))
         for script in ("/old/version/workers.py", "/old/skills/tmux/scripts/crew.py"):
             resume = ["/usr/bin/python3", script, "start", "w1"]
@@ -1206,7 +1208,7 @@ class WorkerDirTest(Base):
 
 class DefaultRuntimeTest(Base):
     def test_the_core_configs_runtime_with_the_local_file_on_top(self):
-        with open(config_file.CONFIG, "rb") as f:
+        with open(agent_pm.config.CONFIG, "rb") as f:
             base = tomllib.load(f)["runtime"]
         self.assertEqual(roster.default_runtime(), base)
         self.local('runtime = "rt9"\n')

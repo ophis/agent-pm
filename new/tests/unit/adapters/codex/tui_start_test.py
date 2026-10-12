@@ -12,7 +12,7 @@ import sys
 import types
 from unittest import mock
 
-from agent_pm.adapters.codex import tui_hook, tui_start
+from agent_pm.session.adapters.codex import tui_hook, tui_start
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests.case import Case
@@ -73,7 +73,7 @@ class SiblingTest(Case):
 
 class StartTest(Base):
     def test_shared_schema_preserves_hooks_in_isolated_scripts_and_adapter(self):
-        from agent_pm.adapters.codex import hook_schema
+        from agent_pm.session.adapters.codex import hook_schema
 
         expected = (
             ("SessionStart", "sessionStart", "activity"),

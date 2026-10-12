@@ -7,8 +7,8 @@ import re
 import shlex
 import subprocess
 
-from agent_pm import composer
-from agent_pm.delegate import cli
+from agent_pm.role import composer
+from agent_pm.role.delegate import cli
 
 from new.tests.case import CORE, Case
 

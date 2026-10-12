@@ -14,7 +14,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -32,11 +32,11 @@ from agent_pm.adapters.base import (
     Usage,
     Window,
 )
-from agent_pm.adapters.claude import ClaudeAdapter
-from agent_pm.adapters.claude.common import ClaudeCommon
-from agent_pm.adapters.claude.headless import ClaudeHeadless
-from agent_pm.adapters.claude.tui import ClaudeTui
-from agent_pm.driver import registry
+from agent_pm.session.adapters.claude import ClaudeAdapter
+from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.headless import ClaudeHeadless
+from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.driver import registry
 
 from new.tests.case import Case
 
@@ -396,7 +396,7 @@ class ReadRulesTest(Base):
             for launch in self.modes(reads=("/ok", read)):
                 with (
                     self.subTest(read=read),
-                    mock.patch("agent_pm.adapters.claude.common.Launch") as made,
+                    mock.patch("agent_pm.session.adapters.claude.common.Launch") as made,
                 ):
                     self.refused(
                         launch,

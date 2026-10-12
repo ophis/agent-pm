@@ -7,8 +7,8 @@ import re
 import unittest
 from types import SimpleNamespace
 
-from agent_pm import composer
-from agent_pm.utils.shell import SHORT
+from agent_pm.role import composer
+from agent_pm.role.repos.shell import SHORT
 from agent_pm_orchestrator import config, inputs, issues, target
 
 from new.tests.case import Case
@@ -1050,7 +1050,7 @@ class Checkout(Case):
                 )
                 for cmd in ("worktree", "status"):
                     self.assertIn(
-                        f"python3 -P -m agent_pm.agent_tools.repo {cmd} --dir <Workdir>/src --branch <branch> "
+                        f"python3 -P -m agent_pm.role.agent_tools.repo {cmd} --dir <Workdir>/src --branch <branch> "
                         "[--name <checkout>] [--base <Base:>] <repo>`",
                         prompt,
                     )

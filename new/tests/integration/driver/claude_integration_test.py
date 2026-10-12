@@ -16,7 +16,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     Activity,
     Exited,
     LimitHit,
@@ -28,7 +28,7 @@ from agent_pm.adapters.base import (
     Usage,
     Window,
 )
-from agent_pm.driver import api, registry
+from agent_pm.session.driver import api, registry
 
 from new.tests import fake_claude
 from new.tests.case import PY, Case, child_env
@@ -59,7 +59,7 @@ PROBE = [
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
 # (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.driver import api, registry
+from agent_pm.session.driver import api, registry
 signal.signal(signal.SIGINT, signal.default_int_handler)
 registry.configure({"adapters": {"claude": json.loads(sys.argv[1])}})
 handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[2]))

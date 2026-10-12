@@ -1,9 +1,9 @@
-"""utils/protocol.py: the reply protocol's names, the objects composer exports."""
+"""role/contract/__init__.py: the reply protocol's names, the objects composer exports."""
 
 import unittest
 
-from agent_pm import composer
-from agent_pm.utils import protocol
+from agent_pm.role import composer
+from agent_pm.role import contract as protocol
 
 from new.tests.case import Case
 

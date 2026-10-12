@@ -3,7 +3,7 @@
 import re
 from unittest import mock
 
-from agent_pm.driver import api
+from agent_pm.session.driver import api
 
 NAMES = (
     "sessions",

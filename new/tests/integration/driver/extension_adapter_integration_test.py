@@ -1,5 +1,5 @@
-"""A new runtime is one package under src/agent_pm/adapters/ plus one [adapters.<name>] table: a temp copy of new/core,
-the fake adapter's package copied into it as src/agent_pm/adapters/fake/ and its table appended to the copy's
+"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of new/core,
+the fake adapter's package copied into it as src/agent_pm/session/adapters/fake/ and its table appended to the copy's
 config.toml, nothing else changed, runs a headless session through driver.api.start in a child Python whose
 PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
 anything starts."""
@@ -19,14 +19,14 @@ SKIP = shutil.ignore_patterns("__pycache__")
 # The child: starts runtime argv[2] headless in workdir argv[1] and prints its events; a ConfigError exits 1, its text
 # on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.driver import api
+from agent_pm.session.driver import api
 try:
     handle = api.start(sys.argv[2], "headless", "hello", api.Spec(workdir=sys.argv[1]))
 except api.ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
-                  "files": [api.__file__, sys.modules["agent_pm.adapters.fake"].__file__]}))
+                  "files": [api.__file__, sys.modules["agent_pm.session.adapters.fake"].__file__]}))
 """
 
 
@@ -59,10 +59,10 @@ class ExtensionAdapterIntegration(Case):
         )
 
     def package(self, name: str) -> None:
-        """The fake adapter's package copied in as src/agent_pm/adapters/<name>/."""
+        """The fake adapter's package copied in as src/agent_pm/session/adapters/<name>/."""
         shutil.copytree(
             os.path.dirname(fake_adapter.__file__),
-            os.path.join(self.src, "agent_pm", "adapters", name),
+            os.path.join(self.src, "agent_pm", "session", "adapters", name),
             ignore=SKIP,
         )
 

@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
-from agent_pm.delegate import Outcome, Progress
+from agent_pm.role.delegate import Outcome, Progress
 from agent_pm.utils.files import save
 
 from agent_pm_orchestrator.config import LOCAL, TASKS

@@ -9,8 +9,8 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome
-from agent_pm.driver import api
+from agent_pm.role.delegate import Outcome
+from agent_pm.session.driver import api
 from agent_pm_orchestrator import linear, sessions
 
 from new.tests import case

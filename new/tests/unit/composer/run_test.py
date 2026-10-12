@@ -8,8 +8,9 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-from agent_pm.composer.base import ConfigError
-from agent_pm.composer.run import (
+import agent_pm.config
+from agent_pm.role.composer.base import ConfigError
+from agent_pm.role.composer.run import (
     RUN_KEYS,
     Intent,
     RunConfig,
@@ -20,8 +21,7 @@ from agent_pm.composer.run import (
     resolve,
     trusted_dirs,
 )
-from agent_pm.composer.teams import team
-from agent_pm.utils import config_file
+from agent_pm.role.composer.teams import team
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests.case import Case
@@ -490,7 +490,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+        with open(os.path.expanduser(agent_pm.config.LOCAL), "w") as f:
             f.write("malformed = [\n")
 
     def test_resolve(self):

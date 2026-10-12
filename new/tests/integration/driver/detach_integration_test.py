@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.driver import api, tmux_host
+from agent_pm.session.driver import api, tmux_host
 
 from new.tests import live_tmux
 from new.tests.case import Case

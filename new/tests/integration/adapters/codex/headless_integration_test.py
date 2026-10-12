@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     Access,
     Activity,
     ConfigError,
@@ -23,8 +23,8 @@ from agent_pm.adapters.base import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.adapters.codex import CodexAdapter
-from agent_pm.driver import api, records, registry
+from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.driver import api, records, registry
 
 from new.tests.case import NEW, Case
 from new.tests.integration.adapters.codex import fake_codex

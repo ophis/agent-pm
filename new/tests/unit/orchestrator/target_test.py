@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-import agent_pm.utils.repos
-from agent_pm import composer
-from agent_pm.utils import config_file
-from agent_pm.utils.shell import SHORT
+import agent_pm.config
+import agent_pm.role.repos
+from agent_pm.role import composer
+from agent_pm.role.repos.shell import SHORT
 from agent_pm_orchestrator import config, issues, target
 
 from new.tests.case import Case
@@ -44,7 +44,7 @@ def roles():
     """Each role's tasks: the committed core config's index (no local file)."""
     return {
         r: SimpleNamespace(
-            tasks=tuple(composer.index(r, config=config_file.CONFIG, local=os.devnull))
+            tasks=tuple(composer.index(r, config=agent_pm.config.CONFIG, local=os.devnull))
         )
         for r in config.TASKS
     }
@@ -586,7 +586,7 @@ class WithClone(Case):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
     def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = agent_pm.utils.repos.checkout(
+        want = agent_pm.role.repos.checkout(
             os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26"
         )
         self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)

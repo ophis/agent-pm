@@ -17,7 +17,7 @@ import threading
 import unittest
 from unittest import mock
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -30,9 +30,9 @@ from agent_pm.adapters.base import (
     SessionInfo,
     TurnEnd,
 )
-from agent_pm.driver import api, tmux_host
-from agent_pm.driver.errors import DriverError
-from agent_pm.driver.modes import tui
+from agent_pm.session.driver import api, tmux_host
+from agent_pm.session.driver.errors import DriverError
+from agent_pm.session.driver.modes import tui
 
 from new.tests import fake_adapter
 from new.tests.case import ROOT, Case
@@ -191,7 +191,7 @@ class PathsTest(Base):
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
-        hook = os.path.join(ROOT, "agent_pm", "driver", "modes", "tui_hook.py")
+        hook = os.path.join(ROOT, "agent_pm", "session", "driver", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
         self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
         self.assertTrue(os.path.isabs(argv[2]))

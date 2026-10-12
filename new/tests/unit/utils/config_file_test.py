@@ -1,4 +1,4 @@
-"""utils/config_file.py: merge, read_config and the core config's pair (CONFIG, LOCAL)."""
+"""utils/config_file.py: merge, read_config; config.py: the core config's pair (CONFIG, LOCAL)."""
 
 import copy
 import os
@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils.config_file import CONFIG, LOCAL, merge, read_config
+from agent_pm.config import CONFIG, LOCAL
+from agent_pm.utils.config_file import merge, read_config
 
 from new.tests.case import CORE, NEW, Case
 

@@ -18,9 +18,9 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
-from agent_pm.driver import api, records, registry, tmux_host
-from agent_pm.driver.modes import tui
+from agent_pm.session.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
+from agent_pm.session.driver import api, records, registry, tmux_host
+from agent_pm.session.driver.modes import tui
 
 from new.tests import fake_adapter, live_tmux
 from new.tests.case import PY, Case, child_env
@@ -32,10 +32,10 @@ WAIT = 20  # upper bound on any wait, in seconds
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
 fake, config, name, text = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("agent_pm.adapters.fake", fake)
-sys.modules["agent_pm.adapters.fake"] = module = importlib.util.module_from_spec(spec)
+spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
+sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from agent_pm.driver import api, registry
+from agent_pm.session.driver import api, registry
 registry.configure(json.loads(config))
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
@@ -43,10 +43,10 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.driver import api; api.close(sys.argv[1])"
+CLOSE = "import sys; from agent_pm.session.driver import api; api.close(sys.argv[1])"
 SLOW_CLOSE = """import sys, time
-from agent_pm.driver import api
-from agent_pm.driver.modes import tui
+from agent_pm.session.driver import api
+from agent_pm.session.driver.modes import tui
 remove = tui._remove
 def slow(*args):
     open(sys.argv[2], "w").close()
@@ -125,7 +125,7 @@ class Live(Case):
                 }
             }
         }
-        patch = mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter})
+        patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure(self.config)
