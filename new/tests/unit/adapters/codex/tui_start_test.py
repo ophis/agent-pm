@@ -2,12 +2,15 @@ from new.tests.unit.adapters.codex.support import Base
 
 import ast
 import copy
+import dataclasses
 import json
 import pathlib
 import sys
 from unittest import mock
 
 from adapters.codex import tui_start
+
+HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
 
 
 class StartTest(Base):
@@ -260,3 +263,74 @@ class StartTest(Base):
             tui_start.main([launch.argv[-1]])
         proc.assert_not_called()
         execute.assert_not_called()
+
+
+class ProtectTest(Base):
+    def launch(self, spec):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            return self.adapter.tui().launch("prompt", spec, False, HOOK).argv[-1]
+
+    def test_the_recheck_keeps_carried_protect_paths_out_of_the_saved_roots(self):
+        link = self.root / "protected-link"
+        flags = ("--add-dir", "../../guarded", "--add-dir=../../other")
+        cases = (
+            (False, flags, self.root / "guarded" / "events"),
+            (False, flags, self.root / "other" / "events"),
+            (False, flags, self.root),
+            (False, (), self.cwd),
+            (True, (), self.extra / "events"),
+        )
+        for index, (role_policy, flags, target) in enumerate(cases):
+            link.unlink(missing_ok=True)
+            link.symlink_to("/protected/events")
+            spec = dataclasses.replace(
+                self.spec,
+                sid=f"recheck-{index}",
+                role_policy=role_policy,
+                flags=flags,
+                protect=(str(link),),
+            )
+            data = self.launch(spec)
+            self.assertEqual(json.loads(data)["protect"], [str(link)])
+            link.unlink()
+            link.symlink_to(target)
+            with (
+                self.subTest(role_policy=role_policy, target=target),
+                mock.patch("subprocess.Popen") as proc,
+                mock.patch("os.execve") as execute,
+                self.assertRaisesRegex(
+                    tui_start.sessions.RecoveryError, f"could rewrite hook dependency {target}$"
+                ),
+            ):
+                tui_start.main([data])
+            proc.assert_not_called()
+            execute.assert_not_called()
+
+    def test_bad_protect_launch_data_does_not_spawn(self):
+        data = json.loads(self.launch(self.spec))
+        with mock.patch.object(tui_start.subprocess, "Popen") as proc:
+            for protect in ("/protected", ["relative"], [1], ["/a\0b"], None):
+                with self.subTest(protect=protect), self.assertRaises(tui_start.StartError):
+                    tui_start.main([json.dumps({**data, "protect": protect})])
+            data.pop("protect")
+            with self.assertRaisesRegex(tui_start.StartError, "fields"):
+                tui_start.main([json.dumps(data)])
+        proc.assert_not_called()
+
+    def test_a_plain_start_lists_hooks_with_the_users_config_and_execs_the_flags(self):
+        flags = ("-c", 'model_verbosity="low"', "--disable", "web", "-m", "o3")
+        spec = dataclasses.replace(self.spec, role_policy=False, flags=flags)
+        data = self.launch(spec)
+        with (
+            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
+            mock.patch("os.chdir"),
+            mock.patch("os.execve") as execute,
+        ):
+            tui_start.main([data])
+        argv = execute.call_args.args[1]
+        self.assertEqual(argv[-10:], [*flags, "-c", "hooks.state={exact}", "--", "prompt"])
+        hook_flags = argv[10:22]
+        self.assertEqual(
+            trust.call_args.args[1],
+            [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],
+        )

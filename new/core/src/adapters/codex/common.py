@@ -1,6 +1,7 @@
 """Codex access, settings, usage parsing and inspection; read dirs need no flag (the sandbox reads the whole disk).
 Both Modes share ~/.agent-pm/core-new-sessions/codex/; recovery and session files have bounded nonblocking reads with
-regular-file, ownership and symlink checks."""
+regular-file, ownership and symlink checks. A plain session's (adapters.base) snapshot saves role_policy=False, its
+flags only the model and effort, its roots its writable dirs. options parses spec.flags up to "--"."""
 
 import json
 import math
@@ -35,6 +36,53 @@ from .sessions import (
     store_root,
     validate_snapshot,
 )
+
+VALUED = {
+    "-c": "-c",
+    "--config": "-c",
+    "-C": "-C",
+    "--cd": "-C",
+    "-p": "-p",
+    "--profile": "-p",
+    "--enable": "--enable",
+    "--disable": "--disable",
+    "--add-dir": "--add-dir",
+}
+RESERVED = ("-C", "-p", "resume", "fork", "--last", "--dangerously-bypass-hook-trust")
+RESERVED_KEYS = ("hooks", "sandbox_workspace_write")
+PASSED = ("-c", "--enable", "--disable")
+
+
+def options(flags):
+    i = 0
+    while i < len(flags) and flags[i] != "--":
+        flag = flags[i]
+        if flag.startswith("--"):
+            word, eq, value = flag.partition("=")
+        else:
+            word, value = flag[:2], flag[2:].removeprefix("=")
+            eq = flag[2:]
+        name = VALUED.get(word)
+        if name is None:
+            yield (word if flag.startswith("--") else flag), None, flag
+        elif eq:
+            yield name, value, flag
+        else:
+            i += 1
+            value = flags[i] if i < len(flags) else ""
+            yield name, value, f"{flag} {value}"
+        i += 1
+
+
+def refuse(flags) -> None:
+    for name, value, text in options(flags):
+        key = value.partition("=")[0].split(".", 1)[0].strip().strip("\"'") if name == "-c" else ""
+        if name in RESERVED or key in RESERVED_KEYS:
+            raise ConfigError(f"{text}: the Driver sets Codex's hooks, session and cwd")
+
+
+def passed(flags) -> list[str]:
+    return [word for name, value, _ in options(flags) if name in PASSED for word in (name, value)]
 
 
 def _recover(method):
@@ -100,6 +148,16 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
 
 
 def flags(snapshot: dict, *, interactive: bool) -> list[str]:
+    model = [
+        *(("-m", snapshot["model"]) if snapshot["model"] is not None else ()),
+        *(
+            ("-c", f"model_reasoning_effort={snapshot['effort']}")
+            if snapshot["effort"] is not None
+            else ()
+        ),
+    ]
+    if not snapshot["role_policy"]:
+        return model
     result = [
         "-s",
         snapshot["sandbox"],
@@ -117,10 +175,7 @@ def flags(snapshot: dict, *, interactive: bool) -> list[str]:
                 "sandbox_workspace_write.writable_roots=[]",
             )
         )
-    if snapshot["model"] is not None:
-        result.extend(("-m", snapshot["model"]))
-    if snapshot["effort"] is not None:
-        result.extend(("-c", f"model_reasoning_effort={snapshot['effort']}"))
+    result.extend(model)
     if not snapshot["project"]:
         result.extend(("-c", "project_doc_max_bytes=0"))
     if snapshot["sandbox"] == "workspace-write":
@@ -235,19 +290,27 @@ class CodexCommon:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+            if state.snapshot["role_policy"] != spec.role_policy:
+                raise ConfigError(
+                    f"Codex session {spec.sid} was started with "
+                    f"role_policy={state.snapshot['role_policy']}"
+                )
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
             snapshot = recovery_snapshot(state)
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
-            if not snapshot["project"]:
+            if snapshot["role_policy"] and not snapshot["project"]:
                 _guard_untrusted_project(state.workdir, snapshot["cwd"], snapshot["codex_home"])
             return state
         roots = self._new_roots(spec)
-        workdir, cwd, home, *dirs = roots
-        workdir, sid = session_identity(workdir, spec.sid)
-        if not spec.access.project:
-            _guard_untrusted_project(workdir, cwd, home)
+        workdir, sid = session_identity(spec.workdir, spec.sid)
+        if spec.role_policy:
+            _, cwd, home, *dirs = roots
+            if not spec.access.project:
+                _guard_untrusted_project(workdir, cwd, home)
+        else:
+            cwd, *dirs, home = roots
         snapshot = validate_snapshot(
             {
                 "cwd": cwd,
@@ -259,6 +322,7 @@ class CodexCommon:
                 "network": self.config["shell_network"],
                 "sandbox": self.config["sandbox"],
                 "codex_home": home,
+                "role_policy": spec.role_policy,
             }
         )
         return create_session(workdir, sid, snapshot, roots, persist=persist)
@@ -269,6 +333,9 @@ class CodexCommon:
         home = absolute_path(
             _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
         )
+        if not spec.role_policy:
+            added = (value for name, value, _ in options(spec.flags) if name == "--add-dir")
+            return [cwd, *(absolute_path(os.path.join(cwd, path), "dir") for path in added), home]
         return [workdir, cwd, home, *(absolute_path(path, "dir") for path in spec.access.dirs)]
 
     @_recover

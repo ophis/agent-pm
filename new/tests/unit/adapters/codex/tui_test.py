@@ -3,6 +3,7 @@ from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 import dataclasses
 import json
 import os
+import shlex
 import sys
 from datetime import datetime
 from unittest import mock
@@ -283,3 +284,179 @@ class TuiTest(Base):
             self.assertNotIn(str(changed_home), resumed)
             self.assertEqual(self.record().read_bytes(), before)
         proc.assert_not_called()
+
+
+PROMPT = "quoted ' prompt\nnext"
+POLICY = (
+    "approval_policy",
+    "approvals_reviewer",
+    "sandbox_workspace_write",
+    "project_doc_max_bytes",
+)
+REFUSED = (
+    ("-C", "/x"),
+    ("--cd=/x",),
+    ("-C/x",),
+    ("-p", "work"),
+    ("--profile", "work"),
+    ("resume",),
+    ("fork",),
+    ("--last",),
+    ("--dangerously-bypass-hook-trust",),
+    ("-c", "hooks.Stop=[]"),
+    ("--config", '"hooks".state={}'),
+    ("--config=sandbox_workspace_write.network_access=true",),
+    ("-csandbox_workspace_write.writable_roots=[]",),
+)
+
+
+class PlainTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.adapter = CodexAdapter(self.adapter.config | {"sandbox": "workspace-write"})
+        self.common = self.adapter.common
+        self.plain = dataclasses.replace(self.spec, role_policy=False)
+
+    def launch(self, spec, resume=False):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = self.adapter.tui().launch(PROMPT, spec, resume, HOOK)
+        return launch, json.loads(launch.argv[-1])
+
+    def assert_no_policy(self, argv):
+        self.assertNotIn("-s", argv)
+        self.assertNotIn(str(self.extra), argv)
+        self.assertFalse([w for w in argv if w.startswith(POLICY)])
+
+    def test_plain_launch_is_the_wiring_then_the_flags(self):
+        (self.cwd / ".codex").mkdir()
+        flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")
+        spec = dataclasses.replace(self.plain, flags=flags, protect=("/protected/events",))
+        launch, data = self.launch(spec)
+        argv = data["argv"]
+        self.assertEqual(
+            argv[:10],
+            [
+                "/protected/codex",
+                "--no-daemon",
+                "-C",
+                str(self.cwd),
+                "-c",
+                'tui.notification_method="bel"',
+                "-m",
+                "gpt-test",
+                "-c",
+                "model_reasoning_effort=low",
+            ],
+        )
+        hook_flags = argv[10:22]
+        self.assertEqual(hook_flags[::2], ["-c"] * 6)
+        self.assertTrue(all(w.startswith("hooks.") for w in hook_flags[1::2]))
+        self.assertEqual(argv[22:], [*flags, "--", PROMPT])
+        self.assert_no_policy(argv[:22])
+        self.assertEqual(
+            data["hook_flags"], [*hook_flags, "-c", 'model_verbosity="low"', "--enable", "web"]
+        )
+        self.assertEqual(data["protect"], ["/protected/events"])
+        self.assertEqual(launch.env, {"CODEX_HOME": str(self.codex_home)})
+        self.assertEqual(launch.unset, self.adapter.identity_env)
+        self.assertEqual(launch.cwd, str(self.cwd))
+        state = self.common.load(str(self.work), spec.sid)
+        self.assertFalse(state.snapshot["role_policy"])
+        self.assertEqual(
+            state.writable_roots, [str(self.cwd), str(self.root / "added"), str(self.codex_home)]
+        )
+
+    def test_plain_resume_is_the_wiring_then_the_flags(self):
+        spec = dataclasses.replace(self.plain, flags=("--enable", "web"))
+        self.launch(spec)
+        self.common.bind(str(self.work), spec.sid, NATIVE)
+        self.rollout()
+        launch, data = self.launch(spec, resume=True)
+        argv = data["argv"]
+        self.assertEqual(
+            argv[:6], ["/protected/codex", "resume", NATIVE, "--no-daemon", "-C", str(self.cwd)]
+        )
+        self.assertEqual(argv[-4:], ["--enable", "web", "--", PROMPT])
+        self.assertIn("gpt-test", argv)
+        self.assert_no_policy(argv)
+        self.assertEqual(data["hook_flags"][-2:], ["--enable", "web"])
+        command = shlex.split(launch.resume)
+        self.assertEqual(
+            command[-6:], ["resume", "-m", "gpt-test", "-c", "model_reasoning_effort=low", NATIVE]
+        )
+        self.assert_no_policy(command)
+
+    def test_role_run_launch_keeps_its_policy_and_appends_the_flags(self):
+        spec = dataclasses.replace(self.spec, flags=("--enable", "web"))
+        launch, data = self.launch(spec)
+        argv = data["argv"]
+        self.assertEqual(argv[argv.index("-s") + 1], "workspace-write")
+        for word in POLICY:
+            self.assertTrue([w for w in argv if w.startswith(word)], word)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(self.extra))
+        self.assertEqual(argv[-4:], ["--enable", "web", "--", PROMPT])
+        self.assertEqual(data["hook_flags"][-2:], ["--enable", "web"])
+        self.assertEqual(launch.unset, self.common.interactive_unset())
+        self.assertTrue(self.common.load(str(self.work), spec.sid).snapshot["role_policy"])
+
+    def test_session_flags_are_refused_before_anything_starts(self):
+        for role_policy in (True, False):
+            for index, flags in enumerate(REFUSED):
+                spec = dataclasses.replace(
+                    self.spec,
+                    sid=f"refused-{index}",
+                    role_policy=role_policy,
+                    flags=("-m", "o3", *flags),
+                )
+                text = " ".join(flags)
+                with (
+                    self.subTest(role_policy=role_policy, flags=flags),
+                    mock.patch("shutil.which") as which,
+                    self.assertRaises(ConfigError) as caught,
+                ):
+                    self.adapter.tui().launch("hi", spec, False, HOOK)
+                self.assertEqual(
+                    str(caught.exception), f"{text}: the Driver sets Codex's hooks, session and cwd"
+                )
+                which.assert_not_called()
+                self.assertIsNone(self.common.load(str(self.work), spec.sid))
+
+    def test_flags_that_pick_nothing_pass(self):
+        for index, flags in enumerate(
+            (
+                ("--", "resume", "-C", "/x"),
+                ("-c", "model=x"),
+                ("--enable", "hooks"),
+                ("--add-dir", "fork"),
+            )
+        ):
+            with self.subTest(flags=flags):
+                spec = dataclasses.replace(self.plain, sid=f"passed-{index}", flags=flags)
+                self.assertEqual(self.launch(spec)[1]["argv"][-len(flags) - 2 : -2], list(flags))
+
+    def test_a_writable_dir_covering_or_inside_a_protect_path_is_refused(self):
+        guarded = self.root / "guarded"
+        events = str(guarded / "events")
+        cases = (
+            (self.plain, ("--add-dir", "../../guarded"), events),
+            (self.plain, ("--add-dir", str(guarded)), events),
+            (self.plain, ("--add-dir=../../guarded/sub",), str(guarded)),
+            (self.plain, (f"--add-dir={guarded / 'sub'}",), str(guarded)),
+            (self.plain, (), str(self.cwd / "events")),
+            (self.plain, (), str(self.work)),
+            (self.spec, (), str(self.extra / "events")),
+            (self.spec, (), str(self.work / "events")),
+        )
+        for index, (base, flags, path) in enumerate(cases):
+            spec = dataclasses.replace(
+                base, sid=f"guarded-{index}", flags=flags, protect=("/protected/x", path)
+            )
+            with (
+                self.subTest(role_policy=spec.role_policy, flags=flags, path=path),
+                self.assertRaisesRegex(
+                    ConfigError, f"Codex tui writable root .* could rewrite hook dependency {path}$"
+                ),
+            ):
+                self.launch(spec)
+            self.assertIsNone(self.common.load(str(self.work), spec.sid))
+        self.launch(dataclasses.replace(self.plain, protect=(events, str(self.work / "events"))))

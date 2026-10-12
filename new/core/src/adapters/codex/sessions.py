@@ -26,7 +26,7 @@ def absolute_path(path: str, label: str) -> str:
 def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    value = {"sandbox": "workspace-write", **value}
+    value = {"sandbox": "workspace-write", "role_policy": True, **value}
     if set(value) != {
         "cwd",
         "project",
@@ -37,12 +37,13 @@ def validate_snapshot(value: dict) -> dict:
         "network",
         "codex_home",
         "sandbox",
+        "role_policy",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
     if value["sandbox"] not in ("danger-full-access", "workspace-write"):
         raise RecoveryError("invalid Codex recovery snapshot sandbox")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
-    for key in ("project", "network"):
+    for key in ("project", "network", "role_policy"):
         if type(value[key]) is not bool:
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
     for key in ("dirs", "commands"):
@@ -66,6 +67,7 @@ def validate_snapshot(value: dict) -> dict:
         "effort": value["effort"],
         "network": value["network"],
         "sandbox": value["sandbox"],
+        "role_policy": value["role_policy"],
     }
     if validated != value:
         raise RecoveryError("invalid Codex recovery snapshot path")
@@ -188,7 +190,9 @@ class SessionState:
 
 def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
     snapshot = validate_snapshot(state.snapshot)
-    paths = [state.workdir, snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
+    paths = [snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
+    if snapshot["role_policy"]:
+        paths.insert(0, state.workdir)
     check_writable_roots(store_root(root), paths)
     for path in paths:
         if not any(inside(path, grant) for grant in state.writable_roots):
@@ -444,6 +448,7 @@ def create_session(
 ) -> SessionState:
     root = store_root(root)
     workdir, sid = session_identity(workdir, sid)
+    grants = [workdir] if validate_snapshot(snapshot)["role_policy"] else []
     state = _state(
         {
             "version": _SESSION_VERSION,
@@ -453,7 +458,7 @@ def create_session(
             "native_id": None,
             "writable_roots": list(
                 dict.fromkeys(
-                    [workdir, *(absolute_path(path, "writable root") for path in writable_roots)]
+                    [*grants, *(absolute_path(path, "writable root") for path in writable_roots)]
                 )
             ),
         },

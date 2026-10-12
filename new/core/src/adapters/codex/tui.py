@@ -8,7 +8,7 @@ import sys
 from adapters.base import ACTIVITY, BLOCKED, TURN_END, ConfigError, Launch, LimitHit, Tui
 
 from . import sessions
-from .common import flags, native_id
+from .common import flags, native_id, passed, refuse
 from .headless import LIMIT_PREFIXES, reset_at
 
 HOOKS = (
@@ -47,12 +47,13 @@ class CodexTuiRun(Tui):
         self.native = ""
 
     def launch(self, prompt, spec, resume, hook):
+        refuse(spec.flags)
         common = self.adapter.common
         self.state = common.prepare(spec, resume, persist=False)
         snapshot = self.state.snapshot
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.interactive_unset()
+        unset = common.interactive_unset() if spec.role_policy else self.adapter.identity_env
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
         store = sessions.store_root()
@@ -70,6 +71,7 @@ class CodexTuiRun(Tui):
             exe,
             store,
             *(word for word in hook if os.path.isabs(word)),
+            *spec.protect,
         ]
         try:
             sessions.protect(self.state, dependencies, effective_env)
@@ -111,16 +113,18 @@ class CodexTuiRun(Tui):
             'tui.notification_method="bel"',
             *flags(snapshot, interactive=True),
             *hook_flags,
+            *spec.flags,
             *(["--", prompt] if prompt else []),
         ]
         data = {
             "argv": argv,
             "hook": list(hook),
             "commands": commands,
-            "hook_flags": hook_flags,
+            "hook_flags": [*hook_flags, *passed(spec.flags)],
             "workdir": self.state.workdir,
             "sid": self.state.sid,
             "store": store,
+            "protect": list(spec.protect),
         }
         return Launch(
             (
