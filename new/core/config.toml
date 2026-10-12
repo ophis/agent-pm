@@ -155,6 +155,9 @@ max = "max"
 
 [adapters.codex]
 implementation = "adapters.codex:CodexAdapter"
+# danger-full-access (default) or workspace-write; both use on-request + auto_review approvals.
+# Full access disables shell_network, writable-root boundaries and team-dir protection; see new/README.md.
+sandbox = "danger-full-access"
 shell_network = false
 
 [adapters.codex.tiers]

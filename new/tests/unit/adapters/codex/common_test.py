@@ -201,7 +201,7 @@ class CommonTest(Base):
         self.assertEqual(launch.env["NO_COLOR"], "1")
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         self.assertIn("CODEX_PERMISSION_PROFILE", launch.unset)
-        self.assertIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
+        self.assertNotIn("sandbox_workspace_write.writable_roots=[]", launch.argv)
         self.assertIsNotNone(adapter.tui())
 
     def test_missing_mapping_is_configuration_error(self):

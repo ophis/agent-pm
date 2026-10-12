@@ -23,6 +23,7 @@ flowchart TB
     LD[launchd]
     HU[the user]
     M["manager: /agent-pm:tmux"]
+    A["the user: /agent-pm:act-as"]
   end
   subgraph L1[orchestration]
     subgraph OR[orchestrator/]
@@ -56,6 +57,7 @@ flowchart TB
   HU -->|"--issue · --tui"| R
   M -->|"--issue · --tui"| R
   M -->|"CLI --detach"| D
+  A -->|"CLI --runtime print_prompt --mode in_process"| D
   W -->|API| DR
   RU <==>|"delegate.run · begun, progress, outcome"| D
   CF -->|resolve| C
