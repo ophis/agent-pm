@@ -1,9 +1,7 @@
-"""The adapter registry, the only reader of the core config's [adapters] table: config.toml (CONFIG) with
-~/.agent-pm/core-new.local.toml (LOCAL) merged on top. The tables are read once per process, on the first use of
-configured() or adapter(), and cached (a failed read is not, so the next use reads again); configure() sets the cache
-from a given config instead (tests), reset() drops it. adapter(name) imports package adapters.<name> and returns the
-class its [adapters.<name>].implementation names, "adapters.<name>:<Class>Adapter", built from the table's other keys.
-Every failure is a ConfigError."""
+"""The adapter registry, the only reader of the core config's [adapters] tables (config.toml, LOCAL merged on top),
+read once per process and cached (a failed read is not); configure() sets the cache instead, reset() drops it.
+adapter(name) builds the class [adapters.<name>].implementation names from the table's other keys. Every failure is a
+ConfigError."""
 import importlib
 import inspect
 import os
@@ -24,12 +22,10 @@ _cache: dict[str, dict] | None = None
 
 
 def read_config(path: str = CONFIG, local: str = LOCAL) -> dict:
-    """Reads the Driver's default configuration through utils.config_file.read_config."""
     return _read_config(path, local)
 
 
 def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
-    """The merged config's [adapters]; {} when it is absent or not a table."""
     try:
         found = read_config(path, local).get("adapters")
     except (OSError, ValueError) as e:
@@ -38,7 +34,6 @@ def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
 
 
 def configure(config: Mapping) -> None:
-    """Sets the cache to the [adapters] of the whole config `config` ({} when absent or not a table); reads no file."""
     global _cache
     found = config.get("adapters")
     with _lock:
@@ -46,7 +41,6 @@ def configure(config: Mapping) -> None:
 
 
 def reset() -> None:
-    """Drops the cache: the next use reads the files."""
     global _cache
     with _lock:
         _cache = None
@@ -65,7 +59,6 @@ def configured() -> list[str]:
 
 
 def adapter(name: str) -> Adapter:
-    """The Adapter of runtime `name`, from its [adapters.<name>] table."""
     if not isinstance(name, str) or not NAME.match(name):
         raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
     table = _tables().get(name)

@@ -1,6 +1,5 @@
-"""A local `team_dirs` (new/core/config.toml's comment) read by the Composer in a child process (child.Case): a team
-dir's role composes as core's, its <tasks> its team dir's tasks/, an added dir; its catalog row; a read dir holding the
-team dir refused. Main's tests/integration/core/team_dirs_integration_test.py, the Composer's part."""
+"""A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
+dir added; its catalog row; a read dir holding the team dir refused."""
 import json
 import os
 import re
@@ -13,7 +12,7 @@ from new.tests.integration.composer import child
 from composer.prompt import RESUME, RETURN
 from utils.paths import temp_dirs, under
 
-# The team dirs lie outside every temp dir (check_team_dirs refuses one there): under the repo's gitignored work/.
+# outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(NEW, "core", "team", "tasks")
@@ -25,8 +24,6 @@ WRITER = ("# Writer\n\nYou write notes.\n\n## Tasks\n\n"
           "- `note` (`<tasks>/note.md`): a short note; always; light.\n")
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-# After PRELUDE: what a listing reads, as the old --list did: the team dirs and every team dir file checked, then per
-# role of the catalog its destination type, source and each task's description and source, every prompt rendered.
 CATALOG = """from composer.base import LOCAL
 from utils.config_file import read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
@@ -64,7 +61,6 @@ def make_team(case: unittest.TestCase) -> str:
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class TeamDirs(child.Case):
-    """A team dir (TEAM) as the local config's `team_dirs`."""
     def setUp(self):
         super().setUp()
         self.team = make_team(self)
