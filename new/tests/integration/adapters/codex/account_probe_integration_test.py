@@ -1,6 +1,3 @@
-from new.tests.case import NEW, ROOT, Case
-from new.tests.integration.adapters.codex import fake_app_server
-
 import json
 import os
 import shlex
@@ -9,6 +6,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+from new.tests.case import NEW, ROOT, Case
+from new.tests.integration.adapters.codex import fake_app_server
 
 
 class AccountProbeIntegrationTest(Case):

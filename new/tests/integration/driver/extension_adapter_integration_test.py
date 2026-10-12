@@ -4,15 +4,15 @@ config.toml, nothing else changed, runs a headless session through driver.api.st
 PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
 anything starts."""
 
-from new.tests import fake_adapter
-from new.tests.case import CORE, PY, Case, child_env
-
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+from new.tests import fake_adapter
+from new.tests.case import CORE, PY, Case, child_env
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")

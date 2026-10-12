@@ -7,9 +7,6 @@ run; claude and codex, from the committed config, refuse it. The Mode protocol, 
 fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
 detach) over tmux_host autospecced (no tmux runs)."""
 
-from new.tests import fake_adapter
-from new.tests.case import Case
-
 import contextlib
 import dataclasses
 import fcntl
@@ -32,6 +29,9 @@ from agent_pm.adapters.base import Access, Launch
 from agent_pm.driver import api, errors, records, registry, tmux_host
 from agent_pm.driver.modes import headless, in_process, tui
 from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

@@ -1,5 +1,3 @@
-import config  # noqa: E402
-
 import functools
 import http.client
 import json
@@ -13,6 +11,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import config  # noqa: E402
 import drive  # noqa: E402
 
 SEAM = "AGENT_PM_LINEAR"

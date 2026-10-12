@@ -1,7 +1,3 @@
-from tests import hermetic
-from tests.integration.core import fake_claude, fake_codex
-from tests.unit.core.drive_test import SID, TEAM, outcome, progress
-
 import json
 import os
 import shutil
@@ -11,6 +7,10 @@ import tempfile
 import unittest
 
 import repo
+
+from tests import hermetic
+from tests.integration.core import fake_claude, fake_codex
+from tests.unit.core.drive_test import SID, TEAM, outcome, progress
 
 DRIVE = os.path.join(hermetic.CORE, "src", "drive.py")
 DONE = {"status": "done", "title": "note", "summary": "A note.", "deliverable": "A note.\n"}

@@ -1,12 +1,12 @@
 """composer/base.py: its paths and the text helpers ported from the old composer's tests."""
 
-from new.tests.case import CORE, Case
-
 import os
 import unittest
 
 from agent_pm.composer import base
 from agent_pm.utils import config_file
+
+from new.tests.case import CORE, Case
 
 
 class Paths(Case):

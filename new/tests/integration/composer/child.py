@@ -2,13 +2,13 @@
 ~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
 agent run as its caller (the Delegate) would."""
 
-from new.tests import case
-from new.tests.case import PY, child_env
-
 import json
 import os
 import subprocess
 import tempfile
+
+from new.tests import case
+from new.tests.case import PY, child_env
 
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nfrom agent_pm import composer\n"

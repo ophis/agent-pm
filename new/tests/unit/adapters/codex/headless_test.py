@@ -1,5 +1,3 @@
-from new.tests.unit.adapters.codex.support import NATIVE, Base
-
 import json
 from datetime import UTC, datetime
 
@@ -12,6 +10,8 @@ from agent_pm.adapters.base import (
     Stderr,
     TurnEnd,
 )
+
+from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 
 class HeadlessTest(Base):

@@ -1,13 +1,13 @@
 """A new runtime is a config value to the Composer: a local `runtime` and its [adapters.<name>] table, with no package
 for it, resolve, compose and list the catalog in a child process (child.Case); no runtime text in the prompt."""
 
-from new.tests.case import ROOT
-from new.tests.integration.composer import child
-
 import os
 import unittest
 
 from agent_pm.composer.prompt import RETURN
+
+from new.tests.case import ROOT
+from new.tests.integration.composer import child
 
 BANNER = "Extension handover."
 LOCAL = (

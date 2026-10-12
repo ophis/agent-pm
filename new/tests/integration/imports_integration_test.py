@@ -1,12 +1,12 @@
 """Every module of agent_pm and new.tests imported alone in a fresh child, an empty temp dir its HOME and cwd: it
 exits 0, leaving the dir empty and sys.path unchanged."""
 
-from new.tests.case import NEW, PY, ROOT, Case, child_env
-
 import os
 import subprocess
 import tempfile
 import unittest
+
+from new.tests.case import NEW, PY, ROOT, Case, child_env
 
 REPO = os.path.dirname(NEW)
 CHILD = """import importlib, sys

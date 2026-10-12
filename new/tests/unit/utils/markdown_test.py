@@ -1,11 +1,11 @@
 """utils/markdown.py: unfenced lines and fenced blocks."""
 
-from new.tests.case import Case
-
 import unittest
 
 from agent_pm.composer import base
 from agent_pm.utils.markdown import fenced, unfenced
+
+from new.tests.case import Case
 
 
 class Unfenced(Case):

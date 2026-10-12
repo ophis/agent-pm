@@ -1,20 +1,6 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
 drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake."""
 
-from new.tests import fake_adapter
-from new.tests.case import PY, Case, child_env
-from new.tests.unit.delegate.runner_test import (
-    DONE,
-    START,
-    STOP,
-    FakeHandle,
-    block,
-    limit,
-    no_child,
-    said,
-    turn,
-)
-
 import io
 import json
 import os
@@ -35,6 +21,20 @@ from agent_pm.composer.prompt import RESUME
 from agent_pm.delegate import Outcome, Result, cli, runner
 from agent_pm.delegate.runner import STOP_LIMIT
 from agent_pm.driver import registry
+
+from new.tests import fake_adapter
+from new.tests.case import PY, Case, child_env
+from new.tests.unit.delegate.runner_test import (
+    DONE,
+    START,
+    STOP,
+    FakeHandle,
+    block,
+    limit,
+    no_child,
+    said,
+    turn,
+)
 
 SID = "11111111-2222-3333-4444-555555555555"
 KEYS = {

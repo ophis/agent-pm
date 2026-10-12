@@ -1,6 +1,3 @@
-from new.tests.integration.adapters.codex import fake_app_server
-from new.tests.unit.adapters.codex.support import Base
-
 import json
 import os
 import shlex
@@ -10,6 +7,9 @@ from unittest import mock
 
 from agent_pm.adapters.base import Usage, Window
 from agent_pm.driver import api, registry
+
+from new.tests.integration.adapters.codex import fake_app_server
+from new.tests.unit.adapters.codex.support import Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 

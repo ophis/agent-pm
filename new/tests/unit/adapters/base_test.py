@@ -1,8 +1,6 @@
 """new/core/src/adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
 Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
 
-from new.tests.case import Case
-
 import dataclasses
 import inspect
 import typing
@@ -37,6 +35,8 @@ from agent_pm.adapters.base import (
     Usage,
     Window,
 )
+
+from new.tests.case import Case
 
 
 class StubAdapter(Adapter):

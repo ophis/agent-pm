@@ -2,10 +2,6 @@
 Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral Return, the resume prefix, and
 reference_errors and the method files on the real team (its References and Methods tests)."""
 
-from new.tests.case import Case
-from new.tests.unit.composer.run_test import CONFIG
-from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
-
 import inspect
 import os
 import re
@@ -25,6 +21,10 @@ from agent_pm.composer.prompt import (
 )
 from agent_pm.composer.run import RunParams, resolve
 from agent_pm.composer.teams import index, team
+
+from new.tests.case import Case
+from new.tests.unit.composer.run_test import CONFIG
+from new.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
 
 TEXTS = {
     "guide.md": (

@@ -2,13 +2,13 @@
 headless mode of the team dir's role. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's
 part."""
 
-from new.tests.integration.composer.team_dirs_integration_test import IN_TEMP, TEAMS, make_team
-from new.tests.integration.delegate.cli_integration_test import CLI, Integration, mark
-from new.tests.unit.delegate.runner_test import block
-
 import json
 import os
 import unittest
+
+from new.tests.integration.composer.team_dirs_integration_test import IN_TEMP, TEAMS, make_team
+from new.tests.integration.delegate.cli_integration_test import CLI, Integration, mark
+from new.tests.unit.delegate.runner_test import block
 
 DONE = {"status": "done", "title": "note", "summary": "A note.", "deliverable": "A note.\n"}
 

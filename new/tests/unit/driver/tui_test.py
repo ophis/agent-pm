@@ -3,9 +3,6 @@ time.sleep patched), with a temp HOME: the session dir and session.json, the nam
 records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
 
-from new.tests import fake_adapter
-from new.tests.case import ROOT, Case
-
 import errno
 import fcntl
 import inspect
@@ -36,6 +33,9 @@ from agent_pm.adapters.base import (
 from agent_pm.driver import api, tmux_host
 from agent_pm.driver.errors import DriverError
 from agent_pm.driver.modes import tui
+
+from new.tests import fake_adapter
+from new.tests.case import ROOT, Case
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

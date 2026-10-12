@@ -2,8 +2,6 @@
 ClaudeHeadless's launch and parse; ClaudeTui's launch, hook payloads and usage-limit screen; ClaudeAdapter's hooks; the
 committed [adapters.claude] table. HOME and CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
-from new.tests.case import Case
-
 import json
 import os
 import re
@@ -38,6 +36,8 @@ from agent_pm.adapters.claude.common import ClaudeCommon
 from agent_pm.adapters.claude.headless import ClaudeHeadless
 from agent_pm.adapters.claude.tui import ClaudeTui
 from agent_pm.driver import registry
+
+from new.tests.case import Case
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 SETTINGS = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'

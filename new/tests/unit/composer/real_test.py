@@ -3,20 +3,6 @@ neutral Return and Parameters, the FR-31 destinations, the package API, the root
 text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
 
-from new.tests.case import CORE, NEW, Case
-from new.tests.unit.composer.prompt_test import (
-    RUN,
-    composed,
-    heading_anchors,
-    item,
-    parameters,
-    role_sources,
-    rule,
-    section,
-    task_text,
-)
-from new.tests.unit.composer.team_test import INTRO
-
 import functools
 import glob
 import hashlib
@@ -35,6 +21,20 @@ from agent_pm.composer.run import check_old_keys
 from agent_pm.composer.teams import START
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.case import CORE, NEW, Case
+from new.tests.unit.composer.prompt_test import (
+    RUN,
+    composed,
+    heading_anchors,
+    item,
+    parameters,
+    role_sources,
+    rule,
+    section,
+    task_text,
+)
+from new.tests.unit.composer.team_test import INTRO
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 ROOT = os.path.dirname(NEW)

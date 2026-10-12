@@ -1,5 +1,3 @@
-from tests import ROOT
-
 import json
 import os
 import re
@@ -9,6 +7,8 @@ import sys
 import tempfile
 import unittest
 import uuid
+
+from tests import ROOT
 
 HOOK = os.path.join(ROOT, "core", "src", "clients", "_codex_hook.py")
 PANE = "%3"

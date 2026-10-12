@@ -1,7 +1,3 @@
-from tests import hermetic  # noqa: F401
-
-import config
-
 import json
 import os
 import shutil
@@ -10,9 +6,12 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+import config
 import issues
 import repo
 import target
+
+from tests import hermetic  # noqa: F401
 
 
 def ok(stdout="", code=0, stderr=""):

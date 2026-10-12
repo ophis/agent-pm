@@ -2,10 +2,6 @@
 a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, an interrupt, a usage limit, config errors.
 Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
 
-from new.tests import fake_claude
-from new.tests.case import PY, Case, child_env
-from new.tests.unit.delegate.runner_test import block
-
 import json
 import os
 import re
@@ -20,6 +16,10 @@ from unittest import mock
 from agent_pm.composer.prompt import RESUME
 from agent_pm.delegate.runner import FIX
 from agent_pm.driver import api, registry
+
+from new.tests import fake_claude
+from new.tests.case import PY, Case, child_env
+from new.tests.unit.delegate.runner_test import block
 
 CLI = (*PY, "-m", "agent_pm.delegate.cli")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

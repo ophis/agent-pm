@@ -1,15 +1,15 @@
 """new/tests/live_tmux.py against a real tmux server: its env, control-mode client, readers, cleanup, grid assertion,
 wait, and the skip without tmux."""
 
-from new.tests import live_tmux
-from new.tests.case import Case
-
 import os
 import shutil
 import stat
 import subprocess
 import unittest
 from unittest import mock
+
+from new.tests import live_tmux
+from new.tests.case import Case
 
 
 class Live(Case):

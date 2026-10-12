@@ -1,9 +1,6 @@
 """A local `team_dirs` read by the Composer in a child process (child.Case): a team dir's role composes with its tasks
 dir added; its catalog row; a read dir holding the team dir refused."""
 
-from new.tests.case import NEW
-from new.tests.integration.composer import child
-
 import json
 import os
 import re
@@ -13,6 +10,9 @@ import unittest
 
 from agent_pm.composer.prompt import RESUME, RETURN
 from agent_pm.utils.paths import temp_dirs, under
+
+from new.tests.case import NEW
+from new.tests.integration.composer import child
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(os.path.dirname(NEW), "work", "new-team-dirs-tests")

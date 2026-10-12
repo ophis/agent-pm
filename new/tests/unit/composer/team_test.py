@@ -1,8 +1,6 @@
 """composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
 TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
 
-from new.tests.case import Case
-
 import os
 import re
 import tempfile
@@ -23,6 +21,8 @@ from agent_pm.composer.teams import (
     team_paths,
 )
 from agent_pm.utils import config_file
+
+from new.tests.case import Case
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = (

@@ -2,9 +2,6 @@
 payload on stdin, $TMUX_PANE set, PATH only a stub tmux that logs each call (no tmux runs here); in process for its one
 locked write and its load of tmux_host; and the file standing alone."""
 
-from new.tests import guards
-from new.tests.case import ROOT, Case
-
 import ast
 import fcntl
 import io
@@ -20,6 +17,9 @@ import unittest.mock
 import uuid
 
 from agent_pm.driver.modes import tui_hook
+
+from new.tests import guards
+from new.tests.case import ROOT, Case
 
 HOOK = os.path.join(ROOT, "agent_pm", "driver", "modes", "tui_hook.py")
 PANE = "%3"

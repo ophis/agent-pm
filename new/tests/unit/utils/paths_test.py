@@ -1,7 +1,5 @@
 """new/core/src/agent_pm/utils/paths.py: IMPORT_ROOT, CORE, real_dirs, under, temp_dirs and printable_abs."""
 
-from new.tests.case import NEW, ROOT, Case
-
 import os
 import subprocess
 import tempfile
@@ -10,6 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.utils.paths import CORE, IMPORT_ROOT, printable_abs, real_dirs, temp_dirs, under
+
+from new.tests.case import NEW, ROOT, Case
 
 
 class PathsTest(Case):

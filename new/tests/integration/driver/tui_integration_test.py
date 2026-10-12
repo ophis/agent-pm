@@ -4,9 +4,6 @@ send, the idle timer and its Blocked pause, attach from another process, stop, a
 while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
 a start while another process closes the name."""
 
-from new.tests import fake_adapter, live_tmux
-from new.tests.case import PY, Case, child_env
-
 import itertools
 import json
 import os
@@ -24,6 +21,9 @@ from unittest import mock
 from agent_pm.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
 from agent_pm.driver import api, records, registry, tmux_host
 from agent_pm.driver.modes import tui
+
+from new.tests import fake_adapter, live_tmux
+from new.tests.case import PY, Case, child_env
 
 MANAGER = "mgr"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

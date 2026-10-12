@@ -1,10 +1,3 @@
-from tests import hermetic  # first: config reads HOME at import
-from tests.integration.core import fake_claude, live_tmux
-from tests.integration.orchestrator import fake_gh, fake_linear
-from tests.unit.orchestrator import board_ids, run_fixtures
-
-import config
-
 import copy
 import json
 import os
@@ -16,8 +9,14 @@ import tomllib
 import unittest
 from urllib.parse import quote
 
+import config
 import linear
 from clients import claude as claude_client
+
+from tests import hermetic  # first: config reads HOME at import
+from tests.integration.core import fake_claude, live_tmux
+from tests.integration.orchestrator import fake_gh, fake_linear
+from tests.unit.orchestrator import board_ids, run_fixtures
 
 SRC = os.path.join(config.ROOT, "orchestrator", "src")
 ROUTER, PROMOTE = os.path.join(SRC, "router.py"), os.path.join(SRC, "promote.py")

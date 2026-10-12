@@ -1,6 +1,3 @@
-from tests.integration.core import fake_codex
-from tests.integration.core.live_tmux import wait
-
 import json
 import os
 import re
@@ -11,6 +8,9 @@ import tempfile
 import time
 import unittest
 import uuid
+
+from tests.integration.core import fake_codex
+from tests.integration.core.live_tmux import wait
 
 FAKE = os.path.abspath(fake_codex.__file__)
 EVENTS = ("SessionStart", "UserPromptSubmit", "PermissionRequest", "Stop", "Interrupt")

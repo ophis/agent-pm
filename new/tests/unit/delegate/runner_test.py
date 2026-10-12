@@ -4,10 +4,6 @@ drive_test Start, HostFailure and Sinks cases: records, saving, the missing star
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
 in_process-only fake, with no child process."""
 
-from new.tests import fake_adapter
-from new.tests.case import Case
-from new.tests.unit.driver.api_test import SPAWNS
-
 import contextlib
 import dataclasses
 import io
@@ -32,6 +28,10 @@ from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Res
 from agent_pm.delegate.outcome import save
 from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT, printable
 from agent_pm.driver import api, registry
+
+from new.tests import fake_adapter
+from new.tests.case import Case
+from new.tests.unit.driver.api_test import SPAWNS
 
 SID = "11111111-2222-3333-4444-555555555555"
 NAME = "fake-11111111"

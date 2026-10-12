@@ -1,7 +1,5 @@
 """new/core/src/utils/config_file.py: merge, read_config and the core config's pair (CONFIG, LOCAL)."""
 
-from new.tests.case import CORE, NEW, Case
-
 import copy
 import os
 import tempfile
@@ -11,6 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.utils.config_file import CONFIG, LOCAL, merge, read_config
+
+from new.tests.case import CORE, NEW, Case
 
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
 

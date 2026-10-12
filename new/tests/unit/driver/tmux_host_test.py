@@ -2,9 +2,6 @@
 start (no pane), detach, respawn, status, sessions, paste/keys/send, read, option, pane, mark, the events file, the
 show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
-from new.tests import guards
-from new.tests.case import Case
-
 import ast
 import errno
 import fcntl
@@ -26,6 +23,9 @@ import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
 from agent_pm.driver import tmux_host
+
+from new.tests import guards
+from new.tests.case import Case
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"

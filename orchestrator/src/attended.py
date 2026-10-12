@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402,F401  (puts core/src on sys.path)
-
 import drive  # noqa: E402
 import linear  # noqa: E402
 import tmux_host  # noqa: E402

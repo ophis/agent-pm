@@ -5,9 +5,6 @@ record and resume steps. The fake adapter, a subclass whose launch takes env, un
 whose runtime is this Python running its config's script are registered in-process (sys.modules) with their tables
 given to registry.configure."""
 
-from new.tests import fake_adapter
-from new.tests.case import Case
-
 import dataclasses
 import io
 import json
@@ -36,6 +33,9 @@ from agent_pm.adapters.base import (
     TurnEnd,
 )
 from agent_pm.driver import api, records, registry
+
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds

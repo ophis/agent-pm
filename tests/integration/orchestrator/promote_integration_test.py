@@ -1,3 +1,10 @@
+import os
+import subprocess
+import unittest
+from datetime import UTC, datetime, timedelta
+
+import promote
+
 from tests import hermetic  # noqa: F401
 from tests.integration.orchestrator import fake_linear
 from tests.integration.orchestrator.flow_fixtures import (
@@ -9,13 +16,6 @@ from tests.integration.orchestrator.flow_fixtures import (
     TIMEOUT,
     Flow,
 )
-
-import os
-import subprocess
-import unittest
-from datetime import UTC, datetime, timedelta
-
-import promote
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."

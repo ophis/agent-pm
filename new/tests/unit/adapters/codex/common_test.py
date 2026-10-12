@@ -1,5 +1,3 @@
-from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
-
 import dataclasses
 import json
 import os
@@ -10,6 +8,8 @@ from unittest import mock
 
 from agent_pm.adapters.base import Access, ConfigError
 from agent_pm.adapters.codex import CodexAdapter
+
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class CommonTest(Base):

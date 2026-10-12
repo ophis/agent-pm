@@ -1,9 +1,6 @@
 """new/tests/guards.py: each guard on the real tree, and on violating samples written to temp trees; every test
 is a Case, with no class or module fixture."""
 
-from new.tests import guards
-from new.tests.case import CORE, NEW, ROOT, Case
-
 import ast
 import importlib
 import os
@@ -11,6 +8,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from new.tests import guards
+from new.tests.case import CORE, NEW, ROOT, Case
 
 OLD = "/".join(("core", "src"))
 PKG = "src/agent_pm"

@@ -1,8 +1,3 @@
-from tests import hermetic
-from tests.integration.core import fake_claude, live_tmux
-from tests.integration.core.drive_integration_test import DONE
-from tests.unit.core.drive_test import SID, outcome, progress
-
 import functools
 import json
 import os
@@ -14,6 +9,11 @@ import unittest
 import compose
 import drive
 from clients import claude as claude_client
+
+from tests import hermetic
+from tests.integration.core import fake_claude, live_tmux
+from tests.integration.core.drive_integration_test import DONE
+from tests.unit.core.drive_test import SID, outcome, progress
 
 DRIVE = os.path.join(hermetic.CORE, "src", "drive.py")
 MANAGER = "mgr"

@@ -2,9 +2,6 @@
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter."""
 
-from new.tests import live_tmux
-from new.tests.case import Case
-
 import json
 import os
 import sys
@@ -14,6 +11,9 @@ import unittest
 from unittest import mock
 
 from agent_pm.driver import api, tmux_host
+
+from new.tests import live_tmux
+from new.tests.case import Case
 
 MANAGER = "mgr"
 # The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists, at most 30 s.

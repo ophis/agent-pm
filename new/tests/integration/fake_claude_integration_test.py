@@ -2,8 +2,6 @@
 file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
 pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 
-from new.tests import case, fake_claude, live_tmux
-
 import glob
 import json
 import os
@@ -18,6 +16,8 @@ from unittest import mock
 from agent_pm.adapters.base import Access, Spec
 from agent_pm.adapters.claude import ClaudeAdapter
 from agent_pm.adapters.claude.tui import ClaudeTui
+
+from new.tests import case, fake_claude, live_tmux
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

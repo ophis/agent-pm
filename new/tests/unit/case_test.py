@@ -1,7 +1,5 @@
 """new/tests/case.py: Case.run's temp HOME, registry resets and import-root check, on inner tests; child_env."""
 
-from new.tests.case import ROOT, Case, child_env
-
 import os
 import tempfile
 import unittest
@@ -9,6 +7,8 @@ from unittest import mock
 
 from agent_pm.driver import registry
 from agent_pm.utils import paths
+
+from new.tests.case import ROOT, Case, child_env
 
 
 class CaseTest(Case):

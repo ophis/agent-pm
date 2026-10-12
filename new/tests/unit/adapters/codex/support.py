@@ -1,5 +1,3 @@
-from new.tests.case import NEW, Case
-
 import json
 import os
 import tempfile
@@ -8,6 +6,8 @@ from unittest import mock
 
 from agent_pm.adapters.base import Access, Spec
 from agent_pm.adapters.codex import CodexAdapter
+
+from new.tests.case import NEW, Case
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"

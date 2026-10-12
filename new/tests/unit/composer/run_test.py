@@ -2,9 +2,6 @@
 the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
 driver's access tests, less the report command)."""
 
-from new.tests.case import Case
-from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
-
 import inspect
 import os
 import tempfile
@@ -26,6 +23,9 @@ from agent_pm.composer.run import (
 from agent_pm.composer.teams import team
 from agent_pm.utils import config_file
 from agent_pm.utils.paths import IMPORT_ROOT
+
+from new.tests.case import Case
+from new.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
 
 CONFIG = """\
 tier = 2

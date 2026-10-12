@@ -4,18 +4,6 @@ The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the give-up, pending
 give-up on a clock ahead (driver.api's `time` only), the fix send; the session left open. Main's
 tests/integration/core/drive_tui_integration_test.py, its tui run."""
 
-from new.tests import fake_claude
-from new.tests.integration.delegate.cli_integration_test import (
-    DONE,
-    SID,
-    UNSAVED,
-    UNSAVED_ERROR,
-    mark,
-    prompt,
-)
-from new.tests.integration.driver import tui_integration_test as tui_live
-from new.tests.unit.delegate.runner_test import GAVE_UP, block
-
 import io
 import json
 import os
@@ -29,6 +17,18 @@ from agent_pm import composer
 from agent_pm.delegate import Progress, run
 from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
 from agent_pm.driver import api, registry
+
+from new.tests import fake_claude
+from new.tests.integration.delegate.cli_integration_test import (
+    DONE,
+    SID,
+    UNSAVED,
+    UNSAVED_ERROR,
+    mark,
+    prompt,
+)
+from new.tests.integration.driver import tui_integration_test as tui_live
+from new.tests.unit.delegate.runner_test import GAVE_UP, block
 
 NAME = f"claude-{SID[:8]}"
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"

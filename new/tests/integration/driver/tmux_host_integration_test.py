@@ -4,9 +4,6 @@ settling and re-tiling modes, and a split outside it; ported from main's crew in
 tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
 fails the test. Also start's dead line for a command ending at once."""
 
-from new.tests import live_tmux
-from new.tests.case import Case
-
 import contextlib
 import functools
 import io
@@ -20,6 +17,9 @@ import unittest
 from unittest import mock
 
 from agent_pm.driver import api, registry, tmux_host
+
+from new.tests import live_tmux
+from new.tests.case import Case
 
 MANAGER = "mgr"
 TIMEOUT = 60

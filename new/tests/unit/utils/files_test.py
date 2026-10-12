@@ -1,7 +1,5 @@
 """new/core/src/utils/files.py: read_regular."""
 
-from new.tests.case import Case
-
 import errno
 import os
 import tempfile
@@ -11,6 +9,8 @@ import unittest.mock
 from pathlib import Path
 
 from agent_pm.utils import files
+
+from new.tests.case import Case
 
 DATA = b"0123456789"
 

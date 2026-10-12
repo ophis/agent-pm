@@ -1,9 +1,6 @@
 """delegate/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
 dir checks (TeamRuns), for a custom team and for the configured team dirs."""
 
-from new.tests.case import NEW, Case
-from new.tests.unit.composer.team_test import POET, VERSE
-
 import io
 import json
 import os
@@ -23,6 +20,9 @@ from agent_pm.delegate import ConfigError, plan
 from agent_pm.delegate.plan import place
 from agent_pm.driver import api
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
+
+from new.tests.case import NEW, Case
+from new.tests.unit.composer.team_test import POET, VERSE
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")

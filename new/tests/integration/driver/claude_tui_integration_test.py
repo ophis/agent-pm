@@ -3,11 +3,6 @@ the real ClaudeAdapter runs new/tests/fake_claude.py (on PATH as `claude`) inter
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
 
-from new.tests import fake_claude, live_tmux
-from new.tests.case import PY, child_env
-from new.tests.integration.driver import detach_integration_test as detach_live
-from new.tests.integration.driver import tui_integration_test as tui_live
-
 import functools
 import json
 import os
@@ -23,6 +18,11 @@ from agent_pm.adapters.base import Activity, Blocked, Exited, LimitHit, SessionB
 from agent_pm.adapters.claude.tui import ClaudeTui
 from agent_pm.driver import api, registry, tmux_host
 from agent_pm.driver.modes import tui
+
+from new.tests import fake_claude, live_tmux
+from new.tests.case import PY, child_env
+from new.tests.integration.driver import detach_integration_test as detach_live
+from new.tests.integration.driver import tui_integration_test as tui_live
 
 MANAGER, SID, IDLE, WAIT, Stream = (
     tui_live.MANAGER,

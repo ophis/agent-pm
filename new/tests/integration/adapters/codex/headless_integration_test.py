@@ -1,6 +1,3 @@
-from new.tests.case import NEW, Case
-from new.tests.integration.adapters.codex import fake_codex
-
 import dataclasses
 import json
 import os
@@ -26,6 +23,9 @@ from agent_pm.adapters.base import (
 )
 from agent_pm.adapters.codex import CodexAdapter
 from agent_pm.driver import api, records, registry
+
+from new.tests.case import NEW, Case
+from new.tests.integration.adapters.codex import fake_codex
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

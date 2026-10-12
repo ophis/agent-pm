@@ -3,9 +3,6 @@ Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
 
-from new.tests import fake_adapter
-from new.tests.case import Case
-
 import importlib.abc
 import importlib.util
 import os
@@ -19,6 +16,9 @@ from unittest import mock
 import agent_pm
 from agent_pm.adapters.base import Adapter, ConfigError
 from agent_pm.driver import registry
+
+from new.tests import fake_adapter
+from new.tests.case import Case
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"

@@ -1,5 +1,3 @@
-from tests import ROOT, hermetic
-
 import dataclasses
 import errno
 import io
@@ -32,6 +30,8 @@ from clients import claude as claude_client
 from clients import codex
 from clients.claude import ClaudeClient
 from clients.skill import SkillClient
+
+from tests import ROOT, hermetic
 
 CORE = os.path.join(ROOT, "core")
 SID = "11111111-2222-3333-4444-555555555555"

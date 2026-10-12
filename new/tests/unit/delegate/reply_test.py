@@ -1,11 +1,11 @@
 """delegate/reply.py: progress mark lines and the outcome block of a reply (FR-18)."""
 
-from new.tests.case import Case
-
 import unittest
 
 from agent_pm.composer import PROGRESS
 from agent_pm.delegate.reply import MARK, marks, outcome_block
+
+from new.tests.case import Case
 
 
 class Marks(Case):
