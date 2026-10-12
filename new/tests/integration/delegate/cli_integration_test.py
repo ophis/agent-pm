@@ -1,4 +1,4 @@
-"""delegate/cli.py as a subprocess over new/tests/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
+"""delegate/cli.py as a subprocess over new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
 a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an
 interrupt, a usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
 
@@ -17,8 +17,8 @@ from agent_pm.role.composer.prompt import RESUME
 from agent_pm.role.delegate.runner import FIX
 from agent_pm.session.driver import api, registry
 
-from new.tests import fake_claude
 from new.tests.case import PY, Case, child_env
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.unit.delegate.runner_test import block
 
 CLI = (*PY, "-m", "agent_pm.role.delegate.cli")

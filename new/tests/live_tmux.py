@@ -12,7 +12,7 @@ import threading
 import time
 from typing import NamedTuple
 
-from new.tests import fake_claude
+from new.tests.integration.adapters.claude import fake_claude
 
 # two words: tmux execs them, not the user's login shell (and its rc files)
 IDLE = ("cat", "-")
