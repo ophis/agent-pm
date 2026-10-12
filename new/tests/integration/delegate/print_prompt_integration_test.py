@@ -1,35 +1,33 @@
-"""delegate/cli.py as a subprocess in the command shape of new/core/skills/act-as/SKILL.md, over the real config with a
-HOME of the test's own: per built-in role, out (or stdout, --out -) holds the --dry-run prompt; headless and a resume
+"""The Delegate CLI as a subprocess run by step 3's command of new/core/skills/act-as/SKILL.md, over the real config with
+a HOME of the test's own: per built-in role, out (or stdout, --out -) holds the --dry-run prompt; headless and a resume
 exit 2."""
-
-from new.tests import SRC, hermetic
 
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 
-CLI = os.path.join(SRC, "delegate", "cli.py")
+from new.tests.case import Case
+from new.tests.unit.skills.act_as_test import argv, head
+
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")
 INPUT = "Compare A and B."
 STARTED = "Progress (start): the composed prompt is handed to the caller"
 
 
-class PrintPrompt(unittest.TestCase):
+class PrintPrompt(Case):
     """The cwd `proj`; per role, workdir ~/.agent-pm/adhoc/<date>-<role>-compare-a-b (not made), --sid SID."""
 
     def setUp(self):
-        agent_pm = hermetic.home(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.proj = os.path.realpath(tmp.name)
-        self.adhoc = os.path.join(agent_pm, "adhoc")
+        self.adhoc = os.path.join(self.agent_pm, "adhoc")
         self.env = {
             "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": os.path.dirname(agent_pm),
+            "HOME": self.home,
             "PYTHONUTF8": "1",
         }
 
@@ -38,10 +36,10 @@ class PrintPrompt(unittest.TestCase):
 
     def cli(self, role, *extra, mode="in_process", out=None) -> subprocess.CompletedProcess:
         work = self.work(role)
-        argv = [CLI, "--runtime", "print_prompt", "--mode", mode, "--role", role, "--workdir", work]
-        argv += ["--out", out or os.path.join(work, "prompt.md"), "--input", INPUT, "--sid", SID]
+        args = ["--runtime", "print_prompt", "--mode", mode, "--role", role, "--workdir", work]
+        args += ["--out", out or os.path.join(work, "prompt.md"), "--input", INPUT, "--sid", SID]
         return subprocess.run(
-            [sys.executable, *argv, *extra],
+            [*argv(head()), *args, *extra],
             cwd=self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
