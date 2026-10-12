@@ -24,6 +24,8 @@ jobs:
           python-version: "3.11"
       - name: Comment budget
         run: python3 .github/comment_budget.py
+      - name: Comment budget tests
+        run: python3 -m unittest discover -v -s .github -p "*_test.py"
 
   ruff:
     name: Ruff (Python 3.11)
