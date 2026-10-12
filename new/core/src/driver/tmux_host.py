@@ -132,9 +132,9 @@ TERMINAL_KEYS = (
     "COLUMNS",
     "LINES",
 )
-# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE and SIGXFSZ reset, any
-# error's errno (else EINVAL) sent to the errpipe, which execve closes. `block` stays blocked across execve; a cwd it
-# cannot enter or no errpipe reader: handover untaken; it waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
+# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE, SIGXFSZ reset; any
+# error's errno (else EINVAL) to the errpipe. `block` stays blocked across execve; a cwd it cannot enter or no errpipe
+# reader: handover untaken; waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
 EXEC = f"""import errno, json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
@@ -292,7 +292,7 @@ def detach(
         raise TuiError(
             f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
         )
-    for arg in argv:  # execve would fail after the handover is taken
+    for arg in argv:
         if "\0" in arg:
             raise TuiError("an argv item holds a NUL character")
         try:
@@ -435,8 +435,7 @@ def _tags(session: str, tags: dict[str, str]) -> list[str]:
 
 
 def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> bool:
-    """Whether the handover went in HANDOVER_TIMEOUT s, then the errpipe hit EOF (execve) in HANDOVER_TIMEOUT + extra
-    s more; an errno or bad data raises."""
+    """Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises."""
     polls, out = 0, b""
     while os.path.exists(path):
         if polls == round(HANDOVER_TIMEOUT / POLL):
@@ -444,7 +443,7 @@ def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> boo
         sleep(POLL)
         polls += 1
     polls = 0
-    while True:  # only now: a FIFO no writer opened reads as EOF
+    while True:  # only now: a FIFO no writer opened reads EOF
         try:
             chunk = os.read(pipe, 64)
         except BlockingIOError:
