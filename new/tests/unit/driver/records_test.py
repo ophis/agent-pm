@@ -11,7 +11,7 @@ import unittest.mock
 from contextlib import redirect_stderr
 from datetime import datetime
 
-from agent_pm.driver import records
+from agent_pm.session.driver import records
 from agent_pm.utils import files
 
 from new.tests.case import Case

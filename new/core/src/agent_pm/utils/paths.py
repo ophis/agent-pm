@@ -23,7 +23,7 @@ def real_dirs(paths, label: str) -> frozenset[str]:
 
 
 def temp_dirs() -> tuple[str, ...]:
-    """Realpaths of the dirs any process may write: TMPDIR, the temp dir, /tmp, /var/tmp, macOS's per-user one."""
+    """Realpaths of the dirs any process may write."""
     dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
     try:
         dirs.append(

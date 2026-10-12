@@ -1,4 +1,4 @@
-"""Case, every test's base, and the child helpers: agent_pm and agent_pm_orchestrator only from this tree's import
+"""Case, every test's base, and the child helpers: agent_pm and agent_pm_linear only from this tree's import
 roots (ROOT, ORCH_ROOT)."""
 
 import os
@@ -7,18 +7,18 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.driver import registry
+from agent_pm.session.driver import registry
 from agent_pm.utils import paths
 
 NEW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(NEW, "core")
 ROOT = os.path.join(CORE, "src")
-ORCH_ROOT = os.path.join(NEW, "orchestrator", "src")
+ORCH_ROOT = os.path.join(NEW, "linear-orchestrator", "src")
 PY = (sys.executable, "-P", "-s")
 
 
 class Case(unittest.TestCase):
-    """Fails a test at once if agent_pm or agent_pm_orchestrator is another tree's, else runs it (whatever its setUp)
+    """Fails a test at once if agent_pm or agent_pm_linear is another tree's, else runs it (whatever its setUp)
     in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
 
     def run(self, result=None):
@@ -45,7 +45,7 @@ class Case(unittest.TestCase):
 
 
 def _foreign() -> str | None:
-    orch = sys.modules.get("agent_pm_orchestrator")
+    orch = sys.modules.get("agent_pm_linear")
     orch_root = (
         os.path.dirname(os.path.dirname(getattr(orch, "__file__", None) or ""))
         if orch
@@ -53,7 +53,7 @@ def _foreign() -> str | None:
     )
     for name, found, root, pythonpath in (
         ("agent_pm", paths.IMPORT_ROOT, ROOT, "new/core/src"),
-        ("agent_pm_orchestrator", orch_root, ORCH_ROOT, "new/core/src:new/orchestrator/src"),
+        ("agent_pm_linear", orch_root, ORCH_ROOT, "new/core/src:new/linear-orchestrator/src"),
     ):
         if os.path.realpath(found) != os.path.realpath(root):
             return (

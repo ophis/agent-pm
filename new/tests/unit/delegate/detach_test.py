@@ -10,8 +10,8 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, detach
-from agent_pm.driver import api
+from agent_pm.role.delegate import ConfigError, detach
+from agent_pm.session.driver import api
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests.case import Case
@@ -55,7 +55,7 @@ class Detach(Base):
             sys.executable,
             "-P",
             "-m",
-            "agent_pm.delegate.cli",
+            "agent_pm.role.delegate.cli",
             f"--driver={DRIVER}",
             "--role=dummy-tester",
             f"--input={INPUT}",

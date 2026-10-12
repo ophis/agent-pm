@@ -8,7 +8,7 @@ import shutil
 import tempfile
 import unittest
 
-from agent_pm.composer.prompt import RESUME, RETURN
+from agent_pm.role.composer.prompt import RESUME, RETURN
 from agent_pm.utils.paths import temp_dirs, under
 
 from new.tests.case import NEW
@@ -30,7 +30,8 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from agent_pm.utils.config_file import CONFIG, LOCAL, read_config
+CATALOG = """from agent_pm.config import CONFIG, LOCAL
+from agent_pm.utils.config_file import read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
 team.check_all(read_config(CONFIG, LOCAL))

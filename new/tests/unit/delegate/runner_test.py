@@ -23,11 +23,20 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-from agent_pm import composer
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, run, runner
-from agent_pm.delegate.outcome import save
-from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from agent_pm.driver import api, registry
+from agent_pm.role import composer
+from agent_pm.role.delegate import (
+    Begun,
+    ConfigError,
+    Finished,
+    Limit,
+    Progress,
+    Result,
+    run,
+    runner,
+)
+from agent_pm.role.delegate.outcome import save
+from agent_pm.role.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.session.driver import api, registry
 from agent_pm.utils import text as text_utils
 
 from new.tests import fake_adapter
@@ -142,7 +151,7 @@ class Base(Case):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
         )
-        patch = mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter})
+        patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
         registry.configure(

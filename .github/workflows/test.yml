@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -80,7 +80,7 @@ jobs:
       matrix:
         job: ["driver", "adapters", "delegate-composer", "orchestrator", "crew", "shared"]
     env:
-      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/orchestrator/src
+      PYTHONPATH: ${{ github.workspace }}/new/core/src:${{ github.workspace }}/new/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7

@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     Activity,
     ConfigError,
     LimitHit,

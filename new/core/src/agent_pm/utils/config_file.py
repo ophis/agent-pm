@@ -3,11 +3,6 @@
 import os
 import tomllib
 
-from agent_pm.utils.paths import CORE
-
-CONFIG = os.path.join(CORE, "config.toml")
-LOCAL = "~/.agent-pm/core-new.local.toml"
-
 
 def merge(base: dict, over: dict) -> dict:
     """`over` on `base`: tables merge key by key; any other value replaces base's."""

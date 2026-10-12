@@ -8,8 +8,8 @@ import unittest
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.adapters import base
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters import base
+from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,

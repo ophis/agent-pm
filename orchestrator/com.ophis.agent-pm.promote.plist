@@ -5,7 +5,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PYTHONPATH</key>
-		<string>/Users/francis/playground/agent-pm/new/core/src:/Users/francis/playground/agent-pm/new/orchestrator/src</string>
+		<string>/Users/francis/playground/agent-pm/new/core/src:/Users/francis/playground/agent-pm/new/linear-orchestrator/src</string>
 	</dict>
 	<key>Label</key>
 	<string>com.ophis.agent-pm.promote</string>
@@ -14,7 +14,7 @@
 		<string>/opt/homebrew/bin/python3</string>
 		<string>-P</string>
 		<string>-m</string>
-		<string>agent_pm_orchestrator.promote</string>
+		<string>agent_pm_linear.promote</string>
 	</array>
 	<key>StandardErrorPath</key>
 	<string>/Users/francis/.agent-pm/logs/orchestrator.jsonl</string>

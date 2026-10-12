@@ -5,7 +5,7 @@ import os
 import re
 import unittest
 
-from agent_pm.composer.prompt import RESUME
+from agent_pm.role.composer.prompt import RESUME
 
 from new.tests.case import NEW
 from new.tests.integration.composer import child

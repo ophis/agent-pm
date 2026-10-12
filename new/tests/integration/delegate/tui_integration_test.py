@@ -13,10 +13,10 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm import composer
-from agent_pm.delegate import Progress, run
-from agent_pm.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.driver import api, registry
+from agent_pm.role import composer
+from agent_pm.role.delegate import Progress, run
+from agent_pm.role.delegate.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
+from agent_pm.session.driver import api, registry
 
 from new.tests import fake_claude
 from new.tests.integration.delegate.cli_integration_test import (

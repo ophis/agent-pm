@@ -1,4 +1,4 @@
-"""agent_pm.crew end to end: its CLI (`python3 -P -m agent_pm.crew`) run as a manager runs it, on a private tmux
+"""agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a manager runs it, on a private tmux
 server (new/tests/live_tmux.py) with a control-mode client on the manager. Workers are plain tui sessions of the real
 Adapters running new/tests/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
 through the Driver's tmux_host.py send. HOME and the server's root lie under AGENT_PM_TEST_TMP (else new/), outside
@@ -18,15 +18,15 @@ import threading
 import unittest
 from unittest import mock
 
-from agent_pm import crew, roster
+from agent_pm.manager import crew, roster
 
 from new.tests import fake_claude, live_tmux
 from new.tests.case import NEW, PY, ROOT, Case
 from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
-CREW = [*PY, "-m", "agent_pm.crew"]
-ENTRY = [sys.executable, "-P", "-m", "agent_pm.crew"]
-TMUX_HOST = os.path.join(ROOT, "agent_pm", "driver", "tmux_host.py")
+CREW = [*PY, "-m", "agent_pm.manager.crew"]
+ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.crew"]
+TMUX_HOST = os.path.join(ROOT, "agent_pm", "session", "driver", "tmux_host.py")
 MANAGER = "mgr"
 SECOND = "mgr2"
 TIMEOUT = 60
@@ -71,7 +71,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     me, events, name = (
-        f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.crew",
+        f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.manager.crew",
         shlex.quote(os.path.join(directory, "events")),
         os.path.basename(directory),
     )

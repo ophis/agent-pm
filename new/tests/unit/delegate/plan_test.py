@@ -15,12 +15,12 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm import composer
-from agent_pm.composer import RunConfig, RunParams
-from agent_pm.composer.prompt import RESUME
-from agent_pm.delegate import ConfigError, plan
-from agent_pm.delegate.plan import place
-from agent_pm.driver import api, registry
+from agent_pm.role import composer
+from agent_pm.role.composer import RunConfig, RunParams
+from agent_pm.role.composer.prompt import RESUME
+from agent_pm.role.delegate import ConfigError, plan
+from agent_pm.role.delegate.plan import place
+from agent_pm.session.driver import api, registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
 
 from new.tests import fake_adapter
@@ -61,7 +61,9 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
+        self.enterContext(
+            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
+        )
         self.addCleanup(registry.reset)
         self.local("")
 

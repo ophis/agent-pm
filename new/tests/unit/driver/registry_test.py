@@ -13,10 +13,10 @@ import types
 import unittest
 from unittest import mock
 
-import agent_pm
-from agent_pm.adapters.base import Adapter, ConfigError
-from agent_pm.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.driver import registry
+import agent_pm.session
+from agent_pm.session.adapters.base import Adapter, ConfigError
+from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.session.driver import registry
 
 from new.tests import fake_adapter
 from new.tests.case import Case
@@ -39,8 +39,8 @@ def odd_adapter():
 
 
 def package(name, **names) -> types.ModuleType:
-    """An in-memory module agent_pm.adapters.<name> holding `names`."""
-    module = types.ModuleType(f"agent_pm.adapters.{name}")
+    """An in-memory module agent_pm.session.adapters.<name> holding `names`."""
+    module = types.ModuleType(f"agent_pm.session.adapters.{name}")
     vars(module).update(names)
     return module
 
@@ -83,9 +83,9 @@ class Base(Case):
         registry.configure(tomllib.loads(text))
 
     def register(self, **modules):
-        """Each name's module as sys.modules["agent_pm.adapters.<name>"] for the rest of the test."""
+        """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of the test."""
         patch = mock.patch.dict(
-            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in modules.items()}
+            sys.modules, {f"agent_pm.session.adapters.{name}": m for name, m in modules.items()}
         )
         patch.start()
         self.addCleanup(patch.stop)
@@ -265,7 +265,7 @@ class AdapterTest(Base):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
         built = registry.adapter("fake")
-        self.assertEqual(registry.PACKAGE, agent_pm.__name__)
+        self.assertEqual(registry.PACKAGE, agent_pm.session.__name__)
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
 
@@ -321,7 +321,7 @@ class AdapterTest(Base):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
         for source, shown in (
             ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
-            ("from agent_pm.adapters.base import Absent\n", "cannot import name 'Absent'"),
+            ("from agent_pm.session.adapters.base import Absent\n", "cannot import name 'Absent'"),
             ("raise OSError('disk gone')\n", "disk gone"),
             ("def broken(:\n", "invalid syntax"),
         ):
@@ -331,7 +331,7 @@ class AdapterTest(Base):
                 mock.patch.object(
                     sys,
                     "meta_path",
-                    [SourceFinder("agent_pm.adapters.broken", source), *sys.meta_path],
+                    [SourceFinder("agent_pm.session.adapters.broken", source), *sys.meta_path],
                 ),
             ):
                 with self.assertRaises(ConfigError) as caught:

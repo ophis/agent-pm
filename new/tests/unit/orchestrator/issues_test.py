@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent_pm_orchestrator import issues
+from agent_pm_linear import issues
 
 from new.tests.case import Case
 

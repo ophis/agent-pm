@@ -13,11 +13,11 @@ import tomllib
 import types
 import unittest
 
-from agent_pm import composer
-from agent_pm.composer.base import CONFIG, anchor, fill, outline
-from agent_pm.composer.prompt import RETURN, RULE, reference_errors
-from agent_pm.composer.run import check_old_keys
-from agent_pm.composer.teams import START
+from agent_pm.role import composer
+from agent_pm.role.composer.base import CONFIG, anchor, fill, outline
+from agent_pm.role.composer.prompt import RETURN, RULE, reference_errors
+from agent_pm.role.composer.run import check_old_keys
+from agent_pm.role.composer.teams import START
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import IMPORT_ROOT
 
@@ -232,12 +232,13 @@ class Acceptance(Case):
 
     def test_each_requested_command_runs_the_repo_module_from_the_import_root(self):
         self.assertTrue(
-            os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "agent_tools", "repo.py"))
+            os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "role", "agent_tools", "repo.py"))
         )
         for role in roles():
             for command in composed(role)[1].commands:
                 self.assertTrue(
-                    command.startswith("python3 -P -m agent_pm.agent_tools.repo "), (role, command)
+                    command.startswith("python3 -P -m agent_pm.role.agent_tools.repo "),
+                    (role, command),
                 )
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
@@ -746,7 +747,7 @@ class RealCore(Case):
             prompt, _ = composed(role)
             text = prompt + "".join(task_text(t) for t in catalog()[role])
             cmds = re.findall(
-                r"`python3 -P -m agent_pm\.agent_tools\.repo (worktree|status) ([^`]*)`", text
+                r"`python3 -P -m agent_pm\.role\.agent_tools\.repo (worktree|status) ([^`]*)`", text
             )
             self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]

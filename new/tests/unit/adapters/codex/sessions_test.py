@@ -1,7 +1,7 @@
 """adapters/codex/sessions.py: the recovery snapshot's session env, by the same rule as Access.env."""
 
-from agent_pm.adapters import base
-from agent_pm.adapters.codex.sessions import RecoveryError, validate_snapshot
+from agent_pm.session.adapters import base
+from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
 
 from new.tests.unit.adapters.codex.support import Base
 

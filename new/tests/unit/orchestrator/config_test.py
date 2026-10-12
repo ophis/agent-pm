@@ -12,11 +12,12 @@ import tomllib
 import unittest
 from unittest import mock
 
-from agent_pm import composer, delegate
+import agent_pm.config
+from agent_pm.role import composer, delegate
+from agent_pm.role.repos.git import GUARD
+from agent_pm.role.repos.shell import SHORT
 from agent_pm.utils import config_file
-from agent_pm.utils.git import GUARD
-from agent_pm.utils.shell import SHORT
-from agent_pm_orchestrator import config
+from agent_pm_linear import config
 
 from new.tests.case import ORCH_ROOT, PY, Case, child_env
 from new.tests.unit.orchestrator.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
@@ -53,23 +54,23 @@ HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 ROOT_Q, CORE_SRC = shlex.quote(config.ROOT), "/".join(("core", "src"))  # guards.old_core
 GATE = (
-    f"env PYTHONPATH={ROOT_Q}/{CORE_SRC}:{ROOT_Q}/orchestrator/src "
-    "python3 -P -m agent_pm_orchestrator.router --brake researcher"
+    f"env PYTHONPATH={ROOT_Q}/{CORE_SRC}:{ROOT_Q}/linear-orchestrator/src "
+    "python3 -P -m agent_pm_linear.router --brake researcher"
 )
-LABEL = ("orchestrator/config.toml", "core")
+LABEL = ("linear-orchestrator/config.toml", "core")
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 
 def missing(keys):
     return (
-        f"missing {keys}: set them in ~/.agent-pm/orchestrator-new.local.toml (orchestrator/config.toml's "
+        f"missing {keys}: set them in ~/.agent-pm/linear-new.local.toml (linear-orchestrator/config.toml's "
         "`# local:` lines)"
     )
 
 
 def old_key(key):
     return (
-        f"core: orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
+        f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
         "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
     )
 
@@ -87,7 +88,7 @@ class ConfigFile:
         self.dir = tmp.name
 
     def local(self, text):
-        write(os.path.join(self.agent_pm, "orchestrator-new.local.toml"), text)
+        write(os.path.join(self.agent_pm, "linear-new.local.toml"), text)
 
     def load(self, text):
         path = os.path.join(self.dir, "config.toml")
@@ -105,7 +106,7 @@ class Config(ConfigFile, Case):
     def test_tests_never_read_this_machines_local_file(self):
         self.assertEqual(
             os.path.expanduser(config.LOCAL),
-            os.path.join(self.agent_pm, "orchestrator-new.local.toml"),
+            os.path.join(self.agent_pm, "linear-new.local.toml"),
         )
 
     def test_stage_order(self):
@@ -272,7 +273,7 @@ class Config(ConfigFile, Case):
         ]
         for text, message in cases:
             with self.subTest(message, text=text):
-                self.fails("orchestrator/config.toml: " + message, text)
+                self.fails("linear-orchestrator/config.toml: " + message, text)
 
     def test_bad_table_entry_rejected(self):
         cases = [
@@ -314,7 +315,9 @@ class Config(ConfigFile, Case):
                 with self.assertRaises(config.ConfigError) as cm:
                     self.load(BASE + f'[{table}]\n"{key}" = {json.dumps(value)}\n')
                 msg = str(cm.exception.code)
-                self.assertTrue(msg.startswith(f"orchestrator/config.toml: {table}.{key} "), msg)
+                self.assertTrue(
+                    msg.startswith(f"linear-orchestrator/config.toml: {table}.{key} "), msg
+                )
                 self.assertIn(repr(value), msg)
 
     def test_loads(self):
@@ -387,15 +390,18 @@ class Config(ConfigFile, Case):
                     None,
                     overlays=[overlay],
                     label=LABEL,
-                    config=config_file.CONFIG,
-                    local=config_file.LOCAL,
+                    config=agent_pm.config.CONFIG,
+                    local=agent_pm.config.LOCAL,
                 )
                 for r in roles
             ],
         )
         self.assertEqual(
             index.call_args_list,
-            [mock.call(r, config=config_file.CONFIG, local=config_file.LOCAL) for r in roles],
+            [
+                mock.call(r, config=agent_pm.config.CONFIG, local=agent_pm.config.LOCAL)
+                for r in roles
+            ],
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
@@ -404,7 +410,7 @@ class Config(ConfigFile, Case):
 
     def test_a_config_error_carries_the_log_dir_once_work_dir_is_valid(self):
         e = self.fails(
-            "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'",
+            "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'",
             'work_dir = "w"\n' + PIPELINE,
         )
         self.assertIsNone(e.logs_dir)
@@ -412,11 +418,11 @@ class Config(ConfigFile, Case):
         logs = os.path.join(os.path.realpath(self.agent_pm), "logs")
         for message, text in (
             (
-                "orchestrator/config.toml: " + missing("team"),
+                "linear-orchestrator/config.toml: " + missing("team"),
                 PIPELINE.replace(f'team = "{TEAM}"\n', ""),
             ),
             (
-                "orchestrator/config.toml: role 'ghost' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'ghost' is not in core/config.toml",
                 PIPELINE + role("ghost"),
             ),
         ):
@@ -425,9 +431,9 @@ class Config(ConfigFile, Case):
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
     def test_importing_reads_no_config_file(self):
-        write(os.path.join(self.agent_pm, "orchestrator-new.local.toml"), "[[[ not toml")
+        write(os.path.join(self.agent_pm, "linear-new.local.toml"), "[[[ not toml")
         code = (
-            "import json\nfrom agent_pm_orchestrator import config\n"
+            "import json\nfrom agent_pm_linear import config\n"
             "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
         )
         res = subprocess.run(
@@ -440,7 +446,7 @@ class Config(ConfigFile, Case):
         )
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         msg, logs = json.loads(res.stdout)
-        self.assertTrue(msg.startswith("orchestrator/config.toml: "), msg)
+        self.assertTrue(msg.startswith("linear-orchestrator/config.toml: "), msg)
         self.assertIsNone(logs)
 
 
@@ -519,7 +525,7 @@ class Runnable(ConfigFile, Case):
             *[
                 (
                     text + f'[task_labels]\n{task} = "{LABEL1}"\n',
-                    f"task_labels.{task} is not a task of a role in orchestrator/config.toml",
+                    f"task_labels.{task} is not a task of a role in linear-orchestrator/config.toml",
                 )
                 for task, text in (
                     ("echo", PIPELINE),
@@ -530,7 +536,7 @@ class Runnable(ConfigFile, Case):
         ]
         for text, message in cases:
             with self.subTest(message):
-                self.fails("orchestrator/config.toml: " + message, text)
+                self.fails("linear-orchestrator/config.toml: " + message, text)
 
     def test_role_for(self):
         roles = self.runs()
@@ -541,13 +547,13 @@ class Runnable(ConfigFile, Case):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(config_file.CONFIG) as f:
+        with open(agent_pm.config.CONFIG) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
         with open(os.path.join(composer.TEAM, "output", "destinations", "github.md")) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
-        self.assertEqual(config_file.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
+        self.assertEqual(agent_pm.config.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
 
 
 CORE_TOML = """tier = 2
@@ -573,7 +579,7 @@ class OtherRoot(ConfigFile, Case):
         super().setUp()
         os.remove(os.path.join(self.agent_pm, "core-new.local.toml"))
         self.root = os.path.join(self.dir, "my root")
-        self.dir = os.path.join(self.root, "orchestrator")
+        self.dir = os.path.join(self.root, "linear-orchestrator")
         os.makedirs(self.dir)
         os.makedirs(os.path.join(self.root, "core"))
         self.core_path = os.path.join(self.root, "core", "config.toml")
@@ -600,13 +606,13 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(
             fake.call_args_list,
             [
-                mock.call(r, config=self.core_path, local=config_file.LOCAL)
+                mock.call(r, config=self.core_path, local=agent_pm.config.LOCAL)
                 for r in ("researcher", "pm", "engineer")
             ],
         )
 
     def test_reads_only_the_paths_passed(self):
-        for name in ("orchestrator-new.local.toml", "core-new.local.toml"):
+        for name in ("linear-new.local.toml", "core-new.local.toml"):
             write(os.path.join(self.agent_pm, name), "[[[ not toml")
         path, local, core_local = (
             os.path.join(self.dir, n) for n in ("config.toml", "local.toml", "core.local.toml")
@@ -658,7 +664,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, "")
 
     def test_overlay_unknown_keys(self):
-        unknown = "core: orchestrator/config.toml: unknown key "
+        unknown = "core: linear-orchestrator/config.toml: unknown key "
         cases = [
             ("[core]\nfoo = 1\n", unknown + "'foo' in [core]"),
             ('[core]\nusers = ["octocat"]\n', unknown + "'users' in [core]"),
@@ -681,7 +687,7 @@ class OtherRoot(ConfigFile, Case):
                 self.fails(message, PIPELINE + text)
 
     def test_resolution_rejects_unknown_overlay_roles_and_output_keys(self):
-        core = "core: orchestrator/config.toml: "
+        core = "core: linear-orchestrator/config.toml: "
         for text, message in (
             ("[core.roles.reseacher]\ntier = 2\n", "unknown role 'reseacher' in [core.roles]"),
             ('[core.output]\ntype = "local"\ntypo = 1\n', "unknown key 'typo' in [core.output]"),
@@ -793,7 +799,7 @@ class Local(ConfigFile, Case):
     def test_local_alone_and_no_local(self):
         self.local(PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
-        os.remove(os.path.join(self.agent_pm, "orchestrator-new.local.toml"))
+        os.remove(os.path.join(self.agent_pm, "linear-new.local.toml"))
         self.assertEqual(self.load(PIPELINE).team, TEAM)
 
     def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
@@ -803,7 +809,7 @@ class Local(ConfigFile, Case):
     def test_a_bad_local_value_is_rejected(self):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
         self.fails(
-            "orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
+            "linear-orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
             BASE,
         )
 
@@ -863,7 +869,7 @@ class TeamDirsIgnored(ConfigFile, Case):
 class RealConfig(Case):
     def setUp(self):
         write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
-        self.local = os.path.join(self.agent_pm, "orchestrator-new.local.toml")
+        self.local = os.path.join(self.agent_pm, "linear-new.local.toml")
 
     def load(self, local=None):
         if local is not None:
@@ -884,7 +890,7 @@ class RealConfig(Case):
             self.load()
         self.assertEqual(
             cm.exception.code,
-            "orchestrator/config.toml: "
+            "linear-orchestrator/config.toml: "
             + missing(
                 "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
                 "states.done, states.canceled, roles.researcher.account, roles.researcher.key, roles.pm.account, roles.pm.key, "
@@ -932,7 +938,7 @@ class RealConfig(Case):
         zero = "00000000-0000-0000-0000-000000000000"
         self.assertEqual(
             cm.exception.code,
-            f"orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
+            f"linear-orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
             "(UUID) to <owner>/<name>: '<owner>/<name>'",
         )
 
@@ -1058,7 +1064,7 @@ class LocalClonesRunnable(Clones):
         for name, path, reason in self.bad():
             with self.subTest(name):
                 self.fails(
-                    f"orchestrator/config.toml: local_clones.{SLUG}: {reason}",
+                    f"linear-orchestrator/config.toml: local_clones.{SLUG}: {reason}",
                     PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(path)}\n',
                 )
 
@@ -1113,7 +1119,7 @@ class WorkDir(ConfigFile, Case):
         )
         home = os.path.dirname(work)
         self.fails(
-            "orchestrator/config.toml: work_dir must neither lie in nor contain "
+            "linear-orchestrator/config.toml: work_dir must neither lie in nor contain "
             f"local_clones.ophis/x {home}: '~/.agent-pm'",
             PIPELINE + '[local_clones]\n"ophis/x" = "~"\n',
         )
@@ -1159,13 +1165,13 @@ class WorkDir(ConfigFile, Case):
         ]
         for text, tail, msg in cases:
             with self.subTest(text=text, tail=tail):
-                self.fails(f"orchestrator/config.toml: {msg}", text + BASE + tail)
+                self.fails(f"linear-orchestrator/config.toml: {msg}", text + BASE + tail)
 
 
 IMPORT_ALONE = """import json, os, sys
 opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm_orchestrator import config
+from agent_pm_linear import config
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
 print(json.dumps({

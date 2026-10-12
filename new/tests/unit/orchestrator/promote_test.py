@@ -12,7 +12,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm_orchestrator import config, linear, promote, sessions
+from agent_pm_linear import config, linear, promote, sessions
 
 from new.tests.case import Case
 from new.tests.unit.orchestrator import run_fixtures
@@ -720,10 +720,10 @@ class TestConfigError(Base):
 
         FakePruner.calls.clear()
         cases = (
-            ("bogus = 1\n" + CONFIG, "orchestrator/config.toml: unknown keys: bogus"),
+            ("bogus = 1\n" + CONFIG, "linear-orchestrator/config.toml: unknown keys: bogus"),
             (
                 CONFIG + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'bogus' is not in core/config.toml",
             ),
         )
         for text, reason in cases:
@@ -753,7 +753,7 @@ class TestConfigError(Base):
         self.assertEqual(self.run_main(), 1)
         self.assertEqual(
             self.err,
-            "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+            "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
         )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
         self.assertFalse(os.path.exists(self.logs))
@@ -891,7 +891,7 @@ class TestPruneHook(Base):
         for name, pruner in (("import error", None), ("run error", Boom)):
             with self.subTest(name):
                 with mock.patch.dict(
-                    sys.modules, {"agent_pm_orchestrator.prune": None}
+                    sys.modules, {"agent_pm_linear.prune": None}
                 ):  # None: its import fails
                     rc = self.run_main("--dry-run", pruner=pruner)
                 self.assertEqual(rc, 0)
@@ -900,7 +900,7 @@ class TestPruneHook(Base):
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
-                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm_orchestrator\.prune"
+                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm_linear\.prune"
                     r"|RuntimeError: boom)",
                 )
 

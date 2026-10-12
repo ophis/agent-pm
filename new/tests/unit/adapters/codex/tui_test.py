@@ -9,7 +9,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     Access,
     Activity,
     Blocked,
@@ -20,7 +20,7 @@ from agent_pm.adapters.base import (
     SessionBound,
     TurnEnd,
 )
-from agent_pm.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base

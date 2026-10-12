@@ -24,10 +24,10 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.adapters import base
-from agent_pm.adapters.base import Access, Launch
-from agent_pm.driver import api, errors, records, registry, tmux_host
-from agent_pm.driver.modes import headless, in_process, tui
+from agent_pm.session.adapters import base
+from agent_pm.session.adapters.base import Access, Launch
+from agent_pm.session.driver import api, errors, records, registry, tmux_host
+from agent_pm.session.driver.modes import headless, in_process, tui
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from new.tests import fake_adapter
@@ -154,8 +154,8 @@ class EnvTui(fake_adapter.FakeTui):
 
 
 def package(name, cls) -> types.ModuleType:
-    """An in-memory module agent_pm.adapters.<name> holding `cls`."""
-    module = types.ModuleType(f"agent_pm.adapters.{name}")
+    """An in-memory module agent_pm.session.adapters.<name> holding `cls`."""
+    module = types.ModuleType(f"agent_pm.session.adapters.{name}")
     setattr(module, cls.__name__, cls)
     return module
 
@@ -189,7 +189,7 @@ class Base(Case):
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
         patch = mock.patch.dict(
-            sys.modules, {f"agent_pm.adapters.{name}": m for name, m in PACKAGES.items()}
+            sys.modules, {f"agent_pm.session.adapters.{name}": m for name, m in PACKAGES.items()}
         )
         patch.start()
         self.addCleanup(patch.stop)

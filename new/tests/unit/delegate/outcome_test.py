@@ -10,10 +10,10 @@ import threading
 import unittest
 import unittest.mock
 
-from agent_pm import composer
-from agent_pm.composer import RunConfig
-from agent_pm.delegate import outcome
-from agent_pm.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
+from agent_pm.role import composer
+from agent_pm.role.composer import RunConfig
+from agent_pm.role.delegate import outcome
+from agent_pm.role.delegate.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
 from agent_pm.utils import files
 
 from new.tests.case import Case

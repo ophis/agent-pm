@@ -19,12 +19,12 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
-from agent_pm import composer
-from agent_pm.adapters import base
-from agent_pm.composer.prompt import RESUME
-from agent_pm.delegate import Begun, Outcome, Result, cli, runner
-from agent_pm.delegate.runner import STOP_LIMIT
-from agent_pm.driver import api, registry
+from agent_pm.role import composer
+from agent_pm.role.composer.prompt import RESUME
+from agent_pm.role.delegate import Begun, Outcome, Result, cli, runner
+from agent_pm.role.delegate.runner import STOP_LIMIT
+from agent_pm.session.adapters import base
+from agent_pm.session.driver import api, registry
 
 from new.tests import fake_adapter
 from new.tests.case import PY, Case, child_env
@@ -90,7 +90,9 @@ class Base(Case):
         self.out = os.path.join(self.work, "out.md")
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
-        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.fake": fake_adapter}))
+        self.enterContext(
+            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
+        )
         registry.configure(
             {
                 "adapters": {
@@ -208,7 +210,7 @@ class List(Base):
 
     def test_it_runs_as_a_module_from_the_import_root(self):
         done = subprocess.run(
-            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
+            [*PY, "-m", "agent_pm.role.delegate.cli", "--list"],
             capture_output=True,
             text=True,
             env=child_env(),
@@ -503,9 +505,11 @@ class InProcess(Base):
 
     def setUp(self):
         super().setUp()
-        refusing = types.ModuleType("agent_pm.adapters.refusing")
+        refusing = types.ModuleType("agent_pm.session.adapters.refusing")
         refusing.RefusingAdapter = RefusingAdapter
-        self.enterContext(mock.patch.dict(sys.modules, {"agent_pm.adapters.refusing": refusing}))
+        self.enterContext(
+            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.refusing": refusing})
+        )
         classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
         registry.configure(
             {

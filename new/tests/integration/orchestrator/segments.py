@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm_orchestrator import config, linear, router, runs
+from agent_pm_linear import config, linear, router, runs
 
 from new.tests import live_tmux
 from new.tests.integration.delegate.cli_integration_test import mark, option

@@ -18,7 +18,7 @@ ROLES = ("researcher", "pm", "engineer", "dummy-tester")
 INPUT = "Compare A and B."
 STARTED = "Progress (start): the composed prompt is handed to the caller"
 AGENT_PM = re.compile(r"python3 -P -m agent_pm\.[\w.]+ \w+")
-REPO = "python3 -P -m agent_pm.agent_tools.repo"
+REPO = "python3 -P -m agent_pm.role.agent_tools.repo"
 
 
 class PrintPrompt(Case):

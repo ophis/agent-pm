@@ -20,7 +20,7 @@ import types
 import unittest
 from unittest import mock
 
-from agent_pm.adapters.base import (
+from agent_pm.session.adapters.base import (
     Access,
     Activity,
     Blocked,
@@ -32,7 +32,7 @@ from agent_pm.adapters.base import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.driver import api, records, registry
+from agent_pm.session.driver import api, records, registry
 
 from new.tests import fake_adapter
 from new.tests.case import Case
@@ -64,7 +64,7 @@ class LaunchingRun(fake_adapter.FakeHeadless):
         )
 
 
-LAUNCHING = types.ModuleType("agent_pm.adapters.launching")
+LAUNCHING = types.ModuleType("agent_pm.session.adapters.launching")
 LAUNCHING.LaunchingAdapter = LaunchingAdapter
 
 
@@ -82,7 +82,7 @@ class ScriptRun(fake_adapter.FakeHeadless):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 
-SCRIPT = types.ModuleType("agent_pm.adapters.script")
+SCRIPT = types.ModuleType("agent_pm.session.adapters.script")
 SCRIPT.ScriptAdapter = ScriptAdapter
 
 
@@ -119,9 +119,9 @@ class Base(Case):
         patch = mock.patch.dict(
             sys.modules,
             {
-                "agent_pm.adapters.fake": fake_adapter,
-                "agent_pm.adapters.launching": LAUNCHING,
-                "agent_pm.adapters.script": SCRIPT,
+                "agent_pm.session.adapters.fake": fake_adapter,
+                "agent_pm.session.adapters.launching": LAUNCHING,
+                "agent_pm.session.adapters.script": SCRIPT,
             },
         )
         patch.start()

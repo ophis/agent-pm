@@ -69,7 +69,7 @@ The new identity is one of:
 | `tests.integration.core.extension_client_integration_test.ExtensionClientIntegration.test_configured_client_without_module_fails_before_launch` | `DEA.ExtensionAdapterIntegration.test_a_table_without_its_package_fails_before_launch` | `ConfigError` before any record or process; the CLI's exit 2 on one: `CLI.ConfigErrors.test_a_config_error_exits_2_and_starts_nothing`. |
 | `tests.integration.core.extension_client_integration_test.ExtensionClientIntegration.test_module_without_config_table_fails_before_launch` | `DEA.ExtensionAdapterIntegration.test_a_package_without_its_table_fails_before_launch` | As the row above. |
 | `tests.integration.core.extension_client_integration_test.ExtensionWorkerIntegration.test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one` | `not ported: (b)` ([entry](#b-task-356-layers)) | Covered apart from the wait: `crew start --client` starts that runtime's worker with its record and roster resume argv (`C.CodexLifecycleTest.test_start_blocked_done_reply_follow_up`); restart resumes the sid (`C.ClaudeLifecycleTest.test_dead_then_restart_resumes_the_sid_in_a_new_pane`, a new pane on purpose, TASK-321); a package-added runtime runs (DEA above). |
-| `tests.integration.core.extension_client_integration_test.ExtensionWorkerIntegration.test_its_session_marker_makes_it_the_default` | `C.RuntimeTest.test_a_worker_started_in_a_codex_worker_defaults_to_codex`; `C.RuntimeTest.test_env_scrubbed_both_ways` | Replaced on purpose (TASK-321, PR #187): the default runtime is the caller's own Driver tui session's, not an Adapter's env marker, for any runtime (`agent_pm.crew` `_runtime`); session markers stay out of the worker's env. |
+| `tests.integration.core.extension_client_integration_test.ExtensionWorkerIntegration.test_its_session_marker_makes_it_the_default` | `C.RuntimeTest.test_a_worker_started_in_a_codex_worker_defaults_to_codex`; `C.RuntimeTest.test_env_scrubbed_both_ways` | Replaced on purpose (TASK-321, PR #187): the default runtime is the caller's own Driver tui session's, not an Adapter's env marker, for any runtime (`agent_pm.manager.crew` `_runtime`); session markers stay out of the worker's env. |
 
 ## tests.integration.core.fake_claude_integration_test
 
@@ -218,7 +218,7 @@ The new module is the old one reformatted; every test body is unchanged (PR #182
 
 | Exact old identity | Exact new identity | Coverage and remaining assertions |
 |---|---|---|
-| `tests.integration.orchestrator.fake_linear_integration_test.Table.test_every_query_constant_has_an_op` | `OFL.Table.test_every_query_constant_has_an_op` | Complete; ops are named by the module's short name (package `agent_pm_orchestrator`). |
+| `tests.integration.orchestrator.fake_linear_integration_test.Table.test_every_query_constant_has_an_op` | `OFL.Table.test_every_query_constant_has_an_op` | Complete; ops are named by the module's short name (package `agent_pm_linear`). |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_two_names_for_one_text_are_refused` | `OFL.Table.test_two_names_for_one_text_are_refused` | Complete. |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_fail_refuses_a_misuse` | `OFL.Table.test_fail_refuses_a_misuse` | Complete. |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_seeding_refuses_a_used_or_malformed_issue_id` | `OFL.Table.test_seeding_refuses_a_used_or_malformed_issue_id` | Complete. |

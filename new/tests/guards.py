@@ -1,12 +1,17 @@
 """The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS but
-                      utils, none imports agent_tools, ORCH or a BARE name, nested, relative or import_module'd
-runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
-old_core(new)         no `core` import, no string constant naming OLD
-adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
+layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS, SESSION
+                      and SHARED, a session layer no role module but UPWARD, none imports TOOLS, ORCH or a BARE name,
+                      nested, relative or import_module'd
+role_session(core)    role/ imports SESSION only by an __all__ name
+layer_commands(new)   COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
+                      but SESSION_COMMAND
+core_standalone(core) no file names LINEAR
+runtime_names(core)   no runtime name (RUNTIME) outside session/adapters/ but a .toml's comments and Adapter lines
+old_core(new)         no `core` import, no str constant naming OLD
+adapters_key(core)    no str constant "adapters" outside session/driver/
 syntax_311(new)       every .py parses as Python 3.11
-pure_utils(core)      utils and agent_tools import only stdlib and utils
+pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
 modes_import_api(core) driver.modes never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
@@ -14,8 +19,8 @@ syntax_39(core)       STANDALONE files parse as Python 3.9
 import_hygiene(new)   no sys.path mutation, module-level environment write or E402/I001/isort comment; ROOTS'
                       src/ hold only their package
 python_commands(new)  PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, utils, `from driver import api`, EXPORTERS' __all__ (composer's
-                      in config.py only), no bare name; any module name (packages cannot clash)
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session.driver import api`, EXPORTERS' __all__
+                      (composer's in config.py only), no bare name; any module name (packages cannot clash)
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
@@ -27,17 +32,32 @@ import re
 import sys
 import tokenize
 
-LAYERS = ("adapters", "driver", "composer", "delegate")
+GROUPS = ("session", "role", "manager")
+DRIVER = "session.driver"
+DRIVER_API = f"{DRIVER}.api"
+MODES = f"{DRIVER}.modes"
+LAYERS = ("session.adapters", DRIVER, "role.composer", "role.delegate")
+SESSION = "session"
 OUTSIDE = "outside the layers"
 ALLOWED = {
-    ("delegate", "composer"),
-    ("delegate", "driver"),
-    ("driver", "adapters"),
-    (OUTSIDE, "driver"),
+    ("role.delegate", "role.composer"),
+    ("role.delegate", SESSION),
+    (DRIVER, "session.adapters"),
+    (OUTSIDE, SESSION),
+    (OUTSIDE, DRIVER),
 }
-TOOLS = "agent_tools"
-PURE = ("utils", TOOLS)
-BARE = (*LAYERS, *PURE, "repo")
+SHARED = ("utils", "config", "role.contract", "role.repos")
+# until TASK-366 (356-5) deletes print_prompt
+UPWARD = {("session.adapters.print_prompt.in_process", "role.contract")}
+TOOLS = "role.agent_tools"
+PURE = {
+    "utils": ("utils",),
+    "config": ("utils", "config"),
+    "role.contract": SHARED,
+    "role.repos": SHARED,
+    TOOLS: ("utils", "config", "role.repos"),
+}
+BARE = (*GROUPS, *(layer.rpartition(".")[2] for layer in LAYERS), "utils", "agent_tools", "repo")
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -47,19 +67,25 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 OLD = "/".join(("core", "src"))  # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
-TMUX_HOST = "src/agent_pm/driver/tmux_host.py"
-TUI_HOOK = "src/agent_pm/driver/modes/tui_hook.py"
+TMUX_HOST = "src/agent_pm/session/driver/tmux_host.py"
+TUI_HOOK = "src/agent_pm/session/driver/modes/tui_hook.py"
 STANDALONE = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
 CORE_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "src")
 CORE_PKG = "agent_pm"
-ORCH = "agent_pm_orchestrator"
+ORCH = "agent_pm_linear"
 ORCH_SRC = f"src/{ORCH}/"
-ROOTS = (("core", CORE_PKG), ("orchestrator", ORCH))
-COMPOSER = f"{CORE_PKG}.composer"
-EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
-UTILS = f"{CORE_PKG}.utils"
+ROOTS = (("core", CORE_PKG), ("linear-orchestrator", ORCH))
+CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
+SESSION_SRC = f"{CORE_TOP}{SESSION}/"
+COMMAND_SRC = (SESSION_SRC, f"{CORE_TOP}role/", f"{ROOTS[1][0]}/{ORCH_SRC}")
+COMMAND = "agent-pm-"
+SESSION_COMMAND = "agent-pm-session"
+SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
+LINEAR = re.compile(f"{ROOTS[1][0]}|{ORCH}")
+COMPOSER = f"{CORE_PKG}.role.composer"
+EXPORTERS = (f"{CORE_PKG}.role.delegate", COMPOSER)
 CONFIG_PY = f"{ORCH_SRC}config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
@@ -68,7 +94,7 @@ ONCE = (f"{ORCH}.config.load", f"{ORCH}.linear.use_logs")
 LOAD_HELPERS = ("runnable", "run_config", "docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}issues.py"
-COMMAND_FILES = ("core/config.toml", "orchestrator/config.toml")
+COMMAND_FILES = ("core/config.toml", "linear-orchestrator/config.toml")
 COMMAND_DOCS = ("core/skills/", "core/team/")
 PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
 PYTHON_OK = re.compile(rf"\S+[ \t]+-P[ \t]+-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w")
@@ -77,41 +103,95 @@ PYTHON_OK = re.compile(rf"\S+[ \t]+-P[ \t]+-m[ \t]+(?:{CORE_PKG}|{ORCH})\.\w")
 def layer_imports(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
+        name = ".".join(names or ())
+        layer = next((each for each in LAYERS if name.startswith(f"{each}.")), OUTSIDE)
         for module, inner in imports:
-            first = (inner or module).split(".")[0]
+            unit = _unit(inner) if inner else module.split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
             elif (
-                first in (TOOLS, ORCH)
-                or (layer != OUTSIDE and inner and first not in (*LAYERS, "utils"))
+                unit in (TOOLS, ORCH)
+                or (layer != OUTSIDE and inner and unit not in (*LAYERS, SESSION, *SHARED))
                 or (
-                    first in LAYERS
-                    and first != layer
-                    and (
-                        (layer, first) not in ALLOWED or first == "driver" and inner != "driver.api"
-                    )
+                    _within(layer, "session")
+                    and _within(unit, "role")
+                    and (name, unit) not in UPWARD
+                )
+                or (
+                    unit in (*LAYERS, SESSION)
+                    and unit != layer
+                    and ((layer, unit) not in ALLOWED or unit == DRIVER and inner != DRIVER_API)
                 )
             ):
                 found.add(f"{rel}: {layer} imports {module}")
     return sorted(found)
 
 
+def role_session(core: str) -> list[str]:
+    found = set()
+    exported = _all(os.path.join(core, "src", _top(core) or "", SESSION, "__init__.py"))
+    for rel, names, imports in _modules(core):
+        if names and names[0] == "role":
+            found.update(
+                f"{rel}: imports {m} outside session.__all__"
+                for m, inner in imports
+                if _within(inner, SESSION) and inner.partition(".")[2] not in exported
+            )
+    return sorted(found)
+
+
+def layer_commands(new: str) -> list[str]:
+    found = set()
+    for scanned in COMMAND_SRC:
+        for rel, text in _files(os.path.join(new, scanned), ".py"):
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            for call in ast.walk(tree):
+                if isinstance(call, ast.Call) and SPAWNS.fullmatch(_dotted(call.func, bound)):
+                    argv = [*call.args, *(k.value for k in call.keywords if k.arg == "args")]
+                    words = {
+                        (line, s.split()[0])
+                        for arg in argv
+                        for line, s in _strings(arg)
+                        if s.startswith(COMMAND)
+                    }
+                    found.update(
+                        f'{scanned}{rel}:{line}: runs "{word}"'
+                        for line, word in words
+                        if not (scanned == SESSION_SRC and word == SESSION_COMMAND)
+                    )
+    return sorted(found)
+
+
+def core_standalone(core: str) -> list[str]:
+    found = set()
+    for top, dirs, names in os.walk(core):
+        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        for name in sorted(names):
+            rel = os.path.relpath(os.path.join(top, name), core).replace(os.sep, "/")
+            with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                for number, line in enumerate(f, 1):
+                    found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
+    return sorted(found)
+
+
 def pure_utils(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        if names and names[0] in PURE:
+        package = next((p for p in PURE if _within(".".join(names or ()), p)), None)
+        if package:
             found.update(
-                f"{rel}: {names[0]} imports {m}"
+                f"{rel}: {package} imports {m}"
                 for m, inner in imports
-                if inner.split(".")[0] != "utils" and m.split(".")[0] not in sys.stdlib_module_names
+                if not any(_within(inner, u) for u in PURE[package])
+                and m.split(".")[0] not in sys.stdlib_module_names
             )
     return sorted(found)
 
 
 def runtime_names(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/adapters/"):
+    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/session/adapters/"):
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
@@ -143,7 +223,7 @@ def old_core(new: str) -> list[str]:
 
 def adapters_key(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/agent_pm/driver/"):
+    for rel, text in _files(core, ".py", skip="src/agent_pm/session/driver/"):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -165,11 +245,9 @@ def syntax_311(new: str) -> list[str]:
 def modes_import_api(core: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(core):
-        if names and names[:2] == ["driver", "modes"]:
+        if names and _within(".".join(names), MODES):
             found.update(
-                f"{rel}: imports {m}"
-                for m, inner in imports
-                if inner.split(".")[:2] == ["driver", "api"]
+                f"{rel}: imports {m}" for m, inner in imports if _within(inner, DRIVER_API)
             )
     return sorted(found)
 
@@ -399,7 +477,8 @@ def _denied(rel, module, name, exported):
     top = module.split(".")[0]
     if top in sys.stdlib_module_names or top == ORCH:
         return False
-    target = f"{module}.{name}" if module == CORE_PKG and name else module
+    packages = (CORE_PKG, *(f"{CORE_PKG}.{g}" for g in GROUPS))
+    target = f"{module}.{name}" if module in packages and name else module
     if target in exported:
         return (
             module == target
@@ -408,20 +487,28 @@ def _denied(rel, module, name, exported):
             or (target == COMPOSER and rel != CONFIG_PY)
         )
     return not (
-        target == UTILS
-        or target.startswith(f"{UTILS}.")
-        or (module, name) == (f"{CORE_PKG}.driver", "api")
+        any(_within(target, f"{CORE_PKG}.{s}") for s in SHARED)
+        or (module, name) == (f"{CORE_PKG}.{DRIVER}", "api")
     )
 
 
 def _exported(package):
-    with open(os.path.join(CORE_SRC, *package.split("."), "__init__.py"), encoding="utf-8") as f:
+    return _all(os.path.join(CORE_SRC, *package.split("."), "__init__.py"))
+
+
+def _all(path):
+    if not os.path.isfile(path):
+        return set()
+    with open(path, encoding="utf-8") as f:
         tree = ast.parse(f.read())
     return next(
-        set(ast.literal_eval(n.value))
-        for n in tree.body
-        if isinstance(n, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+        (
+            set(ast.literal_eval(n.value))
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+        ),
+        set(),
     )
 
 
@@ -469,16 +556,28 @@ def _private(name):
     return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
-def _modules(core):
+def _top(core):
     src = os.path.join(core, "src")
     dirs = sorted(os.listdir(src)) if os.path.isdir(src) else []
     dirs = [d for d in dirs if d != "__pycache__" and os.path.isdir(os.path.join(src, d))]
-    top = dirs[0] if len(dirs) == 1 else None
+    return dirs[0] if len(dirs) == 1 else None
+
+
+def _modules(core):
+    top = _top(core)
     for rel, text in _files(core, ".py"):
         parts = rel[:-3].split("/")
         names = parts[2:] if top and parts[:2] == ["src", top] else None
         imports = _imports(ast.parse(text, rel), [top, *names[:-1]] if names else None, top)
         yield rel, names, [(m, _inner(m, top)) for m in imports]
+
+
+def _unit(inner):
+    return next((u for u in (*LAYERS, *SHARED, TOOLS) if _within(inner, u)), inner.split(".")[0])
+
+
+def _within(name, unit):
+    return name == unit or name.startswith(f"{unit}.")
 
 
 def _inner(module, top):
@@ -508,7 +607,8 @@ def _imports(tree, package, top=None):
                 )
             else:
                 parts = node.module.split(".")
-            if len(parts) > 1 + (parts[0] == top):
+            grouped = parts[0] == top and len(parts) > 1 and parts[1] in GROUPS
+            if len(parts) > 1 + (parts[0] == top) + grouped:
                 yield ".".join(parts)
             else:
                 yield from (

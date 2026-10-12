@@ -14,10 +14,17 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.adapters.base import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
-from agent_pm.adapters.claude.tui import ClaudeTui
-from agent_pm.driver import api, registry, tmux_host
-from agent_pm.driver.modes import tui
+from agent_pm.session.adapters.base import (
+    Activity,
+    Blocked,
+    Exited,
+    LimitHit,
+    SessionBound,
+    TurnEnd,
+)
+from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.driver import api, registry, tmux_host
+from agent_pm.session.driver.modes import tui
 
 from new.tests import fake_claude, live_tmux
 from new.tests.case import PY, child_env
@@ -41,7 +48,7 @@ RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
-from agent_pm.driver import api, registry
+from agent_pm.session.driver import api, registry
 registry.configure({"adapters": {"claude": json.loads(table)}})
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]

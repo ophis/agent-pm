@@ -8,7 +8,7 @@ import shlex
 import unittest
 from datetime import UTC, datetime
 
-from agent_pm_orchestrator import linear
+from agent_pm_linear import linear
 
 from new.tests.integration.delegate.cli_integration_test import mark, option
 from new.tests.integration.orchestrator.flow_fixtures import (
