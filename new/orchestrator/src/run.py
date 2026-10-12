@@ -43,24 +43,6 @@ def _close_tuis(a, role):
             log("run", "tui-closed", a.issue, session=name)
 
 
-def _context(a, cfg, role, gql, rd):
-    return writeback.Context(
-        ident=a.issue,
-        issue_id=a.uuid,
-        role=role,
-        sid=a.sid,
-        resume=a.mode == "resume",
-        project=a.project,
-        workdir=rd,
-        gql=functools.partial(gql, service=cfg.roles[role].key),
-        humans=tuple(e.lower() for e in cfg.human_members),
-        states=cfg.states,
-        repos=cfg.project_repos,
-        team=cfg.team,
-        target=config.repo_slug(a.target) if a.target else None,
-    )
-
-
 def inner(a, cfg, *, gql, run=delegate.run):
     os.environ["PATH"] = config.PATH
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
@@ -84,7 +66,17 @@ def inner(a, cfg, *, gql, run=delegate.run):
     rd = cfg.run_dir(a.issue)
     harness = functools.partial(gql, service=cfg.harness_key, timeout=sessions.LIMIT)
     rec = sessions.base(sid=a.sid, workdir=rd, runtime=a.runtime, started_at=sessions.now())
-    ctx = _context(a, cfg, role, gql, rd)
+    ctx = writeback.context(
+        cfg,
+        role,
+        gql,
+        ident=a.issue,
+        issue_id=a.uuid,
+        sid=a.sid,
+        resume=a.mode == "resume",
+        project=a.project,
+        target=config.repo_slug(a.target) if a.target else None,
+    )
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):
@@ -135,9 +127,8 @@ def inner(a, cfg, *, gql, run=delegate.run):
             at = result.limit.resets_at
             writeback.limit(ctx, at)
             try:
-                runs.note(
+                runs.note_limit(
                     cfg.runs_log,
-                    "limit",
                     issue=a.issue,
                     sid=a.sid,
                     runtime=a.runtime,

@@ -1,8 +1,8 @@
 """orchestrator writeback.py, ported from the old writeback_test (the sink's cases on progress), plus comment steps by
-client id found again on resume (FR-54), the usage-limit path (FR-59) and runs.note."""
+client id found again on resume (FR-54), the usage-limit path (FR-59), runs.note and the Context builder."""
 
 from new.tests import hermetic  # noqa: F401
-from new.tests.unit.orchestrator import board_ids
+from new.tests.unit.orchestrator import board_ids, run_fixtures
 from new.tests.unit.orchestrator.run_fixtures import logged, show
 
 import config
@@ -1295,6 +1295,43 @@ class Bounce(Base):
         )
         with self.assertRaises(SystemExit):
             writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
+
+
+class ContextBuilder(run_fixtures.Base):
+    def test_the_one_context_of_a_role_from_the_config(self):
+        cfg = config.load()
+        gql = mock.Mock(return_value={})
+        for resume, target in ((False, TARGET), (True, None)):
+            with self.subTest(resume=resume):
+                ctx = writeback.context(
+                    cfg,
+                    "engineer",
+                    gql,
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    target=target,
+                )
+                want = writeback.Context(
+                    ident=ID,
+                    issue_id=UUID,
+                    role="engineer",
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    workdir=os.path.join(self.work, "work", ID),
+                    gql=ctx.gql,
+                    humans=("me@x.com",),
+                    states=cfg.states,
+                    repos={PROJECT: "ophis/agent-pm"},
+                    team=cfg.team,
+                    target=target,
+                )
+                self.assertEqual(ctx, want)
+                ctx.gql("q", i=UUID)
+                gql.assert_called_with("q", service=run_fixtures.KEY, i=UUID)
 
 
 class RunsNote(unittest.TestCase):

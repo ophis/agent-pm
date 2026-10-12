@@ -1,5 +1,6 @@
 """Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness account under its
-session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it when a late write left an older one."""
+session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it when a late write left an older one.
+status: a session's SessionStatus at its recorded cwd."""
 
 import os
 import re
@@ -38,12 +39,15 @@ def base(*, sid, workdir, runtime, started_at):
     return {"sid": sid, "workdir": workdir, "runtime": runtime, "started_at": started_at, "seq": 0}
 
 
-def command(rec):
+def status(workdir, runtime, sid):
     # only cwd is read from the session entry: the agent run can write run.jsonl
+    entry = api.session(workdir, sid)
+    return api.session_info(runtime, sid, entry["cwd"] if entry else workdir)
+
+
+def command(rec):
     try:
-        entry = api.session(rec["workdir"], rec["sid"])
-        cwd = entry["cwd"] if entry else rec["workdir"]
-        st = api.session_info(rec["runtime"], rec["sid"], cwd)
+        st = status(rec["workdir"], rec["runtime"], rec["sid"])
     except Exception:
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None

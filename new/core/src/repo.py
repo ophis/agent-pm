@@ -27,12 +27,11 @@ import os
 import re
 import subprocess
 import sys
-import time
 from datetime import datetime
 
 from utils.args import Once
 from utils.config_file import CONFIG, read_config
-from utils.git import GUARD, common_dir  # noqa: F401
+from utils.git import GUARD, LOCK, common_dir, git  # noqa: F401
 from utils.paths import real_dirs, temp_dirs, under
 from utils.repos import (  # noqa: F401
     HOST,
@@ -53,24 +52,11 @@ from utils.shell import LONG, SHORT, USERINFO, Runner, err_text, redact, sh  # n
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
-LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 
 
 def trusted_dirs(cfg: dict) -> frozenset[str]:
     return real_dirs(cfg.get("trusted_dirs", []), "trusted_dirs")
-
-
-def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
-    for i in range(5):
-        res = run(["git", *pre, "-C", wt, *args], timeout)
-        if res.returncode == 0:
-            return res.stdout
-        if i == 4 or not LOCK.search(res.stderr or ""):
-            break
-        time.sleep(0.5 * 2**i)
-    shown = " ".join(a if len(a) <= 40 else a[:37] + "..." for a in args)
-    raise RuntimeError(f"git {shown[:200]}: {err_text(res)}")
 
 
 def gh_json(run: Runner, argv: list[str]):

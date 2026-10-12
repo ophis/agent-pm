@@ -2,6 +2,7 @@
 and --tui's show on a fake Driver api, each Linear call's identity and the usage-limit path (FR-59)."""
 
 from new.tests.unit.orchestrator.board_ids import STATES
+from new.tests.unit.orchestrator.fake_api import FakeApi
 from new.tests.unit.orchestrator.run_fixtures import (
     ENGINEER,
     HARNESS,
@@ -99,36 +100,6 @@ class FakeRun:
         return self.result
 
 
-class FakeApi:
-    """The Driver api's tui calls and session_info; `live` None: tmux's state unknown."""
-
-    def __init__(self, order, gql):
-        self.order, self.gql = order, gql
-        self.live, self.errors, self.shown, self.info = [], {}, None, []
-
-    def sessions(self, prefix):
-        self.order.append(("sessions", prefix))
-        live = self.live
-        return api.Sessions(
-            prefix, None if live is None else tuple(n for n in live if n.startswith(prefix))
-        )
-
-    def close(self, name):
-        self.order.append(("close", name))
-        if name in self.errors:
-            raise self.errors[name]
-
-    def show(self, name, split=None, split_from=None, opener=None):
-        self.order.append(("show", name, split, split_from, opener, len(self.gql().calls)))
-        if isinstance(self.shown, BaseException):
-            raise self.shown
-        return self.shown
-
-    def session_info(self, runtime, sid, cwd):
-        self.info.append((runtime, sid, cwd))
-        return api.SessionStatus("yes", None, CMD)
-
-
 class Case(Base):
     def setUp(self):
         super().setUp()
@@ -138,10 +109,7 @@ class Case(Base):
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
             mock.patch.object(sessions, "now", return_value=NOW),
-            mock.patch.object(api, "sessions", self.api.sessions),
-            mock.patch.object(api, "close", self.api.close),
-            mock.patch.object(api, "show", self.api.show),
-            mock.patch.object(api, "session_info", self.api.session_info),
+            self.api.patch(),
         ):
             p.start()
             self.addCleanup(p.stop)

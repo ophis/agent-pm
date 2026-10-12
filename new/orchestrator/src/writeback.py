@@ -3,6 +3,7 @@ once per session id (the ledger; comment steps by client id, found again on resu
 report."""
 
 import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -65,6 +66,24 @@ class Context:
     repos: Mapping[str, str]
     team: str
     target: tuple[str, str] | None
+
+
+def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
+    return Context(
+        ident=ident,
+        issue_id=issue_id,
+        role=role,
+        sid=sid,
+        resume=resume,
+        project=project,
+        workdir=cfg.run_dir(ident),
+        gql=functools.partial(gql, service=cfg.roles[role].key),
+        humans=tuple(e.lower() for e in cfg.human_members),
+        states=cfg.states,
+        repos=cfg.project_repos,
+        team=cfg.team,
+        target=target,
+    )
 
 
 def say(lead, text):
