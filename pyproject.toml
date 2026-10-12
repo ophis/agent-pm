@@ -6,13 +6,13 @@ per-file-target-version = { "core/src/tmux_host.py" = "py39", "new/core/src/driv
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
 ignore = [
-    "E501",  # the formatter owns line length (100); the ~600 lines it can't wrap (strings, docstrings, comments) are a follow-up
-    "SIM105",  # try/except/pass is the repo's best-effort idiom; contextlib.suppress only adds an import (21 sites)
+    "E501",  # the formatter owns line length (100); the lines it can't wrap (strings, docstrings, comments) are a follow-up
+    "SIM105",  # try/except/pass is the repo's best-effort idiom; contextlib.suppress only adds an import
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# B023: a test loop's closures (subTest cases, fakes) run within that iteration (74 sites)
-# SIM117: merging nested `with` blocks would only reindent test bodies (19 sites)
+# B023: a test loop's closures (subTest cases, fakes) run within that iteration
+# SIM117: merging nested `with` blocks would only reindent test bodies
 "tests/**" = ["B023", "SIM117"]
 "new/tests/**" = ["B023", "SIM117"]
 # SIM115: the open() spy hands its file to the code under test, which closes it
