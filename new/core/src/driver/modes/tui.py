@@ -136,7 +136,7 @@ class TuiMode:
         self.name, self.run, self.sid, self.events = name, run, sid, events
         self.dir = session_dir(name)
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
-        self.bound, self.reply = "", None
+        self.bound, self.reply, self.blocked = "", None, False
         self._offset, self._dialogs, self._limit, self._code = 0, frozenset(), None, None
         self._made, self._live, self._pane, self._gone = None, False, None, False
 
@@ -224,8 +224,8 @@ class TuiMode:
 
     @classmethod
     def attach(cls, name: str, state: dict, run: Tui) -> "TuiMode":
-        """read_state's session, bound to the name's pane if that is tagged with its sid; reply: its last TURN_END's;
-        events from its next record."""
+        """read_state's session, bound to the name's pane if tagged with its sid; reply: last TURN_END's; blocked: last
+        kind BLOCKED or @state blocked; events from its next record."""
         try:
             pane = tmux_host.pane(name)
             tagged = None if pane is None else tmux_host.option(pane, "@sid")
@@ -237,12 +237,18 @@ class TuiMode:
         mode._pane = pane
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1
-        turn = None
+        turn = last = None
         for label, payload in _records(data[: mode._offset]):
             mode.bound = run.session_id(payload) or mode.bound
-            if run.hooks.get(label) == TURN_END:
+            kind = run.hooks.get(label)
+            last = kind or last
+            if kind == TURN_END:
                 turn = payload
         mode.reply = None if turn is None else run.reply(turn)
+        mode.blocked = last == BLOCKED
+        if not mode.blocked:
+            with contextlib.suppress(tmux_host.TuiError):
+                mode.blocked = tmux_host.option(pane, "@state") == "blocked"
         mode._live = True
         return mode
 

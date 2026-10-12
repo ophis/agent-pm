@@ -1161,6 +1161,28 @@ class AttachTest(Base):
         mode = self.attach(record("stop", last_message="r1"), record("stop"), record("tool"))
         self.assertEqual(mode.reply, "")
 
+    def test_blocked_by_its_last_record_of_a_kind_else_by_its_panes_state(self):
+        self.host.pane.return_value = "%7"
+        partial = json.dumps(record("tool")).encode()
+        for lines, state, blocked in (
+            ((record("tool"), record("ask"), record("other"), b"bad\n", partial), None, True),
+            ((record("ask"), record("tool")), None, False),
+            ((record("ask"), record("stop")), "done", False),
+            ((record("stop"),), "blocked", True),
+            ((), "blocked", True),
+            ((), "working", False),
+            ((), tmux_host.TuiError("tmux: denied"), False),
+        ):
+            with self.subTest(lines=lines, state=state):
+
+                def option(target, key):
+                    if (target, key) == ("%7", "@state") and isinstance(state, Exception):
+                        raise state
+                    return {("%7", "@sid"): SID, ("%7", "@state"): state}.get((target, key))
+
+                self.host.option.side_effect = option
+                self.assertIs(self.attach(*lines).blocked, blocked)
+
     def test_another_sid_absent_or_unknown_is_no_tui_session(self):
         for found in ("other", None, tmux_host.TuiError("tmux: denied")):
             with self.subTest(found=found):

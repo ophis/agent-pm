@@ -154,6 +154,7 @@ class Handle:
         idle_timeout: float | None,
         name: str | None = None,
         reply: str | None = None,
+        blocked: bool = False,
     ):
         self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
         self._host, self._info, self._idle = host, info, idle_timeout
@@ -162,7 +163,7 @@ class Handle:
         self._queue: deque = deque()
         self._closed = False
         self._ended = False
-        self._blocked = False
+        self._blocked = blocked
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
         last = time.monotonic()
@@ -468,6 +469,7 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         idle_timeout=idle_timeout,
         name=name,
         reply=host.reply,
+        blocked=host.blocked,
     )
 
 
