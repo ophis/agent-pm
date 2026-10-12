@@ -580,17 +580,6 @@ def status(target: str, *, proc=subprocess.run):
     return int(code)
 
 
-def sessions(prefix: str = "", *, proc=subprocess.run) -> list[str] | None:
-    """Names starting with prefix, sorted; [] when no server runs, None when tmux fails."""
-    try:
-        res = _tmux(["list-sessions", "-F", "#{session_name}"], proc)
-    except TuiError:
-        return None
-    if res.returncode:
-        return [] if _absent(res) else None
-    return sorted(n for n in res.stdout.split("\n") if NAME.fullmatch(n) and n.startswith(prefix))
-
-
 def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
     """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane state, `shown` (no client:
     None; else the newest client's host session, "" if none or not NAME), a dead pane's last LAST_LINES lines; a bad or
@@ -638,7 +627,8 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
 
 def _table(args: list[str], width: int, proc) -> list[list[str]] | None:
     try:
-        res = _tmux(args, proc)
+        # -u: else, without a UTF-8 locale or $TMUX, tmux prints tabs as _
+        res = _tmux(["-u", *args], proc)
     except TuiError:
         return None
     if res.returncode:

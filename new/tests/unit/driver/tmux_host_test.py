@@ -1,5 +1,5 @@
 """new/core/src/driver/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, respawn, status, sessions, listing, tmux_path, paste/keys/send, read, option, pane, mark, the
+start (no pane), detach, respawn, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the
 events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
 from new.tests import guards, hermetic  # noqa: F401
@@ -282,9 +282,9 @@ def panes(*rows):
 
 
 class Tmux:
-    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command or another program to its
-    (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what display-message
-    prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv (after
+    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after any -u) or another
+    program to its (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what
+    display-message prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv (after
     EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
     then per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang",
     fd `writer`)."""
@@ -299,7 +299,7 @@ class Tmux:
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         self.kwargs.append(kw)
-        key = argv[1] if argv[0] == "tmux" else argv[0]
+        key = argv[0] if argv[0] != "tmux" else argv[2] if argv[1] == "-u" else argv[1]
         if key in self.results:
             result = self.results[key]
             if callable(result):
@@ -1416,58 +1416,22 @@ class Status(unittest.TestCase):
                 self.assertEqual(len(fake.calls), 1)
 
 
-class Sessions(unittest.TestCase):
-    LIST = ["tmux", "list-sessions", "-F", "#{session_name}"]
-
-    def test_names_sorted_with_the_prefix(self):
-        listed = (0, "w2\nmgr\nw10\nw1\nx-w1\n")
-        for prefix, want in (
-            ("", ["mgr", "w1", "w10", "w2", "x-w1"]),
-            ("w", ["w1", "w10", "w2"]),
-            ("w1", ["w1", "w10"]),
-            ("y", []),
-        ):
-            with self.subTest(prefix=prefix):
-                fake = Tmux(results={"list-sessions": listed})
-                self.assertEqual(tmux_host.sessions(prefix, proc=fake), want)
-                self.assertEqual(fake.calls, [self.LIST])
-                self.assertEqual(fake.kwargs, [TMUX_KW])
-        self.assertEqual(
-            tmux_host.sessions(proc=Tmux(results={"list-sessions": listed})),
-            ["mgr", "w1", "w10", "w2", "x-w1"],
-        )
-
-    def test_names_read_back_only_after_a_fullmatch(self):
-        fake = Tmux(results={"list-sessions": (0, "a b\nok\n\n%1\nx;\nw1 \n#{x}\n")})
-        self.assertEqual(tmux_host.sessions(proc=fake), ["ok"])
-
-    def test_none_running_without_a_server(self):
-        for err in ABSENT:
-            with self.subTest(err=err):
-                self.assertEqual(
-                    tmux_host.sessions(proc=Tmux(results={"list-sessions": (1, "", err + "\n")})),
-                    [],
-                )
-        self.assertEqual(tmux_host.sessions(proc=Tmux(results={"list-sessions": (0, "")})), [])
-
-    def test_none_when_unknown(self):
-        for result in (
-            *((1, "", err + "\n") for err in FAILED),
-            FileNotFoundError(2, "No such file", "tmux"),
-        ):
-            with self.subTest(result=result):
-                self.assertIsNone(tmux_host.sessions(proc=Tmux(results={"list-sessions": result})))
-
-
 LISTING = [
     "tmux",
+    "-u",
     "list-sessions",
     "-F",
     "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}",
 ]
 COLUMNS = ("name", "dead", "sid", "runtime", "state", "pane", "opener")
-ALL_CLIENTS = ["tmux", "list-clients", "-F", "#{client_activity}\t#{client_tty}\t#{session_name}"]
-HOST_PANES = ["tmux", "list-panes", "-a", "-F", "#{pane_dead}\t#{pane_tty}\t#{session_name}"]
+ALL_CLIENTS = [
+    "tmux",
+    "-u",
+    "list-clients",
+    "-F",
+    "#{client_activity}\t#{client_tty}\t#{session_name}",
+]
+HOST_PANES = ["tmux", "-u", "list-panes", "-a", "-F", "#{pane_dead}\t#{pane_tty}\t#{session_name}"]
 
 
 def tabbed(*rows, width=3):

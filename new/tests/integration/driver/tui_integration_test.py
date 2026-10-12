@@ -229,7 +229,7 @@ class TuiTest(Live):
 
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
-        self.assertEqual(api.sessions("w").state("w1"), "absent")
+        self.assertEqual(api.sessions("w1"), [])
         self.assertFalse(os.path.lexists(tui.session_dir("w1")))
 
     def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
@@ -238,9 +238,11 @@ class TuiTest(Live):
         self.assertEqual(stream.next(), TurnEnd("bye", 0))
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         self.lines("w2 done", "w2 dead")
-        self.assertEqual((handle.state(), api.sessions().state("w2")), ("live", "live"))
+        self.assertEqual(
+            (handle.state(), [r.state for r in api.sessions("w2")]), ("live", ["dead"])
+        )
         api.close("w2")
-        self.assertEqual((handle.state(), api.sessions().state("w2")), ("absent", "absent"))
+        self.assertEqual((handle.state(), api.sessions("w2")), ("absent", []))
         self.assertFalse(os.path.lexists(tui.session_dir("w2")))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
@@ -251,13 +253,12 @@ class TuiTest(Live):
         mode = os.stat(self.server.socket).st_mode
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
-        found = api.sessions("w")
-        self.assertEqual(
-            (found.names, found.state("w3"), handle.state()), (None, "unknown", "unknown")
-        )
+        with self.assertRaisesRegex(api.DriverError, "^tmux sessions unknown: "):
+            api.sessions("w.*")
+        self.assertEqual(handle.state(), "unknown")
         stream.quiet(1.0)
         os.chmod(self.server.socket, mode)
-        self.assertEqual(api.sessions("w").state("w3"), "live")
+        self.assertEqual([r.name for r in api.sessions("w3")], ["w3"])
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
 

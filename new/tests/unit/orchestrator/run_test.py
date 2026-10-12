@@ -21,6 +21,7 @@ import config
 import io
 import json
 import os
+import re
 import shlex
 import signal
 import unittest
@@ -44,6 +45,7 @@ DONE_RESULT = Result(0, DONE)
 NOW = "2026-10-04T10:00:00+08:00"
 CMD = f"resume {SID}"
 TUI = f"engineer-{ID}-{SID[:8]}"
+MATCH = re.escape(f"engineer-{ID}-") + ".*"
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 NO_OUTCOME = Result(0, None, "the agent run returned no outcome")
 RUNNING = f"running · #1 · {NOW}"
@@ -100,18 +102,21 @@ class FakeRun:
 
 
 class FakeApi:
-    """The Driver api's tui calls and session_info; `live` None: tmux's state unknown."""
+    """The Driver api's tui calls and session_info; `live` None: tmux's state unknown (sessions raises)."""
 
     def __init__(self, order, gql):
         self.order, self.gql = order, gql
         self.live, self.errors, self.shown, self.info = [], {}, None, []
 
-    def sessions(self, prefix):
-        self.order.append(("sessions", prefix))
-        live = self.live
-        return api.Sessions(
-            prefix, None if live is None else tuple(n for n in live if n.startswith(prefix))
-        )
+    def sessions(self, match):
+        self.order.append(("sessions", match))
+        if self.live is None:
+            raise api.DriverError("tmux sessions unknown: tmux failed")
+        return [
+            api.SessionRow(n, None, None, "working", None, None, None, None, False)
+            for n in self.live
+            if re.fullmatch(match, n)
+        ]
 
     def close(self, name):
         self.order.append(("close", name))
@@ -442,7 +447,7 @@ class Tui(Case):
                 self.assertEqual(
                     self.order[:4],
                     [
-                        ("sessions", f"engineer-{ID}-"),
+                        ("sessions", MATCH),
                         *(("close", x) for x in self.MINE),
                         "run",
                     ],
@@ -459,7 +464,7 @@ class Tui(Case):
         self.api.live = None
         self.assertEqual(self.main(), 0)
         self.assertEqual(self.said()[1], "run tui-error TASK-7 msg=tmux sessions unknown")
-        self.assertEqual(self.order[:2], [("sessions", f"engineer-{ID}-"), "run"])
+        self.assertEqual(self.order[:2], [("sessions", MATCH), "run"])
 
     def test_a_close_error_is_logged_and_the_others_still_close(self):
         self.api.live = self.MINE

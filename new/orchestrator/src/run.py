@@ -28,11 +28,12 @@ def _stop(signum, frame):
 
 
 def _close_tuis(a, role):
-    found = api.sessions(config.tui_prefix(role, a.issue))
-    if found.names is None:
+    try:
+        found = api.sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
+    except api.DriverError:
         log("run", "tui-error", a.issue, msg="tmux sessions unknown")
         return
-    for name in found.names:
+    for name in (row.name for row in found):
         if config.tui_issue(name) != (role, a.issue):
             continue
         try:
