@@ -1,7 +1,7 @@
 """driver.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
 the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
-send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, and
-sessions while tmux's state is unknown."""
+send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
+while tmux's state is unknown, and an old Handle once its name is another session's."""
 import json
 import os
 import queue
@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Iterator
 from unittest import mock
 
 from new.tests import SRC, fake_adapter, hermetic, live_tmux
@@ -38,6 +39,8 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
+CLOSE = "import sys; sys.path.insert(0, sys.argv[1]); from driver import api; api.close(sys.argv[2])"
+DIALOG = "Pick one: 1. this 2. that"
 
 
 class Stream:
@@ -108,19 +111,20 @@ class Live(unittest.TestCase):
         self.addCleanup(registry.reset)
 
     def start(self, name: str, *steps, **kwargs) -> api.Handle:
-        """Tui session `name` of the fake runtime running `steps`, its events file self.events."""
+        """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
-        handle = api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name=name, events=self.events,
-                           **kwargs)
+        handle = api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name=name,
+                           **{"events": self.events, **kwargs})
         self.addCleanup(handle.stop)
         return handle
 
-    def lines(self, *want: str) -> None:
-        """Waits until the events file's lines, times dropped, are `want`; pokes the server meanwhile."""
+    def lines(self, *want: str, events: str | None = None) -> None:
+        """Waits until the events file's (self.events unless given) lines, times dropped, are `want`; pokes the server
+        meanwhile."""
         def check():
             self.poke()
-            self.assertEqual([line.split(" ", 1)[1] for line in live_tmux.events(self.events)], list(want))
+            self.assertEqual([line.split(" ", 1)[1] for line in live_tmux.events(events or self.events)], list(want))
             return True
         live_tmux.wait(check, what=f"events lines {want}")
 
@@ -191,6 +195,50 @@ class TuiTest(Live):
         self.assertEqual(api.sessions("w").state("w3"), "live")
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
+
+
+class SameNameTest(Live):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(fake_adapter.FakeTui, "dialogs", (DIALOG,))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def old(self, name: str) -> tuple[api.Handle, Iterator]:
+        """Session `name`'s Handle and its events() past its turn's end."""
+        handle = self.start(name, {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True})
+        events = handle.events()
+        self.assertEqual(next(events), TurnEnd("r1", 0))
+        return handle, events
+
+    def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
+        """`name` started again showing DIALOG, with an events file of its own: old's events end, never scanning it;
+        old.stop() leaves it; the new Handle gets Blocked and the blocked line."""
+        mine = os.path.join(self.dir, "events-new")
+        new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
+        live_tmux.wait(lambda: DIALOG in new.screen(), what="the dialog on the new session's screen")
+        self.assertEqual(next(events), Exited(-signal.SIGHUP))
+        self.assertEqual((list(events), old.state()), ([], "absent"))
+        old.stop()
+        stream = Stream(new)
+        self.addCleanup(stream.thread.join, WAIT)
+        self.addCleanup(new.stop)
+        self.assertEqual(stream.next(), Blocked(DIALOG))
+        self.lines(f"{name} blocked", events=mine)
+        self.lines(f"{name} done")
+        self.assertEqual((new.state(), self.server.option(name, "@state")), ("live", "blocked"))
+
+    def test_a_restart_after_stop(self):
+        old, events = self.old("w4")
+        old.stop()
+        self.renewed("w4", old, events)
+
+    def test_a_restart_after_a_close_from_another_process(self):
+        old, events = self.old("w5")
+        res = subprocess.run([sys.executable, "-I", "-c", CLOSE, SRC, "w5"], capture_output=True, text=True,
+                             stdin=subprocess.DEVNULL, timeout=WAIT)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.renewed("w5", old, events)
 
 
 if __name__ == "__main__":

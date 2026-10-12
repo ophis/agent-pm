@@ -602,7 +602,7 @@ class TuiStartTest(TuiBase):
         self.host.start.side_effect = lambda *a, **k: order.append(("start", [e["kind"] for e in self.written()]))
         handle = self.tui(name="w1", sid=SID, events=self.events)
         self.assertEqual(order, [("status", False), ("start", ["session"])])
-        self.assertEqual([c[0] for c in self.host.mock_calls], ["events_file", "status", "start"])
+        self.assertEqual([c[0] for c in self.host.mock_calls], ["events_file", "status", "start", "pane"])
         self.assertEqual((handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui"))
         self.assertEqual(handle.info(), api.SessionInfo(SID, "", self.workdir, False, "", ""))
         (call,) = self.host.start.call_args_list
@@ -699,7 +699,7 @@ class AttachTest(TuiBase):
         self.assertEqual((handle.name, handle.sid, handle.runtime, handle.mode, handle.reply),
                          ("w1", SID, "fake", "tui", "r1"))
         self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
-        self.assertEqual(self.host.mock_calls, [mock.call.option("w1", "@sid")])
+        self.assertEqual(self.host.mock_calls, [mock.call.option("w1", "@sid"), mock.call.pane("w1")])
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(json.dumps({"ts": "", "label": "stop", "payload": {"last_message": "r2"}}) + "\n")
         self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))

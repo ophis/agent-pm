@@ -92,7 +92,7 @@ def _exit(status) -> int | None:
 
 
 class TuiMode:
-    """One tui session, driver.api's Mode: prepare then begin, or attach."""
+    """One tui session, driver.api's Mode: prepare then begin, or attach; bound to its session's pane."""
 
     def __init__(self, name: str, run: Tui, sid: str, events: str | None):
         self.name, self.run, self.sid, self.events = name, run, sid, events
@@ -100,7 +100,7 @@ class TuiMode:
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
         self.bound, self.reply = "", None
         self._offset, self._dialogs, self._limit, self._code = 0, frozenset(), None, None
-        self._made, self._live = None, False
+        self._made, self._live, self._pane, self._gone = None, False, None, False
 
     @classmethod
     def prepare(cls, name: str, run: Tui, info: SessionInfo, events: str | None, *, runtime: str,
@@ -141,12 +141,17 @@ class TuiMode:
         return mode
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], status_line: bool = False) -> None:
-        """Starts argv tagged with the sid; failing, removes the dir prepare made."""
+        """Starts argv tagged with the sid, then takes its pane; failing, ends it and removes the dir prepare made."""
         try:
             tmux_host.start(self.name, list(argv), cwd=cwd, env=dict(env), events=self.events,
                             status_line=status_line, tags={"@sid": self.sid})
         except tmux_host.TuiError as e:
             self._unmake()
+            raise DriverError(f"cannot start tui session {self.name}: {e}") from e
+        try:
+            self._pane = tmux_host.pane(self.name)
+        except tmux_host.TuiError as e:
+            close(self.name)
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         self._live = True
 
@@ -156,14 +161,16 @@ class TuiMode:
 
     @classmethod
     def attach(cls, name: str, state: dict, run: Tui) -> "TuiMode":
-        """read_state's session if tagged with its sid; reply: its last TURN_END's; events from its next record."""
+        """read_state's session if tagged with its sid, bound to its pane; reply: its last TURN_END's; events from its
+        next record."""
         try:
-            tagged = tmux_host.option(name, "@sid")
+            tagged, pane = tmux_host.option(name, "@sid"), tmux_host.pane(name)
         except tmux_host.TuiError:
-            tagged = None
+            tagged = pane = None
         if tagged != state["sid"]:
             raise DriverError(f"no tui session {name}")
         mode = cls(name, run, state["sid"], state["events"])
+        mode._pane = pane
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1
         turn = None
@@ -176,24 +183,54 @@ class TuiMode:
         return mode
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """New records' events; none: ended (last records, True), else a pane scan, else waits `timeout` s for one."""
+        """New records' events; none: ended (last records, True), else a pane scan, else waits `timeout` s for one.
+        Ended at once after stop() or once another pane holds the name."""
         found = self._read()
-        if not found:
+        if not found and not self._gone:
             status = tmux_host.status(self.name)
-            if (code := _exit(status)) is not None:
+            try:   # before _own: a screen read before its pane is confirmed is its own
+                screen = tmux_host.read(self.name) if status == tmux_host.RUNNING else None
+            except tmux_host.TuiError:
+                screen = None
+            if (code := _exit(status := self._own(status))) is not None:
                 self._code = code
                 return self._read(), True
-            if status == tmux_host.RUNNING:
-                found = self._scan()
+            if status == tmux_host.RUNNING and screen is not None:
+                found = self._scan(screen)
         deadline = time.monotonic() + timeout
-        while not found and (left := deadline - time.monotonic()) > 0:
+        while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
             time.sleep(min(SLICE, left))
             found = self._read()
-        return found, False
+        return found, self._gone
+
+    def _holder(self) -> str | None:
+        """The pane under the name (None: absent, UNKNOWN: tmux failed); another than its own ends this Mode."""
+        try:
+            holder = tmux_host.pane(self.name)
+        except tmux_host.TuiError:
+            return tmux_host.UNKNOWN
+        if holder not in (self._pane, None):
+            self._end()
+        return holder
+
+    def _own(self, status):
+        """The name's status as its own session's: None unless its pane holds the name (UNKNOWN: tmux failed)."""
+        if status is None or status == tmux_host.UNKNOWN:
+            return status
+        holder = self._holder()
+        return holder if holder == tmux_host.UNKNOWN else status if holder and holder == self._pane else None
+
+    def _end(self) -> None:
+        self._gone = True
+        self._code = -signal.SIGHUP if self._code is None else self._code
 
     def _read(self) -> list[Event]:
-        data = read_regular(self.hooks, offset=self._offset) or b""
+        data = b"" if self._gone else read_regular(self.hooks, offset=self._offset) or b""
         end = data.rfind(b"\n") + 1
+        if end:
+            self._holder()   # lines under another pane are its session's
+        if self._gone:
+            return []
         self._offset += end
         found = []
         for label, payload in _records(data[:end]):
@@ -203,12 +240,9 @@ class TuiMode:
                 found.append(event)
         return found
 
-    def _scan(self) -> list[Event]:
+    def _scan(self, screen: str) -> list[Event]:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit per appearance."""
-        try:
-            screen = " ".join(tmux_host.read(self.name).split())
-        except tmux_host.TuiError:
-            return []
+        screen = " ".join(screen.split())
         shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
         found = [Activity("")] if self._dialogs - shown else []   # first: a later Blocked keeps the idle pause
         found += [Blocked(d) for d in self.run.dialogs if d in shown - self._dialogs]
@@ -223,15 +257,13 @@ class TuiMode:
     def _mark_blocked(self) -> None:
         with contextlib.suppress(tmux_host.TuiError):
             if tmux_host.option(self.name, "@state") != "blocked":
-                pane = tmux_host.pane(self.name)
-                if pane:   # mark's pane=None would mark this process's own $TMUX_PANE
-                    tmux_host.mark("blocked", self.events, pane=pane)
+                tmux_host.mark("blocked", self.events, pane=self._pane)
 
     def returncode(self, timeout: float) -> int | None:
         """The dead pane's status, -SIGHUP once gone; None while it runs after up to `timeout` s."""
         deadline = time.monotonic() + timeout
         while self._code is None:
-            self._code = _exit(tmux_host.status(self.name))
+            self._code = _exit(self._own(tmux_host.status(self.name)))
             if self._code is None:
                 if (left := deadline - time.monotonic()) <= 0:
                     return None
@@ -239,7 +271,7 @@ class TuiMode:
         return self._code
 
     def state(self) -> str:
-        status = tmux_host.status(self.name)
+        status = self._own(tmux_host.status(self.name))
         return "absent" if status is None else "unknown" if status == tmux_host.UNKNOWN else "live"
 
     def send(self, text: str) -> None:
@@ -265,11 +297,13 @@ class TuiMode:
             raise DriverError(f"screen of tui session {self.name}: {e}") from e
 
     def _running(self) -> None:
-        if tmux_host.status(self.name) != tmux_host.RUNNING:
+        if self._own(tmux_host.status(self.name)) != tmux_host.RUNNING:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """close() once begun or attached."""
-        if self._live:
+        """close() once begun or attached, unless another pane holds the name; then ends (returncode: the code seen,
+        else -SIGHUP)."""
+        if self._live and self._holder() in (self._pane, None, tmux_host.UNKNOWN):
             close(self.name)
-            self._live = False
+        self._live = False
+        self._end()

@@ -1,6 +1,6 @@
 """new/core/src/driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
 time.sleep patched), with a temp HOME: the session dir and session.json, read_state, begin, the hook records' tail,
-the pane scan, returncode, state, send, screen, close and stop, and attach."""
+the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
 import errno
 import inspect
 import json
@@ -107,8 +107,8 @@ class Base(unittest.TestCase):
                                    workdir=workdir or self.tmp)
 
     def started(self) -> tui.TuiMode:
-        """A TuiMode prepared (the session absent) and begun, the host's calls cleared, its status RUNNING."""
-        self.host.status.return_value = None
+        """A TuiMode prepared (the session absent), begun on pane %1, the host's calls cleared, its status RUNNING."""
+        self.host.status.return_value, self.host.pane.return_value = None, "%1"
         mode = self.prepare()
         mode.begin(("/bin/run",), cwd=self.tmp, env={})
         self.host.reset_mock()
@@ -279,7 +279,7 @@ class BeginTest(Base):
         mode.begin(["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}, status_line=True)
         self.assertEqual(self.host.mock_calls[1:], [mock.call.start(
             NAME, ["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}, events=self.events, status_line=True,
-            tags={"@sid": SID})])
+            tags={"@sid": SID}), mock.call.pane(NAME)])
         self.prepare(events=None).begin(("/bin/run",), cwd=self.tmp, env={})
         self.assertEqual(self.host.start.call_args, mock.call(NAME, ["/bin/run"], cwd=self.tmp, env={}, events=None,
                                                               status_line=False, tags={"@sid": SID}))
@@ -306,6 +306,15 @@ class BeginTest(Base):
         with self.assertRaises(DriverError):
             mode.begin(("/bin/run",), cwd=self.tmp, env={})
         self.assertEqual(os.listdir(self.dir), ["theirs"])
+
+    def test_a_pane_it_cannot_take_closes_the_session(self):
+        mode = self.prepare()
+        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
+        with self.assertRaises(DriverError) as caught:
+            mode.begin(("/bin/run",), cwd=self.tmp, env={})
+        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
+        self.host.kill.assert_called_once_with(NAME)
+        self.assertNoSessionDir()
 
 
 class ReadStateTest(Base):
@@ -367,7 +376,7 @@ class PollTest(Base):
         self.append(record("ask", session_id="n2", why="perm"), record("other", session_id="n2"), record("tool"))
         self.assertEqual(mode.poll(0.5), ([SessionBound("n2"), Blocked("perm"), Activity("")], False))
         self.assertEqual(mode.bound, "n2")
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME)] * 2)
         self.assertEqual(self.log, [])
 
     def test_a_partial_last_line_waits_for_its_end(self):
@@ -396,10 +405,10 @@ class PollTest(Base):
                 self.assertEqual(mode.poll(0), ([], False))
             os.unlink(self.hooks)
 
-    def test_nothing_new_checks_status_and_the_pane_once_then_waits_the_timeout_in_slices(self):
+    def test_nothing_new_checks_status_the_screen_then_its_pane_once_then_waits_the_timeout_in_slices(self):
         mode = self.started()
         self.assertEqual(mode.poll(0.5), ([], False))
-        self.assertEqual(self.host.mock_calls, [mock.call.status(NAME), mock.call.read(NAME)])
+        self.assertEqual(self.host.mock_calls, [mock.call.status(NAME), mock.call.read(NAME), mock.call.pane(NAME)])
         self.assertTrue(all(0 < s <= 0.1 for _, s in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
 
@@ -471,22 +480,24 @@ class ScanTest(Base):
         mode = self.started()
         self.host.option.return_value = "done"
         self.scans(mode, "Sign in Trust this folder?")
-        self.assertEqual(self.host.mock_calls[2:], [mock.call.option(NAME, "@state"), mock.call.pane(NAME),
+        self.assertEqual(self.host.mock_calls[3:], [mock.call.option(NAME, "@state"),
                                                     mock.call.mark("blocked", self.events, pane="%1")])
         self.host.reset_mock()
         self.host.option.return_value = "blocked"
         self.scans(mode, "", "Sign in")
         self.host.mark.assert_not_called()
 
-    def test_no_pane_marks_nothing(self):
+    def test_a_name_with_no_pane_is_absent_unscanned(self):
         mode = self.started()
         self.host.pane.return_value = None
-        self.assertEqual(self.scans(mode, "Sign in"), [[Blocked("Sign in")]])
+        self.host.read.return_value = "Sign in"
+        self.assertEqual(mode.poll(0), ([], True))
+        self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
         self.host.mark.assert_not_called()
 
     def test_a_failed_mark_still_yields_the_dialog(self):
         mode = self.started()
-        for method in ("option", "pane", "mark"):
+        for method in ("option", "mark"):
             with self.subTest(method):
                 getattr(self.host, method).side_effect = tmux_host.TuiError("tmux: boom")
                 self.assertEqual(self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]])
@@ -630,6 +641,81 @@ class CloseStopTest(Base):
         self.assertNoSessionDir()
 
 
+class BoundTest(Base):
+    """A begun Mode is its pane's (%1): another pane under its name, or stop(), ends it."""
+
+    def test_another_pane_under_the_name_ends_it_at_once_unscanned_unmarked_and_unread(self):
+        for status in (tmux_host.RUNNING, 3):
+            with self.subTest(status=status):
+                mode = self.started()
+                self.host.status.return_value, self.host.pane.return_value = status, "%2"
+                self.host.read.return_value = "Sign in LIMIT 9"
+                self.log.clear()
+                self.assertEqual(mode.poll(5), ([], True))
+                self.assertEqual((self.run.screens, self.log, mode.returncode(0)), ([], [], -signal.SIGHUP))
+                self.host.mark.assert_not_called()
+                self.append(record("tool"))
+                self.host.reset_mock()
+                self.assertEqual(mode.poll(5), ([], True))
+                self.assertEqual(self.host.mock_calls, [])
+
+    def test_records_under_another_pane_are_never_read(self):
+        mode = self.started()
+        self.host.pane.return_value = "%2"
+        self.append(record("stop", last_message="theirs"))
+        self.assertEqual(mode.poll(5), ([], True))
+        mode = self.started()
+
+        def theirs():
+            self.host.pane.return_value = "%2"
+            self.append(record("stop", last_message="theirs"))
+        self.clock.actions.append((self.clock.now + 0.25, theirs))
+        self.assertEqual((mode.poll(5), mode.returncode(0)), (([], True), -signal.SIGHUP))
+
+    def test_stop_ends_it_at_once_its_code_the_one_seen_else_sighup(self):
+        mode = self.started()
+        mode.stop()
+        os.mkdir(self.dir)
+        self.append(record("tool"))
+        self.host.reset_mock()
+        self.assertEqual((mode.poll(5), mode.returncode(5)), (([], True), -signal.SIGHUP))
+        self.assertEqual((self.host.mock_calls, self.log), ([], []))
+        mode = self.started()
+        self.host.status.return_value = 3
+        self.assertEqual(mode.poll(0), ([], True))
+        mode.stop()
+        self.assertEqual(mode.returncode(0), 3)
+
+    def test_stop_closes_unless_another_pane_holds_the_name(self):
+        for holder, closed in (("%1", True), (None, True), ("%2", False), (tmux_host.TuiError("tmux: boom"), True)):
+            with self.subTest(holder=holder):
+                mode = self.started()
+                self.host.pane.return_value = holder
+                self.host.pane.side_effect = holder if isinstance(holder, Exception) else None
+                mode.stop()
+                self.assertEqual((self.host.kill.called, os.path.isdir(self.dir)), (closed, not closed))
+                self.assertEqual(mode.poll(0), ([], True))
+                self.host.pane.side_effect = None
+
+    def test_another_pane_under_the_name_is_absent_to_state_send_and_screen(self):
+        mode = self.started()
+        self.host.pane.return_value = "%2"
+        self.assertEqual(mode.state(), "absent")
+        for call in (lambda: mode.send("hi"), mode.screen):
+            with self.assertRaisesRegex(DriverError, r"\Atui session w1 is not running\Z"):
+                call()
+        self.host.paste.assert_not_called()
+        self.host.read.assert_not_called()
+        self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
+
+    def test_its_pane_unknown_is_no_scan_and_no_end(self):
+        mode = self.started()
+        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
+        self.host.read.return_value = "Sign in"
+        self.assertEqual(mode.poll(0), ([], False))
+        self.assertEqual((self.run.screens, mode.returncode(0), mode.state()), ([], None, "unknown"))
+
+
 class AttachTest(Base):
     def setUp(self):
         super().setUp()
@@ -648,7 +734,7 @@ class AttachTest(Base):
                            record("stop", session_id="n2", last_message="r2"), record("ask"), b"bad\n", partial[:7])
         self.assertEqual((mode.name, mode.sid, mode.events, mode.reply, mode.bound),
                          (NAME, SID, self.events, "r2", "n2"))
-        self.assertEqual(self.host.mock_calls, [mock.call.option(NAME, "@sid")])
+        self.assertEqual(self.host.mock_calls, [mock.call.option(NAME, "@sid"), mock.call.pane(NAME)])
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
@@ -669,15 +755,28 @@ class AttachTest(Base):
                 with self.assertRaises(DriverError) as caught:
                     self.attach()
                 self.assertEqual(str(caught.exception), "no tui session w1")
+        self.host.option.side_effect = lambda name, key: {"@sid": SID}.get(key)
+        self.host.pane.side_effect = tmux_host.TuiError("tmux: denied")
+        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+            self.attach()
 
     def test_an_attached_session_is_live_and_marks_dialogs_on_its_events_file(self):
+        self.host.pane.return_value = "%7"
         mode = self.attach()
         self.host.status.return_value = tmux_host.RUNNING
         self.host.read.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([Blocked("Sign in")], False))
-        self.host.mark.assert_called_once_with("blocked", self.events, pane="%1")
+        self.host.mark.assert_called_once_with("blocked", self.events, pane="%7")
         mode.stop()
         self.host.kill.assert_called_once_with(NAME)
+
+    def test_an_attached_session_ends_once_another_pane_holds_its_name(self):
+        self.host.pane.return_value = "%7"
+        mode = self.attach()
+        self.host.status.return_value, self.host.pane.return_value = tmux_host.RUNNING, "%8"
+        self.host.read.return_value = "Sign in"
+        self.assertEqual(mode.poll(0), ([], True))
+        self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
 
 
 class ModeTest(unittest.TestCase):
