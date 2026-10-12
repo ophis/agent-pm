@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime
 from unittest import mock
 
-from agent_pm_orchestrator import issues, linear, sessions, writeback
+from agent_pm_linear import issues, linear, sessions, writeback
 
 from new.tests.case import Case
 from new.tests.unit.orchestrator.board_ids import HEADER, STATES, role
@@ -161,7 +161,7 @@ class Base(Case):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.local = os.path.join(self.agent_pm, "orchestrator-new.local.toml")
+        self.local = os.path.join(self.agent_pm, "linear-new.local.toml")
         self.write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
         self.write(self.local, local(self.work))
         self.rd = os.path.join(self.work, "work", ID)

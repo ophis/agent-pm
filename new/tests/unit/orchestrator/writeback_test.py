@@ -15,7 +15,7 @@ from unittest import mock
 
 import agent_pm.utils.files
 from agent_pm.role.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
-from agent_pm_orchestrator import config, issues, linear, runs, writeback
+from agent_pm_linear import config, issues, linear, runs, writeback
 
 from new.tests.case import Case
 from new.tests.unit.orchestrator import board_ids, run_fixtures
@@ -1182,7 +1182,7 @@ class Bounce(Base):
             comment(
                 self.text(
                     reason,
-                    " Or fix ~/.agent-pm/orchestrator-new.local.toml's [project_repos] entry.",
+                    " Or fix ~/.agent-pm/linear-new.local.toml's [project_repos] entry.",
                 )
             ),
             gql.calls,

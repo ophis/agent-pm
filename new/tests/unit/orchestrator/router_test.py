@@ -21,8 +21,8 @@ from unittest import mock
 from agent_pm.role.repos.git import GUARD
 from agent_pm.role.repos.shell import SHORT
 from agent_pm.session.driver import api
-from agent_pm_orchestrator import config, inputs, issues, linear, router, runs, target
-from agent_pm_orchestrator import run as run_py
+from agent_pm_linear import config, inputs, issues, linear, router, runs, target
+from agent_pm_linear import run as run_py
 
 from new.tests.case import ORCH_ROOT, ROOT
 from new.tests.unit.orchestrator import run_fixtures
@@ -1398,7 +1398,7 @@ class TaskLabels(Base):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/orchestrator-new.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in ~/.agent-pm/linear-new.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (
             ([], (None, None)),
             (outside, (None, None)),
@@ -2968,7 +2968,7 @@ class TickTaskLabels(TickBase):
             self.tick(fake)
         self.assertEqual(
             cm.exception.code,
-            f"orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
+            f"linear-orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
         )
         self.assertEqual(
             (fake.queries, fake.mutations),
@@ -3149,7 +3149,7 @@ def inner(*args, text=INPUT):
         sys.executable,
         "-P",
         "-m",
-        "agent_pm_orchestrator.run",
+        "agent_pm_linear.run",
         "--uuid",
         UUID,
         *args,
@@ -3650,10 +3650,10 @@ class Entry(OuterBase):
 
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
-            ("bogus = 1\n" + OUTER, "orchestrator/config.toml: unknown keys: bogus"),
+            ("bogus = 1\n" + OUTER, "linear-orchestrator/config.toml: unknown keys: bogus"),
             (
                 OUTER + role_table("bogus"),
-                "orchestrator/config.toml: role 'bogus' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'bogus' is not in core/config.toml",
             ),
         ):
             self.write_config(text)
@@ -3667,16 +3667,16 @@ class Entry(OuterBase):
                 [show(e) for e in logged(self.logs)], [f"config-error reason={reason}"]
             )
         self.logs = None
-        error = config.ConfigError("orchestrator/config.toml:\n  bad", self.tmp)
+        error = config.ConfigError("linear-orchestrator/config.toml:\n  bad", self.tmp)
         with mock.patch.object(config, "load", side_effect=error):
             self.assertEqual(self.entry(), 1)
-        self.assertEqual(self.said(), ["config-error reason=orchestrator/config.toml: bad"])
+        self.assertEqual(self.said(), ["config-error reason=linear-orchestrator/config.toml: bad"])
         self.write(self.local, 'work_dir = "w"\n')
         self.assertEqual(self.entry(), 1)
         self.assertEqual(
             (self.err, self.said()),
             (
-                "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+                "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
                 [],
             ),
         )
@@ -3728,7 +3728,7 @@ class Usage(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm_orchestrator.router "
+            "usage: python3 -P -m agent_pm_linear.router "
             "[--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):

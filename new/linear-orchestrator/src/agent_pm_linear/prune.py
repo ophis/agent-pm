@@ -24,9 +24,9 @@ from agent_pm.role.repos.shell import SHORT
 from agent_pm.session.driver import api
 from agent_pm.utils.paths import under
 
-from agent_pm_orchestrator import config
-from agent_pm_orchestrator.config import CLONES
-from agent_pm_orchestrator.linear import (
+from agent_pm_linear import config
+from agent_pm_linear.config import CLONES
+from agent_pm_linear.linear import (
     HISTORY,
     ISSUE_ID,
     Unavailable,

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from agent_pm.role import composer
 from agent_pm.role.repos.shell import SHORT
-from agent_pm_orchestrator import config, inputs, issues, target
+from agent_pm_linear import config, inputs, issues, target
 
 from new.tests.case import Case
 

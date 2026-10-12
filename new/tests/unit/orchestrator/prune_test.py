@@ -15,7 +15,7 @@ from unittest import mock
 from agent_pm.role.repos import shell
 from agent_pm.session.driver import api
 from agent_pm.utils import paths
-from agent_pm_orchestrator import config, linear, promote, prune
+from agent_pm_linear import config, linear, promote, prune
 
 from new.tests.case import Case
 from new.tests.unit.orchestrator import promote_test as tp
@@ -865,7 +865,7 @@ class PruneTest(Case):
     def tick(self, prune_gql):
         write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
         write(
-            os.path.join(self.agent_pm, "orchestrator-new.local.toml"),
+            os.path.join(self.agent_pm, "linear-new.local.toml"),
             f'work_dir = "{self.root}"\n',
         )
         path = os.path.join(self.root, "config.toml")

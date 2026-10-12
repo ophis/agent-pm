@@ -218,7 +218,7 @@ The new module is the old one reformatted; every test body is unchanged (PR #182
 
 | Exact old identity | Exact new identity | Coverage and remaining assertions |
 |---|---|---|
-| `tests.integration.orchestrator.fake_linear_integration_test.Table.test_every_query_constant_has_an_op` | `OFL.Table.test_every_query_constant_has_an_op` | Complete; ops are named by the module's short name (package `agent_pm_orchestrator`). |
+| `tests.integration.orchestrator.fake_linear_integration_test.Table.test_every_query_constant_has_an_op` | `OFL.Table.test_every_query_constant_has_an_op` | Complete; ops are named by the module's short name (package `agent_pm_linear`). |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_two_names_for_one_text_are_refused` | `OFL.Table.test_two_names_for_one_text_are_refused` | Complete. |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_fail_refuses_a_misuse` | `OFL.Table.test_fail_refuses_a_misuse` | Complete. |
 | `tests.integration.orchestrator.fake_linear_integration_test.Table.test_seeding_refuses_a_used_or_malformed_issue_id` | `OFL.Table.test_seeding_refuses_a_used_or_malformed_issue_id` | Complete. |

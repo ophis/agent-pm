@@ -1,4 +1,4 @@
-# DO NOT MODIFY this file. This deployment's settings go in ~/.agent-pm/orchestrator-new.local.toml, read on top of
+# DO NOT MODIFY this file. This deployment's settings go in ~/.agent-pm/linear-new.local.toml, read on top of
 # this file: create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override
 # any other key too: tables merge key by key, the local value wins, a list is replaced whole; a table cannot drop a
 # key this file sets. Missing required keys stop router, run and promote.
@@ -37,7 +37,7 @@
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
 # A role to orchestrate. Its tasks are its charter's index (core/team/roles/<role>.md › Tasks). A role added in
-# orchestrator-new.local.toml is orchestrated too.
+# linear-new.local.toml is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
 #   key                   local, required: Keychain service of that account's API key
 #   next                  the role promote hands this role's Handoff issues to; unset → the last stage
@@ -78,14 +78,14 @@ max_runs = 3
 # local: [local_clones]
 # local: "<owner>/<name>" = "~/src/<name>"
 
-# The overlay; optional: core run keys for the orchestrator's agent runs, in core/config.toml's layout under
+# The overlay; optional: core run keys for the Linear orchestrator's agent runs, in core/config.toml's layout under
 # [core], the last of core/config.toml's layers. config.overlay() fills {{root}} with this repo's root.
 #   <run key>  as in core/config.toml, local keys included (e.g. a trusted cwd or a show command); users, trusted_dirs,
 #              status_line, workers_per_column, grid_retile and clients are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
 # the session's PYTHONPATH is core/src only, so the gate sets both roots; why `env`: new/README.md (act-as row)
-gate = "env PYTHONPATH={{root}}/core/src:{{root}}/orchestrator/src python3 -P -m agent_pm_orchestrator.router --brake researcher"
+gate = "env PYTHONPATH={{root}}/core/src:{{root}}/linear-orchestrator/src python3 -P -m agent_pm_linear.router --brake researcher"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: show = ""

@@ -93,33 +93,33 @@ class CaseTest(Case):
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
     def orchestrator(self, root):
-        """An agent_pm_orchestrator package module found under `root`."""
-        module = types.ModuleType("agent_pm_orchestrator")
-        module.__file__ = os.path.join(root, "agent_pm_orchestrator", "__init__.py")
+        """An agent_pm_linear package module found under `root`."""
+        module = types.ModuleType("agent_pm_linear")
+        module.__file__ = os.path.join(root, "agent_pm_linear", "__init__.py")
         return module
 
-    def test_agent_pm_orchestrator_from_another_tree_fails_the_test_before_its_set_up(self):
+    def test_agent_pm_linear_from_another_tree_fails_the_test_before_its_set_up(self):
         ran = []
-        elsewhere = {"agent_pm_orchestrator": self.orchestrator("/elsewhere/src")}
+        elsewhere = {"agent_pm_linear": self.orchestrator("/elsewhere/src")}
         with mock.patch.dict(sys.modules, elsewhere):
             result = self.run_inner(ran.append, set_up=ran.append)
         ((_, failure),) = result.failures
         self.assertIn(
-            f"agent_pm_orchestrator is imported from /elsewhere/src, not this tree's {ORCH_ROOT}: "
-            "run with PYTHONPATH=new/core/src:new/orchestrator/src",
+            f"agent_pm_linear is imported from /elsewhere/src, not this tree's {ORCH_ROOT}: "
+            "run with PYTHONPATH=new/core/src:new/linear-orchestrator/src",
             failure,
         )
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
-    def test_agent_pm_orchestrator_absent_or_this_trees_passes(self):
-        self.assertEqual(ORCH_ROOT, os.path.join(NEW, "orchestrator", "src"))
+    def test_agent_pm_linear_absent_or_this_trees_passes(self):
+        self.assertEqual(ORCH_ROOT, os.path.join(NEW, "linear-orchestrator", "src"))
         self.assertTrue(os.path.isfile(self.orchestrator(ORCH_ROOT).__file__))
         for found in (None, self.orchestrator(ORCH_ROOT)):
             ran = []
             with self.subTest(found=found), mock.patch.dict(sys.modules):
-                sys.modules.pop("agent_pm_orchestrator", None)
+                sys.modules.pop("agent_pm_linear", None)
                 if found:
-                    sys.modules["agent_pm_orchestrator"] = found
+                    sys.modules["agent_pm_linear"] = found
                 result = self.run_inner(ran.append)
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)

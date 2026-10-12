@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Agent pipeline on a Linear board (README). The core runs one role, on a task given or picked from its index; the orchestrator turns a Linear issue into that agent run's input, and its outcome into Linear changes. Their code: `new/README.md`.
+Agent pipeline on a Linear board (README). The core runs one role, on a task given or picked from its index; the Linear orchestrator turns a Linear issue into that agent run's input, and its outcome into Linear changes. Their code: `new/README.md`.
 
 ## Commands
 
@@ -9,7 +9,7 @@ The plugin (`claude --plugin-dir`, `claude plugin validate`) and the tests (layo
 ```bash
 uvx ruff@0.16.9 check .                                   # lint; config: pyproject.toml
 uvx ruff@0.16.9 format .                                  # format; CI pins the same version
-PYTHONPATH=new/core/src:new/orchestrator/src python3 -m unittest discover -v -s .github -p "*_test.py"  # .github scripts' tests
+PYTHONPATH=new/core/src:new/linear-orchestrator/src python3 -m unittest discover -v -s .github -p "*_test.py"  # .github scripts' tests
 ```
 
 CI (`.github/workflows/test.yml`) runs on Ubuntu, Python 3.11, for each PR and push to `main`: Comment budget, Ruff (`ruff check`, `ruff format --check`) and the test jobs; a test must pass on Linux too. Comment budget (`.github/comment_budget.py`) caps each directory's comment plus docstring characters over its own git-tracked `.py` files (not its subdirectories'), source and tests (`(^|/)tests/` or `_test.py`) separately, at 15% (source) or 10% (tests) of their code characters plus 500 characters: keep a comment only for a gotcha (≤3 lines).
@@ -19,7 +19,7 @@ Operating: README › Operating, README › Attended runs. Without `--dry-run`, 
 
 ## Architecture
 
-The core's and orchestrator's modules, entries and import rules: `new/README.md`.
+The core's and the Linear orchestrator's modules, entries and import rules: `new/README.md`.
 
 - Identity: write-back and bounce act as the role's `account`, the rest as the harness account (README › Setup). Only Keychain service names travel in env, argv, logs and prompts, never keys. As the same macOS user, an agent run could read Keychain items: no enforced boundary.
 - No move changes an assignee; every move to In Review (write-back, bounce or harness) also subscribes each `human_members` email.
@@ -27,7 +27,7 @@ The core's and orchestrator's modules, entries and import rules: `new/README.md`
 ## Roles, tasks, rules
 
 - Config and test isolation: `new/README.md` › Layout.
-- Core owns roles, tasks, methods, principles and templates (`new/core/team/`, `new/core/config.toml`); `new/orchestrator/config.toml` adds what core must not know, plus the overlay.
+- Core owns roles, tasks, methods, principles and templates (`new/core/team/`, `new/core/config.toml`); `new/linear-orchestrator/config.toml` adds what core must not know, plus the overlay.
 - Where a rule goes: every role → `new/core/team/principles.md`; every task of one role → `new/core/team/roles/<role>.md`; a document format → `new/core/team/templates/`; a method → `new/core/team/methods/`; one task (claiming, failure, hand-off, resume) → `new/core/team/tasks/<task>.md`; a Linear fact (comment text, state, title) → `writeback.py`, its per-role differences → `config.TASKS` data. Precedence: `new/core/team/guide.md`.
 - Say each thing once: one home per rule or fact; elsewhere point to it, never restate.
 - No em dashes (U+2014): use a colon, semicolon, comma or parentheses.

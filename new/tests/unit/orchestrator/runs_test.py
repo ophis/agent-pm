@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 import agent_pm.utils.files
-from agent_pm_orchestrator import runs
+from agent_pm_linear import runs
 
 from new.tests import case
 

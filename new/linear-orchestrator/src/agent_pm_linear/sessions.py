@@ -7,7 +7,7 @@ import threading
 
 from agent_pm.session.driver import api
 
-from agent_pm_orchestrator import config, linear
+from agent_pm_linear import config, linear
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10

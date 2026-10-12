@@ -12,7 +12,7 @@ import agent_pm.config
 import agent_pm.role.repos
 from agent_pm.role import composer
 from agent_pm.role.repos.shell import SHORT
-from agent_pm_orchestrator import config, issues, target
+from agent_pm_linear import config, issues, target
 
 from new.tests.case import Case
 

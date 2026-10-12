@@ -8,10 +8,10 @@ from urllib.parse import quote, unquote
 
 from agent_pm.role.repos.shell import SHORT, err_text
 
-from agent_pm_orchestrator import issues
-from agent_pm_orchestrator.config import TASKS, sh_run
-from agent_pm_orchestrator.linear import parse_time
-from agent_pm_orchestrator.target import pr_title
+from agent_pm_linear import issues
+from agent_pm_linear.config import TASKS, sh_run
+from agent_pm_linear.linear import parse_time
+from agent_pm_linear.target import pr_title
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 RAW = "Accept: application/vnd.github.raw+json"

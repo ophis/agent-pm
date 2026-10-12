@@ -1,4 +1,4 @@
-"""Every module of agent_pm, agent_pm_orchestrator and new.tests imported alone in a fresh child, an empty temp dir
+"""Every module of agent_pm, agent_pm_linear and new.tests imported alone in a fresh child, an empty temp dir
 its HOME and cwd, with only the import roots it needs (EXTRA): it exits 0, leaving the dir empty and sys.path
 unchanged."""
 
@@ -10,7 +10,7 @@ import unittest
 from new.tests.case import NEW, ORCH_ROOT, PY, ROOT, Case, child_env
 
 REPO = os.path.dirname(NEW)
-EXTRA = {"agent_pm": (), "agent_pm_orchestrator": (ORCH_ROOT,), "new": (ORCH_ROOT, REPO)}
+EXTRA = {"agent_pm": (), "agent_pm_linear": (ORCH_ROOT,), "new": (ORCH_ROOT, REPO)}
 CHILD = """import importlib, sys
 path = list(sys.path)
 importlib.import_module(sys.argv[1])
@@ -32,11 +32,11 @@ class ImportsAlone(Case):
     def test_each_module(self):
         names = (
             modules(ROOT, "agent_pm")
-            + modules(ORCH_ROOT, "agent_pm_orchestrator")
+            + modules(ORCH_ROOT, "agent_pm_linear")
             + modules(REPO, "new.tests")
         )
         self.assertIn("agent_pm.session.driver.api", names)
-        self.assertIn("agent_pm_orchestrator.run", names)
+        self.assertIn("agent_pm_linear.run", names)
         self.assertIn("new.tests.case", names)
         for name in names:
             with self.subTest(name), tempfile.TemporaryDirectory() as home:

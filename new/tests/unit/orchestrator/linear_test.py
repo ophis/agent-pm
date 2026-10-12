@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm_orchestrator import linear
+from agent_pm_linear import linear
 
 from new.tests.case import Case
 from new.tests.unit.orchestrator.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
@@ -35,7 +35,7 @@ class RoleIds(Case):
             )
         self.assertEqual(
             cm.exception.code,
-            "orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear",
+            "linear-orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear",
         )
 
 
@@ -49,7 +49,8 @@ class Humans(Case):
         with self.assertRaises(SystemExit) as cm:
             linear.humans(gql, SimpleNamespace(human_members=("a@b.c", "x@y.z")))
         self.assertEqual(
-            cm.exception.code, "orchestrator/config.toml: human_members not found in Linear: x@y.z"
+            cm.exception.code,
+            "linear-orchestrator/config.toml: human_members not found in Linear: x@y.z",
         )
 
 
@@ -84,7 +85,9 @@ class TeamCheck(Case):
             with self.subTest(message):
                 with self.assertRaises(SystemExit) as cm:
                     linear.team(self.gql(nodes), self.cfg())
-                self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
+                self.assertEqual(
+                    str(cm.exception.code), "linear-orchestrator/config.toml: " + message
+                )
 
 
 class TaskGroupCheck(Case):
@@ -146,7 +149,9 @@ class TaskGroupCheck(Case):
             with self.subTest(message):
                 with self.assertRaises(SystemExit) as cm:
                     linear.task_group(gql, self.cfg(labels))
-                self.assertEqual(str(cm.exception.code), "orchestrator/config.toml: " + message)
+                self.assertEqual(
+                    str(cm.exception.code), "linear-orchestrator/config.toml: " + message
+                )
                 self.assertEqual(len(gql.calls), 1)
 
 

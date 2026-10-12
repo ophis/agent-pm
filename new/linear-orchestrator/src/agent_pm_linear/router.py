@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Router: the orchestrator's one entry point. Decides which agent run starts or resumes among the team's issues
-assigned to role accounts, then starts it through the outer (run.py in a detached Driver session).
+"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among the team's
+issues assigned to role accounts, then starts it through the outer (run.py in a detached Driver session).
 
-python3 -P -m agent_pm_orchestrator.router [--now] [--dry-run] [--issue ID] | --brake ROLE
+python3 -P -m agent_pm_linear.router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
 (no mode)     One tick (launchd): the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
@@ -32,8 +32,8 @@ from datetime import UTC, datetime, timedelta
 from agent_pm.session.driver import api
 from agent_pm.utils.paths import IMPORT_ROOT
 
-from agent_pm_orchestrator import config, inputs, issues, linear, sessions, target, writeback
-from agent_pm_orchestrator.linear import (
+from agent_pm_linear import config, inputs, issues, linear, sessions, target, writeback
+from agent_pm_linear.linear import (
     ISSUE_ID,
     config_error,
     humans,
@@ -46,7 +46,7 @@ from agent_pm_orchestrator.linear import (
     task_group,
     team,
 )
-from agent_pm_orchestrator.runs import limits, note, parse_log, runtime_of, trim
+from agent_pm_linear.runs import limits, note, parse_log, runtime_of, trim
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -59,11 +59,10 @@ CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
 USAGE = (
-    "usage: python3 -P -m agent_pm_orchestrator.router "
-    "[--now] [--dry-run] [--issue ID] | --brake ROLE"
+    "usage: python3 -P -m agent_pm_linear.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 )
 FLAGS = {"--dry-run": "dry", "--now": "now"}
-RUN = ("-P", "-m", "agent_pm_orchestrator.run")
+RUN = ("-P", "-m", "agent_pm_linear.run")
 ROOTS = os.pathsep.join((IMPORT_ROOT, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 SESSIONS = "agent-pm-"
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")

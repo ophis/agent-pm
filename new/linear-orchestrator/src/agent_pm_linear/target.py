@@ -12,8 +12,8 @@ from agent_pm.role.repos.git import GUARD, common_dir
 from agent_pm.role.repos.shell import SHORT, err_text
 from agent_pm.utils.paths import under
 
-from agent_pm_orchestrator import config, issues
-from agent_pm_orchestrator.config import CLONES, REF, TASKS, repo_slug, sh_run
+from agent_pm_linear import config, issues
+from agent_pm_linear.config import CLONES, REF, TASKS, repo_slug, sh_run
 
 MAPPED = "project mapping "
 

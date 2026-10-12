@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from agent_pm.utils.files import append_line, save
 
-from agent_pm_orchestrator import linear
+from agent_pm_linear import linear
 
 KEEP = timedelta(days=7)
 ERRORS = (ValueError, TypeError, KeyError, OverflowError)

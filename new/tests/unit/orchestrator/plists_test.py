@@ -31,7 +31,7 @@ class Plists(Case):
         for job in JOBS:
             with self.subTest(job=job):
                 job_plist = plist(job)
-                module = f"agent_pm_orchestrator.{job}"
+                module = f"agent_pm_linear.{job}"
                 self.assertEqual(
                     job_plist["ProgramArguments"][:4],
                     ["/opt/homebrew/bin/python3", "-P", "-m", module],

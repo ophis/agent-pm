@@ -4,8 +4,8 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from agent_pm_orchestrator import config, issues, linear, sessions
-from agent_pm_orchestrator.linear import (
+from agent_pm_linear import config, issues, linear, sessions
+from agent_pm_linear.linear import (
     config_error,
     linear_error,
     linear_gql,
@@ -18,7 +18,7 @@ from agent_pm_orchestrator.linear import (
 
 HELP = """Promote issues in Handoff to the next role.
 
-For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in orchestrator/config.toml has a next:
+For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in linear-orchestrator/config.toml has a next:
 create that role's issue in the same project, assigned to its account, in Todo with the source links and the
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
@@ -275,7 +275,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
-            from agent_pm_orchestrator.prune import Pruner as pruner
+            from agent_pm_linear.prune import Pruner as pruner
         pruner(gql, now, dry, work=work, team=team, roles=roles).run()
     except linear.Unavailable as e:
         linear_error("prune", e, dry)

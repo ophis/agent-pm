@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm_orchestrator import issues, linear, promote, prune, router, sessions, writeback
+from agent_pm_linear import issues, linear, promote, prune, router, sessions, writeback
 
 from new.tests.case import Case
 from new.tests.integration.orchestrator import fake_linear

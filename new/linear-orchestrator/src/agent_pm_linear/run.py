@@ -14,8 +14,8 @@ from agent_pm.role import delegate
 from agent_pm.session.driver import api
 from agent_pm.utils.text import printable
 
-from agent_pm_orchestrator import config, linear, runs, sessions, writeback
-from agent_pm_orchestrator.linear import ISSUE_ID, log, one_line
+from agent_pm_linear import config, linear, runs, sessions, writeback
+from agent_pm_linear.linear import ISSUE_ID, log, one_line
 
 
 def _stop(signum, frame):

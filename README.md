@@ -2,7 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the orchestrator runs it from the board (Setup). Their code and local headless Codex role runs: `new/README.md`. Developers: `CLAUDE.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code and local headless Codex role runs: `new/README.md`. Developers: `CLAUDE.md`.
 
 ```mermaid
 flowchart LR
@@ -76,7 +76,7 @@ flowchart TB
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` logged in as you. The orchestrator runs this checkout's scripts, not the plugin.
+Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` logged in as you. The Linear orchestrator runs this checkout's scripts, not the plugin.
 
 1. Create `~/.agent-pm/orchestrator.local.toml` and `~/.agent-pm/core.local.toml` as each `config.toml`'s header says, core's with researcher's and pm's `[output]` (its Destination comment). `<work_dir>` below is the `work_dir` key.
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.

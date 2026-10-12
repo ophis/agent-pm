@@ -59,11 +59,11 @@ The Markdown an agent run delivers to its destination (report, PRD, PR descripti
 _Avoid_: document, result, report
 
 **Orchestration layer**:
-The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear; the orchestrator of the pipeline's agent runs. Elsewhere: a control plane.
+The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear (the Linear orchestrator); the orchestrator of the pipeline's agent runs. Elsewhere: a control plane.
 _Avoid_: runner
 
 **Write-back**:
 The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear.
 
 **Overlay**:
-The core run keys the orchestrator adds to its own agent runs, in `new/orchestrator/config.toml`'s `[core]` table (its comment).
+The core run keys the Linear orchestrator adds to its own agent runs, in `new/linear-orchestrator/config.toml`'s `[core]` table (its comment).

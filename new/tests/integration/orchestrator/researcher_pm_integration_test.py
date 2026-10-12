@@ -4,7 +4,7 @@ session; a failed run is not promoted; four failed runs cap the issue."""
 
 import unittest
 
-from agent_pm_orchestrator import router
+from agent_pm_linear import router
 
 from new.tests.integration.orchestrator.flow_fixtures import (
     HARNESS_EMAIL,

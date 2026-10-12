@@ -1,10 +1,10 @@
-"""Linear issues as the orchestrator reads them (read_issue) and the one Handoff grammar: handoff, parse_handoff
-and head."""
+"""Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar: handoff,
+parse_handoff and head."""
 
 import re
 from dataclasses import dataclass
 
-from agent_pm_orchestrator import linear, sessions
+from agent_pm_linear import linear, sessions
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }

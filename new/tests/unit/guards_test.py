@@ -17,7 +17,7 @@ from new.tests.case import CORE, NEW, ORCH_ROOT, PY, ROOT, Case, child_env
 OLD = "/".join(("core", "src"))
 PKG = "src/agent_pm"
 ORCH = os.path.dirname(ORCH_ROOT)
-OPKG = "src/agent_pm_orchestrator"
+OPKG = "src/agent_pm_linear"
 FIXTURES = ("setUpClass", "tearDownClass", "setUpModule", "tearDownModule")
 ORCH_GUARDS = (guards.orchestrator_imports, guards.orchestrator_text, guards.config_once)
 PROBE = (
@@ -81,6 +81,18 @@ class RealTree(Case):
         utils = os.listdir(os.path.join(ROOT, "agent_pm", "utils"))
         self.assertEqual([n for n in utils if n.removesuffix(".py") in moved], [])
 
+    def test_new_never_names_the_old_orchestrator_package(self):
+        old = "_".join(("agent_pm", "orchestrator"))
+        named = []
+        for top, dirs, files in os.walk(NEW):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            for name in sorted(files):
+                rel = os.path.relpath(os.path.join(top, name), NEW)
+                text = Path(top, name).read_text(encoding="utf-8", errors="replace")
+                if old in rel or old in text:
+                    named.append(rel)
+        self.assertEqual(named, [])
+
     def test_src_never_reaches_the_old_core(self):
         src = os.path.realpath(ROOT)
         for top, dirs, files in os.walk(ROOT):
@@ -94,13 +106,13 @@ class RealTree(Case):
         self.assert_no_old_core(files, sys.path)
 
     def test_orchestrator_loads_from_its_root_and_never_the_old_core(self):
-        package = os.path.join(ORCH_ROOT, "agent_pm_orchestrator")
+        package = os.path.join(ORCH_ROOT, "agent_pm_linear")
         names = sorted(
-            "agent_pm_orchestrator" + ("" if f == "__init__.py" else f".{f[:-3]}")
+            "agent_pm_linear" + ("" if f == "__init__.py" else f".{f[:-3]}")
             for f in os.listdir(package)
             if f.endswith(".py")
         )
-        self.assertIn("agent_pm_orchestrator.run", names)
+        self.assertIn("agent_pm_linear.run", names)
         out = subprocess.run(
             [*PY, "-c", PROBE, *names],
             env=child_env(None, ORCH_ROOT),
@@ -264,19 +276,19 @@ class LayerImports(Sample):
     def test_importing_the_orchestrator_is_a_violation(self):
         root = self.tree(
             {
-                f"{PKG}/role/delegate/x.py": "from agent_pm_orchestrator.config import load\n",
-                f"{PKG}/session/driver/x.py": "from agent_pm_orchestrator import config\n",
-                f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm_orchestrator')\n",
-                f"{PKG}/x.py": "import agent_pm_orchestrator.run\n",
+                f"{PKG}/role/delegate/x.py": "from agent_pm_linear.config import load\n",
+                f"{PKG}/session/driver/x.py": "from agent_pm_linear import config\n",
+                f"{PKG}/utils/x.py": "def f():\n    __import__('agent_pm_linear')\n",
+                f"{PKG}/x.py": "import agent_pm_linear.run\n",
             }
         )
         self.assertEqual(
             guards.layer_imports(root),
             [
-                f"{PKG}/role/delegate/x.py: role.delegate imports agent_pm_orchestrator.config",
-                f"{PKG}/session/driver/x.py: session.driver imports agent_pm_orchestrator.config",
-                f"{PKG}/utils/x.py: outside the layers imports agent_pm_orchestrator",
-                f"{PKG}/x.py: outside the layers imports agent_pm_orchestrator.run",
+                f"{PKG}/role/delegate/x.py: role.delegate imports agent_pm_linear.config",
+                f"{PKG}/session/driver/x.py: session.driver imports agent_pm_linear.config",
+                f"{PKG}/utils/x.py: outside the layers imports agent_pm_linear",
+                f"{PKG}/x.py: outside the layers imports agent_pm_linear.run",
             ],
         )
 
@@ -598,9 +610,9 @@ class ImportHygiene(Sample):
         )
 
     def test_the_orchestrator_root_holds_only_its_package(self):
-        src = "orchestrator/src"
+        src = "linear-orchestrator/src"
         names = (
-            "agent_pm_orchestrator/__init__.py",
+            "agent_pm_linear/__init__.py",
             "__pycache__/x.pyc",
             "config.py",
             "agent_pm/__init__.py",
@@ -608,7 +620,7 @@ class ImportHygiene(Sample):
         root = self.tree({f"{src}/{name}": "" for name in names})
         self.assertEqual(
             guards.import_hygiene(root),
-            [f"{src}/{entry}: not agent_pm_orchestrator" for entry in ("agent_pm", "config.py")],
+            [f"{src}/{entry}: not agent_pm_linear" for entry in ("agent_pm", "config.py")],
         )
 
 
@@ -618,11 +630,11 @@ class PythonCommands(Sample):
             {
                 "core/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n'
                 "# python3 -P -m agent_pm.role.agent_tools.repo\n",
-                "orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
+                "linear-orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "core/skills/a/SKILL.md": "Run `python3.11 x.py`.\n"
                 "- Bash(python -P -m agent_pm.role.delegate.cli --list)\n",
                 "core/team/roles/r.md": "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n"
-                "3. `env PYTHONPATH=x python3 -P -m agent_pm_orchestrator.run`\n",
+                "3. `env PYTHONPATH=x python3 -P -m agent_pm_linear.run`\n",
             }
         )
         self.assertEqual(
@@ -633,7 +645,7 @@ class PythonCommands(Sample):
                 'core/skills/a/SKILL.md:1: python command "python3.11 x.py"',
                 'core/team/roles/r.md:1: python command "python3 -P agent_pm.x"',
                 'core/team/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
-                'orchestrator/config.toml:1: python command "python3 -P -m agent_pmx.y"',
+                'linear-orchestrator/config.toml:1: python command "python3 -P -m agent_pmx.y"',
             ],
         )
 
@@ -643,7 +655,7 @@ class PythonCommands(Sample):
                 "core/team/a.md": "pythonic, my_python3 x.py, Python 3.11\n",
                 "core/skills/a/notes.txt": "python3 x.py\n",
                 "core/README.md": "python3 x.py\n",
-                "orchestrator/other.toml": 'x = "python3 x.py"\n',
+                "linear-orchestrator/other.toml": 'x = "python3 x.py"\n',
                 "tests/a.md": "python3 x.py\n",
             }
         )
@@ -726,11 +738,11 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/config.py": "import os\nfrom agent_pm.role.composer import resolve\n"
                 "from agent_pm.role import composer\ncomposer.index()\nimport agent_pm.role.composer\n"
                 "from agent_pm.utils.files import save\n",
-                f"{OPKG}/run.py": "from agent_pm_orchestrator import config\n"
+                f"{OPKG}/run.py": "from agent_pm_linear import config\n"
                 "from agent_pm.role.delegate import run, Result\nfrom agent_pm.role import delegate\n"
                 "delegate.Begun\nimport agent_pm.role.delegate as d\nd.Finished\n"
                 "from agent_pm.session.driver import api\nimport agent_pm.role.repos.shell\nfrom agent_pm import utils\n"
-                "import agent_pm_orchestrator.linear\nfrom agent_pm_orchestrator.config import TASKS\n",
+                "import agent_pm_linear.linear\nfrom agent_pm_linear.config import TASKS\n",
                 f"{OPKG}/utils.py": "",
             }
         )
@@ -794,21 +806,21 @@ class OrchestratorText(Sample):
 
 
 class ConfigOnce(Sample):
-    LOAD = "calls agent_pm_orchestrator.config.load outside an entry main"
-    USE_LOGS = "calls agent_pm_orchestrator.linear.use_logs outside an entry main"
+    LOAD = "calls agent_pm_linear.config.load outside an entry main"
+    USE_LOGS = "calls agent_pm_linear.linear.use_logs outside an entry main"
 
     def test_load_and_use_logs_outside_an_entry_main(self):
         root = self.tree(
             {
-                f"{OPKG}/run.py": "from agent_pm_orchestrator import config, linear\n\ndef main():\n"
+                f"{OPKG}/run.py": "from agent_pm_linear import config, linear\n\ndef main():\n"
                 "    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
-                f"{OPKG}/writeback.py": "from agent_pm_orchestrator import config\n"
-                "from agent_pm_orchestrator.linear import use_logs\n\ndef main():\n"
+                f"{OPKG}/writeback.py": "from agent_pm_linear import config\n"
+                "from agent_pm_linear.linear import use_logs\n\ndef main():\n"
                 "    config.load()\n    use_logs(None)\n",
-                f"{OPKG}/promote.py": "import agent_pm_orchestrator.config as c\n\nclass P:\n"
+                f"{OPKG}/promote.py": "import agent_pm_linear.config as c\n\nclass P:\n"
                 "    def main(self):\n        c.load()\n",
-                "src/run.py": "import agent_pm_orchestrator.config\n\ndef main():\n"
-                "    agent_pm_orchestrator.config.load()\n",
+                "src/run.py": "import agent_pm_linear.config\n\ndef main():\n"
+                "    agent_pm_linear.config.load()\n",
             }
         )
         self.assertEqual(
@@ -825,9 +837,7 @@ class ConfigOnce(Sample):
     def test_the_real_entries_calls_outside_an_entry(self):
         files = {}
         for name in ("run.py", "promote.py"):
-            with open(
-                os.path.join(ORCH_ROOT, "agent_pm_orchestrator", name), encoding="utf-8"
-            ) as f:
+            with open(os.path.join(ORCH_ROOT, "agent_pm_linear", name), encoding="utf-8") as f:
                 files[f"{OPKG}/not_{name}"] = f.read()
         found = guards.config_once(self.tree(files))
         self.assertEqual(
@@ -838,10 +848,10 @@ class ConfigOnce(Sample):
     def test_load_helpers_outside_config_py(self):
         root = self.tree(
             {
-                f"{OPKG}/run.py": "from agent_pm_orchestrator import config\nconfig.runnable(1)\n",
+                f"{OPKG}/run.py": "from agent_pm_linear import config\nconfig.runnable(1)\n",
                 f"{OPKG}/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n"
                 "    docs()\n",
-                f"{OPKG}/promote.py": "from agent_pm_orchestrator import config, linear\n\n"
+                f"{OPKG}/promote.py": "from agent_pm_linear import config, linear\n\n"
                 "def main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n"
                 "        linear.use_logs(None)\n",
                 "src/config.py": "def load():\n    runnable()\n",
@@ -850,7 +860,7 @@ class ConfigOnce(Sample):
         self.assertEqual(
             guards.config_once(root),
             [
-                f"{OPKG}/run.py:2: calls agent_pm_orchestrator.config.runnable",
+                f"{OPKG}/run.py:2: calls agent_pm_linear.config.runnable",
                 "src/config.py:2: calls runnable",
             ],
         )

@@ -14,7 +14,7 @@ from unittest import mock
 from agent_pm.role import delegate
 from agent_pm.role.delegate import Begun, Finished, Limit, Outcome, Progress, Result
 from agent_pm.session.driver import api
-from agent_pm_orchestrator import config, linear, run, sessions, writeback
+from agent_pm_linear import config, linear, run, sessions, writeback
 
 from new.tests.unit.orchestrator.board_ids import STATES
 from new.tests.unit.orchestrator.config_test import GATE
@@ -345,8 +345,8 @@ class Inner(Case):
             (
                 bad_config,
                 {},
-                "orchestrator/config.toml: missing harness_key: set them in "
-                "~/.agent-pm/orchestrator-new.local.toml (orchestrator/config.toml's `# local:` lines)",
+                "linear-orchestrator/config.toml: missing harness_key: set them in "
+                "~/.agent-pm/linear-new.local.toml (linear-orchestrator/config.toml's `# local:` lines)",
             ),
         ]  # last: it changes the config
         for setup, kw, reason in cases:
@@ -373,7 +373,7 @@ class Inner(Case):
         self.assertEqual(self.main(), 1)
         self.assertEqual(
             self.err,
-            "orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+            "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
         )
         self.nothing_ran()
 

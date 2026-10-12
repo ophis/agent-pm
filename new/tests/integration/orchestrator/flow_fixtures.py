@@ -12,7 +12,7 @@ import tempfile
 import tomllib
 from urllib.parse import quote
 
-from agent_pm_orchestrator import linear
+from agent_pm_linear import linear
 
 from new.tests import fake_claude, live_tmux
 from new.tests.case import ORCH_ROOT, PY, Case, child_env
@@ -20,7 +20,7 @@ from new.tests.integration.orchestrator import fake_gh, fake_linear
 from new.tests.unit.orchestrator import board_ids, run_fixtures
 from new.tests.unit.orchestrator.run_fixtures import ID, SID
 
-RUN, PROMOTE, ROUTER = (("-m", f"agent_pm_orchestrator.{n}") for n in ("run", "promote", "router"))
+RUN, PROMOTE, ROUTER = (("-m", f"agent_pm_linear.{n}") for n in ("run", "promote", "router"))
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT_RESEARCH}"\n'
 _CFG = tomllib.loads(run_fixtures.local("/") + TASK_LABELS)
@@ -42,7 +42,7 @@ MANAGER = "manager"
 TIMEOUT = 60
 TAIL = 20
 GUARD = (
-    "import json, shutil, sys\nfrom agent_pm_orchestrator import config\n"
+    "import json, shutil, sys\nfrom agent_pm_linear import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
 
@@ -85,7 +85,7 @@ class Flow(Case):
         state = os.path.join(self.root, "state")
         self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         for name, text in (
-            ("orchestrator-new.local.toml", run_fixtures.local(state) + TASK_LABELS),
+            ("linear-new.local.toml", run_fixtures.local(state) + TASK_LABELS),
             ("core-new.local.toml", run_fixtures.CORE_LOCAL),
         ):
             with open(os.path.join(self.agent_pm, name), "w") as f:
