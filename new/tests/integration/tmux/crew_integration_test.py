@@ -372,11 +372,27 @@ class ClaudeLifecycleTest(Live):
         self.shown("w1")
         (call,) = self.calls("w1")
         argv = call["argv"]
+        settings_at = argv.index("--settings") + 1
         self.assertEqual(
-            argv[:5] + argv[6:], ["--session-id", sid, "--name", "w1", "--settings", "--", "hi"]
+            argv[:settings_at] + argv[settings_at + 1 :],
+            [
+                "--session-id",
+                sid,
+                "--name",
+                "w1",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "user,project,local",
+                "--settings",
+                "--",
+                "hi",
+            ],
         )
-        self.assertEqual(set(json.loads(argv[5])), {"hooks"})
-        self.assertEqual(set(json.loads(argv[5])["hooks"]), CLAUDE_HOOKS)
+        settings = json.loads(argv[settings_at])
+        self.assertEqual(set(settings), {"enabledPlugins", "hooks"})
+        self.assertEqual(set(settings["hooks"]), CLAUDE_HOOKS)
+        self.assertFalse(settings["enabledPlugins"]["agent-pm@agent-pm"])
+        self.assertNotIn("--permission-mode", argv)
         self.assertEqual(call["cwd"], self.cwd)
         self.assertEqual(
             self.record(sid),

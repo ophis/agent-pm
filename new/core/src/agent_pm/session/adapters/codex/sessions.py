@@ -243,7 +243,6 @@ class SessionState:
 def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
     snapshot = validate_snapshot(state.snapshot)
     paths = [
-        state.workdir,
         snapshot["cwd"],
         snapshot["codex_home"],
         *snapshot["dirs"],
@@ -505,7 +504,6 @@ def create_session(
     root = store_root(root)
     workdir, sid = session_identity(workdir, sid)
     validate_snapshot(snapshot)
-    grants = [workdir]
     state = _state(
         {
             "version": _SESSION_VERSION,
@@ -514,9 +512,7 @@ def create_session(
             "snapshot": snapshot,
             "native_id": None,
             "writable_roots": list(
-                dict.fromkeys(
-                    [*grants, *(absolute_path(path, "writable root") for path in writable_roots)]
-                )
+                dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)
             ),
         },
         workdir,
@@ -544,7 +540,7 @@ def load_session(workdir: str, sid: str, *, root: str | None = None) -> SessionS
         return None
     state = read_state(_path(root, workdir, sid), workdir, sid, root=root)
     if state is not None:
-        check_writable_roots(root, [workdir, *state.writable_roots])
+        check_writable_roots(root, state.writable_roots)
     return state
 
 

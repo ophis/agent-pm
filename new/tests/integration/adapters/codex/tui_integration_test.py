@@ -767,9 +767,7 @@ class TuiIntegrationTest(Live):
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(first_tmp)
         registry.configure(self.config)
         fresh = api.writable_dirs("codex", self.spec)
-        self.assertEqual(
-            list(fresh[:4]), [str(p) for p in (self.work, self.cwd, self.codex_home, self.extra)]
-        )
+        self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
         self.assertFalse((self.home / ".agent-pm" / "core-new-sessions").exists())
         self.assertEqual(self.logged(), [])

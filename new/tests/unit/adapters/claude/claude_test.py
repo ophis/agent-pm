@@ -1046,6 +1046,13 @@ def tui_launch(work, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch
 
 
 class TuiArgvTest(Base):
+    def test_named_session_keeps_its_name_fresh_and_resumed(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                argv = self.tui(name="worker-name", resume=resume).argv
+                start = argv.index("--name")
+                self.assertEqual(argv[start : start + 2], ("--name", "worker-name"))
+
     def tui(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         return tui_launch(self.work, prompt, config, resume, **spec)
 
@@ -1153,7 +1160,7 @@ class TuiArgvTest(Base):
         flags = ("--verbose", "--add-dir", "/x")
         for prompt in ("do it", ""):
             with self.subTest(prompt=prompt):
-                base = self.tui(prompt, access=access).argv
+                base = self.tui(prompt, access=access, name=NAME).argv
                 cut = len(base) - 2 if prompt else len(base)
                 self.assertEqual(
                     self.tui(prompt, access=access, flags=flags, name=NAME).argv,
@@ -1176,9 +1183,19 @@ class SessionTuiTest(Base):
     def settings(self, flags) -> tuple[dict, tuple[str, ...]]:
         argv = self.session(flags=flags).argv
         self.assertEqual(
-            argv[:6], ("claude", "--session-id", SID, "--setting-sources", "user", "--settings")
+            argv[:8],
+            (
+                "claude",
+                "--session-id",
+                SID,
+                "--name",
+                NAME,
+                "--setting-sources",
+                "user",
+                "--settings",
+            ),
         )
-        return json.loads(argv[6]), argv[7:]
+        return json.loads(argv[8]), argv[9:]
 
     def test_new_and_resumed_share_config_access_flags_and_env(self):
         cwd = os.path.join(self.tmp, "cwd")
@@ -1216,6 +1233,8 @@ class SessionTuiTest(Base):
                         "haiku",
                         "--effort",
                         "lo",
+                        "--name",
+                        NAME,
                         "--permission-mode",
                         "auto",
                         "--setting-sources",
@@ -1255,6 +1274,8 @@ class SessionTuiTest(Base):
                 "claude",
                 "--session-id",
                 SID,
+                "--name",
+                NAME,
                 "--setting-sources",
                 "user",
                 "--settings",

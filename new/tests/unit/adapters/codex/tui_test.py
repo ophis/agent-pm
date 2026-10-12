@@ -284,10 +284,10 @@ class TuiTest(Base):
             self.common.config | {"env": {"CODEX_HOME": str(home), "TMPDIR": str(alias)}},
         )
         run = adapter.tui()
-        expected = [str(p) for p in (self.work, self.cwd, home, self.extra)]
+        expected = [str(p) for p in (self.cwd, home, self.extra)]
         with mock.patch("subprocess.Popen") as proc:
             roots = run.adapter.writable_dirs(self.spec, False)
-            self.assertEqual(list(roots[:4]), expected)
+            self.assertEqual(list(roots[:3]), expected)
             self.assertIn(str(temporary), roots)
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
@@ -378,7 +378,7 @@ class SuppliedFlagsTest(Base):
             (("--add-dir", str(guarded)), str(guarded / "events")),
             ((f"--add-dir={guarded / 'sub'}",), str(guarded)),
             ((), str(self.cwd / "events")),
-            ((), str(self.work)),
+            (("--add-dir", str(self.work)), str(self.work)),
             ((), str(self.extra / "events")),
         )
         for index, (flags, path) in enumerate(cases):

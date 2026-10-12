@@ -306,7 +306,7 @@ class CodexCommon:
         check_writable_roots(store_root(), implicit_writable_roots(environment))
         roots = self._new_roots(spec)
         workdir, sid = session_identity(spec.workdir, spec.sid)
-        _, cwd, home, *_ = roots
+        cwd, home, *_ = roots
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
         snapshot = validate_snapshot(
@@ -335,7 +335,6 @@ class CodexCommon:
         )
         added = [absolute_path(path, "dir") for path in added_dirs(spec.flags, cwd)]
         return [
-            workdir,
             cwd,
             home,
             *(absolute_path(path, "dir") for path in spec.access.dirs),

@@ -300,7 +300,7 @@ class RunTest(Base):
         self.assertTrue(os.path.isfile(handle.info().transcript))
 
     def test_a_sid_that_is_no_uuid_starts_nothing(self):
-        with self.assertRaisesRegex(api.ConfigError, "claude session ids are UUIDs"):
+        with self.assertRaisesRegex(api.ConfigError, "session ids are UUIDs"):
             self.start(sid="not-a-uuid")
         self.assertFalse(os.path.exists(self.log))
         self.assertEqual(self.written(), [])

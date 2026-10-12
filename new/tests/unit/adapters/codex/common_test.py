@@ -400,10 +400,10 @@ class CommonTest(Base):
 
 class WritableDirsTest(Base):
     def new_launch(self, adapter, home):
-        roots = [str(path) for path in (self.work, self.cwd, home, self.extra)]
+        roots = [str(path) for path in (self.cwd, home, self.extra)]
         dirs = adapter.writable_dirs(self.spec, False)
         self.assertFalse((self.home / ".agent-pm").exists())
-        self.assertEqual(list(dirs[:4]), roots)
+        self.assertEqual(list(dirs[:3]), roots)
         self.assertEqual(len(set(dirs)), len(dirs))
         launch = adapter.headless().launch("hi", self.spec, False)
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
@@ -595,12 +595,33 @@ class InspectionTest(Base):
 
 
 class GrantTest(Base):
+    def test_record_directory_is_only_writable_when_explicitly_granted(self):
+        record = self.root / "worker-record"
+        record.mkdir()
+        for granted in (False, True):
+            spec = dataclasses.replace(
+                self.spec,
+                workdir=str(record),
+                sid=f"record-{granted}",
+                access=Access(
+                    cwd=str(self.cwd), project=True, dirs=(str(record),) if granted else ()
+                ),
+            )
+            state = self.common.prepare(spec, False)
+            with self.subTest(granted=granted):
+                self.assertEqual(str(record) in state.writable_roots, granted)
+                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, False), granted)
+                self.common.bind(str(record), spec.sid, NATIVE)
+                self.rollout()
+                resumed = self.common.prepare(spec, True)
+                self.assertEqual(str(record) in resumed.writable_roots, granted)
+                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, True), granted)
+
     def test_access_and_flag_roots_are_combined_and_resume_ignores_new_flags(self):
         added = self.root / "added"
         spec = dataclasses.replace(self.spec, flags=("--add-dir", str(added)))
         state = self.common.prepare(spec, False)
         expected = [
-            str(self.work),
             str(self.cwd),
             str(self.codex_home),
             str(self.extra),
@@ -613,7 +634,7 @@ class GrantTest(Base):
         self.assertEqual(self.common.prepare(changed, True).writable_roots, expected)
         self.assertNotIn("/changed", self.adapter.writable_dirs(changed, True))
 
-    def test_recovery_needs_roots_covering_workdir_cwd_and_home(self):
+    def test_recovery_needs_roots_covering_cwd_and_home(self):
         self.prepare()
         self.edit_record(writable_roots=[str(self.codex_home)])
         with self.assertRaisesRegex(ConfigError, "no recorded root covers"):

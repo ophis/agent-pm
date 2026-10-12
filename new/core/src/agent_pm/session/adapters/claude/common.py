@@ -260,6 +260,7 @@ class ClaudeCommon:
             *spec._select(sid, resume),
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
+            *(("--name", spec.name) if spec.name is not None else ()),
             *self.flags,
             "--setting-sources",
             "user,project,local" if access.project else "user",
