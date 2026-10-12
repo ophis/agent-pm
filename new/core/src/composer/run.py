@@ -101,6 +101,7 @@ class RunParams:
 @dataclass(frozen=True)
 class Intent:
     dirs: tuple[str, ...]
+    reads: tuple[str, ...]
     writes: tuple[str, ...]
     commands: tuple[str, ...]
     gate: str
@@ -190,21 +191,24 @@ def access(
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
-    dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [
-        tasks_path(run.role, team)
-    ]
-    methods, writes = os.path.join(team.root, "methods"), []
+    methods, paths = os.path.join(team.root, "methods"), {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, {"methods": methods}, key), repo_dir)
-            if p and p not in dirs:
-                dirs.append(p)
-            if p and key == "write" and p not in writes:
-                writes.append(p)
+            if p and p not in paths[key]:
+                paths[key].append(p)
+    dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
+    dirs += [p for p in paths["write"] if p not in dirs]
+    seen, reads = set(map(os.path.realpath, dirs)), []
+    for p in (tasks_path(run.role, team), *paths["read"]):
+        if (real := os.path.realpath(p)) not in seen:
+            seen.add(real)
+            reads.append(p)
     values = {"scripts": SRC, "workdir": workdir}
     return Intent(
         dirs=tuple(dirs),
-        writes=tuple(writes),
+        reads=tuple(reads),
+        writes=tuple(paths["write"]),
         commands=tuple(fill(c, values, "commands") for c in run.commands),
         gate=run.gate,
         cwd=cwd,
