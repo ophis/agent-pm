@@ -1,10 +1,11 @@
 """driver.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
-taken name."""
+taken name, a cwd it cannot enter."""
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -81,6 +82,15 @@ class DetachTest(unittest.TestCase):
         self.assertEqual(self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout, pid)
         self.assertEqual([self.server.option(n, "@opener") for n in ("d1", MANAGER)], ["", ""])
         self.assertEqual(api.sessions().names, ("d1", MANAGER))
+
+    def test_a_cwd_it_cannot_enter_is_refused_never_a_success(self):
+        missing = os.path.join(self.dir, "missing")
+        with self.assertRaises(api.ConfigError):
+            api.detach("d1", self.argv("d1"), missing, self.server.env())
+        with self.assertRaisesRegex(tmux_host.TuiError, "^session d2 did not start$"):
+            tmux_host.detach("d2", self.argv("d2"), cwd=missing, env=self.server.env(),
+                             sleep=lambda seconds: time.sleep(seconds / 10))
+        live_tmux.wait(self.gone, what="no session left")
 
 
 if __name__ == "__main__":

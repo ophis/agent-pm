@@ -179,10 +179,12 @@ class DeadTest(Live):
         api.close("w1")
         self.closed(handle)
 
-    def test_an_early_death_ends_with_its_exit_code_its_pane_kept(self):
+    def test_an_early_death_ends_with_its_exit_code_and_a_dead_line_its_pane_kept(self):
         self.configure(flags=["--bogus"])
         handle = self.start("w2", scenario={})
         self.assertEqual(self.stream(handle).next(poke=self.poke), Exited(2))
+        self.lines("w2 dead")
+        self.assertEqual(self.server.option("w2", "@state"), "dead")
         pane = self.server.tmux("capture-pane", "-p", "-J", "-t", "=w2:").stdout
         self.assertIn("claude: error: unrecognized arguments: --bogus", pane)
         self.assertEqual(api.sessions("w").state("w2"), "live")

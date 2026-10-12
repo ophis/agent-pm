@@ -517,6 +517,11 @@ class SessionStatusTest(Base):
 HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
 HOOKS = {"Stop": TURN_END, "PermissionRequest": BLOCKED, "Notification": BLOCKED, "PostToolUse": ACTIVITY,
          "UserPromptSubmit": ACTIVITY}
+MATCHER = "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|quota_auto_resume_stale)$"
+WAITING = ("permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
+           "quota_auto_resume_stale")
+NOT_WAITING = ("idle_prompt", "auth_success", "elicitation_complete", "elicitation_response", "agent_completed",
+               "quota_auto_resume_fired", "quota_auto_resume_disabled", "", "permission_prompt_x", "xidle_prompt")
 
 
 def entry(label) -> dict:
@@ -525,7 +530,7 @@ def entry(label) -> dict:
 
 TUI_SETTINGS = json.dumps({"enabledPlugins": {"agent-pm@agent-pm": False}, "hooks": {
     "Stop": [entry("Stop")], "PermissionRequest": [entry("PermissionRequest")],
-    "Notification": [{"matcher": "^(?!idle_prompt$)", **entry("Notification")}],
+    "Notification": [{"matcher": MATCHER, **entry("Notification")}],
     "PostToolUse": [entry("PostToolUse")], "UserPromptSubmit": [entry("UserPromptSubmit")]}})
 
 
@@ -560,12 +565,11 @@ class TuiArgvTest(Base):
             with self.subTest(label=label):
                 self.assertEqual(shlex.split(entries[0]["hooks"][0]["command"]), [*HOOK, label])
 
-    def test_the_notification_matcher_skips_only_idle_prompt(self):
-        self.assertEqual(ClaudeTui.MATCHER, "^(?!idle_prompt$)")
-        for kind, hit in (("idle_prompt", False), ("permission_prompt", True), ("auth_success", True),
-                          ("idle_prompt_x", True), ("", True)):
+    def test_the_notification_matcher_takes_only_the_types_waiting_on_the_user(self):
+        for kind, hit in ((k, k in WAITING) for k in (*WAITING, *NOT_WAITING)):
             with self.subTest(kind=kind):
                 self.assertEqual(re.search(ClaudeTui.MATCHER, kind) is not None, hit)
+        self.assertEqual(ClaudeTui.MATCHER, MATCHER)
 
     def test_a_project_run_and_the_rest_as_headless(self):
         cwd = os.path.join(self.tmp, "cwd")

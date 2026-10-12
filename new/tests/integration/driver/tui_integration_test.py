@@ -1,13 +1,14 @@
 """driver.api's tui mode end to end on a private tmux server (new/tests/live_tmux.py), os.environ that server's env:
 the fake adapter's Tui (new/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
 send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
-while tmux's state is unknown, and an old Handle once its name is another session's."""
+while tmux's state is unknown, an old Handle once its name is another session's, and two starts of one name at once."""
 import json
 import os
 import queue
 import signal
 import subprocess
 import sys
+import itertools
 import tempfile
 import threading
 import time
@@ -17,7 +18,7 @@ from unittest import mock
 
 from new.tests import SRC, fake_adapter, hermetic, live_tmux
 from adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
-from driver import api, records, registry
+from driver import api, records, registry, tmux_host
 from driver.modes import tui
 
 MANAGER = "mgr"
@@ -232,6 +233,39 @@ class SameNameTest(Live):
         old, events = self.old("w4")
         old.stop()
         self.renewed("w4", old, events)
+
+    def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
+        with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
+            json.dump([{"read": True}], f)
+        real, order, second, first_done = tmux_host.start, itertools.count(), threading.Event(), threading.Event()
+        results, threads = [], []
+
+        def run():
+            try:
+                results.append(api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name="w6"))
+            except Exception as e:
+                results.append(e)
+
+        def start(*args, **kwargs):
+            if next(order):
+                second.set()
+                first_done.wait(WAIT)
+                return real(*args, **kwargs)
+            threads.append(threading.Thread(target=run))
+            threads[0].start()
+            second.wait(1)   # unlocked, the second start prepares meanwhile
+            try:
+                return real(*args, **kwargs)
+            finally:
+                first_done.set()
+        with mock.patch.object(tmux_host, "start", start):
+            run()
+            threads[0].join(WAIT)
+        handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
+        self.addCleanup(handle.stop)
+        self.assertEqual(tui.read_state("w6")["sid"], handle.sid)
+        self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
+        self.assertEqual((handle.state(), os.listdir(tui.session_dir("w6"))), ("live", ["session.json"]))
 
     def test_a_restart_after_a_close_from_another_process(self):
         old, events = self.old("w5")

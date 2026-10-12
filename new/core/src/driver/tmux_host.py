@@ -109,10 +109,12 @@ end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
 # Runs as `python -I -c EXEC <file>`, so no '#' or trailing ';'. Resets SIGPIPE and SIGXFSZ as Popen does; `block`
-# stays blocked across execve; it waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
+# stays blocked across execve; a cwd it cannot enter leaves the handover untaken; it waits up to RESPAWN_WAIT s for
+# `after` to exit or turn zombie.
 EXEC = f"""import json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
+os.chdir(h['cwd'])
 os.unlink(sys.argv[1])
 for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
     try: os.kill(h['after'], 0)
@@ -122,7 +124,6 @@ for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
     except OSError: z = False
     if z: break
     time.sleep({POLL})
-os.chdir(h['cwd'])
 h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
 for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
 os.execve(h['argv'][0], h['argv'], h['env'])"""
@@ -161,8 +162,9 @@ class Slot(NamedTuple):
 def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], events: str | None = None,
           status_line: bool = False, tags: dict[str, str] | None = None, proc=subprocess.run, sleep=time.sleep) -> None:
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its terminal keys the
-    pane's, PWD cwd), tags set in the same tmux call, then decorates it; opens no pane. A running session is refused, a
-    dead one replaced; argv reaches the pane through a 0600 handover file. Raising, it leaves no session of its own."""
+    pane's, PWD cwd), tags and decorate's options set in the same tmux call (an instant death still gets its dead
+    line); opens no pane. A running session is refused, a dead one replaced; argv reaches the pane through a 0600
+    handover file. Raising, it leaves no session of its own."""
     _name(session)
     options = _tags(session, tags or {})
     argv = _command(argv, env)
@@ -180,17 +182,18 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
             kill(session, proc=proc)
         _handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
+        decorations = [arg for args in _decorations(session, events, status_line) for arg in (";", *args)]
         # new-session may have run even when the tmux call fails
         may_run = True
         res = _tmux(["new-session", "-d", "-s", session, "-x", str(cols), "-y", str(rows), *wrapper,
-                     ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on", *options], proc)
+                     ";", "set-option", "-p", "-t", f"={session}:", "remain-on-exit", "on", *options, *decorations],
+                    proc)
         if res.returncode:
             if _err(res).startswith("duplicate session:"):   # another start took the name: not ours to kill
                 may_run = False
             raise TuiError(f"tmux: {_err(res)}")
         if not _taken(path, sleep):
             raise TuiError("the session did not start")
-        decorate(session, events, status_line=status_line, proc=proc)
         may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
@@ -360,7 +363,7 @@ def events_file(path: str) -> str:
     if "#" in path or path.endswith(";"):
         raise TuiError(f"events file {path}: tmux would misread it")
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
             st = os.fstat(fd)
         finally:
@@ -375,14 +378,18 @@ def events_file(path: str) -> str:
 def decorate(session: str, events: str | None = None, *, status_line: bool = False, proc=subprocess.run) -> None:
     """Sets @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>` border and the
     status line."""
-    target = f"={_name(session)}:"
-    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
-    for args in [*([["set-option", "-t", target, "@events", events]] if events is not None else []),
-                 ["set-hook", "-p", "-t", target, "pane-died", died],
-                 ["set-option", "-w", "-t", target, "pane-border-status", "top"],
-                 ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
-                 ["set-option", "-t", target, "status", "on" if status_line else "off"]]:
+    for args in _decorations(_name(session), events, status_line):
         _tmux_ok(args, proc)
+
+
+def _decorations(session: str, events: str | None, status_line: bool) -> list[list[str]]:
+    target = f"={session}:"
+    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
+    return [*([["set-option", "-t", target, "@events", events]] if events is not None else []),
+            ["set-hook", "-p", "-t", target, "pane-died", died],
+            ["set-option", "-w", "-t", target, "pane-border-status", "top"],
+            ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
+            ["set-option", "-t", target, "status", "on" if status_line else "off"]]
 
 
 def status(session: str, *, proc=subprocess.run):

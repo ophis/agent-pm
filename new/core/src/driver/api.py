@@ -3,6 +3,7 @@ starts it in its Mode and returns its Handle. Handle.events() streams its events
 Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and `stderr`. usage(),
 session_info() and session() give a runtime's Usage, a session's SessionStatus and its record. attach(), sessions(),
 show() and close() reach a tui session by name; detach() runs a command in a tmux session of its own."""
+import contextlib
 import logging
 import os
 import signal
@@ -202,15 +203,16 @@ def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None =
         raise ConfigError(f"runtime {runtime!r} gave no command")
     cwd = launch.cwd or spec.access.cwd or spec.workdir
     info = SessionInfo(sid, "", cwd, spec.access.project, launch.transcript, launch.resume)
-    if mode == "tui":
-        host = tui.TuiMode.prepare(name, run, info, events, runtime=runtime, workdir=spec.workdir)
-    os.makedirs(spec.workdir, exist_ok=True)
-    records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
-                 transcript=launch.transcript, resume=launch.resume)
-    if mode == "headless":
-        host = _begin_headless(run, launch, cwd)
-    else:
-        host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=settings.status_line)
+    with tui.lock(name) if mode == "tui" else contextlib.nullcontext():
+        if mode == "tui":
+            host = tui.TuiMode.prepare(name, run, info, events, runtime=runtime, workdir=spec.workdir)
+        os.makedirs(spec.workdir, exist_ok=True)
+        records.note(records.path(spec.workdir), "session", sid=sid, cwd=cwd, project=spec.access.project,
+                     transcript=launch.transcript, resume=launch.resume)
+        if mode == "headless":
+            host = _begin_headless(run, launch, cwd)
+        else:
+            host.begin(launch.argv, cwd=cwd, env=_child_env(launch, cwd), status_line=settings.status_line)
     return Handle(sid, runtime, mode, host=host, workdir=spec.workdir, idle_timeout=idle_timeout, info=info, name=name)
 
 
@@ -330,6 +332,8 @@ def detach(name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, 
         raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
     if not printable_abs(cwd):
         raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+    if not os.path.isdir(cwd):
+        raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
     _placement(None, None, opener)
     try:
         tmux_host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)

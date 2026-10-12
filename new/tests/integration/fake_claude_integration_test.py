@@ -301,7 +301,7 @@ class Hooks(Case):
                           *({"kind": "hook", "event": "PermissionRequest", "tool_name": n} for n in ("Read", "Bash"))])
         res = self.run_fake("hi", *SESSION, "--settings", json.dumps({"hooks": hooks}))
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(live_tmux.events(self.hooklog), ["rea", "edit", "note", "note", "note", "ask"])
+        self.assertEqual(live_tmux.events(self.hooklog), ["rea", "edit", "note", "ask"])
 
     def test_failing_hooks_do_not_stop_the_fake(self):
         marker = shlex.quote(self.hooklog)

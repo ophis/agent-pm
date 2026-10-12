@@ -1,5 +1,5 @@
 """Claude Code's tui Mode, interactive `claude`: ClaudeTui. launch: ClaudeCommon's, with a command hook per label in
---settings (Notification's on all but idle_prompt) and the prompt after "--" unless empty. reply:
+--settings (Notification's on the types waiting on the user) and the prompt after "--" unless empty. reply:
 last_assistant_message, else the last assistant message's text in transcript_path's last 4 MiB. limit: Claude's
 usage-limit message, reset at the `resets <when>` after it (WHEN), the next such time when undated, local time
 without a known zone."""
@@ -26,7 +26,8 @@ WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 class ClaudeTui(Tui):
     hooks = {"Stop": TURN_END, "PermissionRequest": BLOCKED, "Notification": BLOCKED, "PostToolUse": ACTIVITY,
              "UserPromptSubmit": ACTIVITY}
-    MATCHER = "^(?!idle_prompt$)"
+    MATCHER = ("^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input"
+               "|quota_auto_resume_stale)$")
     dialogs = ("Quick safety check",)
 
     def launch(self, prompt, spec, resume, hook):

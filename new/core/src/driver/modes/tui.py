@@ -1,6 +1,7 @@
 """The Driver's tui Mode: a Tui's command in a tmux session; events from the hook records tui_hook.py appends to its
 session dir, and from its pane."""
 import contextlib
+import fcntl
 import json
 import os
 import shutil
@@ -50,6 +51,21 @@ def close(name: str) -> None:
         _remove(session_dir(name))
     except OSError as e:
         raise DriverError(f"cannot close tui session {name}: {e.strerror or e}") from None
+
+
+@contextlib.contextmanager
+def lock(name: str) -> Iterator[None]:
+    _tui_dir()
+    path = os.path.join(os.path.expanduser(TUI_DIR), f"{name}.lock")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as e:
+        raise DriverError(f"{path}: {e.strerror or e}") from None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def _remove(path: str, made: os.stat_result | None = None) -> None:

@@ -2,7 +2,7 @@
 driver/tmux_host.py lays them out: the grid (columns, name order, sub-sessions, an unshown session reopened), its
 settling and re-tiling modes, and a split outside it; ported from main's crew integration tests. Sessions are
 tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
-fails the test."""
+fails the test. Also start's dead line for a command ending at once."""
 import contextlib
 import functools
 import io
@@ -407,6 +407,19 @@ class SplitsTest(Live):
         self.assertEqual(x, mx)
         self.assertGreater(y, my)
         self.assertEqual([self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")], ["", ""])
+
+
+class StartTest(Live):
+    def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
+        events = os.path.join(self.cwd, "events")
+        tmux_host.start("s1", ["/bin/sh", "-c", "exit 3"], cwd=self.cwd, env=self.server.env(), events=events)
+
+        def dead():
+            self.server.tmux("run-shell", "-b", "true")
+            self.assertEqual([line.split(" ", 1)[1] for line in live_tmux.events(events)], ["s1 dead"])
+            return True
+        live_tmux.wait(dead, what="s1's dead line")
+        self.assertEqual((tmux_host.status("s1"), self.server.option("s1", "@state")), (3, "dead"))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 """new/core/src/driver/modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
-time.sleep patched), with a temp HOME: the session dir and session.json, read_state, begin, the hook records' tail,
+time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock, read_state, begin, the hook
+records' tail,
 the pane scan, returncode, state, send, screen, close and stop, the binding to its pane, and attach."""
 import errno
+import fcntl
 import inspect
 import json
 import os
@@ -271,6 +273,56 @@ class PrepareTest(Base):
                 self.prepare()
         self.assertNoSessionDir()
         self.assertTrue(os.path.isdir(self.root))
+
+
+class LockTest(Base):
+    def locked(self, name: str = NAME) -> bool:
+        fd = os.open(os.path.join(self.root, f"{name}.lock"), os.O_RDONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)
+        return False
+
+    def test_a_0600_lock_file_per_name_in_tui_dir_held_till_the_block_ends(self):
+        os.rmdir(self.agent_pm)
+        with tui.lock(NAME):
+            self.assertTrue(self.locked())
+            with tui.lock("w2"):
+                self.assertTrue(self.locked("w2"))
+            self.assertFalse(self.locked("w2"))
+        self.assertFalse(self.locked())
+        self.assertEqual(stat.S_IMODE(os.lstat(os.path.join(self.root, "w1.lock")).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
+        self.assertEqual(self.host.mock_calls, [])
+
+    def test_a_second_holder_waits_for_the_first(self):
+        entered = threading.Event()
+
+        def second():
+            with tui.lock(NAME):
+                entered.set()
+        with tui.lock(NAME):
+            thread = threading.Thread(target=second)
+            thread.start()
+            self.assertFalse(entered.wait(0.2))
+        thread.join(5)
+        self.assertTrue(entered.is_set())
+
+    def test_a_lock_path_that_is_no_regular_file_is_refused_at_once(self):
+        os.mkdir(self.root, 0o700)
+        target = os.path.join(self.tmp, "target")
+        open(target, "w").close()
+        path = os.path.join(self.root, "w1.lock")
+        for case, make in (("symlink", lambda: os.symlink(target, path)), ("fifo", lambda: os.mkfifo(path)),
+                           ("directory", lambda: os.mkdir(path))):
+            with self.subTest(case):
+                make()
+                with self.assertRaisesRegex(DriverError, rf"\A{re.escape(path)}: "), tui.lock(NAME):
+                    pass
+                (os.rmdir if case == "directory" else os.unlink)(path)
 
 
 class BeginTest(Base):

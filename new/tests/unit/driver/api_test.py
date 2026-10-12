@@ -5,6 +5,7 @@ usage()'s probe is headless.probe patched, but for a spawn error. The Mode proto
 Mode on a fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout,
 attach_command, detach) over tmux_host autospecced (no tmux runs)."""
 import dataclasses
+import fcntl
 import inspect
 import itertools
 import json
@@ -616,6 +617,27 @@ class TuiStartTest(TuiBase):
                          {"runtime": "fake", "sid": SID, "events": self.events,
                           "words": {"stop": "done", "ask": "blocked", "tool": "working"}})
 
+    def test_the_names_lock_is_held_from_prepare_to_begin(self):
+        held = []
+
+        def locked(*args, **kwargs):
+            fd = os.open(os.path.join(self.root, "w1.lock"), os.O_RDONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held.append(False)
+            except BlockingIOError:
+                held.append(True)
+            finally:
+                os.close(fd)
+        self.host.status.side_effect = self.host.start.side_effect = locked
+        self.tui(name="w1")
+        locked()
+        self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
+        with self.assertRaises(api.DriverError):
+            self.tui(name="w1")
+        locked()
+        self.assertEqual(held, [True, True, False, True, False])
+
     def test_the_default_name_is_the_runtime_and_the_sids_first_8_chars(self):
         for kwargs in ({"sid": SID}, {"resume": SID}):
             with self.subTest(kwargs=kwargs):
@@ -883,21 +905,24 @@ class AttachCommandTest(TuiBase):
 class DetachTest(TuiBase):
     def test_hosts_argv_with_the_signals_blocked_and_the_opener(self):
         env = {"PATH": "/bin", "TMUX": "x"}
-        self.assertIsNone(api.detach("d1", ["tool", "a b"], "/work", env, opener="mgr"))
-        self.assertEqual(self.host.mock_calls, [mock.call.detach("d1", ["tool", "a b"], cwd="/work", env=env,
+        self.assertIsNone(api.detach("d1", ["tool", "a b"], self.dir, env, opener="mgr"))
+        self.assertEqual(self.host.mock_calls, [mock.call.detach("d1", ["tool", "a b"], cwd=self.dir, env=env,
                                                                  block=api.SIGNALS, opener="mgr")])
-        api.detach("d2", ("tool",), "/work", env)
+        api.detach("d2", ("tool",), self.dir, env)
         self.assertEqual(self.host.detach.call_args.kwargs["opener"], None)
 
     def test_a_bad_name_argv_cwd_or_opener_is_refused_before_tmux(self):
-        self.name_refused(lambda name: api.detach(name, ["tool"], "/work", {}))
+        self.name_refused(lambda name: api.detach(name, ["tool"], self.dir, {}))
+        missing, file = os.path.join(self.dir, "missing"), self.scenario
         for args, kwargs, message in (
-                (([], "/work"), {}, "argv must be a non-empty list of str, got []"),
-                (("tool", "/work"), {}, "argv must be a non-empty list of str, got 'tool'"),
-                (([b"tool"], "/work"), {}, "argv must be a non-empty list of str, got [b'tool']"),
+                (([], self.dir), {}, "argv must be a non-empty list of str, got []"),
+                (("tool", self.dir), {}, "argv must be a non-empty list of str, got 'tool'"),
+                (([b"tool"], self.dir), {}, "argv must be a non-empty list of str, got [b'tool']"),
                 ((["tool"], "work"), {}, "cwd must be a printable absolute path, got 'work'"),
                 ((["tool"], "/a\nb"), {}, r"cwd must be a printable absolute path, got '/a\nb'"),
-                *(((["tool"], "/work"), {"opener": o}, m) for o, m in OPENERS)):
+                *(((["tool"], cwd), {}, f"cwd must be an existing directory, got {cwd!r:.80}")
+                  for cwd in (missing, file)),
+                *(((["tool"], self.dir), {"opener": o}, m) for o, m in OPENERS)):
             with self.subTest(args=args, kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
                 api.detach("d1", *args, {}, **kwargs)
             self.assertEqual(str(caught.exception), message)
@@ -906,7 +931,7 @@ class DetachTest(TuiBase):
     def test_a_tmux_failure_is_a_driver_error(self):
         self.host.detach.side_effect = tmux_host.TuiError("session d1 exists")
         with self.assertRaises(api.DriverError) as caught:
-            api.detach("d1", ["tool"], "/work", {})
+            api.detach("d1", ["tool"], self.dir, {})
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
 

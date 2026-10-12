@@ -42,7 +42,6 @@ FAILED = ("error connecting to /tmp/tmux-501/default (Permission denied)", "boom
 SIGNALS = [int(signal.SIGHUP), int(signal.SIGTERM), int(signal.SIGINT)]
 DIED = "set-option @state dead"
 DIED_EVENTS = DIED + " ; run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
-DECORATE = ["set-hook", "set-option", "set-option", "set-option"]
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3", "ITERM_SESSION_ID": "w0t0p0:ABC"}
 OWN = ["tmux", "display-message", "-p", "-t", "%3", "#{session_name}"]
 SESSIONS = ["tmux", "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"]
@@ -165,6 +164,10 @@ def decorations(session, events=None, status="off"):
             ["tmux", "set-option", "-t", target, "status", status]]
 
 
+def chained(calls):
+    return [arg for call in calls for arg in (";", *call[1:])]
+
+
 def panes(*rows):
     """A list-panes result printing rows of (pane_dead, pane_tty, pane_id) in the call's -F format."""
     def result(argv):
@@ -242,18 +245,19 @@ class Start(unittest.TestCase):
         with redirect_stderr(self.stderr):
             tmux_host.start(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep, **kw)
 
-    def test_new_session_runs_the_wrapper_keeps_a_dead_pane_then_decorates_opening_no_pane(self):
+    def test_new_session_runs_the_wrapper_keeps_a_dead_pane_decorated_in_the_same_call_opening_no_pane(self):
         # in tmux or iTerm2 all the same: start never shows the session
         for env in ({}, INSIDE, ITERM):
             with self.subTest(env=env), environ(**env), which():
                 fake = Tmux()
                 self.start(fake)
-                self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+                self.assertEqual(fake.commands(), ["display-message", "new-session"])
                 self.assertEqual(fake.calls[1], ["tmux", "new-session", "-d", "-s", "s", "-x", "120", "-y", "40",
                                                  sys.executable, "-I", "-c", tmux_host.EXEC, fake.path,
-                                                 ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on"])
+                                                 ";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on",
+                                                 *chained(decorations("s"))])
                 self.assertNotIn("-c", fake.calls[1][:fake.calls[1].index(sys.executable)])
-                self.assertEqual([a for a in fake.calls[1] if a.endswith(";")], [";"])
+                self.assertEqual({a for a in fake.calls[1] if a.endswith(";")}, {";"})
                 self.assertEqual(fake.kwargs, [TMUX_KW] * len(fake.calls))
                 self.sleep.assert_not_called()
                 self.assertEqual(self.stderr.getvalue(), "")
@@ -341,7 +345,7 @@ class Start(unittest.TestCase):
             with self.subTest(pane=pane):
                 fake = Tmux(pane=pane)
                 self.start(fake)
-                self.assertEqual(fake.commands(), ["display-message", "kill-session", "new-session", *DECORATE])
+                self.assertEqual(fake.commands(), ["display-message", "kill-session", "new-session"])
                 self.assertEqual(fake.calls[1], ["tmux", "kill-session", "-t", "=s"])
 
     def test_an_unknown_session_is_never_killed(self):
@@ -350,7 +354,7 @@ class Start(unittest.TestCase):
             with self.subTest(err=err):
                 fake = Tmux(results={"display-message": (1, "", err)})
                 self.start(fake)
-                self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+                self.assertEqual(fake.commands(), ["display-message", "new-session"])
         fake = Tmux(results={"display-message": (1, "", "boom\n"), "new-session": (1, "", "duplicate session: s\n")})
         with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: duplicate session: s$"):
             self.start(fake)
@@ -362,8 +366,8 @@ class Start(unittest.TestCase):
         self.assertEqual(fake.calls[1][fake.calls[1].index(fake.path) + 1:],
                          [";", "set-option", "-p", "-t", "=s:", "remain-on-exit", "on",
                           ";", "set-option", "-t", "=s:", "@sid", "0123abcd-x",
-                          ";", "set-option", "-t", "=s:", "@k", "a b#{x}"])
-        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+                          ";", "set-option", "-t", "=s:", "@k", "a b#{x}", *chained(decorations("s"))])
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
 
     def test_bad_tags_refused_before_tmux(self):
         for tags in ({"sid": "x"}, {"@": "x"}, {"@a b": "x"}, {"@a;": "x"}, {"@k": "x;"}, {"@k": 1}, {"@k": None}):
@@ -393,16 +397,13 @@ class Start(unittest.TestCase):
     def test_an_interrupt_after_new_session_kills_the_session(self):
         def interrupt(*args, **kw):
             raise KeyboardInterrupt
-        for where in ("handover", "decorate"):
-            with self.subTest(where=where):
-                fake = Tmux(hand_over=where == "decorate")
-                self.sleep = interrupt
-                with unittest.mock.patch.object(tmux_host, "decorate", side_effect=interrupt), \
-                        self.assertRaises(KeyboardInterrupt):
-                    self.start(fake)
-                self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
-                self.assertIs(fake.dir_at_kill, False)
-                self.assertEqual(os.listdir(self.temp), [])
+        fake = Tmux(hand_over=False)
+        self.sleep = interrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.start(fake)
+        self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
+        self.assertIs(fake.dir_at_kill, False)
+        self.assertEqual(os.listdir(self.temp), [])
 
     def test_tmux_missing(self):
         # status: unknown; new-session: the error
@@ -437,7 +438,7 @@ class Start(unittest.TestCase):
         self.sleep = sleep
         self.start(fake)
         self.assertEqual(len(slept), 3)
-        self.assertEqual(fake.commands(), ["display-message", "new-session", *DECORATE])
+        self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_unsafe_tmux_argument(self):
@@ -487,17 +488,10 @@ class Start(unittest.TestCase):
                 self.start(fake, env={"PATH": self.bin}, events=given, status_line=status_line)
                 self.assertEqual(fake.handover["argv"], [self.tool, "-x", "a b"])
                 self.assertEqual(fake.handover["env"], {"PATH": self.bin, "PWD": self.cwd})
-                self.assertEqual(fake.calls[2:], decorations("s", path, status))
+                self.assertEqual(fake.commands(), ["display-message", "new-session"])
+                self.assertEqual(fake.calls[1][fake.calls[1].index(fake.path) + 8:],
+                                 chained(decorations("s", path, status)))
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
-
-    def test_a_failed_decoration_kills_the_session(self):
-        fake = Tmux(fail={"set-hook"})
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
-            self.start(fake)
-        self.assertEqual(fake.commands(), ["display-message", "new-session", "set-hook", "kill-session"])
-        self.assertEqual(fake.calls[-1], ["tmux", "kill-session", "-t", "=s"])
-        self.assertEqual(os.listdir(self.temp), [])
-        self.assertEqual(self.stderr.getvalue(), "")
 
 
 class Detach(unittest.TestCase):
@@ -816,6 +810,26 @@ class EventsFile(unittest.TestCase):
                       unittest.mock.patch("os.fstat", return_value=fifo)):
             with self.subTest(patch=patch), patch, self.assertRaisesRegex(tmux_host.TuiError, "owned by you"):
                 tmux_host.events_file(target)
+
+    def test_a_fifo_without_a_reader_is_refused_at_once(self):
+        fifo = os.path.join(self.root, "fifo")
+        os.mkfifo(fifo, 0o600)
+        caught = []
+
+        def run():
+            try:
+                tmux_host.events_file(fifo)
+            except tmux_host.TuiError as e:
+                caught.append(e)
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(5)
+        if thread.is_alive():
+            reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)   # lets the blocked open return
+            thread.join()
+            os.close(reader)
+            self.fail("events_file blocked on a FIFO without a reader")
+        self.assertRegex(str(caught[0]), f"^events file {re.escape(fifo)}: ")
 
     def test_refuses_a_path_tmux_would_misread(self):
         for name in ("a#b", "e;"):
@@ -2854,6 +2868,12 @@ class Exec(unittest.TestCase):
         self.assertNotIn("PATH", got_env)
         self.assertEqual(got_argv, ["-c", "x", "y z"])
         self.assertFalse(os.path.exists(self.path))
+
+    def test_a_cwd_it_cannot_enter_fails_it_leaving_the_handover_untaken(self):
+        res = self.run_exec([sys.executable, "-c", "print('ran')"], {}, os.path.join(self.root, "missing"), {})
+        self.assertEqual((res.returncode, res.stdout), (1, ""))
+        self.assertIn("FileNotFoundError", res.stderr)
+        self.assertTrue(os.path.exists(self.path))
 
     def test_block_signals_stay_blocked_in_argv(self):
         code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
