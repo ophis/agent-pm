@@ -24,10 +24,11 @@ class ClaudeHeadless(Headless):
         return common.launch(
             spec,
             resume,
-            common.PLUGINS,
+            None,
             ("-p",),
             ("--output-format", "stream-json", "--verbose"),
-            ("--", prompt),
+            (*spec.flags, "--", prompt),
+            common.ENV,
         )
 
     def parse(self, record):

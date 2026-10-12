@@ -41,7 +41,6 @@ MANAGER, SID, IDLE, WAIT, Stream = (
 )
 TABLE = {
     "implementation": "adapters.claude:ClaudeAdapter",
-    "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
 }
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"

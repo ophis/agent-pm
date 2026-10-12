@@ -40,7 +40,6 @@ SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 RESETS = 1760000000
 TABLE = {
     "implementation": "adapters.claude:ClaudeAdapter",
-    "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
     "tiers": {"4": "haiku"},
     "efforts": {"low": "low"},
 }
@@ -235,7 +234,8 @@ class RunTest(Base):
     def test_a_run_in_its_own_cwd_is_recorded_there_and_resumes_there(self):
         proj = os.path.join(self.dir, "proj")
         os.mkdir(proj)
-        first = self.start(spec=api.Spec(workdir=self.workdir, access=api.Access(cwd=proj)))
+        access = api.Access(cwd=proj, dirs=(self.workdir,))
+        first = self.start(spec=api.Spec(workdir=self.workdir, access=access))
         sid, transcript = first.sid, first.info().transcript
         self.assertEqual(self.drain(first)[-1], Exited(0))
         self.assertTrue(os.path.isfile(transcript))
@@ -300,7 +300,7 @@ class RunTest(Base):
         self.assertTrue(os.path.isfile(handle.info().transcript))
 
     def test_a_sid_that_is_no_uuid_starts_nothing(self):
-        with self.assertRaisesRegex(api.ConfigError, "claude session ids are UUIDs"):
+        with self.assertRaisesRegex(api.ConfigError, "session ids are UUIDs"):
             self.start(sid="not-a-uuid")
         self.assertFalse(os.path.exists(self.log))
         self.assertEqual(self.written(), [])

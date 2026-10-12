@@ -60,7 +60,7 @@ PURE = {
 BARE = (*GROUPS, *(layer.rpartition(".")[2] for layer in LAYERS), "utils", "agent_tools", "repo")
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
-TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
 )

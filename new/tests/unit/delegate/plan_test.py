@@ -510,5 +510,62 @@ class CustomTeam(Base):
                     )
 
 
+class Policy(Base):
+    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's replacing the core's."""
+
+    SHIPPED = {
+        "claude": (
+            (
+                "--permission-mode",
+                "auto",
+                "--strict-mcp-config",
+                "--settings",
+                '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
+            ),
+            {},
+        ),
+        "codex": (
+            (
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ),
+            {},
+        ),
+        "fake": ((), {}),
+    }
+
+    def test_the_default_config_gives_each_runtime_its_shipped_policy(self):
+        for runtime, want in self.SHIPPED.items():
+            with self.subTest(runtime=runtime):
+                got, _ = self.planned(runtime=runtime)
+                self.assertEqual((got.spec.flags, dict(got.spec.env)), want)
+
+    def test_a_local_policy_replaces_the_shipped_one(self):
+        self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
+        got, _ = self.planned(runtime="codex")
+        self.assertEqual(
+            (got.spec.flags, dict(got.spec.env)), (("-s", "workspace-write"), {"K": "v"})
+        )
+
+    def test_an_invalid_policy_is_a_config_error_before_any_launch(self):
+        for text in (
+            'policy = "x"\n',
+            '[policy]\nclaude = "x"\n',
+            '[policy.claude]\nflags = "--x"\n',
+            "[policy.claude]\nflags = [1]\n",
+            '[policy.claude]\nflags = ["a\\u0000"]\n',
+            "[policy.claude]\nenv = { K = 1 }\n",
+            '[policy.claude]\nunset = ["K"]\n',
+        ):
+            with self.subTest(text=text), mock.patch.object(api, "start") as start:
+                self.local(text)
+                self.assertIn("policy", self.refused(runtime="claude"))
+                start.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

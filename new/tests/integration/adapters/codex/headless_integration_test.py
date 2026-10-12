@@ -28,6 +28,7 @@ from agent_pm.session.driver import api, records, registry
 
 from new.tests.case import NEW, Case
 from new.tests.integration.adapters.codex import fake_codex
+from new.tests.selection import configured
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -56,12 +57,24 @@ class HeadlessIntegrationTest(Case):
         executable.chmod(0o755)
         self.log, self.scenario = self.root / "exec.jsonl", self.root / "scenario.json"
         self.scene()
-        self.adapter = CodexAdapter(
-            {"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}, "shell_network": False}
+        self.adapter = configured(
+            CodexAdapter,
+            {
+                "tiers": {"1": "gpt-test"},
+                "efforts": {"low": "low"},
+            },
         )
         self.common = self.adapter.common
         self.sid = "caller-id"
         self.spec = Spec(
+            flags=(
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ),
             workdir=str(self.work),
             tier=1,
             effort="low",
@@ -154,8 +167,7 @@ class HeadlessIntegrationTest(Case):
                 ]
             )
         args.extend(["-m", "gpt-test", "-c", "model_reasoning_effort=low"])
-        if sandbox == "workspace-write":
-            args.extend(["--add-dir", str(self.extra)])
+        args.extend(["--add-dir", str(self.extra)])
         return [
             *args,
             *(["resume", NATIVE] if resume else []),
@@ -222,10 +234,24 @@ class HeadlessIntegrationTest(Case):
         )
 
     def test_workspace_write_exact_flags_and_saved_policy_through_driver(self):
-        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        self.spec = dataclasses.replace(
+            self.spec,
+            flags=(
+                "-s",
+                "workspace-write",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+            ),
+        )
         registry.configure(self.config)
         self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))
-        self.config["adapters"]["codex"]["sandbox"] = "danger-full-access"
+        self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
         registry.configure(self.config)
         self.drain(
             api.start("codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid)
@@ -235,15 +261,16 @@ class HeadlessIntegrationTest(Case):
         self.assertEqual(
             second["argv"], self.expected_args("again", resume=True, sandbox="workspace-write")
         )
-        self.assertEqual(second["snapshot"]["snapshot"]["sandbox"], "workspace-write")
+        self.assertEqual(second["snapshot"]["snapshot"]["flags"][1], "workspace-write")
 
     def direct_launch(self, prompt, resume=False):
-        adapter = CodexAdapter(
+        adapter = configured(
+            CodexAdapter,
             {
                 key: value
                 for key, value in self.config["adapters"]["codex"].items()
                 if key != "implementation"
-            }
+            },
         )
         run = adapter.headless()
         launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume)
@@ -325,23 +352,16 @@ class HeadlessIntegrationTest(Case):
                 self.assertFalse((self.home / ".agent-pm").exists())
         self.assertEqual(self.logged(), [])
 
-    def test_configured_tmpdir_store_overlap_refused_before_resumed_spawn(self):
+    def test_resume_ignores_changed_config_environment(self):
         self.drain(api.start("codex", "headless", "first", self.spec, sid=self.sid))
-        saved = self.record().read_bytes()
-        for root in (self.home, self.record().parent):
-            with self.subTest(root=root):
-                self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)
-                registry.configure(self.config)
-                with mock.patch(
-                    "subprocess.Popen", side_effect=AssertionError("spawned before TMPDIR guard")
-                ) as spawn:
-                    with self.assertRaisesRegex(ConfigError, "writable"):
-                        api.start(
-                            "codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid
-                        )
-                    spawn.assert_not_called()
-                self.assertEqual(self.record().read_bytes(), saved)
-        self.assertEqual(len(self.logged()), 1)
+        saved = self.common.load(str(self.work), self.sid).snapshot
+        self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(self.home)
+        registry.configure(self.config)
+        changed = dataclasses.replace(self.spec, env={"NEW_POLICY_KEY": "fresh"})
+        self.drain(api.start("codex", "headless", "again", changed, resume=self.sid))
+        self.assertEqual(self.common.load(str(self.work), self.sid).snapshot, saved)
+        self.assertEqual(len(self.logged()), 2)
+        self.assertIsNone(self.logged()[-1]["env"]["NEW_POLICY_KEY"])
 
     def test_resume_same_native_and_saved_settings(self):
         self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))
@@ -351,8 +371,6 @@ class HeadlessIntegrationTest(Case):
         cfg.update(
             tiers={"1": "changed"},
             efforts={"low": "high"},
-            shell_network=True,
-            sandbox="workspace-write",
         )
         cfg["env"]["CODEX_HOME"] = str(alternate)
         registry.configure(self.config)
@@ -382,7 +400,21 @@ class HeadlessIntegrationTest(Case):
         )
 
     def test_add_dir_order_survives_resume_and_the_tasks_dir_is_read_unadded(self):
-        self.config["adapters"]["codex"]["sandbox"] = "workspace-write"
+        self.spec = dataclasses.replace(
+            self.spec,
+            flags=(
+                "-s",
+                "workspace-write",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+            ),
+        )
         registry.configure(self.config)
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):

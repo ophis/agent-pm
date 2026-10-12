@@ -6,7 +6,8 @@
 # Each layer reads only its own keys: the Composer (src/agent_pm/role/composer/) the run keys, [output],
 # [roles.<role>], trusted_dirs and team_dirs; src/agent_pm/role/agent_tools/repo.py users and trusted_dirs;
 # src/agent_pm/manager/roster.py runtime (the default of src/agent_pm/manager/crew.py's workers); the Driver
-# (src/agent_pm/session/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile.
+# (src/agent_pm/session/driver/registry.py) [adapters.<name>], status_line, workers_per_column and grid_retile;
+# the Delegate (src/agent_pm/role/delegate/plan.py) [policy.<runtime>].
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -84,7 +85,7 @@ type = "local"
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
 #                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
-#                 default danger-full-access can write there too (new/README.md › Codex sandbox). A dir also in write,
+#                 default danger-full-access can write there too (new/README.md › Runtime policy). A dir also in write,
 #                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
 #                 regardless
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
@@ -136,8 +137,7 @@ effort = "low"
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
-# [adapters.claude]  Claude Code (src/agent_pm/session/adapters/claude/); each key optional; a plain session
-#                    (src/agent_pm/session/adapters/base.py) gets neither flags nor allow
+# [adapters.claude]  Claude Code (src/agent_pm/session/adapters/claude/); each key optional
 #   flags            claude flags added to every session command; never --setting-sources (the Driver's)
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read rules
 #   env              variables added to every command's environment, over the adapter's defaults
@@ -146,7 +146,6 @@ effort = "low"
 #                            starting a run whose tier or effort has no entry here is a config error
 [adapters.claude]
 implementation = "adapters.claude:ClaudeAdapter"
-flags = ["--permission-mode", "auto", "--strict-mcp-config"]
 # allow = ["<rule>"]
 
 [adapters.claude.tiers]
@@ -164,10 +163,6 @@ max = "max"
 
 [adapters.codex]
 implementation = "adapters.codex:CodexAdapter"
-# danger-full-access (default) or workspace-write; both use on-request + auto_review approvals.
-# Full access disables shell_network, writable-root boundaries and team-dir protection; see new/README.md.
-sandbox = "danger-full-access"
-shell_network = false
 
 [adapters.codex.tiers]
 1 = "gpt-6-astra"
@@ -189,3 +184,17 @@ max = "max"
 #                          run hands the composed prompt back as the deliverable and starts no process; no other keys
 [adapters.print_prompt]
 implementation = "adapters.print_prompt:PrintPromptAdapter"
+
+# [policy.<runtime>]  a role run's flags and env, the Delegate's (new/README.md › Runtime policy); in claude's
+#                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load
+[policy.claude]
+flags = [
+  "--permission-mode",
+  "auto",
+  "--strict-mcp-config",
+  "--settings",
+  '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
+]
+
+[policy.codex]
+flags = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']

@@ -10,6 +10,7 @@ from agent_pm.session.adapters.base import Launch, SessionStatus, Usage, Window
 from agent_pm.session.adapters.codex import CodexAdapter
 
 from new.tests.case import Case
+from new.tests.selection import configured
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
@@ -54,9 +55,7 @@ class UsageTest(Case):
                 "subprocess.Popen", side_effect=AssertionError("usage parser started a process")
             )
         )
-        self.adapter = CodexAdapter(
-            {"shell_network": False, "env": {"PAGER": "configured", "ADDED": "value"}}
-        )
+        self.adapter = configured(CodexAdapter, {"env": {"PAGER": "configured", "ADDED": "value"}})
         self.five = {"usedPercent": 62, "windowDurationMins": 300, "resetsAt": 2000}
         self.weekly = {"usedPercent": 41, "windowDurationMins": 10080, "resetsAt": 4000}
 

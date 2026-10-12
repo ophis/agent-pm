@@ -1,5 +1,4 @@
-"""Claude Code interactive launches and hooks, transcript replies and native usage limits. spec.flags go before the
-prompt; a plain session's launch is ClaudeCommon.plain's; a session flag is refused."""
+"""Claude Code interactive launches, merged hooks, transcript replies and native usage limits."""
 
 import json
 import re
@@ -9,7 +8,6 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, LimitHit, Tui
-from agent_pm.session.adapters.claude.common import refuse
 from agent_pm.utils.files import read_regular
 
 TAIL = 4 << 20
@@ -51,7 +49,6 @@ class ClaudeTui(Tui):
     dialogs = ("Quick safety check",)
 
     def launch(self, prompt, spec, resume, hook):
-        refuse(spec.flags)
         common = self.adapter.common
         hooks = {
             label: [
@@ -63,11 +60,8 @@ class ClaudeTui(Tui):
             for label in self.hooks
         }
         tail = ("--", prompt) if prompt else ()
-        if not spec.role_policy:
-            return common.plain(spec, resume, hooks, tail)
-        return common.launch(
-            spec, resume, {**common.PLUGINS, "hooks": hooks}, tail=(*spec.flags, *tail)
-        )
+        settings, flags = common.merged(spec.flags, hooks)
+        return common.launch(spec, resume, settings, tail=(*flags, *tail))
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")

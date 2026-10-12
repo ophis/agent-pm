@@ -373,10 +373,21 @@ class ClaudeLifecycleTest(Live):
         (call,) = self.calls("w1")
         argv = call["argv"]
         self.assertEqual(
-            argv[:5] + argv[6:], ["--session-id", sid, "--name", "w1", "--settings", "--", "hi"]
+            argv[:7] + argv[8:],
+            [
+                "--session-id",
+                sid,
+                "--name",
+                "w1",
+                "--setting-sources",
+                "user,project,local",
+                "--settings",
+                "--",
+                "hi",
+            ],
         )
-        self.assertEqual(set(json.loads(argv[5])), {"hooks"})
-        self.assertEqual(set(json.loads(argv[5])["hooks"]), CLAUDE_HOOKS)
+        self.assertEqual(set(json.loads(argv[7])), {"hooks"})
+        self.assertEqual(set(json.loads(argv[7])["hooks"]), CLAUDE_HOOKS)
         self.assertEqual(call["cwd"], self.cwd)
         self.assertEqual(
             self.record(sid),
@@ -474,13 +485,15 @@ class CodexLifecycleTest(Live):
         self.shown("w1")
         (call,) = self.codex_calls("w1")
         argv = call["argv"]
-        self.assertEqual(argv[:5], ["--no-daemon", "-C", self.cwd, "-c", NOTIFY])
+        self.assertEqual(argv[:7], ["--no-daemon", "-C", self.cwd, "-c", NOTIFY, "-m", "gpt-test"])
         self.assertEqual(
-            [w.partition("=")[0] for w in argv[6:17:2]], [f"hooks.{e}" for e in CODEX_HOOKS]
+            [w.partition("=")[0] for w in argv[8:19:2]], [f"hooks.{e}" for e in CODEX_HOOKS]
         )
-        self.assertEqual(argv[17:20] + argv[21:], ["-m", "gpt-test", "-c", "--", "hi"])
+        self.assertEqual(argv[19:20] + argv[21:], ["-c", "--", "hi"])
         self.assertTrue(argv[20].startswith("hooks.state="), argv[20])
         self.assertNotIn("-s", argv)
+        policy = ("approval_policy", "approvals_reviewer", "sandbox_workspace_write")
+        self.assertFalse([w for w in argv if w.startswith(policy)], argv)
         self.assertEqual(call["env"]["CODEX_HOME"], self.codex_home)
         self.assertEqual(
             {k: self.record(sid)[k] for k in ("runtime", "flags", "env")},

@@ -297,16 +297,15 @@ class WorkerCase(CrewCase):
 
 
 class StartTest(WorkerCase):
-    def test_a_plain_tui_session_through_api_start(self):
+    def test_a_worker_uses_the_common_spec_without_policy_flags(self):
         sid = self.started(prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
         spec = api.Spec(
             workdir=os.path.join(self.agent_pm, "workers", sid),
-            access=api.Access(cwd=self.dir),
+            access=api.Access(cwd=self.dir, project=True),
             flags=("--model", "m"),
             env={},
             protect=self.protect(),
-            role_policy=False,
         )
         self.assertEqual(
             self.api.starts,

@@ -146,11 +146,10 @@ def _spec(record: dict, workdir: str) -> api.Spec:
     with _driver():
         return api.Spec(
             workdir=workdir,
-            access=api.Access(cwd=record["cwd"]),
+            access=api.Access(cwd=record["cwd"], project=True),
             flags=tuple(record["flags"]),
             env=record["env"],
             protect=tuple(os.path.realpath(os.path.expanduser(p)) for p in protect),
-            role_policy=False,
         )
 
 
