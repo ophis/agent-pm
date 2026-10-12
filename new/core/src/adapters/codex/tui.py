@@ -42,7 +42,7 @@ class CodexTuiRun(Tui):
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Driver hook command")
         dependencies = [os.path.dirname(os.path.dirname(DIRECTORY)), sys.prefix, sys.base_prefix, sys.executable,
-                        exe, sessions._store_root(), *(word for word in hook if os.path.isabs(word))]
+                        exe, sessions.store_root(), *(word for word in hook if os.path.isabs(word))]
         try:
             sessions.protect(self.state, dependencies)
         except sessions.RecoveryError as exc:

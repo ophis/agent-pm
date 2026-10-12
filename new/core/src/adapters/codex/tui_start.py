@@ -37,7 +37,7 @@ class _Exited(Exception):
 
 
 def hook_trust(exe: str, args: list[str], cwd: str, env: dict[str, str], commands: dict[str, str]) -> str:
-    root = sessions._store(create=False)
+    root = sessions.store_directory(create=False)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
     lock = os.path.join(root, hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest() + ".start.lock")
@@ -226,12 +226,12 @@ def main(argv):
     if not isinstance(commands, dict) or set(commands) != {event for event, name in HOOKS} or any(
             not isinstance(word, str) or not word for word in commands.values()):
         raise StartError("Codex tui launch: invalid hook commands")
-    state = sessions._load_session(data["workdir"], data["sid"])
+    state = sessions.load_session(data["workdir"], data["sid"])
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     directory = os.path.dirname(os.path.abspath(__file__))
     sessions.protect(state, [os.path.dirname(os.path.dirname(directory)), sys.prefix, sys.base_prefix,
-                             sys.executable, data["argv"][0], sessions._store_root(),
+                             sys.executable, data["argv"][0], sessions.store_root(),
                              *(word for word in data["hook"] if os.path.isabs(word))])
     cwd = state.snapshot["cwd"]
     env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}

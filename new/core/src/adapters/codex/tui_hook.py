@@ -34,12 +34,12 @@ def bind(label, value, workdir, sid):
             or not os.path.isabs(value["cwd"]) or "\0" in value["cwd"]):
         return False
     try:
-        state = sessions._load_session(workdir, sid)
+        state = sessions.load_session(workdir, sid)
         if state is None:
             raise sessions.RecoveryError("missing Codex recovery state")
         if os.path.realpath(value["cwd"]) != state.snapshot["cwd"]:
             return False
-        sessions._bind_session(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
+        sessions.bind_session(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
         return True
     except (sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex hook: {exc}", file=sys.stderr)

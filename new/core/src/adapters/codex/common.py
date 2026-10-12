@@ -10,10 +10,10 @@ from functools import wraps
 
 from adapters.base import ConfigError, Launch, Usage, Window
 
-from .sessions import (RecoveryError, SessionFile, SessionState, _absolute, _bind_session, _create_session,
-                       _identity, _implicit_writable_roots, _inside, _load_session, _metadata, _read,
-                       _recovery_snapshot, _save_session, _session_paths, _snapshot, _store, _store_root,
-                       _unsafe_root, native_id, session_file)
+from .sessions import (RecoveryError, SessionFile, SessionState, absolute_path, bind_session, create_session,
+                       session_identity, implicit_writable_roots, inside, load_session, read_metadata, read_state,
+                       recovery_snapshot, save_session, session_paths, validate_snapshot, store_directory, store_root,
+                       check_writable_roots, native_id, session_file)
 
 
 def _recover(method):
@@ -28,14 +28,14 @@ def _recover(method):
 
 def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
-    if not _inside(real_cwd, real_workdir):
+    if not inside(real_cwd, real_workdir):
         raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
 
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
     config_home = _config_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
-    if _inside(config_home, workdir) or _inside(real_config_home, real_workdir):
+    if inside(config_home, workdir) or inside(real_config_home, real_workdir):
         raise ConfigError(f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
                           "move Codex config outside the workdir")
 
@@ -48,8 +48,8 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
                 genuine_user_home = (candidate in (default_home, real_default_home)
                                      and real_candidate == real_default_home
                                      and not os.path.islink(candidate)
-                                     and not _inside(candidate, workdir)
-                                     and not _inside(real_candidate, real_workdir))
+                                     and not inside(candidate, workdir)
+                                     and not inside(real_candidate, real_workdir))
                 if not genuine_user_home:
                     raise ConfigError(f"project Codex settings at {candidate} may load in an untrusted run; "
                                       "use a clean workdir or trusted_dirs")
@@ -154,42 +154,42 @@ class CodexCommon:
     @_recover
     def prepare(self, spec, resume: bool, *, persist: bool = True) -> SessionState:
         environment = {**os.environ, **self.defaults, **self.config.get("env", {})}
-        _unsafe_root(_store_root(), _implicit_writable_roots(environment))
+        check_writable_roots(store_root(), implicit_writable_roots(environment))
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
-            snapshot = _recovery_snapshot(state)
+            snapshot = recovery_snapshot(state)
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
             if not snapshot["project"]:
                 _guard_untrusted_project(state.workdir, snapshot["cwd"], snapshot["codex_home"])
             return state
-        workdir, sid = _identity(spec.workdir, spec.sid)
-        cwd = _absolute(spec.access.cwd or workdir, "cwd")
-        home = _absolute(_config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home")
+        workdir, sid = session_identity(spec.workdir, spec.sid)
+        cwd = absolute_path(spec.access.cwd or workdir, "cwd")
+        home = absolute_path(_config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home")
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
-        snapshot = _snapshot({"cwd": cwd, "project": spec.access.project,
-                              "dirs": [_absolute(path, "dir") for path in spec.access.dirs],
+        snapshot = validate_snapshot({"cwd": cwd, "project": spec.access.project,
+                              "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
                               "commands": list(spec.access.commands), "model": self._mapped("tiers", spec.tier),
                               "effort": self._mapped("efforts", spec.effort),
                               "network": self.config["shell_network"], "codex_home": home})
-        return _create_session(workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]], persist=persist)
+        return create_session(workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]], persist=persist)
 
     @_recover
     def save(self, state: SessionState) -> SessionState:
-        return _save_session(state)
+        return save_session(state)
 
     @_recover
     def load(self, workdir: str, sid: str) -> SessionState | None:
-        return _load_session(workdir, sid)
+        return load_session(workdir, sid)
 
     @_recover
     def bind(self, workdir: str, sid: str, identifier: str) -> SessionState:
-        return _bind_session(workdir, sid, identifier)
+        return bind_session(workdir, sid, identifier)
 
     def environment(self, snapshot: dict, *, interactive: bool = False) -> dict[str, str]:
         return {**({} if interactive else self.defaults), **self.config.get("env", {}),
@@ -226,15 +226,15 @@ class CodexCommon:
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
-        cwd = _absolute(cwd, "cwd")
-        root = _store(create=False)
+        cwd = absolute_path(cwd, "cwd")
+        root = store_directory(create=False)
         if root is None:
             return None
         matches = []
         with os.scandir(root) as entries:
             for entry in entries:
                 if entry.name.endswith(".json"):
-                    state = _read(entry.path)
+                    state = read_state(entry.path)
                     if state is not None and state.sid == sid and state.snapshot["cwd"] == cwd:
                         matches.append(state)
         if len(matches) > 1:
@@ -244,9 +244,9 @@ class CodexCommon:
     @_recover
     def last_active(self, state: SessionState, found: SessionFile) -> float:
         candidates = []
-        for path in _session_paths(state.snapshot):
+        for path in session_paths(state.snapshot):
             try:
-                metadata = _metadata(path)
+                metadata = read_metadata(path)
             except (ConfigError, RecoveryError, OSError):
                 continue
             payload = metadata.metadata

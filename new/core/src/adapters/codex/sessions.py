@@ -17,25 +17,25 @@ class RecoveryError(Exception):
     pass
 
 
-def _absolute(path: str, label: str) -> str:
+def absolute_path(path: str, label: str) -> str:
     if not isinstance(path, str) or not path or not os.path.isabs(path) or "\x00" in path:
         raise RecoveryError(f"invalid Codex recovery {label}: expected an absolute path")
     return os.path.realpath(path)
 
 
 
-def _snapshot(value: dict) -> dict:
+def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict) or set(value) != {"cwd", "project", "dirs", "commands", "model", "effort",
                                                    "network", "codex_home"}:
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    paths = {key: _absolute(value[key], key) for key in ("cwd", "codex_home")}
+    paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     for key in ("project", "network"):
         if type(value[key]) is not bool:
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
     for key in ("dirs", "commands"):
         if not isinstance(value[key], list):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
-    dirs = [_absolute(item, "dir") for item in value["dirs"]]
+    dirs = [absolute_path(item, "dir") for item in value["dirs"]]
     commands = value["commands"]
     if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
         raise RecoveryError("invalid Codex recovery snapshot commands")
@@ -50,7 +50,7 @@ def _snapshot(value: dict) -> dict:
 
 
 
-def _inside(path: str, root: str) -> bool:
+def inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
 
 
@@ -63,7 +63,7 @@ class SessionFile:
 
 
 
-def _metadata(path: str) -> SessionFile:
+def read_metadata(path: str) -> SessionFile:
     _check_ancestors(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -84,7 +84,7 @@ def _metadata(path: str) -> SessionFile:
             raise RecoveryError(f"malformed Codex session metadata: {path}")
         payload = metadata["payload"]
         if (not native_id(payload.get("id")) or not path.endswith("-" + payload["id"] + ".jsonl")
-                or _absolute(payload.get("cwd"), "session cwd") != payload["cwd"]):
+                or absolute_path(payload.get("cwd"), "session cwd") != payload["cwd"]):
             raise RecoveryError(f"mismatched Codex session metadata: {path}")
         return SessionFile(path, info.st_mtime, metadata["payload"])
     finally:
@@ -93,7 +93,7 @@ def _metadata(path: str) -> SessionFile:
 
 
 
-def _session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
+def session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
     root = os.path.join(snapshot["codex_home"], "sessions")
     _check_ancestors(root)
     if not os.path.exists(root):
@@ -121,12 +121,12 @@ def _session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
 def session_file(snapshot: dict, identifier: str) -> SessionFile | None:
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
-    matches = _session_paths(snapshot, identifier)
+    matches = session_paths(snapshot, identifier)
     if len(matches) > 1:
         raise RecoveryError(f"duplicate Codex session files for native ID {identifier}")
     if not matches:
         return None
-    found = _metadata(matches[0])
+    found = read_metadata(matches[0])
     if found.metadata["id"] != identifier or found.metadata["cwd"] != snapshot["cwd"]:
         raise RecoveryError(f"mismatched Codex session metadata for native ID {identifier}: {found.path}")
     return found
@@ -163,12 +163,12 @@ class SessionState:
 
 
 
-def _recovery_snapshot(state: SessionState) -> dict:
-    snapshot = _snapshot(state.snapshot)
+def recovery_snapshot(state: SessionState) -> dict:
+    snapshot = validate_snapshot(state.snapshot)
     paths = [state.workdir, snapshot["cwd"], snapshot["codex_home"], *snapshot["dirs"]]
-    _unsafe_root(_store_root(), paths)
+    check_writable_roots(store_root(), paths)
     for path in paths:
-        if not any(_inside(path, grant) for grant in state.writable_roots):
+        if not any(inside(path, grant) for grant in state.writable_roots):
             raise RecoveryError(f"invalid Codex recovery writable grants: no recorded root covers {path}")
     return snapshot
 
@@ -185,8 +185,8 @@ def _copy_snapshot(value: object) -> dict:
 
 
 
-def _identity(workdir: str, sid: str) -> tuple[str, str]:
-    workdir = _absolute(workdir, "workdir")
+def session_identity(workdir: str, sid: str) -> tuple[str, str]:
+    workdir = absolute_path(workdir, "workdir")
     if not isinstance(sid, str) or not sid or len(sid) > 1024 or "\x00" in sid:
         raise RecoveryError("invalid recovery run ID")
     return workdir, sid
@@ -203,9 +203,9 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
     if native is not None and not native_id(native):
         raise RecoveryError("invalid recovery native ID")
     roots = data["writable_roots"]
-    if not isinstance(roots, list) or any(_absolute(path, "writable root") != path for path in roots):
+    if not isinstance(roots, list) or any(absolute_path(path, "writable root") != path for path in roots):
         raise RecoveryError("invalid recovery writable roots")
-    return SessionState(workdir, sid, _snapshot(_copy_snapshot(data["snapshot"])), roots.copy(), native)
+    return SessionState(workdir, sid, validate_snapshot(_copy_snapshot(data["snapshot"])), roots.copy(), native)
 
 
 
@@ -252,16 +252,16 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
 
 
 
-def _store_root() -> str:
+def store_root() -> str:
     return os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex")
 
 
 
-def _store(*, create: bool) -> str | None:
-    root = _store_root()
+def store_directory(*, create: bool) -> str | None:
+    root = store_root()
     parent = os.path.dirname(root)
     base = os.path.dirname(parent)
-    _unsafe_root(root, _implicit_writable_roots())
+    check_writable_roots(root, implicit_writable_roots())
     if not _private_dir(base, create=create, config_parent=True):
         return None
     if not _private_dir(parent, create=create):
@@ -276,23 +276,23 @@ def _path(root: str, workdir: str, sid: str) -> str:
 
 
 
-def _implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
+def implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
     environment = os.environ if environment is None else environment
     return ["/tmp", "/private/tmp", "/var/tmp", tempfile.gettempdir(),
             *([os.path.abspath(environment["TMPDIR"])] if environment.get("TMPDIR") else [])]
 
 
 
-def _unsafe_root(root: str, paths: list[str]) -> None:
+def check_writable_roots(root: str, paths: list[str]) -> None:
     actual = os.path.realpath(root)
     for path in paths:
-        writable = _absolute(path, "writable root")
+        writable = absolute_path(path, "writable root")
         if os.path.commonpath((actual, writable)) == writable:
             raise RecoveryError(f"recovery state directory {root} is inside writable root {path}")
 
 
 
-def _read(path: str, workdir: str | None = None, sid: str | None = None) -> SessionState | None:
+def read_state(path: str, workdir: str | None = None, sid: str | None = None) -> SessionState | None:
     _check_ancestors(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -320,12 +320,12 @@ def _read(path: str, workdir: str | None = None, sid: str | None = None) -> Sess
     if workdir is None:
         if not isinstance(data, dict):
             raise RecoveryError("malformed recovery state")
-        workdir, sid = _identity(data.get("workdir"), data.get("sid"))
+        workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
         if data.get("workdir") != workdir or path != _path(os.path.dirname(path), workdir, sid):
             raise RecoveryError("invalid recovery state identity")
     state = _state(data, workdir, sid)
-    _recovery_snapshot(state)
-    _unsafe_root(_store_root(), state.writable_roots)
+    recovery_snapshot(state)
+    check_writable_roots(store_root(), state.writable_roots)
     return state
 
 
@@ -386,48 +386,48 @@ def _write(path: str, state: SessionState, *, exclusive: bool) -> None:
 
 
 
-def _create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list[str], *, persist: bool = True) -> SessionState:
-    workdir, sid = _identity(workdir, sid)
+def create_session(workdir: str, sid: str, snapshot: dict, writable_roots: list[str], *, persist: bool = True) -> SessionState:
+    workdir, sid = session_identity(workdir, sid)
     state = _state({"version": _SESSION_VERSION, "workdir": workdir, "sid": sid,
                     "snapshot": snapshot, "native_id": None,
-                    "writable_roots": list(dict.fromkeys([workdir, *(_absolute(path, "writable root")
+                    "writable_roots": list(dict.fromkeys([workdir, *(absolute_path(path, "writable root")
                                                                     for path in writable_roots)]))}, workdir, sid)
-    _recovery_snapshot(state)
-    _unsafe_root(_store_root(), [*state.writable_roots, *_implicit_writable_roots()])
-    return _save_session(state) if persist else state
+    recovery_snapshot(state)
+    check_writable_roots(store_root(), [*state.writable_roots, *implicit_writable_roots()])
+    return save_session(state) if persist else state
 
 
-def _save_session(state: SessionState) -> SessionState:
-    _recovery_snapshot(state)
-    _unsafe_root(_store_root(), [*state.writable_roots, *_implicit_writable_roots()])
-    root = _store(create=True)
+def save_session(state: SessionState) -> SessionState:
+    recovery_snapshot(state)
+    check_writable_roots(store_root(), [*state.writable_roots, *implicit_writable_roots()])
+    root = store_directory(create=True)
     assert root is not None
     _write(_path(root, state.workdir, state.sid), state, exclusive=True)
     return state
 
 
 
-def _load_session(workdir: str, sid: str) -> SessionState | None:
-    workdir, sid = _identity(workdir, sid)
-    root = _store(create=False)
+def load_session(workdir: str, sid: str) -> SessionState | None:
+    workdir, sid = session_identity(workdir, sid)
+    root = store_directory(create=False)
     if root is None:
         return None
-    state = _read(_path(root, workdir, sid), workdir, sid)
+    state = read_state(_path(root, workdir, sid), workdir, sid)
     if state is not None:
-        _unsafe_root(root, [workdir, *state.writable_roots])
+        check_writable_roots(root, [workdir, *state.writable_roots])
     return state
 
 
 
-def _bind_session(workdir: str, sid: str, identifier: str, timeout: float | None = None) -> SessionState:
-    workdir, sid = _identity(workdir, sid)
+def bind_session(workdir: str, sid: str, identifier: str, timeout: float | None = None) -> SessionState:
+    workdir, sid = session_identity(workdir, sid)
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
-    root = _store(create=False)
+    root = store_directory(create=False)
     if root is None:
         raise RecoveryError(f"missing recovery state for run ID {sid!r}")
     with _locked(root, timeout):
-        existing = _load_session(workdir, sid)
+        existing = load_session(workdir, sid)
         if existing is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
         validated = _state({"version": _SESSION_VERSION, "workdir": workdir, "sid": sid,
@@ -443,10 +443,10 @@ def _bind_session(workdir: str, sid: str, identifier: str, timeout: float | None
 
 
 def protect(state, dependencies):
-    roots = [*state.writable_roots, *_implicit_writable_roots()]
+    roots = [*state.writable_roots, *implicit_writable_roots()]
     for root in roots:
         root = os.path.realpath(root)
         for dependency in dependencies:
             for path in {os.path.abspath(dependency), os.path.realpath(dependency)}:
-                if _inside(path, root) or _inside(root, path):
+                if inside(path, root) or inside(root, path):
                     raise RecoveryError(f"Codex tui writable root {root} could rewrite hook dependency {path}")
