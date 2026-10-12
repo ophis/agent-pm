@@ -11,6 +11,7 @@ modes_import_api(core) src/driver/modes/ never imports driver.api
 tmux_calls(core)      "tmux" only in TMUX_HOST
 syntax_39(core)       STANDALONE files parse as Python 3.9
 """
+
 import ast
 import os
 import re
@@ -18,14 +19,20 @@ import sys
 
 LAYERS = ("adapters", "driver", "composer", "delegate")
 OUTSIDE = "outside the layers"
-ALLOWED = {("delegate", "composer"), ("delegate", "driver"), ("driver", "adapters"), (OUTSIDE, "driver")}
+ALLOWED = {
+    ("delegate", "composer"),
+    ("delegate", "driver"),
+    ("driver", "adapters"),
+    (OUTSIDE, "driver"),
+}
 RUNTIME = re.compile(r"claude|codex", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*adapters\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 TOML_IMPLEMENTATION = re.compile(
-    r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z')
+    r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
+)
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
-OLD = "/".join(("core", "src"))   # built at run time, so this file never names it
+OLD = "/".join(("core", "src"))  # built at run time, so this file never names it
 OLD_NAMED = re.compile("(?<!new/)" + OLD)
 TMUX_HOST = "src/driver/tmux_host.py"
 TUI_HOOK = "src/driver/modes/tui_hook.py"
@@ -40,8 +47,11 @@ def layer_imports(core: str) -> list[str]:
         layer = names[0] if names and len(names) > 1 and names[0] in LAYERS else OUTSIDE
         for module in _imports(ast.parse(text, rel), names[:-1] if names else None):
             top = module.split(".")[0]
-            if top == "repo" or (top in LAYERS and top != layer and ((layer, top) not in ALLOWED
-                                                   or top == "driver" and module != "driver.api")):
+            if top == "repo" or (
+                top in LAYERS
+                and top != layer
+                and ((layer, top) not in ALLOWED or top == "driver" and module != "driver.api")
+            ):
                 found.add(f"{rel}: {layer} imports {module}")
     return sorted(found)
 
@@ -63,8 +73,12 @@ def runtime_names(core: str) -> list[str]:
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
-                line = code if line[len(code):len(code) + 1] in ("", "#") else line
-                if TOML_HEADER.match(line) or TOML_IMPLEMENTATION.match(line) or TOML_RUNTIME.match(line):
+                line = code if line[len(code) : len(code) + 1] in ("", "#") else line
+                if (
+                    TOML_HEADER.match(line)
+                    or TOML_IMPLEMENTATION.match(line)
+                    or TOML_RUNTIME.match(line)
+                ):
                     continue
             found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
     return sorted(found)
@@ -74,16 +88,25 @@ def old_core(new: str) -> list[str]:
     found = set()
     for rel, text in _files(new, ".py"):
         tree = ast.parse(text, rel)
-        found.update(f"{rel}: imports {m}" for m in _imports(tree, None) if m.split(".")[0] == "core")
-        found.update(f"{rel}:{line}: names the old {OLD}" for line, s in _strings(tree) if OLD_NAMED.search(s))
+        found.update(
+            f"{rel}: imports {m}" for m in _imports(tree, None) if m.split(".")[0] == "core"
+        )
+        found.update(
+            f"{rel}:{line}: names the old {OLD}"
+            for line, s in _strings(tree)
+            if OLD_NAMED.search(s)
+        )
     return sorted(found)
 
 
 def adapters_key(core: str) -> list[str]:
     found = set()
     for rel, text in _files(core, ".py", skip="src/driver/"):
-        found.update(f'{rel}:{line}: literal key "adapters"' for line, s in _strings(ast.parse(text, rel))
-                     if s == "adapters")
+        found.update(
+            f'{rel}:{line}: literal key "adapters"'
+            for line, s in _strings(ast.parse(text, rel))
+            if s == "adapters"
+        )
     return sorted(found)
 
 
@@ -101,8 +124,11 @@ def modes_import_api(core: str) -> list[str]:
     found = set()
     for rel, names, tree in _src_modules(core):
         if names[:2] == ["driver", "modes"]:
-            found.update(f"{rel}: imports {m}" for m in _imports(tree, names[:-1])
-                         if m.split(".")[:2] == ["driver", "api"])
+            found.update(
+                f"{rel}: imports {m}"
+                for m in _imports(tree, names[:-1])
+                if m.split(".")[:2] == ["driver", "api"]
+            )
     return sorted(found)
 
 
@@ -110,8 +136,11 @@ def tmux_calls(core: str) -> list[str]:
     found = set()
     for rel, text in _files(core, ".py"):
         if rel != TMUX_HOST:
-            found.update(f'{rel}:{line}: str constant "tmux"' for line, s in _strings(ast.parse(text, rel))
-                         if s == "tmux")
+            found.update(
+                f'{rel}:{line}: str constant "tmux"'
+                for line, s in _strings(ast.parse(text, rel))
+                if s == "tmux"
+            )
     return sorted(found)
 
 
@@ -135,7 +164,11 @@ def private_imports(root: str) -> list[str]:
             if isinstance(node, ast.ImportFrom):
                 imported.update(a.asname or a.name for a in node.names)
                 module = "." * node.level + (f"{node.module}." if node.module else "")
-                found.update(f"{rel}:{node.lineno}: private {module}{a.name}" for a in node.names if _private(a.name))
+                found.update(
+                    f"{rel}:{node.lineno}: private {module}{a.name}"
+                    for a in node.names
+                    if _private(a.name)
+                )
             elif isinstance(node, ast.Import):
                 imported.update(a.asname or a.name.split(".")[0] for a in node.names)
         for node in ast.walk(tree):
@@ -145,7 +178,9 @@ def private_imports(root: str) -> list[str]:
                     chain.append(base.attr)
                     base = base.value
                 if isinstance(base, ast.Name) and base.id in imported:
-                    found.add(f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}")
+                    found.add(
+                        f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}"
+                    )
     return sorted(found)
 
 
@@ -156,7 +191,7 @@ def _private(name):
 def _src_modules(core):
     for rel, text in _files(core, ".py"):
         if rel.startswith("src/"):
-            yield rel, rel[len("src/"):-3].split("/"), ast.parse(text, rel)
+            yield rel, rel[len("src/") : -3].split("/"), ast.parse(text, rel)
 
 
 def _files(root, suffixes, skip=None):
@@ -177,19 +212,35 @@ def _imports(tree, package):
             if node.level:
                 if package is None or node.level - 1 > len(package):
                     continue
-                parts = package[:len(package) - node.level + 1] + (node.module.split(".") if node.module else [])
+                parts = package[: len(package) - node.level + 1] + (
+                    node.module.split(".") if node.module else []
+                )
             else:
                 parts = node.module.split(".")
             if len(parts) > 1:
                 yield ".".join(parts)
             else:
-                yield from (".".join(parts + ([] if a.name == "*" else [a.name])) for a in node.names)
-        elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
-                and isinstance(node.args[0].value, str) and (
-                    isinstance(node.func, ast.Name) and node.func.id in ("__import__", "import_module")
-                    or isinstance(node.func, ast.Attribute) and node.func.attr == "import_module"):
+                yield from (
+                    ".".join(parts + ([] if a.name == "*" else [a.name])) for a in node.names
+                )
+        elif (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id in ("__import__", "import_module")
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+            )
+        ):
             yield node.args[0].value
 
 
 def _strings(tree):
-    return ((n.lineno, n.value) for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    return (
+        (n.lineno, n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    )

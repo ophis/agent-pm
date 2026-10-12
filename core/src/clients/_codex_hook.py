@@ -4,6 +4,7 @@ the worker record to the payload's session; for done (Stop) saves its last_assis
 then, whatever those did, marks the pane (tmux_host.mark). Never prints on stdout (Codex reads a SessionStart's or
 UserPromptSubmit's stdout as model context) and always exits 0 (exit 2 denies or blocks). No payload text reaches an
 event line or a tmux argument."""
+
 import fcntl
 import json
 import os
@@ -13,7 +14,13 @@ import tempfile
 import time
 import uuid
 
-WORDS = {"session": "working", "working": "working", "blocked": "blocked", "done": "done", "interrupt": "done"}
+WORDS = {
+    "session": "working",
+    "working": "working",
+    "blocked": "blocked",
+    "done": "done",
+    "interrupt": "done",
+}
 VERSION = 1
 KEYS = frozenset({"version", "sid", "cwd", "codex_home", "native"})
 RECORD_MAX = 64 << 10
@@ -32,7 +39,11 @@ def canonical(text) -> bool:
 
 def unsafe(fd: int, limit: int) -> str:
     st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+    if (
+        not stat.S_ISREG(st.st_mode)
+        or st.st_uid != os.getuid()
+        or stat.S_IMODE(st.st_mode) != 0o600
+    ):
         return "not a 0600 regular file of yours"
     return f"over {limit} bytes" if st.st_size > limit else ""
 
@@ -42,10 +53,17 @@ def load(data: bytes, sid: str) -> dict | None:
         record = json.loads(data)
     except (ValueError, RecursionError):
         return None
-    if not (isinstance(record, dict) and set(record) == KEYS and type(record["version"]) is int
-            and record["version"] == VERSION and record["sid"] == sid
-            and all(isinstance(record[k], str) and os.path.isabs(record[k]) for k in ("cwd", "codex_home"))
-            and (record["native"] is None or canonical(record["native"]))):
+    if not (
+        isinstance(record, dict)
+        and set(record) == KEYS
+        and type(record["version"]) is int
+        and record["version"] == VERSION
+        and record["sid"] == sid
+        and all(
+            isinstance(record[k], str) and os.path.isabs(record[k]) for k in ("cwd", "codex_home")
+        )
+        and (record["native"] is None or canonical(record["native"]))
+    ):
         return None
     return record
 
@@ -55,14 +73,21 @@ def dump(record: dict) -> bytes:
 
 
 def reply_path(record: str) -> str:
-    return record[:-len(".json")] + ".reply"
+    return record[: -len(".json")] + ".reply"
 
 
 def main(argv: list[str]) -> None:
     payload = _payload(sys.stdin.buffer)
-    if (len(argv) != 4 or argv[0] not in WORDS or not argv[2].endswith(".json")
-            or not all(os.path.isabs(a) for a in argv[1:])):
-        print(f"codex_hook: usage: _codex_hook.py {{{','.join(WORDS)}}} EVENTS RECORD.json TMUX", file=sys.stderr)
+    if (
+        len(argv) != 4
+        or argv[0] not in WORDS
+        or not argv[2].endswith(".json")
+        or not all(os.path.isabs(a) for a in argv[1:])
+    ):
+        print(
+            f"codex_hook: usage: _codex_hook.py {{{','.join(WORDS)}}} EVENTS RECORD.json TMUX",
+            file=sys.stderr,
+        )
         return
     word, events, record, tmux = argv
     try:
@@ -71,6 +96,7 @@ def main(argv: list[str]) -> None:
         print(f"codex_hook: {record}: {e}", file=sys.stderr)
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import tmux_host
+
     try:
         tmux_host.mark(WORDS[word], events, tmux=tmux)
     except tmux_host.TuiError as e:
@@ -101,7 +127,7 @@ def _bind(word: str, payload: dict, record: str) -> None:
         if why := unsafe(fd, RECORD_MAX):
             raise ValueError(why)
         _lock(fd)
-        fields = load(os.pread(fd, RECORD_MAX + 1, 0), os.path.basename(record)[:-len(".json")])
+        fields = load(os.pread(fd, RECORD_MAX + 1, 0), os.path.basename(record)[: -len(".json")])
         if fields is None:
             raise ValueError("malformed worker record")
         if os.path.realpath(cwd) != fields["cwd"]:
@@ -114,7 +140,9 @@ def _bind(word: str, payload: dict, record: str) -> None:
             os.ftruncate(fd, len(data))
             os.fsync(fd)
         elif fields["native"] != session:
-            print(f"codex_hook: {record}: bound to {fields['native']}, not {session}", file=sys.stderr)
+            print(
+                f"codex_hook: {record}: bound to {fields['native']}, not {session}", file=sys.stderr
+            )
             return
         message = payload.get("last_assistant_message")
         if word == "done" and isinstance(message, str):

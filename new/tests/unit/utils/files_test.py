@@ -1,4 +1,7 @@
 """new/core/src/utils/files.py: read_regular."""
+
+from new.tests import hermetic  # noqa: F401
+
 import errno
 import os
 import tempfile
@@ -7,7 +10,6 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from new.tests import hermetic  # noqa: F401
 from utils import files
 
 DATA = b"0123456789"
@@ -42,17 +44,32 @@ class ReadRegular(unittest.TestCase):
 
     def test_limit_from_the_start_or_the_end(self):
         self.write()
-        for limit, tail, want in ((4, False, b"0123"), (4, True, b"6789"), (0, False, b""), (0, True, b""),
-                                  (20, False, DATA), (20, True, DATA), (None, True, DATA)):
+        for limit, tail, want in (
+            (4, False, b"0123"),
+            (4, True, b"6789"),
+            (0, False, b""),
+            (0, True, b""),
+            (20, False, DATA),
+            (20, True, DATA),
+            (None, True, DATA),
+        ):
             with self.subTest(limit=limit, tail=tail):
                 self.assertEqual(files.read_regular(self.path, limit=limit, tail=tail), want)
 
     def test_from_an_offset(self):
         self.write()
-        for offset, limit, tail, want in ((3, None, False, b"3456789"), (3, 4, False, b"3456"), (3, 4, True, b"6789"),
-                                          (8, 4, True, b"89"), (10, None, False, b""), (12, 4, False, b"")):
+        for offset, limit, tail, want in (
+            (3, None, False, b"3456789"),
+            (3, 4, False, b"3456"),
+            (3, 4, True, b"6789"),
+            (8, 4, True, b"89"),
+            (10, None, False, b""),
+            (12, 4, False, b""),
+        ):
             with self.subTest(offset=offset, limit=limit, tail=tail):
-                self.assertEqual(files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want)
+                self.assertEqual(
+                    files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want
+                )
 
     def test_a_symlink_is_none(self):
         target = os.path.join(self.dir, "target")

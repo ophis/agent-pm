@@ -25,6 +25,28 @@ jobs:
       - name: Comment budget
         run: python3 .github/comment_budget.py
 
+  ruff:
+    name: Ruff (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install Ruff
+        id: ruff
+        run: pip install ruff==0.16.9
+      - name: Ruff check
+        run: ruff check --output-format=github
+      - name: Ruff format
+        if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
+        run: ruff format --check
+
   new-unit:
     name: New core unit tests (Python 3.11)
     runs-on: ubuntu-latest

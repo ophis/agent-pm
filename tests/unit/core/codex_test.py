@@ -1,3 +1,6 @@
+from tests import ROOT, hermetic
+from tests.integration.core import fake_codex
+
 import contextlib
 import fcntl
 import hashlib
@@ -11,21 +14,20 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import unittest
 from unittest import mock
 
-from tests import ROOT, hermetic
-from tests.integration.core import fake_codex
 from clients import _codex_worker, codex
-from clients.claude import ClaudeClient
 from clients.base import Client, SessionInfo, WorkerSpec
+from clients.claude import ClaudeClient
 from compose import ConfigError
 
 
 class Store(unittest.TestCase):
     def setUp(self):
-        self.implicit = self.enterContext(mock.patch.object(codex, "_implicit_writable_roots", return_value=[]))
+        self.implicit = self.enterContext(
+            mock.patch.object(codex, "_implicit_writable_roots", return_value=[])
+        )
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = os.path.join(self.tmp.name, "home")
@@ -38,12 +40,24 @@ class Store(unittest.TestCase):
         self.enterContext(mock.patch.dict(os.environ, {"HOME": self.home}))
         self.sid = "../odd/opaque ID with spaces"
         self.native = "11111111-2222-3333-4444-555555555555"
-        self.snapshot = dict(cwd=self.cwd, project=False, dirs=[self.extra], commands=["git status"],
-                             model="gpt-test", effort="low", network=False, codex_home=self.codex_home)
+        self.snapshot = dict(
+            cwd=self.cwd,
+            project=False,
+            dirs=[self.extra],
+            commands=["git status"],
+            model="gpt-test",
+            effort="low",
+            network=False,
+            codex_home=self.codex_home,
+        )
 
     def create(self, **kw):
-        return codex._create_session(self.work, self.sid, kw.get("snapshot", self.snapshot),
-                                  kw.get("writable_roots", [self.work, self.cwd, self.extra, self.codex_home]))
+        return codex._create_session(
+            self.work,
+            self.sid,
+            kw.get("snapshot", self.snapshot),
+            kw.get("writable_roots", [self.work, self.cwd, self.extra, self.codex_home]),
+        )
 
     def test_opaque_sid_and_durable_round_trip(self):
         with mock.patch.object(codex.os, "fsync", wraps=os.fsync) as sync:
@@ -71,8 +85,13 @@ class Store(unittest.TestCase):
         state = codex._create_session(self.work, self.sid, payload, [self.extra])
         self.assertEqual(codex._load_session(self.work, self.sid), state)
         self.assertEqual(state.snapshot, payload)
-        self.assertEqual(state.writable_roots, [os.path.realpath(self.work), os.path.realpath(self.extra)])
-        self.assertEqual(codex._bind_session(self.work, self.sid, "native:opaque-id").client_id, "native:opaque-id")
+        self.assertEqual(
+            state.writable_roots, [os.path.realpath(self.work), os.path.realpath(self.extra)]
+        )
+        self.assertEqual(
+            codex._bind_session(self.work, self.sid, "native:opaque-id").client_id,
+            "native:opaque-id",
+        )
 
     def test_rejects_non_json_payload(self):
         for payload in ({"x": float("nan")}, {"x": {1, 2}}, {1: "integer key"}, {"x": (1, 2)}):
@@ -107,9 +126,13 @@ except ConfigError as exc:
 else:
     sys.exit(1)
 """
-        result = subprocess.run([sys.executable, "-c", code, path, self.work, self.sid],
-                                cwd=os.path.dirname(codex.__file__) + "/..", capture_output=True,
-                                text=True, timeout=2)
+        result = subprocess.run(
+            [sys.executable, "-c", code, path, self.work, self.sid],
+            cwd=os.path.dirname(codex.__file__) + "/..",
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("unsafe recovery state file", result.stdout)
 
@@ -121,8 +144,10 @@ else:
             stream.write("[" * 2000 + "0" + "]" * 2000)
         decoder = json.JSONDecoder()
         decoder.scan_once = json.scanner.py_make_scanner(decoder)
-        with mock.patch.object(json, "_default_decoder", decoder), \
-                self.assertRaisesRegex(ConfigError, "malformed recovery state"):
+        with (
+            mock.patch.object(json, "_default_decoder", decoder),
+            self.assertRaisesRegex(ConfigError, "malformed recovery state"),
+        ):
             codex._load_session(self.work, self.sid)
 
     def test_duplicate_and_missing(self):
@@ -182,9 +207,18 @@ else:
         self.create()
         store = os.path.join(self.home, ".agent-pm", "core-sessions")
         path = os.path.join(store, os.listdir(store)[0])
-        for bad in ({"version": codex._SESSION_VERSION}, {"version": codex._SESSION_VERSION, "workdir": self.work, "sid": self.sid,
-                                            "client": "codex", "snapshot": dict(self.snapshot, network="yes"),
-                                            "client_id": None, "writable_roots": "bad"}):
+        for bad in (
+            {"version": codex._SESSION_VERSION},
+            {
+                "version": codex._SESSION_VERSION,
+                "workdir": self.work,
+                "sid": self.sid,
+                "client": "codex",
+                "snapshot": dict(self.snapshot, network="yes"),
+                "client_id": None,
+                "writable_roots": "bad",
+            },
+        ):
             with self.subTest(bad=bad), open(path, "w") as handle:
                 json.dump(bad, handle)
             with self.assertRaisesRegex(ConfigError, "invalid|malformed"):
@@ -218,8 +252,18 @@ class ImplicitWritableRoots(unittest.TestCase):
             os.chmod(os.path.dirname(root), 0o700)
             path = codex._path(root, work, "sid")
             with open(path, "w") as f:
-                json.dump({"version": codex._SESSION_VERSION, "workdir": work, "sid": "sid", "client": "codex",
-                           "snapshot": {}, "client_id": None, "writable_roots": []}, f)
+                json.dump(
+                    {
+                        "version": codex._SESSION_VERSION,
+                        "workdir": work,
+                        "sid": "sid",
+                        "client": "codex",
+                        "snapshot": {},
+                        "client_id": None,
+                        "writable_roots": [],
+                    },
+                    f,
+                )
             os.chmod(path, 0o600)
             with self.assertRaisesRegex(ConfigError, "writable"):
                 codex._create_session(work, "new", {}, [])
@@ -229,7 +273,10 @@ class ImplicitWritableRoots(unittest.TestCase):
     def test_implicit_locations_include_tmpdir_and_system_temp_roots(self):
         with mock.patch.dict(os.environ, {"TMPDIR": "/custom/agent-temp"}):
             roots = set(map(os.path.realpath, codex._implicit_writable_roots()))
-        self.assertLessEqual(set(map(os.path.realpath, ["/custom/agent-temp", "/tmp", "/private/tmp", "/var/tmp"])), roots)
+        self.assertLessEqual(
+            set(map(os.path.realpath, ["/custom/agent-temp", "/tmp", "/private/tmp", "/var/tmp"])),
+            roots,
+        )
 
 
 class Capabilities(unittest.TestCase):
@@ -249,8 +296,13 @@ SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 NATIVE = "11111111-2222-4333-8444-555555555555"
 HOOK = os.path.join(ROOT, "core", "src", "clients", "_codex_hook.py")
 NOTIFY = 'tui.notification_method="bel"'
-WORDS = (("SessionStart", "session"), ("UserPromptSubmit", "working"), ("PermissionRequest", "blocked"),
-         ("Stop", "done"), ("Interrupt", "interrupt"))
+WORDS = (
+    ("SessionStart", "session"),
+    ("UserPromptSubmit", "working"),
+    ("PermissionRequest", "blocked"),
+    ("Stop", "done"),
+    ("Interrupt", "interrupt"),
+)
 RESERVED = ": crew.py sets a Codex worker's hooks, session and cwd"
 UNBOUND = f"Codex worker {SID} has no native session: it never took a prompt; start a new worker"
 APP_SERVER = """import json, os, subprocess, sys, time
@@ -310,9 +362,14 @@ def hook_args(events: str, record: str, tmux: str) -> list[str]:
     args = []
     python, hook, tmux = map(os.path.realpath, (sys.executable, HOOK, tmux))
     for event, word in WORDS:
-        command = json.dumps(shlex.join([python, "-I", hook, word, events, record, tmux]), ensure_ascii=False)
-        args += ["-c", f'hooks.{event}=[{{hooks=[{{type="command",command={command},'
-                       f'timeout={3 if event == "Interrupt" else 10}}}]}}]']
+        command = json.dumps(
+            shlex.join([python, "-I", hook, word, events, record, tmux]), ensure_ascii=False
+        )
+        args += [
+            "-c",
+            f'hooks.{event}=[{{hooks=[{{type="command",command={command},'
+            f"timeout={3 if event == 'Interrupt' else 10}}}]}}]",
+        ]
     return args
 
 
@@ -328,8 +385,12 @@ def virtual_time():
 
     def sleep(seconds):
         now[0] += seconds
-    with mock.patch.object(time, "monotonic", lambda: now[0]), mock.patch.object(select, "select", wait), \
-            mock.patch.object(time, "sleep", sleep):
+
+    with (
+        mock.patch.object(time, "monotonic", lambda: now[0]),
+        mock.patch.object(select, "select", wait),
+        mock.patch.object(time, "sleep", sleep),
+    ):
         yield
 
 
@@ -361,7 +422,11 @@ class Worker(unittest.TestCase):
         self.app = os.path.join(self.dir, "app.json")
         self.scenario()
         self.breaks()
-        self.env = {"PATH": f"{self.bin}:/usr/bin:/bin", fake_codex.ENV: self.scenario_file, "FAKE_APP": self.app}
+        self.env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            fake_codex.ENV: self.scenario_file,
+            "FAKE_APP": self.app,
+        }
         self.client = codex.CodexClient({"tiers": {}, "efforts": {}, "shell_network": False})
 
     def executable(self, path, body):
@@ -378,8 +443,19 @@ class Worker(unittest.TestCase):
             json.dump(app, f)
 
     def spec(self, **kw):
-        return WorkerSpec(**{"name": "w1", "sid": SID, "cwd": self.cwd, "flags": (), "prompt": None,
-                             "events": self.events, "resume": False, "env": self.env, **kw})
+        return WorkerSpec(
+            **{
+                "name": "w1",
+                "sid": SID,
+                "cwd": self.cwd,
+                "flags": (),
+                "prompt": None,
+                "events": self.events,
+                "resume": False,
+                "env": self.env,
+                **kw,
+            }
+        )
 
     def logged(self, key):
         try:
@@ -402,16 +478,33 @@ class Worker(unittest.TestCase):
                 os.mkdir(d, 0o700)
         fd = os.open(self.record, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"version": 1, "sid": SID, "cwd": self.cwd, "codex_home": self.codex_home, "native": native,
-                       **fields}, f)
+            json.dump(
+                {
+                    "version": 1,
+                    "sid": SID,
+                    "cwd": self.cwd,
+                    "codex_home": self.codex_home,
+                    "native": native,
+                    **fields,
+                },
+                f,
+            )
 
     def hooks(self):
         return hook_args(self.events, self.record, self.tmux)
 
     def state(self, hooks):
-        entries = fake_codex.catalog(fake_codex.configure([("config", a) for a in hooks[1::2]]), self.codex_home, None)
-        return "hooks.state={" + ",".join(f'{json.dumps(e["key"])}={{trusted_hash={json.dumps(e["currentHash"])}}}'
-                                          for e in entries) + "}"
+        entries = fake_codex.catalog(
+            fake_codex.configure([("config", a) for a in hooks[1::2]]), self.codex_home, None
+        )
+        return (
+            "hooks.state={"
+            + ",".join(
+                f"{json.dumps(e['key'])}={{trusted_hash={json.dumps(e['currentHash'])}}}"
+                for e in entries
+            )
+            + "}"
+        )
 
     def fails(self, **kw):
         with self.assertRaises(ConfigError) as cm:
@@ -419,30 +512,85 @@ class Worker(unittest.TestCase):
         return str(cm.exception)
 
     def test_a_new_worker(self):
-        flags = ("-m", "gpt-x", "-c", 'tui.notification_method="auto"', "--config=model_verbosity=\"low\"",
-                 "--enable", "apps", "--disable=memory")
+        flags = (
+            "-m",
+            "gpt-x",
+            "-c",
+            'tui.notification_method="auto"',
+            '--config=model_verbosity="low"',
+            "--enable",
+            "apps",
+            "--disable=memory",
+        )
         with mock.patch.object(os, "fsync", wraps=os.fsync) as sync:
             cmd = self.client.worker(self.spec(flags=flags, prompt="-do it"))
         self.assertGreaterEqual(sync.call_count, 2)
         hooks = self.hooks()
-        self.assertEqual(cmd.argv, [self.codex, "--no-daemon", "-C", self.cwd, "-c", NOTIFY, *hooks, "-c",
-                                    self.state(hooks), *flags, "--", "-do it"])
+        self.assertEqual(
+            cmd.argv,
+            [
+                self.codex,
+                "--no-daemon",
+                "-C",
+                self.cwd,
+                "-c",
+                NOTIFY,
+                *hooks,
+                "-c",
+                self.state(hooks),
+                *flags,
+                "--",
+                "-do it",
+            ],
+        )
         self.assertEqual(cmd.env, {"CODEX_HOME": self.codex_home})
         with open(self.record) as f:
-            self.assertEqual(json.load(f), {"version": 1, "sid": SID, "cwd": self.cwd, "codex_home": self.codex_home,
-                                            "native": None})
+            self.assertEqual(
+                json.load(f),
+                {
+                    "version": 1,
+                    "sid": SID,
+                    "cwd": self.cwd,
+                    "codex_home": self.codex_home,
+                    "native": None,
+                },
+            )
         self.assertEqual(stat.S_IMODE(os.stat(self.record).st_mode), 0o600)
         for d in (self.workers, os.path.dirname(self.workers)):
             self.assertEqual(stat.S_IMODE(os.stat(d).st_mode), 0o700)
         [start] = self.logged("argv")
-        self.assertEqual(start, ["app-server", *hooks, "-c", 'tui.notification_method="auto"', "-c",
-                                 'model_verbosity="low"', "--enable", "apps", "--disable", "memory"])
+        self.assertEqual(
+            start,
+            [
+                "app-server",
+                *hooks,
+                "-c",
+                'tui.notification_method="auto"',
+                "-c",
+                'model_verbosity="low"',
+                "--enable",
+                "apps",
+                "--disable",
+                "memory",
+            ],
+        )
         self.assertEqual(self.logged("cwd"), [self.cwd])
         self.assertEqual(self.logged("env")[0]["CODEX_HOME"], self.codex_home)
-        self.assertEqual(self.logged("received"), [
-            {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "agent-pm", "version": "0"},
-                                                         "capabilities": {"experimentalApi": True}}},
-            {"method": "initialized"}, {"id": 2, "method": "hooks/list", "params": {"cwds": [self.cwd]}}])
+        self.assertEqual(
+            self.logged("received"),
+            [
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {"name": "agent-pm", "version": "0"},
+                        "capabilities": {"experimentalApi": True},
+                    },
+                },
+                {"method": "initialized"},
+                {"id": 2, "method": "hooks/list", "params": {"cwds": [self.cwd]}},
+            ],
+        )
 
     def test_hooks_run_the_resolved_paths_protect_checks(self):
         links = os.path.join(self.dir, "links")
@@ -451,10 +599,27 @@ class Worker(unittest.TestCase):
         for link, target in ((python, sys.executable), (hook, HOOK), (tmux, self.tmux)):
             os.symlink(target, link)
         hooks = self.hooks()
-        with mock.patch.object(sys, "executable", python), mock.patch.object(_codex_worker, "HOOK", hook):
-            cmd = self.client.worker(self.spec(env={**self.env, "PATH": f"{links}:{self.env['PATH']}"}))
-        self.assertEqual(cmd.argv, [self.codex, "--no-daemon", "-C", self.cwd, "-c", NOTIFY, *hooks, "-c",
-                                    self.state(hooks)])
+        with (
+            mock.patch.object(sys, "executable", python),
+            mock.patch.object(_codex_worker, "HOOK", hook),
+        ):
+            cmd = self.client.worker(
+                self.spec(env={**self.env, "PATH": f"{links}:{self.env['PATH']}"})
+            )
+        self.assertEqual(
+            cmd.argv,
+            [
+                self.codex,
+                "--no-daemon",
+                "-C",
+                self.cwd,
+                "-c",
+                NOTIFY,
+                *hooks,
+                "-c",
+                self.state(hooks),
+            ],
+        )
 
     def test_codex_home_and_the_binaries_from_the_env(self):
         home = os.path.join(self.dir, "codex-home")
@@ -468,8 +633,10 @@ class Worker(unittest.TestCase):
                 for other in ("codex", "tmux"):
                     if other != name:
                         os.symlink(os.path.join(self.bin, other), os.path.join(bare, other))
-                self.assertEqual(self.fails(sid=SID.replace("0b", "0c"), env={**self.env, "PATH": bare}),
-                                 f"{name} not found on PATH")
+                self.assertEqual(
+                    self.fails(sid=SID.replace("0b", "0c"), env={**self.env, "PATH": bare}),
+                    f"{name} not found on PATH",
+                )
 
     def test_a_resumed_worker(self):
         self.make_record()
@@ -478,26 +645,72 @@ class Worker(unittest.TestCase):
         os.symlink(self.codex, stored)
         for prompt, tail in ((None, []), ("next", ["--", "next"])):
             with self.subTest(prompt=prompt):
-                cmd = self.client.worker(self.spec(resume=True, flags=("-m", "x"), prompt=prompt, exe=stored,
-                                                   env={**self.env, "CODEX_HOME": "/elsewhere"}))
+                cmd = self.client.worker(
+                    self.spec(
+                        resume=True,
+                        flags=("-m", "x"),
+                        prompt=prompt,
+                        exe=stored,
+                        env={**self.env, "CODEX_HOME": "/elsewhere"},
+                    )
+                )
                 hooks = self.hooks()
-                self.assertEqual(cmd.argv, [stored, "resume", NATIVE, "-C", self.cwd, "--no-daemon", "-c", NOTIFY,
-                                            *hooks, "-c", self.state(hooks), "-m", "x", *tail])
+                self.assertEqual(
+                    cmd.argv,
+                    [
+                        stored,
+                        "resume",
+                        NATIVE,
+                        "-C",
+                        self.cwd,
+                        "--no-daemon",
+                        "-c",
+                        NOTIFY,
+                        *hooks,
+                        "-c",
+                        self.state(hooks),
+                        "-m",
+                        "x",
+                        *tail,
+                    ],
+                )
                 self.assertEqual(cmd.env, {"CODEX_HOME": self.codex_home})
                 self.assertEqual(self.logged("env")[-1]["CODEX_HOME"], self.codex_home)
 
     def test_reserved_flags_refused_before_a_bare_double_dash(self):
-        for flags in (("-c", "hooks.Stop=[]"), ("-chooks.Stop=[]",), ("-c=hooks.x=1",), ("--config", "hooks={}"),
-                      ("--config=hooks.state={}",), ("-c", ' "hooks" .Stop=[]'), ("-c", "hooks"),
-                      ("-c", "sandbox_workspace_write.network_access=true"), ("--dangerously-bypass-hook-trust",),
-                      ("--dangerously-bypass-hook-trust=true",), ("-C", "/x"), ("-C/x",), ("--cd", "/x"),
-                      ("--cd=/x",), ("-p", "work"), ("-pwork",), ("--profile", "work"), ("--profile=work",),
-                      ("resume",), ("fork",), ("--last",)):
+        for flags in (
+            ("-c", "hooks.Stop=[]"),
+            ("-chooks.Stop=[]",),
+            ("-c=hooks.x=1",),
+            ("--config", "hooks={}"),
+            ("--config=hooks.state={}",),
+            ("-c", ' "hooks" .Stop=[]'),
+            ("-c", "hooks"),
+            ("-c", "sandbox_workspace_write.network_access=true"),
+            ("--dangerously-bypass-hook-trust",),
+            ("--dangerously-bypass-hook-trust=true",),
+            ("-C", "/x"),
+            ("-C/x",),
+            ("--cd", "/x"),
+            ("--cd=/x",),
+            ("-p", "work"),
+            ("-pwork",),
+            ("--profile", "work"),
+            ("--profile=work",),
+            ("resume",),
+            ("fork",),
+            ("--last",),
+        ):
             with self.subTest(flags=flags):
-                self.assertEqual(self.fails(flags=("-m", "m", *flags, "--", "resume")), " ".join(flags) + RESERVED)
+                self.assertEqual(
+                    self.fails(flags=("-m", "m", *flags, "--", "resume")),
+                    " ".join(flags) + RESERVED,
+                )
         self.assertFalse(os.path.exists(self.workers))
         self.assertEqual(self.runs(), 0)
-        cmd = self.client.worker(self.spec(flags=("-c", "features.hooks=true", "--", "resume", "-C", "/x")))
+        cmd = self.client.worker(
+            self.spec(flags=("-c", "features.hooks=true", "--", "resume", "-C", "/x"))
+        )
         self.assertEqual(cmd.argv[-4:], ["--", "resume", "-C", "/x"])
 
     def test_protected_paths_refused(self):
@@ -510,18 +723,26 @@ class Worker(unittest.TestCase):
         events = os.path.join(m, "events")
         os.close(os.open(events, os.O_WRONLY | os.O_CREAT, 0o600))
         inside = os.path.join(self.workers, "w")
-        for kw, root, path in (({"cwd": core}, core, os.path.join(core, "src")),
-                               ({"cwd": inside}, inside, self.workers),
-                               ({"cwd": self.home}, self.home, self.workers),
-                               ({"cwd": self.bin}, self.bin, self.tmux),
-                               ({"cwd": cx, "env": {**self.env, "PATH": f"{links}:{self.env['PATH']}"}}, cx,
-                                os.path.join(cx, "codex")),
-                               ({"flags": ("--add-dir", m), "events": events}, m, events),
-                               ({"flags": ("--add-dir=" + m,), "events": events}, m, events),
-                               ({"flags": ("--add-dir", "../m"), "events": events}, m, events)):
+        for kw, root, path in (
+            ({"cwd": core}, core, os.path.join(core, "src")),
+            ({"cwd": inside}, inside, self.workers),
+            ({"cwd": self.home}, self.home, self.workers),
+            ({"cwd": self.bin}, self.bin, self.tmux),
+            (
+                {"cwd": cx, "env": {**self.env, "PATH": f"{links}:{self.env['PATH']}"}},
+                cx,
+                os.path.join(cx, "codex"),
+            ),
+            ({"flags": ("--add-dir", m), "events": events}, m, events),
+            ({"flags": ("--add-dir=" + m,), "events": events}, m, events),
+            ({"flags": ("--add-dir", "../m"), "events": events}, m, events),
+        ):
             with self.subTest(**kw):
-                self.assertEqual(self.fails(**kw), f"Codex worker {root} could rewrite {path}, which its hooks run "
-                                                   "unsandboxed: use another --cwd")
+                self.assertEqual(
+                    self.fails(**kw),
+                    f"Codex worker {root} could rewrite {path}, which its hooks run "
+                    "unsandboxed: use another --cwd",
+                )
         self.assertFalse(os.path.exists(self.workers))
         self.assertEqual(self.runs(), 0)
 
@@ -542,7 +763,10 @@ class Worker(unittest.TestCase):
         self.make_record()
         other = os.path.join(self.dir, "other")
         os.mkdir(other)
-        self.assertEqual(self.fails(resume=True, cwd=other), f"--cwd {other}: Codex worker {SID} ran in {self.cwd}")
+        self.assertEqual(
+            self.fails(resume=True, cwd=other),
+            f"--cwd {other}: Codex worker {SID} ran in {self.cwd}",
+        )
         os.unlink(self.record)
         self.assertEqual(self.fails(resume=True), missing)
         self.assertEqual(self.runs(), 0)
@@ -551,31 +775,40 @@ class Worker(unittest.TestCase):
         target = os.path.join(self.dir, "target.json")
         malformed = f"malformed Codex worker record {self.record}"
         for name, setup, want in (
-                ("symlink", lambda: os.symlink(target, self.record), "symbolic links"),
-                ("mode", lambda: os.chmod(self.record, 0o644), "not a 0600 regular file of yours"),
-                ("extra key", lambda: self.make_record(extra=1), malformed),
-                ("other sid", lambda: self.make_record(sid=SID.replace("0b", "0c")), malformed),
-                ("version", lambda: self.make_record(version=True), malformed),
-                ("native", lambda: self.make_record(NATIVE.replace("1", "A")), malformed),
-                ("relative cwd", lambda: self.make_record(cwd="project"), malformed),
-                ("not JSON", lambda: open(self.record, "w").close(), malformed)):
+            ("symlink", lambda: os.symlink(target, self.record), "symbolic links"),
+            ("mode", lambda: os.chmod(self.record, 0o644), "not a 0600 regular file of yours"),
+            ("extra key", lambda: self.make_record(extra=1), malformed),
+            ("other sid", lambda: self.make_record(sid=SID.replace("0b", "0c")), malformed),
+            ("version", lambda: self.make_record(version=True), malformed),
+            ("native", lambda: self.make_record(NATIVE.replace("1", "A")), malformed),
+            ("relative cwd", lambda: self.make_record(cwd="project"), malformed),
+            ("not JSON", lambda: open(self.record, "w").close(), malformed),
+        ):
             with self.subTest(name):
                 self.make_record()
                 if name == "symlink":
                     os.rename(self.record, target)
                 setup()
-                for call in (lambda: self.client.worker(self.spec(resume=True)),
-                             lambda: self.client.worker_reply(SID)):
+                for call in (
+                    lambda: self.client.worker(self.spec(resume=True)),
+                    lambda: self.client.worker_reply(SID),
+                ):
                     with self.assertRaises(ConfigError) as cm:
                         call()
                     if want == malformed:
                         self.assertEqual(str(cm.exception), malformed)
                     else:
-                        self.assertRegex(str(cm.exception), f"^{re.escape(f'Codex worker record {self.record}: ')}.*"
-                                                            + re.escape(want))
+                        self.assertRegex(
+                            str(cm.exception),
+                            f"^{re.escape(f'Codex worker record {self.record}: ')}.*"
+                            + re.escape(want),
+                        )
                 os.unlink(self.record)
         self.make_record()
-        with mock.patch.object(os, "getuid", return_value=os.getuid() + 1), self.assertRaises(ConfigError):
+        with (
+            mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
+            self.assertRaises(ConfigError),
+        ):
             self.client.worker_reply(SID)
         os.rename(self.workers, os.path.join(self.dir, "workers"))
         os.symlink(os.path.join(self.dir, "workers"), self.workers)
@@ -588,26 +821,46 @@ class Worker(unittest.TestCase):
             with self.subTest(flags=flags):
                 if os.path.exists(self.record):
                     os.unlink(self.record)
-                self.assertEqual(self.fails(flags=flags), "codex hooks/list: Codex hooks are off (features.hooks); a "
-                                                          "Codex worker needs them")
+                self.assertEqual(
+                    self.fails(flags=flags),
+                    "codex hooks/list: Codex hooks are off (features.hooks); a "
+                    "Codex worker needs them",
+                )
                 with open(self.record) as f:
                     self.assertIsNone(json.load(f)["native"])
 
     def test_only_our_five_hooks_as_defined_are_trusted(self):
-        extra = {"key": "/<session-flags>/config.toml:subagent_stop:0:0", "eventName": "subagentStop",
-                 "handlerType": "command", "command": "true", "source": "sessionFlags", "enabled": True,
-                 "isManaged": False, "currentHash": "sha256:" + "0" * 64, "trustStatus": "untrusted"}
-        for app, why in (({"drop": ["stop"]}, "no session-flags stop hook"),
-                         ({"extra": [{**extra, "eventName": "stop"}]}, "2 session-flags stop hooks"),
-                         ({"change": {"stop": {"enabled": False}}}, "the session-flags stop hook is disabled"),
-                         ({"change": {"stop": {"command": "true"}}}, "the session-flags stop hook is not our command"),
-                         ({"change": {"stop": {"handlerType": "prompt"}}},
-                          "the session-flags stop hook is not our command"),
-                         ({"change": {"stop": {"key": 7}}}, "the session-flags stop hook has no key"),
-                         ({"change": {"stop": {"currentHash": "sha256:abc"}}},
-                          "the session-flags stop hook has no sha256 hash"),
-                         ({"extra": [extra]}, f"a session-flags hook not ours: {extra['key']}"),
-                         ({"error": "boom"}, "hooks/list failed: boom")):
+        extra = {
+            "key": "/<session-flags>/config.toml:subagent_stop:0:0",
+            "eventName": "subagentStop",
+            "handlerType": "command",
+            "command": "true",
+            "source": "sessionFlags",
+            "enabled": True,
+            "isManaged": False,
+            "currentHash": "sha256:" + "0" * 64,
+            "trustStatus": "untrusted",
+        }
+        for app, why in (
+            ({"drop": ["stop"]}, "no session-flags stop hook"),
+            ({"extra": [{**extra, "eventName": "stop"}]}, "2 session-flags stop hooks"),
+            ({"change": {"stop": {"enabled": False}}}, "the session-flags stop hook is disabled"),
+            (
+                {"change": {"stop": {"command": "true"}}},
+                "the session-flags stop hook is not our command",
+            ),
+            (
+                {"change": {"stop": {"handlerType": "prompt"}}},
+                "the session-flags stop hook is not our command",
+            ),
+            ({"change": {"stop": {"key": 7}}}, "the session-flags stop hook has no key"),
+            (
+                {"change": {"stop": {"currentHash": "sha256:abc"}}},
+                "the session-flags stop hook has no sha256 hash",
+            ),
+            ({"extra": [extra]}, f"a session-flags hook not ours: {extra['key']}"),
+            ({"error": "boom"}, "hooks/list failed: boom"),
+        ):
             with self.subTest(app=app):
                 self.breaks(**app)
                 if os.path.exists(self.record):
@@ -616,10 +869,16 @@ class Worker(unittest.TestCase):
         self.breaks()
         os.unlink(self.record)
         self.scenario(errors=["bad project config"])
-        self.assertEqual(self.fails(), f'codex hooks/list: errors for {self.cwd}: ["bad project config"]')
+        self.assertEqual(
+            self.fails(), f'codex hooks/list: errors for {self.cwd}: ["bad project config"]'
+        )
 
     def test_the_one_answer_is_used_whatever_its_cwd_says(self):
-        other = self.cwd.removeprefix("/private") if self.cwd.startswith("/private/") else "/private" + self.cwd
+        other = (
+            self.cwd.removeprefix("/private")
+            if self.cwd.startswith("/private/")
+            else "/private" + self.cwd
+        )
         self.breaks(cwds=[other])
         hooks = self.hooks()
         self.assertEqual(self.client.worker(self.spec()).argv[-1], self.state(hooks))
@@ -627,14 +886,20 @@ class Worker(unittest.TestCase):
             with self.subTest(cwds=cwds):
                 self.breaks(cwds=cwds)
                 os.unlink(self.record)
-                self.assertEqual(self.fails(), f"codex hooks/list: want one answer for {self.cwd}, got {len(cwds)}")
+                self.assertEqual(
+                    self.fails(),
+                    f"codex hooks/list: want one answer for {self.cwd}, got {len(cwds)}",
+                )
 
     def test_the_users_own_untrusted_or_modified_hook_fails_closed(self):
         key = f"{self.codex_home}/hooks.json:stop:0:0"
-        for hook, refused in (({"trustStatus": "untrusted"}, "untrusted"), ({"trustStatus": "modified"}, "modified"),
-                              ({"trustStatus": "trusted"}, None),
-                              ({"trustStatus": "untrusted", "enabled": False}, None),
-                              ({"trustStatus": "modified", "isManaged": True}, None)):
+        for hook, refused in (
+            ({"trustStatus": "untrusted"}, "untrusted"),
+            ({"trustStatus": "modified"}, "modified"),
+            ({"trustStatus": "trusted"}, None),
+            ({"trustStatus": "untrusted", "enabled": False}, None),
+            ({"trustStatus": "modified", "isManaged": True}, None),
+        ):
             with self.subTest(hook=hook):
                 self.scenario(user_hook=hook)
                 if os.path.exists(self.record):
@@ -643,8 +908,11 @@ class Worker(unittest.TestCase):
                     hooks = self.hooks()
                     self.assertEqual(self.client.worker(self.spec()).argv[-1], self.state(hooks))
                 else:
-                    self.assertEqual(self.fails(), f"codex hooks/list: your hook {key} is {refused}: review it in "
-                                                   "your own Codex session (/hooks) first")
+                    self.assertEqual(
+                        self.fails(),
+                        f"codex hooks/list: your hook {key} is {refused}: review it in "
+                        "your own Codex session (/hooks) first",
+                    )
 
     def test_one_retry_when_the_app_server_exits_before_answering(self):
         self.breaks(die=1)
@@ -678,13 +946,17 @@ class Worker(unittest.TestCase):
 
     def test_one_discovery_per_codex_home_at_a_time(self):
         self.make_record()
-        lock = os.path.join(self.workers, hashlib.sha256(self.codex_home.encode()).hexdigest()[:16] + ".lock")
+        lock = os.path.join(
+            self.workers, hashlib.sha256(self.codex_home.encode()).hexdigest()[:16] + ".lock"
+        )
         fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
         self.addCleanup(os.close, fd)
         fcntl.flock(fd, fcntl.LOCK_EX)
         with virtual_time():
-            self.assertEqual(self.fails(resume=True),
-                             f"codex hooks/list: another Codex worker's start held {lock} for 30 s")
+            self.assertEqual(
+                self.fails(resume=True),
+                f"codex hooks/list: another Codex worker's start held {lock} for 30 s",
+            )
         self.assertEqual(self.runs(), 0)
         fcntl.flock(fd, fcntl.LOCK_UN)
         self.client.worker(self.spec(resume=True))
@@ -702,10 +974,14 @@ class Worker(unittest.TestCase):
             f.write("**Done**: 完成\nline 2")
         self.assertEqual(self.client.worker_reply(SID), "**Done**: 完成\nline 2")
         os.chmod(reply, 0o644)
-        self.assertEqual(self.fails_reply(), f"Codex worker reply {reply}: not a 0600 regular file of yours")
+        self.assertEqual(
+            self.fails_reply(), f"Codex worker reply {reply}: not a 0600 regular file of yours"
+        )
         os.unlink(reply)
         os.symlink(self.record, reply)
-        self.assertRegex(self.fails_reply(), f"^{re.escape(f'Codex worker reply {reply}: ')}.*symbolic links")
+        self.assertRegex(
+            self.fails_reply(), f"^{re.escape(f'Codex worker reply {reply}: ')}.*symbolic links"
+        )
         self.assertEqual(self.fails_reply("../x"), "bad session id '../x'")
 
     def fails_reply(self, sid=SID):
@@ -718,14 +994,37 @@ class WorkerAttributes(unittest.TestCase):
     def test_marker_context_variables_and_dialogs(self):
         cls = codex.CodexClient
         self.assertEqual(cls.session_env, "CODEX_THREAD_ID")
-        self.assertEqual(dict(cls.command_env), {
-            **dict.fromkeys(("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-                             "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE")),
-            "NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"})
-        self.assertEqual(cls.worker_dialogs, (
-            "Trust this folder?", "Config, hooks, and exec policies from untrusted folders stay disabled.",
-            "Hooks need review", "Working directory · resume", "This conversation is open in another app",
-            "Sign in with ChatGPT to use Codex"))
+        self.assertEqual(
+            dict(cls.command_env),
+            {
+                **dict.fromkeys(
+                    (
+                        "CODEX_THREAD_ID",
+                        "CODEX_SESSION_ID",
+                        "CODEX_VERSION",
+                        "CODEX_SANDBOX",
+                        "CODEX_SANDBOX_NETWORK_DISABLED",
+                        "CODEX_PERMISSION_PROFILE",
+                    )
+                ),
+                "NO_COLOR": "1",
+                "CODEX_CI": "1",
+                "PAGER": "cat",
+                "GIT_PAGER": "cat",
+                "GH_PAGER": "cat",
+            },
+        )
+        self.assertEqual(
+            cls.worker_dialogs,
+            (
+                "Trust this folder?",
+                "Config, hooks, and exec policies from untrusted folders stay disabled.",
+                "Hooks need review",
+                "Working directory · resume",
+                "This conversation is open in another app",
+                "Sign in with ChatGPT to use Codex",
+            ),
+        )
         with self.assertRaises(TypeError):
             cls.command_env["NO_COLOR"] = "0"
 

@@ -1,4 +1,5 @@
 """Before any test module loads, HOME becomes a temp dir of this process's own, never this machine's ~/.agent-pm."""
+
 import atexit
 import os
 import shutil

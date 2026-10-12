@@ -1,6 +1,10 @@
 """delegate/cli.py as a subprocess over new/tests/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
 a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, an interrupt, a usage limit, config errors.
 Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
+
+from new.tests import SRC, fake_claude, hermetic
+from new.tests.unit.delegate.runner_test import block
+
 import json
 import os
 import re
@@ -10,21 +14,24 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest import mock
 
-from new.tests import SRC, fake_claude, hermetic
-from new.tests.unit.delegate.runner_test import block
 from composer.prompt import RESUME
 from delegate.runner import FIX
 from driver import api, registry
 
 CLI = os.path.join(SRC, "delegate", "cli.py")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
-WAIT = 30   # seconds
+WAIT = 30  # seconds
 RESETS = 1760000000
 DONE = {"status": "done", "title": "echo", "summary": "Hello.", "deliverable": "Hello.\n"}
-ASKING = {"status": "needs_input", "title": "echo", "summary": "Asking.", "questions": ["Which greeting?"]}
+ASKING = {
+    "status": "needs_input",
+    "title": "echo",
+    "summary": "Asking.",
+    "questions": ["Which greeting?"],
+}
 UNSAVED = {k: v for k, v in DONE.items() if k != "deliverable"}
 UNSAVED_ERROR = "done with a local destination must carry the deliverable"
 ANSWER = "Say hello."
@@ -57,6 +64,7 @@ def running(pid: int) -> bool:
 
 class Integration(unittest.TestCase):
     """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid SID."""
+
     ROLE = "dummy-tester"
 
     def setUp(self):
@@ -64,20 +72,45 @@ class Integration(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        self.proj, self.work, bin_dir = (os.path.join(self.root, d) for d in ("proj", "work", "bin"))
+        self.proj, self.work, bin_dir = (
+            os.path.join(self.root, d) for d in ("proj", "work", "bin")
+        )
         for d in (self.proj, self.work, bin_dir):
             os.mkdir(d)
         self.out = os.path.join(self.work, "out.md")
-        self.scenario, self.log = os.path.join(self.root, "scenario.json"), os.path.join(self.root, "log.jsonl")
+        self.scenario, self.log = (
+            os.path.join(self.root, "scenario.json"),
+            os.path.join(self.root, "log.jsonl"),
+        )
         self.config = os.path.join(self.root, "config")
-        self.env = {"PATH": fake_claude.install(bin_dir), "HOME": home, "CLAUDE_CONFIG_DIR": self.config,
-                    "PYTHONUTF8": "1", "TZ": "UTC", fake_claude.ENV: self.scenario}
-        self.transcript = os.path.join(self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.proj),
-                                       f"{SID}.jsonl")
+        self.env = {
+            "PATH": fake_claude.install(bin_dir),
+            "HOME": home,
+            "CLAUDE_CONFIG_DIR": self.config,
+            "PYTHONUTF8": "1",
+            "TZ": "UTC",
+            fake_claude.ENV: self.scenario,
+        }
+        self.transcript = os.path.join(
+            self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.proj), f"{SID}.jsonl"
+        )
 
     def argv(self, *extra) -> list[str]:
-        return [sys.executable, CLI, "--role", self.ROLE, "--input", "Hello.", "--out", self.out, "--workdir",
-                self.work, "--sid", SID, *extra]
+        return [
+            sys.executable,
+            CLI,
+            "--role",
+            self.ROLE,
+            "--input",
+            "Hello.",
+            "--out",
+            self.out,
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            *extra,
+        ]
 
     def scene(self, steps, **scenario) -> None:
         with open(self.scenario, "w") as f:
@@ -85,8 +118,15 @@ class Integration(unittest.TestCase):
 
     def drive(self, steps, *extra, cwd=None, argv=None, **scenario) -> subprocess.CompletedProcess:
         self.scene(steps, **scenario)
-        return subprocess.run(argv or self.argv(*extra), cwd=cwd or self.proj, env=self.env, stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            argv or self.argv(*extra),
+            cwd=cwd or self.proj,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def records(self) -> list[dict]:
         with open(os.path.join(self.work, "run.jsonl")) as f:
@@ -106,7 +146,9 @@ class Integration(unittest.TestCase):
 
     def users(self) -> list:
         with open(self.transcript) as f:
-            return [line["message"]["content"] for line in map(json.loads, f) if line["type"] == "user"]
+            return [
+                line["message"]["content"] for line in map(json.loads, f) if line["type"] == "user"
+            ]
 
     def read(self, path: str) -> str:
         with open(path) as f:
@@ -118,31 +160,60 @@ class NewRun(Integration):
         res = self.drive([mark("start", "echoing"), "Echoing.", block(DONE)])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout, "")
-        for line in (f"delegate: session {SID}", "Progress (start): echoing", "Echoing.", "delegate: status done"):
+        for line in (
+            f"delegate: session {SID}",
+            "Progress (start): echoing",
+            "Echoing.",
+            "delegate: status done",
+        ):
             self.assertIn(line, res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "result", "end"])
+        self.assertEqual(
+            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"]
+        )
         session = self.records()[0]
-        self.assertEqual((session["sid"], session["cwd"], session["project"], session["transcript"]),
-                         (SID, self.proj, False, self.transcript))
-        self.assertEqual(bare(self.records()[1:]), [
-            {"kind": "input", "text": "Hello."},
-            {"kind": "client_session", "sid": SID, "client_id": SID},
-            {"kind": "progress", "name": "start", "text": "echoing"},
-            {"kind": "result", "outcome": {"status": "done", "title": "echo", "summary": "Hello.", "questions": [],
-                                           "url": self.out, "files": []}},
-            {"kind": "end", "sid": SID, "rc": 0}])
+        self.assertEqual(
+            (session["sid"], session["cwd"], session["project"], session["transcript"]),
+            (SID, self.proj, False, self.transcript),
+        )
+        self.assertEqual(
+            bare(self.records()[1:]),
+            [
+                {"kind": "input", "text": "Hello."},
+                {"kind": "client_session", "sid": SID, "client_id": SID},
+                {"kind": "progress", "name": "start", "text": "echoing"},
+                {
+                    "kind": "result",
+                    "outcome": {
+                        "status": "done",
+                        "title": "echo",
+                        "summary": "Hello.",
+                        "questions": [],
+                        "url": self.out,
+                        "files": [],
+                    },
+                },
+                {"kind": "end", "sid": SID, "rc": 0},
+            ],
+        )
         self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
-        self.assertEqual((call["cwd"], option(call, "--session-id"), option(call, "--output-format")),
-                         (self.proj, SID, "stream-json"))
+        self.assertEqual(
+            (call["cwd"], option(call, "--session-id"), option(call, "--output-format")),
+            (self.proj, SID, "stream-json"),
+        )
         self.assertIsNone(option(call, "--resume"))
 
     def test_a_deliverable_file_the_agent_wrote_is_saved_to_out(self):
         report = os.path.join(self.work, "report.md")
-        res = self.drive([mark("start", "echoing"), {"kind": "write", "path": report, "text": "Written.\n"},
-                          block({**UNSAVED, "deliverable_file": report})])
+        res = self.drive(
+            [
+                mark("start", "echoing"),
+                {"kind": "write", "path": report, "text": "Written.\n"},
+                block({**UNSAVED, "deliverable_file": report}),
+            ]
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(self.read(self.out), "Written.\n")
         self.assertEqual(self.last("result")["outcome"]["url"], self.out)
@@ -171,11 +242,29 @@ class Outcomes(Integration):
         self.assertIn(f"delegate: invalid outcome: {UNSAVED_ERROR}; resuming once", res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
         first, second = self.calls()
-        self.assertEqual((option(first, "--session-id"), option(second, "--resume"), option(second, "--session-id")),
-                         (SID, SID, None))
+        self.assertEqual(
+            (
+                option(first, "--session-id"),
+                option(second, "--resume"),
+                option(second, "--session-id"),
+            ),
+            (SID, SID, None),
+        )
         self.assertEqual(prompt(second), FIX.format(error=UNSAVED_ERROR))
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "invalid", "session",
-                                        "client_session", "result", "end"])
+        self.assertEqual(
+            self.kinds(),
+            [
+                "session",
+                "input",
+                "client_session",
+                "progress",
+                "invalid",
+                "session",
+                "client_session",
+                "result",
+                "end",
+            ],
+        )
         self.assertEqual(self.last("invalid")["error"], UNSAVED_ERROR)
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
         self.assertEqual(res.stderr.count(f"delegate: session {SID}"), 1)
@@ -194,8 +283,15 @@ class Outcomes(Integration):
         self.assertIn("delegate: status done", res.stderr)
         self.assertEqual(self.read(self.out), DONE["deliverable"])
         saved = self.last("result")
-        self.assertEqual((saved["outcome"]["status"], saved["outcome"]["url"], saved["error"], self.last("end")["rc"]),
-                         ("done", self.out, "the client exited 7", 7))
+        self.assertEqual(
+            (
+                saved["outcome"]["status"],
+                saved["outcome"]["url"],
+                saved["error"],
+                self.last("end")["rc"],
+            ),
+            ("done", self.out, "the client exited 7", 7),
+        )
         self.assertEqual(len(self.calls()), 1)
         self.assertEqual(self.kinds()[-2:], ["result", "end"])
 
@@ -206,7 +302,10 @@ class Outcomes(Integration):
                 res = self.drive(steps, exit=7)
                 self.assertEqual(res.returncode, 3, res.stderr)
                 self.assertIn("delegate: the client exited 7", res.stderr)
-                self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 7", 7))
+                self.assertEqual(
+                    (self.last("result")["error"], self.last("end")["rc"]),
+                    ("the client exited 7", 7),
+                )
                 self.assertNotIn("outcome", self.last("result"))
                 self.assertFalse(os.path.exists(self.out))
                 self.assertEqual(len(self.calls()), before + 1)
@@ -223,14 +322,18 @@ class Stderr(Integration):
         self.assertIn(said, res.stderr)
         self.assertEqual([e["text"] for e in self.records() if e["kind"] == "stderr"], [said])
         self.assertEqual(self.kinds()[-3:], ["stderr", "result", "end"])
-        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1))
+        self.assertEqual(
+            (self.last("result")["error"], self.last("end")["rc"]), ("the client exited 1", 1)
+        )
 
 
 class Resume(Integration):
     def test_resume_reuses_the_recorded_cwd_and_session(self):
         res = self.drive([mark("start", "first")])
         self.assertEqual(res.returncode, 1, res.stderr)
-        res = self.drive([mark("round", "second"), block(DONE)], "--resume", "--input", "Use B.", cwd=self.root)
+        res = self.drive(
+            [mark("round", "second"), block(DONE)], "--resume", "--input", "Use B.", cwd=self.root
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
         self.assertEqual(second["cwd"], self.proj)
@@ -238,10 +341,14 @@ class Resume(Integration):
         self.assertTrue(prompt(second).startswith(RESUME))
         self.assertTrue(prompt(second).endswith("\n# Input\n\nUse B.\n"))
         self.assertEqual(self.users(), [prompt(first), prompt(second)])
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "result", "end"] * 2)
+        self.assertEqual(
+            self.kinds(), ["session", "input", "client_session", "progress", "result", "end"] * 2
+        )
         records = self.records()
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", "Use B."])
-        self.assertEqual([e["cwd"] for e in records if e["kind"] == "session"], [self.proj, self.proj])
+        self.assertEqual(
+            [e["cwd"] for e in records if e["kind"] == "session"], [self.proj, self.proj]
+        )
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
 
@@ -254,34 +361,83 @@ class NeedsInput(Integration):
         res = self.drive([block(DONE)], "--resume", "--input", ANSWER)
         self.assertEqual(res.returncode, 0, res.stderr)
         records = self.records()
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "result", "end",
-                                        "session", "input", "client_session", "result", "end"])
+        self.assertEqual(
+            self.kinds(),
+            [
+                "session",
+                "input",
+                "client_session",
+                "progress",
+                "result",
+                "end",
+                "session",
+                "input",
+                "client_session",
+                "result",
+                "end",
+            ],
+        )
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
-        self.assertEqual([(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"], [(SID, self.proj)] * 2)
+        self.assertEqual(
+            [(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"],
+            [(SID, self.proj)] * 2,
+        )
         first, second = self.calls()
-        self.assertEqual((option(first, "--session-id"), option(second, "--resume"), option(second, "--session-id")),
-                         (SID, SID, None))
+        self.assertEqual(
+            (
+                option(first, "--session-id"),
+                option(second, "--resume"),
+                option(second, "--session-id"),
+            ),
+            (SID, SID, None),
+        )
         self.assertTrue(prompt(second).startswith(RESUME), "the resume prompt")
-        self.assertTrue(prompt(second).endswith(f"\n# Input\n\n{ANSWER}\n"), "the answer as the input")
+        self.assertTrue(
+            prompt(second).endswith(f"\n# Input\n\n{ANSWER}\n"), "the answer as the input"
+        )
         self.assertEqual(self.users(), [prompt(first), prompt(second)], "one session's transcript")
-        self.assertEqual(bare(records[-2:]), [
-            {"kind": "result", "outcome": {"status": "done", "title": "echo", "summary": "Hello.", "questions": [],
-                                           "url": self.out, "files": []}},
-            {"kind": "end", "sid": SID, "rc": 0}])
+        self.assertEqual(
+            bare(records[-2:]),
+            [
+                {
+                    "kind": "result",
+                    "outcome": {
+                        "status": "done",
+                        "title": "echo",
+                        "summary": "Hello.",
+                        "questions": [],
+                        "url": self.out,
+                        "files": [],
+                    },
+                },
+                {"kind": "end", "sid": SID, "rc": 0},
+            ],
+        )
         self.assertEqual(self.read(self.out), DONE["deliverable"])
 
 
 class RolePicks(Integration):
     ROLE = "researcher"
     PICK = mark("start", "light-research: a quick, good-enough answer will do")
-    REPORT = {"status": "done", "title": "Greetings", "summary": "web", "deliverable": "# Greetings\n"}
+    REPORT = {
+        "status": "done",
+        "title": "Greetings",
+        "summary": "web",
+        "deliverable": "# Greetings\n",
+    }
 
     def test_the_role_picks_and_a_resume_keeps_the_session(self):
-        picked = {"kind": "progress", "name": "start", "text": "light-research: a quick, good-enough answer will do"}
+        picked = {
+            "kind": "progress",
+            "name": "start",
+            "text": "light-research: a quick, good-enough answer will do",
+        }
         res = self.drive([self.PICK])
         self.assertEqual(res.returncode, 1, res.stderr)
         self.assertIn(f"Progress (start): {picked['text']}", res.stderr)
-        self.assertIn("**Your task**: pick it from your charter's Tasks section", prompt(self.calls()[0]))
+        self.assertIn(
+            "**Your task**: pick it from your charter's Tasks section", prompt(self.calls()[0])
+        )
         self.assertEqual(bare([e for e in self.records() if e["kind"] == "progress"]), [picked])
         res = self.drive([block(self.REPORT)], "--resume")
         self.assertEqual(res.returncode, 0, res.stderr)
@@ -298,14 +454,22 @@ class RolePicks(Integration):
 
 class UsageLimit(Integration):
     def test_a_limit_ends_the_run_and_its_session_stays_resumable(self):
-        res = self.drive([mark("start", "echoing"), {"kind": "limit", "resets_at": RESETS}, block(DONE)])
+        res = self.drive(
+            [mark("start", "echoing"), {"kind": "limit", "resets_at": RESETS}, block(DONE)]
+        )
         self.assertEqual(res.returncode, 3, res.stderr)
-        resets = datetime.fromtimestamp(RESETS, timezone.utc).isoformat(timespec="seconds")
+        resets = datetime.fromtimestamp(RESETS, UTC).isoformat(timespec="seconds")
         self.assertIn(f"delegate: usage limit; resets at {resets}\n", res.stderr)
         self.assertNotIn("status done", res.stderr)
-        self.assertEqual(self.kinds(), ["session", "input", "client_session", "progress", "limit", "result", "end"])
+        self.assertEqual(
+            self.kinds(),
+            ["session", "input", "client_session", "progress", "limit", "result", "end"],
+        )
         self.assertEqual(self.last("limit")["resets_at"], RESETS)
-        self.assertEqual(bare([self.last("result")]), [{"kind": "result", "error": f"usage limit; resets at {resets}"}])
+        self.assertEqual(
+            bare([self.last("result")]),
+            [{"kind": "result", "error": f"usage limit; resets at {resets}"}],
+        )
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
         registry.reset()
@@ -317,12 +481,31 @@ class UsageLimit(Integration):
 class ConfigErrors(Integration):
     def test_a_config_error_exits_2_and_starts_nothing(self):
         cli = [sys.executable, CLI]
-        cases = {"unknown role": ([*cli, "--role", "nobody", "--input", "x", "--out", self.out, "--workdir",
-                                   self.work], "'nobody'"),
-                 "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
-                 "missing options": ([*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
-                                     "--input, --out and --workdir are required"),
-                 "tui": (self.argv("--mode", "tui"), "tui mode is not available yet")}
+        cases = {
+            "unknown role": (
+                [
+                    *cli,
+                    "--role",
+                    "nobody",
+                    "--input",
+                    "x",
+                    "--out",
+                    self.out,
+                    "--workdir",
+                    self.work,
+                ],
+                "'nobody'",
+            ),
+            "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
+            "missing options": (
+                [*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
+                "--input, --out and --workdir are required",
+            ),
+            "a runtime without tui": (
+                self.argv("--runtime", "codex", "--mode", "tui"),
+                "runtime 'codex' does not support tui mode",
+            ),
+        }
         for name, (argv, said) in cases.items():
             with self.subTest(name):
                 res = self.drive([block(DONE)], argv=argv)
@@ -336,9 +519,17 @@ class ConfigErrors(Integration):
 class Interrupt(Integration):
     def popen(self) -> subprocess.Popen:
         # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of its own.
-        proc = subprocess.Popen(self.argv(), cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-                                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        proc = subprocess.Popen(
+            self.argv(),
+            cwd=self.proj,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+        )
         self.addCleanup(self.reap, proc)
         return proc
 

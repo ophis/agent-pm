@@ -19,6 +19,7 @@ is an explicit extension.
          or output) the fake polls every 0.05 s until the file exists. Orphaned or HANG_CAP s without it: exit 1 with a
          stderr line. A non-string: exit 1.
 """
+
 import argparse
 import json
 import os
@@ -49,7 +50,10 @@ def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
     # Each shim exec's (the pid drive kills is the program's); python3 is sys.executable, as the prompt's report
     # command starts with `python3` and report.py needs Python >= 3.10.
     q = shlex.quote
-    shims = {"claude": f"{q(sys.executable)} {q(os.path.abspath(__file__))}", "python3": q(sys.executable)}
+    shims = {
+        "claude": f"{q(sys.executable)} {q(os.path.abspath(__file__))}",
+        "python3": q(sys.executable),
+    }
     for name, cmd in shims.items():
         path = os.path.join(bin_dir, name)
         with open(path, "w") as f:
@@ -74,8 +78,9 @@ def check(where: str, steps) -> None:
                 sys.exit(f"fake_claude.py: outcome key {extra[0]!r}: report.py can't carry it")
         if kind == "hook" and not (isinstance(step["event"], str) and step["event"]):
             sys.exit(f"fake_claude.py: bad step {step!r}")
-        if kind in FILES and not (isinstance(step["path"], str) and step["path"]
-                                  and isinstance(step.get("text", ""), str)):
+        if kind in FILES and not (
+            isinstance(step["path"], str) and step["path"] and isinstance(step.get("text", ""), str)
+        ):
             sys.exit(f"fake_claude.py: bad step {step!r}")
 
 
@@ -97,7 +102,10 @@ def scenario() -> dict:
         sys.exit("fake_claude.py: gate: want a file path")
     if not isinstance(data["turns"], list):
         sys.exit("fake_claude.py: turns: want a list")
-    for where, steps in [("steps", data["steps"]), *((f"turns[{i}]", t) for i, t in enumerate(data["turns"]))]:
+    for where, steps in [
+        ("steps", data["steps"]),
+        *((f"turns[{i}]", t) for i, t in enumerate(data["turns"])),
+    ]:
         check(where, steps)
     return data
 
@@ -107,8 +115,18 @@ def parse(argv: list[str]) -> argparse.Namespace:
     for flag in ("--verbose", "--strict-mcp-config"):
         ap.add_argument(flag, action="store_true")
     ap.add_argument("-p", "--print", action="store_true")
-    for opt in ("--session-id", "--resume", "--model", "--effort", "--permission-mode", "--setting-sources",
-                "--output-format", "--settings", "--mcp-config", "--name"):
+    for opt in (
+        "--session-id",
+        "--resume",
+        "--model",
+        "--effort",
+        "--permission-mode",
+        "--setting-sources",
+        "--output-format",
+        "--settings",
+        "--mcp-config",
+        "--name",
+    ):
         ap.add_argument(opt)
     for opt in ("--add-dir", "--allowedTools"):
         ap.add_argument(opt, nargs="+", action="extend")
@@ -135,8 +153,14 @@ def parse(argv: list[str]) -> argparse.Namespace:
 def parameters(prompt: str) -> dict[str, str]:
     section = SECTION.search(prompt)
     # compose._code pads a value holding a backtick with a space each side.
-    return {name: value[1:-1] if "`" in value else value
-            for name, _, value in LINE.findall(section.group(1))} if section else {}
+    return (
+        {
+            name: value[1:-1] if "`" in value else value
+            for name, _, value in LINE.findall(section.group(1))
+        }
+        if section
+        else {}
+    )
 
 
 def report_command(prompts: list[str]) -> list[str] | None:
@@ -160,16 +184,27 @@ def report(command: list[str], step: dict) -> None:
             sub = ["progress", step["name"], step["text"]]
         else:
             o = step["outcome"]
-            sub = ["outcome", *(f"--{k}={o[k]}" for k in ("status", "title", "summary") if k in o),
-                   *(f"--question={q}" for q in o.get("questions", [])), *([f"--url={o['url']}"] if "url" in o else []),
-                   *(f"--file={p}" for p in o.get("files", []))]
+            sub = [
+                "outcome",
+                *(f"--{k}={o[k]}" for k in ("status", "title", "summary") if k in o),
+                *(f"--question={q}" for q in o.get("questions", [])),
+                *([f"--url={o['url']}"] if "url" in o else []),
+                *(f"--file={p}" for p in o.get("files", [])),
+            ]
             if "deliverable" in o:
-                with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as f:
+                with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", suffix=".md", delete=False
+                ) as f:
                     deliverable = f.name
                     f.write(o["deliverable"])
                 sub.append(f"--deliverable={deliverable}")
-        res = subprocess.run(command + sub, capture_output=True, text=True, timeout=REPORT_TIMEOUT,
-                             stdin=subprocess.DEVNULL)
+        res = subprocess.run(
+            command + sub,
+            capture_output=True,
+            text=True,
+            timeout=REPORT_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )
         if res.returncode:
             print(res.stderr, end="", file=sys.stderr, flush=True)
     except (OSError, subprocess.SubprocessError) as e:
@@ -195,12 +230,25 @@ def file_step(step: dict) -> str | None:
 def run_hooks(hooks, event: str, payload: dict) -> None:
     entries = hooks.get(event) if isinstance(hooks, dict) else None
     for entry in entries if isinstance(entries, list) else []:
-        items = entry.get("hooks") if isinstance(entry, dict) and entry.get("matcher", "") in ("", "*") else None
+        items = (
+            entry.get("hooks")
+            if isinstance(entry, dict) and entry.get("matcher", "") in ("", "*")
+            else None
+        )
         for hook in items if isinstance(items, list) else []:
-            if isinstance(hook, dict) and hook.get("type") == "command" and isinstance(hook.get("command"), str):
+            if (
+                isinstance(hook, dict)
+                and hook.get("type") == "command"
+                and isinstance(hook.get("command"), str)
+            ):
                 try:
-                    subprocess.run(["/bin/sh", "-c", hook["command"]], input=json.dumps(payload), text=True,
-                                   stdout=subprocess.DEVNULL, timeout=HOOK_TIMEOUT)
+                    subprocess.run(
+                        ["/bin/sh", "-c", hook["command"]],
+                        input=json.dumps(payload),
+                        text=True,
+                        stdout=subprocess.DEVNULL,
+                        timeout=HOOK_TIMEOUT,
+                    )
                 except (OSError, subprocess.SubprocessError) as e:
                     print(f"fake_claude.py: {event} hook: {e}", file=sys.stderr, flush=True)
 
@@ -266,12 +314,30 @@ def main(argv: list[str]) -> int:
 
     def keep(role: str, content) -> None:
         with open(transcript, "a") as f:
-            f.write(json.dumps({"type": role, "sessionId": sid, "cwd": cwd,
-                                "message": {"role": role, "content": content}}) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": role,
+                        "sessionId": sid,
+                        "cwd": cwd,
+                        "message": {"role": role, "content": content},
+                    }
+                )
+                + "\n"
+            )
 
     def hook(event: str, **extra) -> None:
-        run_hooks(a.hooks, event, {"session_id": sid, "transcript_path": transcript, "cwd": cwd,
-                                   "hook_event_name": event, **extra})
+        run_hooks(
+            a.hooks,
+            event,
+            {
+                "session_id": sid,
+                "transcript_path": transcript,
+                "cwd": cwd,
+                "hook_event_name": event,
+                **extra,
+            },
+        )
 
     prompts, command = [], None
 
@@ -279,7 +345,13 @@ def main(argv: list[str]) -> int:
         content = [{"type": "text", "text": text}]
         keep("assistant", content)
         if stream:
-            say({"type": "assistant", "message": {"role": "assistant", "content": content}, "session_id": sid})
+            say(
+                {
+                    "type": "assistant",
+                    "message": {"role": "assistant", "content": content},
+                    "session_id": sid,
+                }
+            )
         else:
             print(text, flush=True)
 
@@ -299,7 +371,9 @@ def main(argv: list[str]) -> int:
             else:
                 command = command or report_command(prompts)
                 if command is None:
-                    sys.exit("fake_claude.py: a report step, but no prompt so far names a report command")
+                    sys.exit(
+                        "fake_claude.py: a report step, but no prompt so far names a report command"
+                    )
                 report(command, step)
         if stop:
             hook("Stop", stop_hook_active=False)
@@ -314,8 +388,14 @@ def main(argv: list[str]) -> int:
                 time.sleep(0.1)
             return 1
         if stream:
-            say({"type": "result", "subtype": "success" if s["exit"] == 0 else "error_during_execution",
-                 "is_error": s["exit"] != 0, "session_id": sid})
+            say(
+                {
+                    "type": "result",
+                    "subtype": "success" if s["exit"] == 0 else "error_during_execution",
+                    "is_error": s["exit"] != 0,
+                    "session_id": sid,
+                }
+            )
         return s["exit"]
     turns = [s["steps"], *s["turns"]]
     try:

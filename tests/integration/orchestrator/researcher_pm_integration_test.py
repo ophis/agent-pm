@@ -1,9 +1,15 @@
+from tests import hermetic  # noqa: F401
+from tests.integration.orchestrator.flow_fixtures import (
+    HARNESS_EMAIL,
+    HUMAN,
+    LIGHT_RESEARCH,
+    RESEARCH_DIR,
+)
+from tests.integration.orchestrator.segments import RESEARCH, Segment
+
 import unittest
 
-from tests import hermetic  # noqa: F401
 import router
-from tests.integration.orchestrator.flow_fixtures import HARNESS_EMAIL, HUMAN, LIGHT_RESEARCH, RESEARCH_DIR
-from tests.integration.orchestrator.segments import RESEARCH, Segment
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."
@@ -26,8 +32,10 @@ class ResearcherToPm(Segment):
         self.backlog_not_claimed(ident)
         self.human_move(ident, "todo", "human: to todo")
         with self.step("router: blocked"):
-            self.assertEqual([(e["src"], e["kind"], e.get("issue"), e.get("by")) for e in self.refused(ident)],
-                             [("router", "blocked", ident, [blocker])])
+            self.assertEqual(
+                [(e["src"], e["kind"], e.get("issue"), e.get("by")) for e in self.refused(ident)],
+                [("router", "blocked", ident, [blocker])],
+            )
         self.human_move(blocker, "done", "human: blocker done")
         self.researcher_done(ident)
 
@@ -60,12 +68,24 @@ class ResearcherToPm(Segment):
             self.agent_run()
         with self.step("router: cap"):
             attempts = self.attempts(ident)
-            self.assertEqual([(e["src"], e["kind"], e.get("issue"), e.get("to"), e.get("reason"))
-                              for e in self.refused(ident, attempts)],
-                             [("router", "claim-skip", ident, "in_review", f"reached {router.CAP} attempts"),
-                              ("router", "pick-none", None, None, "nothing claimable")], attempts)
-            self.expect(ident, state="in_review", history=[("todo", "in_review", HARNESS_EMAIL)],
-                        comments=[(HARNESS_EMAIL, "cap")], subscribers=[HUMAN])
+            self.assertEqual(
+                [
+                    (e["src"], e["kind"], e.get("issue"), e.get("to"), e.get("reason"))
+                    for e in self.refused(ident, attempts)
+                ],
+                [
+                    ("router", "claim-skip", ident, "in_review", f"reached {router.CAP} attempts"),
+                    ("router", "pick-none", None, None, "nothing claimable"),
+                ],
+                attempts,
+            )
+            self.expect(
+                ident,
+                state="in_review",
+                history=[("todo", "in_review", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, "cap")],
+                subscribers=[HUMAN],
+            )
         self.assertEqual(len(self.runs()), router.CAP)
 
 

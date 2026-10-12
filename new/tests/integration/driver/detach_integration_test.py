@@ -1,6 +1,9 @@
 """driver.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
 taken name, a cwd it cannot enter, a script whose interpreter is missing, an env execve refuses."""
+
+from new.tests import hermetic, live_tmux
+
 import errno
 import json
 import os
@@ -11,7 +14,6 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic, live_tmux
 from driver import api, tmux_host
 
 MANAGER = "mgr"
@@ -81,7 +83,9 @@ class DetachTest(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(api.DriverError) as caught:
                 self.detach(name, opener="other")
             self.assertEqual(str(caught.exception), f"detach {name}: session {name} exists")
-        self.assertEqual(self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout, pid)
+        self.assertEqual(
+            self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout, pid
+        )
         self.assertEqual([self.server.option(n, "@opener") for n in ("d1", MANAGER)], ["", ""])
         self.assertEqual(api.sessions().names, ("d1", MANAGER))
 
@@ -90,8 +94,13 @@ class DetachTest(unittest.TestCase):
         with self.assertRaises(api.ConfigError):
             api.detach("d1", self.argv("d1"), missing, self.server.env())
         with self.assertRaisesRegex(tmux_host.TuiError, "^session d2 did not start$"):
-            tmux_host.detach("d2", self.argv("d2"), cwd=missing, env=self.server.env(),
-                             sleep=lambda seconds: time.sleep(seconds / 10))
+            tmux_host.detach(
+                "d2",
+                self.argv("d2"),
+                cwd=missing,
+                env=self.server.env(),
+                sleep=lambda seconds: time.sleep(seconds / 10),
+            )
         live_tmux.wait(self.gone, what="no session left")
 
     def test_a_script_whose_interpreter_is_missing_fails_it_leaving_no_session(self):
@@ -105,7 +114,9 @@ class DetachTest(unittest.TestCase):
         live_tmux.wait(self.gone, what="no session left")
 
     def test_an_env_execve_refuses_fails_it_leaving_no_session(self):
-        with self.assertRaisesRegex(api.DriverError, rf"^detach d1: cannot run .+: {os.strerror(errno.EINVAL)}$"):
+        with self.assertRaisesRegex(
+            api.DriverError, rf"^detach d1: cannot run .+: {os.strerror(errno.EINVAL)}$"
+        ):
             api.detach("d1", self.argv("d1"), self.dir, {**self.server.env(), "X": "a\0b"})
         live_tmux.wait(self.gone, what="no session left")
         self.assertFalse(os.path.exists(os.path.join(self.dir, "d1.json")))

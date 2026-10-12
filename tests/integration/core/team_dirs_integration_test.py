@@ -1,3 +1,7 @@
+from tests import hermetic
+from tests.integration.core import fake_claude, fake_codex
+from tests.unit.core.drive_test import SID, TEAM, outcome, progress
+
 import json
 import os
 import shutil
@@ -6,9 +10,6 @@ import sys
 import tempfile
 import unittest
 
-from tests import hermetic
-from tests.integration.core import fake_claude, fake_codex
-from tests.unit.core.drive_test import NOTE, SID, TEAM, outcome, progress
 import repo
 
 DRIVE = os.path.join(hermetic.CORE, "src", "drive.py")
@@ -46,18 +47,42 @@ class Fixture(unittest.TestCase):
         for d in (self.work, bin_dir):
             os.mkdir(d)
         self.scenario = os.path.join(root, "scenario.json")
-        self.env = {"PATH": fake_claude.install(bin_dir), "HOME": os.environ["HOME"], "PYTHONUTF8": "1",
-                    fake_claude.ENV: self.scenario}
+        self.env = {
+            "PATH": fake_claude.install(bin_dir),
+            "HOME": os.environ["HOME"],
+            "PYTHONUTF8": "1",
+            fake_claude.ENV: self.scenario,
+        }
 
     def drive(self, *argv, steps=()) -> subprocess.CompletedProcess:
         with open(self.scenario, "w") as f:
             json.dump({"steps": list(steps)}, f)
-        return subprocess.run([sys.executable, DRIVE, *argv], cwd=self.work, env=self.env, stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            [sys.executable, DRIVE, *argv],
+            cwd=self.work,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def run_argv(self, role, task, *extra):
-        return ["--role", role, "--task", task, "--input", "Write X.", "--out", os.path.join(self.work, "out.md"),
-                "--workdir", self.work, "--sid", SID, *extra]
+        return [
+            "--role",
+            role,
+            "--task",
+            task,
+            "--input",
+            "Write X.",
+            "--out",
+            os.path.join(self.work, "out.md"),
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            *extra,
+        ]
 
 
 class TeamDirs(Fixture):
@@ -72,12 +97,21 @@ class TeamDirs(Fixture):
     def test_list(self):
         res = self.drive("--list")
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn(f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"
-                      f"  note: a short note; always; light.  [{os.path.join(self.tasks, 'note.md')}]\n", res.stdout)
+        self.assertIn(
+            f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"
+            f"  note: a short note; always; light.  [{os.path.join(self.tasks, 'note.md')}]\n",
+            res.stdout,
+        )
 
     def test_a_headless_run_reads_its_task_from_its_tasks_dir(self):
-        res = self.drive(*self.run_argv("writer", "note"), steps=[
-            progress("start", "noting"), {"kind": "read", "path": os.path.join(self.tasks, "note.md")}, outcome(DONE)])
+        res = self.drive(
+            *self.run_argv("writer", "note"),
+            steps=[
+                progress("start", "noting"),
+                {"kind": "read", "path": os.path.join(self.tasks, "note.md")},
+                outcome(DONE),
+            ],
+        )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("drive.py: status done", res.stderr)
         self.assertIn("[agent-pm-progress:start] the topic", res.stderr)
@@ -95,24 +129,40 @@ class CodexTeamDirs(Fixture):
         home = tempfile.TemporaryDirectory(prefix="home-", dir=homes)
         self.addCleanup(home.cleanup)
         os.makedirs(os.path.join(home.name, ".agent-pm"))
-        shutil.copy(os.path.join(os.environ["HOME"], ".agent-pm", "core.local.toml"),
-                    os.path.join(home.name, ".agent-pm", "core.local.toml"))
+        shutil.copy(
+            os.path.join(os.environ["HOME"], ".agent-pm", "core.local.toml"),
+            os.path.join(home.name, ".agent-pm", "core.local.toml"),
+        )
         self.log = os.path.join(os.path.dirname(self.scenario), "codex-call.json")
-        self.env |= {"PATH": fake_codex.install(os.path.join(os.path.dirname(self.scenario), "bin")),
-                     "HOME": home.name, fake_codex.ENV: self.scenario}
+        self.env |= {
+            "PATH": fake_codex.install(os.path.join(os.path.dirname(self.scenario), "bin")),
+            "HOME": home.name,
+            fake_codex.ENV: self.scenario,
+        }
 
     def codex(self, *extra, steps):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, "log": self.log}, f)
-        return subprocess.run([sys.executable, DRIVE, "--client", "codex", *self.run_argv("writer", "note"), *extra],
-                              cwd=self.work, env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=60)
+        return subprocess.run(
+            [sys.executable, DRIVE, "--client", "codex", *self.run_argv("writer", "note"), *extra],
+            cwd=self.work,
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def test_a_codex_run_and_its_resume_add_its_tasks_dir(self):
         for extra in ((), ("--resume",)):
             with self.subTest(extra=extra):
-                res = self.codex(*extra, steps=[{"kind": "progress", "name": "start", "text": "noting"},
-                                                {"kind": "outcome", "outcome": DONE}])
+                res = self.codex(
+                    *extra,
+                    steps=[
+                        {"kind": "progress", "name": "start", "text": "noting"},
+                        {"kind": "outcome", "outcome": DONE},
+                    ],
+                )
                 self.assertEqual(res.returncode, 0, res.stderr)
                 with open(self.log) as f:
                     call = json.load(f)
@@ -127,7 +177,9 @@ class CodexTeamDirs(Fixture):
             f.write(f'[roles.writer]\nread = ["{self.team}"]\n')
         res = self.codex(steps=[])
         self.assertEqual(res.returncode, 2, res.stderr)
-        self.assertIn(f"team_dirs: {self.team} overlaps a dir CodexClient adds {self.team}", res.stderr)
+        self.assertIn(
+            f"team_dirs: {self.team} overlaps a dir CodexClient adds {self.team}", res.stderr
+        )
         self.assertFalse(os.path.exists(self.log))
 
 
