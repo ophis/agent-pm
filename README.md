@@ -49,10 +49,8 @@ flowchart TB
     P1[Claude Code]
     P2[Codex CLI]
   end
-  LD --> R & PP
-  HU & M -->|"--issue · --tui"| R
-  M -->|"CLI --detach"| D
-  HU -->|"/agent-pm:act-as"| D
+  EN --> R
+  EN --> D
   W -->|"start · show · sessions"| DR
   RU <==>|"delegate.run · events, outcome"| D
   OR -->|"session chores"| DR
