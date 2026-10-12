@@ -12,8 +12,10 @@ from pathlib import Path
 
 from composer import OUTCOME, RunConfig, Team
 from driver import api
+from utils.files import save
+from utils.text import printable
 
-from delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome, save
+from delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from delegate.outcome import read as read_outcome
 from delegate.plan import ConfigError, Plan, plan
 from delegate.reply import marks, outcome_block
@@ -142,11 +144,6 @@ class Tui(Headless):
 
 
 POLICIES = {"headless": Headless, "tui": Tui, "in_process": Headless}
-
-
-def printable(text: str) -> str:
-    """Without control characters but tabs: an agent run's output can't steer the terminal."""
-    return "".join(c for c in text if c.isprintable() or c == "\t")
 
 
 def _say(text: str) -> None:
