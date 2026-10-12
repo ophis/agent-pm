@@ -1,19 +1,17 @@
-"""Guards for the new core's rules. Each takes a root and returns its sorted violations, `<path relative to root>: <what>`
-([] when clean); string constants include docstrings.
+"""The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)  the layers under src/ (LAYERS) import each other only as delegate → composer or driver, driver →
-                     adapters, a module outside the layers → driver; outside driver/, of the driver only driver.api.
-                     No module imports repo as a library. Imports read by ast: nested ones, relative ones resolved, literal-string import_module/__import__
-runtime_names(core)  no runtime name (RUNTIME) in a .py or .toml outside src/adapters/; in a .toml, comments, a table
-                     header [adapters.<name>…], an implementation = "adapters.<name>:<Class>Adapter" line and a
-                     runtime = "<name>" line under any table (the config naming an Adapter) are exempt
-old_core(new)        no import of top-level `core` and no string constant naming the old core's source dir (OLD)
-adapters_key(core)   no string constant "adapters" outside src/driver/
-syntax_311(new)      every .py parses as Python 3.11
-pure_utils(core)     src/utils/ imports only the Python standard library
-modes_import_api(core)  no module under src/driver/modes/ imports driver.api (a Mode raises driver.errors' DriverError)
-tmux_calls(core)     no str constant "tmux" outside src/driver/tmux_host.py (TMUX_HOST), the only module that calls tmux
-syntax_39(core)      each standalone file (STANDALONE) parses as Python 3.9
+layer_imports(core)   imports go one way (new/README.md), none imports repo; reads nested, relative and literal
+                      import_module/__import__ imports
+runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
+                      Adapter
+old_core(new)         no import of top-level `core`, no string constant naming the old core's source dir (OLD)
+adapters_key(core)    no string constant "adapters" outside src/driver/
+syntax_311(new)       every .py parses as Python 3.11
+pure_utils(core)      src/utils/ imports only the standard library
+private_imports(root) no other module's _name
+modes_import_api(core) no module under src/driver/modes/ imports driver.api
+tmux_calls(core)      no str constant "tmux" outside TMUX_HOST, the only module that calls tmux
+syntax_39(core)       each STANDALONE file parses as Python 3.9
 """
 import ast
 import os
@@ -67,7 +65,7 @@ def runtime_names(core: str) -> list[str]:
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
-                line = code if line[len(code):len(code) + 1] in ("", "#") else line   # an unclosed quote: whole line
+                line = code if line[len(code):len(code) + 1] in ("", "#") else line
                 if TOML_HEADER.match(line) or TOML_IMPLEMENTATION.match(line) or TOML_RUNTIME.match(line):
                     continue
             found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
@@ -130,15 +128,40 @@ def syntax_39(core: str) -> list[str]:
     return sorted(found)
 
 
+def private_imports(root: str) -> list[str]:
+    found = set()
+    for rel, text in _files(root, ".py"):
+        tree = ast.parse(text, rel)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(a.asname or a.name for a in node.names)
+                module = "." * node.level + (f"{node.module}." if node.module else "")
+                found.update(f"{rel}:{node.lineno}: private {module}{a.name}" for a in node.names if _private(a.name))
+            elif isinstance(node, ast.Import):
+                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _private(node.attr):
+                chain, base = [node.attr], node.value
+                while isinstance(base, ast.Attribute):
+                    chain.append(base.attr)
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in imported:
+                    found.add(f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}")
+    return sorted(found)
+
+
+def _private(name):
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
 def _src_modules(core):
-    """(path relative to core, its module names under src/, its ast) of each .py in core's src/."""
     for rel, text in _files(core, ".py"):
         if rel.startswith("src/"):
             yield rel, rel[len("src/"):-3].split("/"), ast.parse(text, rel)
 
 
 def _files(root, suffixes, skip=None):
-    """(path relative to root with / separators, text) of each file under root ending in suffixes, but under skip."""
     for top, dirs, names in os.walk(root):
         dirs.sort()
         for name in sorted(names):
@@ -149,9 +172,6 @@ def _files(root, suffixes, skip=None):
 
 
 def _imports(tree, package):
-    """Each module tree imports. `package`, the importing module's package as a list of names, resolves relative
-    imports (None: they are skipped). `from P import n` yields P.n when P is top-level (the driver's __init__ holds no
-    names), else P."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             yield from (alias.name for alias in node.names)
@@ -174,5 +194,4 @@ def _imports(tree, package):
 
 
 def _strings(tree):
-    """(line, value) of each str constant in tree, docstrings included."""
     return ((n.lineno, n.value) for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))

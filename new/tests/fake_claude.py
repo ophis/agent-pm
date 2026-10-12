@@ -1,45 +1,25 @@
-"""A stand-in `claude` for the new core's integration tests, in print and interactive mode; install() puts it on PATH.
-Stdlib only, importing no core module: it models Claude Code's CLI, never the adapter.
+"""A stand-in `claude` for the integration tests, in print mode (`-p --output-format stream-json --verbose`) or
+interactive mode (neither); install() puts it on PATH. Stdlib only. An option src/adapters/claude/ never emits exits 2.
 
-claude -p [PROMPT] [--session-id SID | --resume SID] --output-format stream-json --verbose ... [--] [PROMPT]
-claude [--session-id SID | --resume SID] ... [--] [PROMPT]   (interactive mode)
-Knows only the options src/adapters/claude/ (with core/config.toml's flags) and its usage probe emit: any other, -p
-without --output-format stream-json, or --output-format without -p is a usage error (exit 2). Exits 1 with a stderr line
-on: -p without a prompt; both --session-id and --resume; --settings not a JSON object; stream-json without --verbose
-(Claude Code's rule); --resume SID without SID's transcript.
+Interactive mode: turn 1 runs at once with a PROMPT, else on the first stdin line; each later stdin line runs the next
+of [steps, *turns]. A turn runs the UserPromptSubmit hooks, its steps, then the Stop hooks. Stdin's end exits `exit`;
+orphaned, or HANG_CAP s without a line, exits 1. A hook is a --settings command hook whose matcher is absent, "", "*" or
+a regex found in the payload's tool_name; it runs by /bin/sh -c with the payload JSON on stdin.
 
-Session: --resume's SID, else --session-id's, else a new uuid4. Its transcript (Claude Code's path rule, restated:
-<$CLAUDE_CONFIG_DIR, else ~/.claude>/projects/<realpath(cwd), each non-[A-Za-z0-9] char "-">/<sid>.jsonl) gets per
-turn a user line (the prompt or stdin line), then an assistant line per text or tool step; a resume appends.
-
-Print mode stdout, one JSON line each: system init; the `rate_limit` event, if any; each step's lines; unless it hangs,
-a result (exit 0: success, `result` the last text, "" none; else error_during_execution). It runs no hooks.
-
-Interactive mode: turn 1 runs at once with a PROMPT, else on the first stdin line; each later stdin line (an
-unterminated last one too) is the next turn; turn k runs [steps, *turns][k], none past the end. A turn: the
-UserPromptSubmit hooks (payload + prompt), the user line, the steps, the Stop hooks (payload + stop_hook_active false,
-last_assistant_message the turn's last text or "", background_tasks `background` objects). Stdin's end: exit `exit`;
-orphaned, or HANG_CAP s without a line: exit 1. Hooks: the --settings hooks.<event> entries whose matcher is absent,
-"" or "*", or a regex re.search-ing the payload's tool_name (Notification's: notification_type; none: ""); each command
-hook runs as /bin/sh -c in the fake's cwd and env, the payload JSON on stdin, stdout dropped; a failure is skipped.
-Payload: session_id, transcript_path, cwd, hook_event_name.
-
-Scenario: the JSON object in file $FAKE_CLAUDE_SCENARIO (unset, unreadable, a bad value or any other key: exit 1).
-  steps       run in order; default []. A step of the other mode only is a bad value.
-              A string: assistant text (interactive: also a stdout line).
-              {"kind": "tool", "name": N}: an assistant tool_use of tool N (interactive: then PostToolUse, tool_name N).
-              {"kind": "limit", "resets_at": T}, print: a rejected rate_limit_event (resetsAt T; null: none), then an
-              assistant message with error "rate_limit" and text LIMIT.
-              {"kind": "limit", "text": S}, interactive: prints S and ends the turn, without Stop.
-              {"kind": "hook", "event": E, ...}, interactive: runs E's hooks, the step's other keys over the payload's.
-              {"kind": "dialog", "text": S}, interactive: prints S, then takes a stdin line (its answer, no turn).
-              {"kind": "sleep", "seconds": X}, interactive: sleeps X s (0 to HANG_CAP).
-  turns       interactive: the steps of turn 2 on, a list of step lists; default [].
-  background  interactive: how many background_tasks each Stop payload lists; default 0.
-  rate_limit  print: a rate_limit_info object, printed as a rate_limit_event after init; default none.
-  exit        the exit code; default 0.
-  hang        print: true: after the steps, sleep until killed; it exits 1 by itself once orphaned or after HANG_CAP s.
-  log         a file; on start the fake appends {"pid", "argv" (without argv[0]), "cwd"} to it as a JSON line.
+Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
+  steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use (interactive: then PostToolUse);
+              print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then the assistant text LIMIT with
+              error "rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
+              interactive: {"kind": "limit", "text": S}: prints S, ends the turn without Stop; {"kind": "hook",
+              "event": E, ...}: runs E's hooks; {"kind": "dialog", "text": S}: prints S, takes a stdin line;
+              {"kind": "sleep", "seconds": X}
+  turns       interactive: the steps of turn 2 on
+  background  interactive: how many background_tasks each Stop payload lists
+  resume      print: steps run instead of `steps` on --resume
+  rate_limit  print: a rate_limit_info, printed after init
+  exit        the exit code
+  hang        print: true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
+  log         a file each start appends {"pid", "argv", "cwd"} to
 """
 import argparse
 import itertools
@@ -54,15 +34,14 @@ import time
 import uuid
 
 ENV = "FAKE_CLAUDE_SCENARIO"
-HANG_CAP = 120   # seconds
-HOOK_TIMEOUT = 60   # seconds
-DEFAULTS = {"steps": [], "turns": [], "background": 0, "rate_limit": None, "exit": 0, "hang": False, "log": None}
+HANG_CAP = 120
+HOOK_TIMEOUT = 60
+DEFAULTS = {"steps": [], "resume": None, "turns": [], "background": 0, "rate_limit": None, "exit": 0, "hang": False,
+            "log": None}
 LIMIT = "You've hit your usage limit."
 
 
 def install(bin_dir: str, tail: str = "/usr/bin:/bin") -> str:
-    """Writes the `claude` shim into `bin_dir`, exec'ing this fake (so the pid the Driver starts is the fake's).
-    Returns the PATH "<bin_dir>:<tail>"."""
     q = shlex.quote
     path = os.path.join(bin_dir, "claude")
     with open(path, "w", encoding="utf-8") as f:
@@ -79,7 +58,8 @@ def _text(value) -> bool:
     return isinstance(value, str)
 
 
-PRINT = {"tool": {"name": _text}, "limit": {"resets_at": lambda v: v is None or _number(v)}}
+PRINT = {"tool": {"name": _text}, "limit": {"resets_at": lambda v: v is None or _number(v)},
+         "write": {"path": lambda v: _text(v) and v != "", "text": _text}}
 TUI = {"tool": {"name": _text}, "limit": {"text": _text}, "dialog": {"text": _text},
        "sleep": {"seconds": lambda v: _number(v) and 0 <= v <= HANG_CAP}}
 
@@ -95,6 +75,7 @@ def _step(step, tui: bool) -> bool:
 
 
 CHECKS = {"steps": lambda v: isinstance(v, list),
+          "resume": lambda v: v is None or isinstance(v, list) and all(_step(step, False) for step in v),
           "turns": lambda v: isinstance(v, list) and all(isinstance(t, list) for t in v),
           "background": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
           "rate_limit": lambda v: v is None or isinstance(v, dict),
@@ -286,12 +267,17 @@ def main(argv: list[str]) -> int:
     if s["rate_limit"] is not None:
         say({"type": "rate_limit_event", "rate_limit_info": s["rate_limit"]})
     keep("user", a.prompt)
-    for k, step in enumerate(s["steps"]):
+    steps = s["resume"] if a.resume and s["resume"] is not None else s["steps"]
+    for k, step in enumerate(steps):
         if isinstance(step, str):
             last = step
             assistant([{"type": "text", "text": step}])
         elif step["kind"] == "tool":
             assistant([{"type": "tool_use", "id": f"toolu_{k}", "name": step["name"], "input": {}}])
+        elif step["kind"] == "write":
+            os.makedirs(os.path.dirname(os.path.abspath(step["path"])), exist_ok=True)
+            with open(step["path"], "w", encoding="utf-8") as f:
+                f.write(step["text"])
         else:
             resets = {} if step["resets_at"] is None else {"resetsAt": step["resets_at"]}
             say({"type": "rate_limit_event",

@@ -1,8 +1,7 @@
-"""The Driver's headless Mode: a Headless's command on pipes, stdin /dev/null, leading its own process group. Two
-daemon threads pump the run's events() over stdout and one Stderr per stderr line into one queue, each closing its pipe
-when done; the session has ended at both pipes' EOF. stop() kills the whole group, so a grandchild holding the pipes
-dies with it; every wait on the process is bounded. send and screen are refused (tui only). probe() runs a short command
-for its stdout. Imports only the stdlib, adapters and driver.errors."""
+"""The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two daemon threads pump
+its events and Stderr lines into one queue, and the session ends at both pipes' EOF. stop() kills the whole group, so a
+grandchild holding the pipes dies too; every wait is bounded. send and screen are tui only. probe() runs a short command
+for its stdout."""
 import os
 import queue
 import signal
@@ -13,13 +12,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from adapters.base import Event, Headless, Stderr
 from driver.errors import DriverError
 
-STOP_WAIT = 5   # seconds: the longest wait for a killed process to be reaped
+STOP_WAIT = 5
 
 
 def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
-    """SIGKILL to the process group proc leads, else to proc alone, then reaps proc, waiting at most STOP_WAIT s.
-    `ended`: both its pipes have ended; once proc is reaped too, the group is gone and its id may be reused, so nothing
-    is signalled."""
+    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so signal nothing.
     if not (ended and proc.returncode is not None):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -35,8 +32,6 @@ def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
 
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
-    """argv's stdout, run in cwd with env, stdin /dev/null, stderr discarded, leading its own process group; None on a
-    spawn error, or once `timeout` s pass (its group killed, it reaped)."""
     try:
         proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, text=True, errors="replace", process_group=0)
@@ -52,16 +47,13 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
 
 
 class HeadlessMode:
-    """One headless session's process: driver.api's Mode."""
-
     def __init__(self, run: Headless):
         self.run, self.proc = run, None
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], popen=None) -> None:
-        """Starts argv; popen's exception propagates and leaves nothing to stop."""
         popen = popen or subprocess.Popen   # looked up per call, so a patch of subprocess.Popen applies
         self.items, self.open = queue.Queue(), 2
-        self.eof = (threading.Event(), threading.Event())   # set by each pipe's pump at its end
+        self.eof = (threading.Event(), threading.Event())
         self.proc = popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, errors="replace", process_group=0)
         out, err = self.proc.stdout, self.proc.stderr
@@ -81,8 +73,6 @@ class HeadlessMode:
             self.items.put(None)
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """The next event, waiting up to `timeout` s, and whether both pipes have ended; a pump's exception is
-        raised."""
         try:
             item = self.items.get(timeout=timeout)
         except queue.Empty:
@@ -95,15 +85,12 @@ class HeadlessMode:
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
-        """The process's exit status, waiting at most `timeout` s; None while it runs; negative: killed by that
-        signal."""
         try:
             return self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             return None
 
     def state(self) -> str:
-        """live while the process runs, else absent (before begin, after exit)."""
         return "live" if self.proc is not None and self.proc.poll() is None else "absent"
 
     def send(self, text: str) -> None:
@@ -113,7 +100,5 @@ class HeadlessMode:
         raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
-        """kill_group on the process: its group killed, so whatever still holds the pipes ends too; a no-op before
-        begin and after a failed begin."""
         if self.proc is not None:
             kill_group(self.proc, all(eof.is_set() for eof in self.eof))

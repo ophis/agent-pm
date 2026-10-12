@@ -1,18 +1,13 @@
-"""The test-only fake adapter, runtime `fake`: a whole Adapter in one package, importing only adapters.base, so a test
-can register it in-process (sys.modules["adapters.fake"]) or copy it to src/adapters/fake/ unchanged. Its runtime is
-runtime.py (RUNTIME), run by this Python.
-
-Config keys: scenario (the scenario file), log (the runtime's log file), tui (true: a Tui). FakeHeadless.parse
-maps each JSON record by its "type": session {id} → SessionBound, activity {name} → Activity, message {text} → Reply,
-blocked {reason} → Blocked, result {text, pending} → TurnEnd, exit → Exited(99) (which the Driver drops); any other
-record → nothing. FakeTui's hook labels: stop (TURN_END: reply its last_message, pending its tasks' count), ask
-(BLOCKED), tool (ACTIVITY)."""
+"""The test-only Adapter, runtime `fake`, importing only adapters.base: a test registers it in-process
+(sys.modules["adapters.fake"]) or copies it to src/adapters/fake/. Config keys: scenario, log, tui (true: a Tui).
+Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
+record to Exited(99), which the Driver drops."""
 import os
 import shlex
 import sys
 
-from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, Launch, Reply,
-                           SessionBound, Tui, TurnEnd)
+from adapters.base import (ACTIVITY, BLOCKED, TURN_END, Activity, Adapter, Blocked, Exited, Headless, Launch,
+                           LimitHit, Reply, SessionBound, Tui, TurnEnd)
 
 RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
 
@@ -51,6 +46,8 @@ class FakeHeadless(Headless):
             yield Blocked(record.get("reason", ""))
         elif kind == "result":
             yield TurnEnd(record.get("text", ""), record.get("pending", 0))
+        elif kind == "limit":
+            yield LimitHit(record.get("resets_at"))
         elif kind == "exit":
             yield Exited(99)
 

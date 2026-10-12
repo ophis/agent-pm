@@ -1,7 +1,5 @@
-"""A new runtime is a config value to the Composer: a local `runtime` and that runtime's [adapters.<name>] table (the
-Driver's), with no package for it, resolve, compose and list the catalog in a child process (child.Case) that loads
-only new/core/src. Main's tests/integration/core/extension_client_integration_test.py, the Composer's part: no runtime
-layer (an overlay replaces the client's [clients.<name>] run keys), no runtime text in the prompt."""
+"""A new runtime is a config value to the Composer: a local `runtime` and its [adapters.<name>] table, with no package
+for it, resolve, compose and list the catalog in a child process (child.Case); no runtime text in the prompt."""
 import os
 import unittest
 

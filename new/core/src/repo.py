@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG> (checkout()), on the run's branch.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's branch.
 
 repo.py worktree --dir DIR --branch B [--name SLUG] REPO
     prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from utils.args import Once
 from utils.config_file import CONFIG, read_config
 from utils.paths import real_dirs, temp_dirs, under
 
@@ -55,13 +56,6 @@ class Invalid(Exception):
     pass
 
 
-class Once(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        if getattr(namespace, self.dest) is not None:
-            parser.error(f"{option_string} given twice")
-        setattr(namespace, self.dest, values)
-
-
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
@@ -74,7 +68,6 @@ class Repo:
 
     @classmethod
     def parse(cls, spec: str) -> "Repo":
-        """The repo a REPO argument names; Invalid if unreadable."""
         m = SPEC.fullmatch(spec.strip())
         if not m or m.group(3) in (".", "..") or (m.group(1) is None and spec.strip().startswith("https://")):
             raise Invalid(f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name")
@@ -86,7 +79,7 @@ class Repo:
 
 
 def url_slug(url: str) -> str | None:
-    """host/owner/name of a clone URL as written, or None; an ssh port is no part of the web host."""
+    # an ssh port is no part of the web host
     m = URL.fullmatch(url.strip())
     if not m:
         return None
@@ -95,13 +88,11 @@ def url_slug(url: str) -> str | None:
 
 
 def origin(url: str) -> str | None:
-    """host/owner/name of a clone URL, lowercased, or None."""
     slug = url_slug(url)
     return slug.lower() if slug else None
 
 
 def redact(text: str) -> str:
-    """`text` with URL userinfo (a token in an origin URL) masked."""
     return USERINFO.sub("//***@", text)
 
 
@@ -110,12 +101,10 @@ def err_text(res: subprocess.CompletedProcess) -> str:
 
 
 def trusted_dirs(cfg: dict) -> frozenset[str]:
-    """The CLI's configured trusted roots, validated by utils.paths.real_dirs."""
     return real_dirs(cfg.get("trusted_dirs", []), "trusted_dirs")
 
 
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
-    """Retries a lock failure: runs may share a clone."""
     for i in range(5):
         res = run(["git", *pre, "-C", wt, *args], timeout)
         if res.returncode == 0:
@@ -138,7 +127,6 @@ def gh_json(run: Runner, argv: list[str]):
 
 
 def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
-    """(push permission, default branch) of the repo; Invalid if not found or no access."""
     res = run(["gh", "api", "--hostname", repo.host, f"repos/{repo.owner}/{repo.name}"], SHORT)
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
@@ -153,7 +141,6 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
 
 
 def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
-    """(repo, local clone or None) of a REPO argument; Invalid if unreadable."""
     if not spec.startswith(("/", "~")):
         return Repo.parse(spec), None
     clone = os.path.realpath(os.path.expanduser(spec))
@@ -168,7 +155,6 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
 
 
 def check_slug(slug: str | None, branch: str = "") -> str:
-    """The checkout slug: `slug`, else `branch` with / → -; Invalid unless a SLUG."""
     slug = branch.replace("/", "-") if slug is None else slug
     if not SLUG.fullmatch(slug):
         raise Invalid(f"unsafe checkout name {slug[:80]!r}")
@@ -176,12 +162,10 @@ def check_slug(slug: str | None, branch: str = "") -> str:
 
 
 def checkout(base: str, owner: str, name: str, slug: str) -> str:
-    """The checkout path of repo owner/name under `base`; Invalid unless `slug` is a SLUG."""
     return os.path.join(os.path.abspath(base), owner, f"{name}-{check_slug(slug)}")
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
-    """(worktree, whether it exists); Invalid if it holds anything but a clone of the repo or a worktree of `clone`."""
     wt = checkout(base, repo.owner, repo.name, slug)
     if not os.path.lexists(wt):
         return wt, False
@@ -212,7 +196,6 @@ def check_branch(branch: str) -> None:
 
 
 def registered(run: Runner, at: str) -> dict[str, str | None]:
-    """{realpath: branch or None} of the worktrees registered in `at`'s clone, existing or not."""
     found, path = {}, None
     for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
@@ -225,9 +208,7 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
 
 def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh, temp=None,
              links=frozenset()) -> dict:
-    """The checkout's details, on `branch`; raises Invalid, or RuntimeError on other failures. `temp`: dirs a local
-    clone may not live in (default temp_dirs()), since prune treats their clones as untrusted. `links`: realpaths of the
-    local clones whose worktrees get symlinks (trusted_dirs(), matched exactly)."""
+    # a local clone in a temp dir is refused: prune treats clones there as untrusted
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -294,8 +275,7 @@ def worktree(spec: str, branch: str, base: str, *, slug: str | None = None, run:
 
 
 def common_dir(wt: str) -> str | None:
-    """The `<clone>/.git` that worktree `wt`'s `.git` file names, found by reading files as git reads them (whole file,
-    trailing CR/LF dropped), never by running git; None if it names none."""
+    # never runs git: reads the files as git does (whole file, trailing CR/LF dropped)
     def read(path):
         if not os.path.isfile(path):   # a FIFO would block open()
             return None
@@ -315,8 +295,6 @@ def common_dir(wt: str) -> str | None:
 
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
-    """[{"path", "phase"}] of the autopilot plan docs for `branch` in the checkout, outside .git, node_modules and any
-    nested checkout (a subdir holding a .git entry)."""
     found = []
     for parent, dirs, files in os.walk(wt):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules")
@@ -345,8 +323,6 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
 
 def status(spec: str, branch: str, base: str, *, slug: str | None = None, run: Runner = sh,
            users: list[str] | None = None, base_branch: str | None = None) -> dict:
-    """The branch's PR and base (`base_branch` being BASE: module docstring), plan docs and PR feedback since the latest
-    plan doc commit; raises Invalid or RuntimeError."""
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)

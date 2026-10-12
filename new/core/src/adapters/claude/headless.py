@@ -1,12 +1,6 @@
-"""Claude Code's headless Mode, `claude -p` with stream-json output: ClaudeHeadless.
-
-launch is ClaudeCommon's with -p, the stream-json output flags and the plugin settings, and the prompt last after "--",
-so a prompt starting with "-" stays the prompt.
-
-parse, a field of the wrong type counting as absent: system init → SessionBound(session_id); assistant → Reply(its
-text blocks joined by newlines) unless blank, then Activity(name) per tool_use block; result → TurnEnd(result); a
-rejected rate_limit_event or an assistant rate_limit error → LimitHit(the last rejected event's resetsAt), once per
-run."""
+"""Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with the prompt last
+after "--" so a leading "-" stays the prompt. parse turns init, assistant, result and rate-limit records into events,
+one LimitHit per run."""
 from adapters.base import Activity, Headless, LimitHit, Reply, SessionBound, TurnEnd
 from adapters.claude.common import number
 

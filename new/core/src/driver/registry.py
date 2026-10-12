@@ -1,9 +1,7 @@
-"""The Driver's core-config reader: config.toml (CONFIG) with ~/.agent-pm/core-new.local.toml (LOCAL) merged on top,
-read through utils.config_file, of which it keeps [adapters] and the tui keys (TUI_KEYS). They are read once per
-process, on the first use of configured(), adapter() or tui(), and cached (a failed read is not, so the next use reads
-again); configure() sets the cache from a given config instead (tests), reset() drops it. adapter(name) imports package
-adapters.<name> and returns the class its [adapters.<name>].implementation names, "adapters.<name>:<Class>Adapter",
-built from the table's other keys. Every failure is a ConfigError."""
+"""The adapter registry, the only reader of the core config's [adapters] tables and tui keys (TUI_KEYS) (config.toml,
+LOCAL merged on top), read once per process and cached (a failed read is not); configure() sets the cache instead,
+reset() drops it. adapter(name) builds the class [adapters.<name>].implementation names from the table's other keys.
+Every failure is a ConfigError."""
 import importlib
 import inspect
 import re
@@ -31,7 +29,6 @@ class TuiSettings:
 
 
 def read(path: str = CONFIG, local: str = LOCAL) -> dict:
-    """The merged config's "adapters" ({} when absent or not a table) and each of TUI_KEYS it sets."""
     try:
         return _kept(read_config(path, local))
     except (OSError, ValueError) as e:
@@ -48,14 +45,12 @@ def tables(path: str = CONFIG, local: str = LOCAL) -> dict[str, dict]:
 
 
 def configure(config: Mapping) -> None:
-    """Sets the cache from the whole config `config`, as read() keeps it; reads no file."""
     global _cache
     with _lock:
         _cache = _kept(config)
 
 
 def reset() -> None:
-    """Drops the cache: the next use reads the files."""
     global _cache
     with _lock:
         _cache = None
@@ -86,7 +81,6 @@ def tui() -> TuiSettings:
 
 
 def adapter(name: str) -> Adapter:
-    """The Adapter of runtime `name`, from its [adapters.<name>] table."""
     if not isinstance(name, str) or not NAME.match(name):
         raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
     table = _config()["adapters"].get(name)

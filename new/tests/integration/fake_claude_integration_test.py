@@ -1,6 +1,6 @@
 """new/tests/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
-file or output; print mode's stream-json lines; interactive mode's turns, hooks and steps over a pipe, in a private tmux
-server's pane and under ClaudeTui's launch."""
+file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
+pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 import glob
 import json
 import os
@@ -21,6 +21,7 @@ FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"
 SESSION = ("--session-id", SID)
 ARGS = ["-p", "hi", *SESSION, "--output-format", "stream-json", "--verbose"]
+RESUME = ["-p", "hi", "--resume", SID, "--output-format", "stream-json", "--verbose"]
 TRUST = "Quick safety check: Is this a project you created or one you trust?"
 LIMIT = "You've hit your session limit. Your limit resets 3pm (Europe/Berlin)"
 
@@ -103,6 +104,10 @@ class Case(unittest.TestCase):
     def names(self) -> list[str]:
         return [h["hook_event_name"] for h in self.fired()]
 
+    def result(self, res: subprocess.CompletedProcess) -> str:
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return json.loads(res.stdout.splitlines()[-1])["result"]
+
 
 class BadScenario(Case):
     def test_a_bad_step_or_value_exits_1_before_the_session(self):
@@ -112,7 +117,11 @@ class BadScenario(Case):
                 {"steps": "x"}, {"steps": [1]}, {"steps": [{"kind": "nope"}]}, {"steps": [{"kind": "tool"}]},
                 {"steps": [{"kind": "tool", "name": 7}]}, {"steps": [{"kind": "tool", "name": "R", "x": 1}]},
                 {"steps": [{"kind": "limit"}]}, {"steps": [{"kind": "limit", "resets_at": "soon"}]},
-                {"steps": [{"kind": "limit", "resets_at": True}]}, {"turns": "x"}, {"turns": ["x"]},
+                {"steps": [{"kind": "limit", "resets_at": True}]}, {"steps": [{"kind": "write", "path": "a"}]},
+                {"steps": [{"kind": "write", "path": 1, "text": "x"}]},
+                {"steps": [{"kind": "write", "path": "", "text": "x"}]},
+                {"steps": [{"kind": "write", "path": "a", "text": None}]}, {"resume": "x"}, {"resume": [1]},
+                {"turns": "x"}, {"turns": ["x"]},
                 {"background": -1}, {"background": True}, {"rate_limit": []}, {"exit": "0"}, {"exit": True},
                 {"hang": 1}, {"log": 5}]
         for scenario in rows:
@@ -130,7 +139,8 @@ class BadScenario(Case):
                          {"steps": [{"kind": "limit", "resets_at": None}]}, {"steps": [{"kind": "limit", "text": 5}]},
                          {"steps": [{"kind": "dialog"}]}, {"steps": [{"kind": "dialog", "text": "x", "y": 1}]},
                          {"steps": [{"kind": "sleep", "seconds": -1}]}, {"steps": [{"kind": "sleep", "seconds": "1"}]},
-                         {"steps": [{"kind": "sleep", "seconds": True}]}, {"steps": [{"kind": "sleep"}]}):
+                         {"steps": [{"kind": "sleep", "seconds": True}]}, {"steps": [{"kind": "sleep"}]},
+                         {"steps": [{"kind": "write", "path": "a", "text": "x"}]}):
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
                 res = self.run_fake(*SESSION, "--", "hi")
@@ -149,6 +159,22 @@ class PrintMode(Case):
                          ["system", "assistant", "assistant", "rate_limit_event", "assistant", "rate_limit_event",
                           "assistant", "result"])
         self.assertEqual(self.fired(), [])
+
+    def test_a_write_step_writes_its_file_under_the_cwd_then_the_next_step_runs(self):
+        self.scene(steps=[{"kind": "write", "path": "sub/out.md", "text": "# Out\n"}, "After."])
+        res = self.run_fake(*ARGS)
+        self.assertEqual(self.result(res), "After.")
+        self.assertEqual([json.loads(line)["type"] for line in res.stdout.splitlines()],
+                         ["system", "assistant", "result"])
+        with open(os.path.join(self.proj, "sub", "out.md"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "# Out\n")
+
+    def test_resume_steps_replace_steps_only_on_a_resume(self):
+        self.scene(steps=["First."], resume=["Again."])
+        self.assertEqual(self.result(self.run_fake(*ARGS)), "First.")
+        self.assertEqual(self.result(self.run_fake(*RESUME)), "Again.")
+        self.scene(steps=["First."])
+        self.assertEqual(self.result(self.run_fake(*RESUME)), "First.")
 
 
 class Interactive(Case):

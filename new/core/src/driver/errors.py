@@ -3,4 +3,4 @@ re-exports it (api → modes stays one-way)."""
 
 
 class DriverError(Exception):
-    """A session that could not start, or a call its Mode does not take."""
+    """A failed start, or a call its Mode lacks."""

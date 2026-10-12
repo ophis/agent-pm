@@ -1,13 +1,14 @@
-"""A role's run config (resolve: the core config, then the caller's overlays; `runtime` an opaque run key, no runtime
-layer), one run's params and its runtime-neutral access intent (access)."""
+"""A role's run config (resolve: the core config, then the caller's overlays), one run's params and its runtime-neutral
+access intent (access). An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
+config as one."""
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, get_args
 
-from composer.base import CONFIG, SRC, ConfigError, _title, fill
-from composer.teams import Team, _no_charter, _roles, _team, index, tasks_path
+from composer.base import CONFIG, SRC, ConfigError, fill, title_of
+from composer.teams import Team, index, no_charter, role_tables, tasks_path, team_or_default
 from utils.config_file import LOCAL, read_config
 from utils.paths import real_dirs
 
@@ -21,9 +22,8 @@ OLD_KEYS = frozenset({"default_task", "tasks"})
 
 @dataclass(frozen=True, kw_only=True)
 class RunConfig:
-    """A role's resolved config; checked on creation and on dataclasses.replace."""
     role: str
-    task: str = ""   # the named task; "" → the agent run picks one from the role's index
+    task: str = ""
     tier: int
     effort: Effort
     runtime: str = ""   # opaque: never compared with an Adapter's name
@@ -35,7 +35,7 @@ class RunConfig:
     gate: str = ""
     language: str = ""
     show: str | None = None
-    cwd: str = ""   # "" → the caller's default
+    cwd: str = ""
     role_title: str = ""
 
     def __post_init__(self):
@@ -60,7 +60,6 @@ class RunConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class RunParams:
-    """What the caller passes for one agent run: its input, where its deliverable ends up and its workdir."""
     input: str
     out: str
     workdir: str
@@ -68,8 +67,6 @@ class RunParams:
 
     @property
     def deliverable(self) -> str:
-        """The file the agent run writes its deliverable to: `out` when it lies under the real workdir, else
-        <workdir>/tmp/deliverable.md."""
         out = os.path.abspath(self.out)
         if Path(os.path.realpath(out)).is_relative_to(os.path.realpath(self.workdir)):
             return out
@@ -78,9 +75,8 @@ class RunParams:
 
 @dataclass(frozen=True)
 class Intent:
-    """One agent run's access intent: the dirs it needs beyond its cwd, the commands it requests, its gate, cwd and
-    whether the cwd's project settings load; the Adapter decides the grants."""
     dirs: tuple[str, ...]
+    writes: tuple[str, ...]
     commands: tuple[str, ...]
     gate: str
     cwd: str
@@ -88,7 +84,6 @@ class Intent:
 
 
 def lookup(layer: Mapping, role: str, key: str):
-    """`key` in one config layer: roles.<role> > the top; None if unset."""
     for table in (layer.get("roles", {}).get(role, {}), layer):
         if key in table:
             return table[key]
@@ -96,8 +91,6 @@ def lookup(layer: Mapping, role: str, key: str):
 
 
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
-    """Raises ConfigError when role table [<prefix>roles.<role>] holds a key of the task-level config this one replaced,
-    naming the table its run keys now go in."""
     if old := sorted(OLD_KEYS & set(table)):
         raise ConfigError(f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
                           f"run keys in [{prefix}roles.{role}] (a run without a task picks one)")
@@ -106,17 +99,10 @@ def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
 def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] = (),
             label: tuple[str, str] = ("run overlay", "overlay"), team: Team | None = None,
             config: str = CONFIG) -> RunConfig:
-    """The run config of `role`: `config` with LOCAL on top, then each overlay in order (the same layout), each
-    replacing the run keys it sets; within a layer [roles.<role>] beats the global value and an output table replaces
-    the whole. `config` must give a valid RunConfig on its own (so it sets runtime); each overlay is checked again once
-    applied, its errors naming `label` (source, the overlays' table). A role is known by its [roles.<role>] table or
-    its charter in `team` (None: the team root alone); `task`, when named, must be in the role's index.
-
-    An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled config as one."""
-    overlays, team = tuple(overlays), _team(team)
-    known = set(_roles(config)) | {name for kind, name in team.files if kind == "roles"}
+    overlays, team = tuple(overlays), team_or_default(team)
+    known = set(role_tables(config)) | {name for kind, name in team.files if kind == "roles"}
     if role not in known:
-        raise _no_charter(role, {}, team)
+        raise no_charter(role, {}, team)
     source, where = label
     for overlay in overlays:
         try:
@@ -131,16 +117,15 @@ def resolve(role: str, task: str | None = None, *, overlays: Sequence[Mapping] =
     for overlay in overlays:
         run = replace(run, **_run_keys(overlay, role))
     if not (charter := team.charter(role)):
-        raise _no_charter(role, cfg, team)
+        raise no_charter(role, cfg, team)
     tasks = index(role, team, config)
     if task and task not in tasks:
         raise team.misnamed_error("tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})")
-    return replace(run, role_title=_title(*charter))
+    return replace(run, role_title=title_of(*charter))
 
 
 def trusted_dirs(config: str = CONFIG) -> frozenset[str]:
-    """Real paths of the global `trusted_dirs` of `config` with LOCAL on top; ConfigError when it is malformed."""
     try:
         return real_dirs(read_config(config, LOCAL).get("trusted_dirs", []), "trusted_dirs")
     except ValueError as e:
@@ -148,8 +133,6 @@ def trusted_dirs(config: str = CONFIG) -> frozenset[str]:
 
 
 def bind(entry: str, repo_dir: str | None) -> str | None:
-    """A read/write entry as an absolute dir: `repo` is `repo_dir`, the caller's repo dir (None without one); else a
-    path."""
     if entry == "repo":
         return os.path.abspath(repo_dir) if repo_dir else None
     return os.path.abspath(os.path.expanduser(entry))
@@ -157,28 +140,25 @@ def bind(entry: str, repo_dir: str | None) -> str | None:
 
 def access(run: RunConfig, workdir: str, *, cwd: str, project: bool, repo_dir: str | None = None,
            team: Team | None = None) -> Intent:
-    """`run`'s Intent. `cwd` (an absolute path, else ConfigError) and `project` are the caller's, passed through. Dirs:
-    the workdir when `cwd` is another real path, then <tasks>, then each read then write entry with {{methods}} filled
-    and bound (bind), deduped; commands with {{scripts}} and {{workdir}} filled; the gate verbatim. `team` as
-    resolve's."""
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
-    team, workdir = _team(team), os.path.abspath(workdir)
+    team, workdir = team_or_default(team), os.path.abspath(workdir)
     dirs = ([workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []) + [tasks_path(run.role, team)]
-    methods = os.path.join(team.root, "methods")
+    methods, writes = os.path.join(team.root, "methods"), []
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
             p = bind(fill(entry, {"methods": methods}, key), repo_dir)
             if p and p not in dirs:
                 dirs.append(p)
+            if p and key == "write" and p not in writes:
+                writes.append(p)
     values = {"scripts": SRC, "workdir": workdir}
-    return Intent(dirs=tuple(dirs), commands=tuple(fill(c, values, "commands") for c in run.commands), gate=run.gate,
-                  cwd=cwd, project=project)
+    return Intent(dirs=tuple(dirs), writes=tuple(writes),
+                  commands=tuple(fill(c, values, "commands") for c in run.commands), gate=run.gate, cwd=cwd,
+                  project=project)
 
 
 def _check(cfg: Mapping) -> None:
-    """Raises ConfigError unless the config's own tables are valid: [output] and each [roles.<role>] (old keys first).
-    Its other global keys are other layers' (the core config's header) and go unchecked."""
     _check_output(cfg, "output")
     for r, table in cfg.get("roles", {}).items():
         check_old_keys(table, r)

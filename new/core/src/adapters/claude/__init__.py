@@ -1,6 +1,5 @@
-"""Claude Code's Adapter, runtime `claude`: ClaudeAdapter, built from [adapters.claude] (keys: core/config.toml).
-Headless mode is ClaudeHeadless (headless.py), tui mode ClaudeTui (tui.py). Its usage probe, the probe's reading and
-a session's status are ClaudeCommon's. Imports only adapters.base, utils and the stdlib."""
+"""Claude Code's Adapter, runtime `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the rest is
+ClaudeCommon's."""
 from adapters.base import Adapter
 from adapters.claude.common import ClaudeCommon
 from adapters.claude.headless import ClaudeHeadless

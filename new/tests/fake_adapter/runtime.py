@@ -1,10 +1,9 @@
 """The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...]. Stdlib only.
 
-Appends one JSON line {"argv" (without argv[0]), "pid", "cwd", "env": {"PWD", "FAKE_ENV"} (null: unset)} to the log,
-then runs the scenario, a JSON list, step by step: {"out": obj} prints obj as one JSON line, {"raw": text} prints text,
-{"err": text} prints text to stderr, {"sleep": s} sleeps s seconds, {"exit": n} exits n, {"hook": label, "payload": obj}
-runs the HOOK argv plus label with obj as JSON on stdin and waits for it, {"read": true} waits for a stdin line. Each
-line is flushed; after the last step it exits 0. A tui launch's HOOK argv follows PROMPT."""
+Logs {"argv", "pid", "cwd", "env": {"PWD", "FAKE_ENV"}} as a JSON line, then runs the scenario, a JSON list of steps (or
+{"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj} prints obj as JSON, {"raw": text} prints
+text, {"err": text} to stderr, {"sleep": s}, {"exit": n}, {"hook": label, "payload": obj} runs HOOK plus label with obj
+on stdin and waits, {"read": true} waits for a stdin line; then exits 0."""
 import argparse
 import json
 import os
@@ -25,7 +24,10 @@ def main() -> int:
         f.write(json.dumps({"argv": sys.argv[1:], "pid": os.getpid(), "cwd": os.getcwd(),
                             "env": {k: os.environ.get(k) for k in ("PWD", "FAKE_ENV")}}) + "\n")
     with open(args.scenario, encoding="utf-8") as f:
-        steps = json.load(f)
+        scenario = json.load(f)
+    if isinstance(scenario, list):
+        scenario = {"steps": scenario}
+    steps = scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)

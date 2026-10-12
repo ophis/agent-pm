@@ -1,15 +1,9 @@
-"""The Driver's API, the only driver module other layers import. start() runs one agent session of a runtime (its
-Adapter from src/driver/registry.py) in a Mode (MODES) and returns its Handle; every check runs before anything starts.
-A session's `session` record goes to <workdir>/run.jsonl (records) before it starts; Handle.events() then streams the
-frozen event set (LimitHit included), Stderr and the Driver's IdleTimeout up to the Driver's Exited, recording
-`client_session` and `stderr` on the way; nothing else is recorded or interpreted. usage(runtime) runs the Adapter's
-usage probe and gives its reading as Usage; session_info(runtime, sid, cwd) gives the Adapter's SessionStatus;
-session() is the run records' session query.
-
-A Handle runs over its session's Mode (the Mode protocol): driver/modes/headless.py, or driver/modes/tui.py, a named
-tmux session that attach(name) reaches from any process, sessions() lists, show(name) puts in a pane (where: layout())
-and close(name) ends. detach() runs a command in a tmux session of its own. A function taking a session name refuses one
-not matching [A-Za-z0-9_-]+ before any path or tmux use."""
+"""The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
+starts it in its Mode (modes/headless.py, or modes/tui.py: a named tmux session) and returns its Handle.
+Handle.events() streams its events, Stderr and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own
+Exited, recording `client_session` and `stderr`. usage(), session_info() and session() give a runtime's Usage, a
+session's SessionStatus and its record. attach(), sessions(), show() (where: layout()) and close() reach a tui session
+by name; detach() runs a command in a tmux session of its own. A session name must match [A-Za-z0-9_-]+."""
 import logging
 import os
 import signal
@@ -38,16 +32,15 @@ __all__ = ["Access", "Activity", "Blocked", "ConfigError", "DriverError", "Event
 
 MODES = ("headless", "tui")
 STATES = ("live", "absent", "unknown")
-POLL = 0.5   # seconds: the longest wait on a Mode for its next event
-PROBE_DIR = "~/.agent-pm/probe"   # a usage probe's cwd when its launch names none; made 0700
-PROBE_TIMEOUT = 120               # seconds: the longest a usage probe runs
+POLL = 0.5
+PROBE_DIR = "~/.agent-pm/probe"
+PROBE_TIMEOUT = 120
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 LOG = logging.getLogger("driver")
 
 
 @dataclass(frozen=True)
 class IdleTimeout:
-    """A Driver event: no event for `seconds`, start()'s idle_timeout."""
     seconds: float
 
 
@@ -71,8 +64,7 @@ class Mode(Protocol):
         """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
 
     def returncode(self, timeout: float) -> int | None:
-        """The session's exit status, waiting at most `timeout` s; None while it runs; negative: killed by that
-        signal."""
+        """The exit status, waiting at most `timeout` s; None while it runs; negative: killed by that signal."""
 
     def state(self) -> str:
         """One of STATES."""
@@ -88,8 +80,7 @@ class Mode(Protocol):
 
 
 class Handle:
-    """One session start() began, over its Mode: `sid` (agent-pm's session id), `runtime`, `mode` and `name` (a tui
-    session's name; None in headless mode)."""
+    """One session start() began, over its Mode; `name` is a tui session's, None in headless mode."""
 
     def __init__(self, sid: str, runtime: str, mode: str, *, host: Mode, workdir: str, info: SessionInfo,
                  idle_timeout: float | None, name: str | None = None, reply: str | None = None):
@@ -97,19 +88,12 @@ class Handle:
         self._host, self._info, self._idle = host, info, idle_timeout
         self._channel = records.path(workdir)
         self._reply = reply
-        self._queue: deque = deque()   # polled events not yet yielded
-        self._closed = False    # the Mode has no more events
-        self._ended = False     # Exited yielded, or events() raised
-        self._blocked = False   # since a Blocked, no event but Blocked or Stderr
+        self._queue: deque = deque()
+        self._closed = False
+        self._ended = False
+        self._blocked = False
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
-        """Each event in order, ending after Exited(returncode): made by the Driver once the Mode has no more events and
-        gives its returncode, awaited in slices of at most POLL s (an Exited from the Mode is dropped); a later call
-        yields nothing. SessionBound is recorded as `client_session` (durable) and sets info().native_id; Stderr is
-        recorded as `stderr` (best effort); a Reply, or a TurnEnd's non-empty reply, sets `reply`. With an idle_timeout,
-        each span of that many seconds without an event yields IdleTimeout, except after a Blocked until an event other
-        than Blocked or Stderr. Never stops the session on its own; an exception (the Mode's, a record write's) stops
-        it, then propagates."""
         last = time.monotonic()
         try:
             while not self._ended:
@@ -155,19 +139,15 @@ class Handle:
             self._reply = event.reply
 
     def send(self, text: str) -> None:
-        """Submits `text` to a tui session; a headless one raises DriverError."""
         self._host.send(text)
 
     def state(self) -> str:
-        """One of STATES, the Mode's."""
         return self._host.state()
 
     def screen(self, lines: int | None = None) -> str:
-        """A tui session's pane text; a headless one raises DriverError."""
         return self._host.screen(lines)
 
     def stop(self) -> None:
-        """Ends the session, the Mode's stop(); idempotent. events() then ends with Exited."""
         self._host.stop()
 
     def info(self) -> SessionInfo:
@@ -175,16 +155,13 @@ class Handle:
 
     @property
     def reply(self) -> str | None:
-        """The last reply's text; None before any."""
         return self._reply
 
     def usage(self) -> Usage | None:
-        """The runtime's account usage, usage(runtime): starts a probe process."""
         return usage(self.runtime)
 
 
 def _child_env(launch: Launch, cwd: str) -> dict[str, str]:
-    """A child's environment: the caller's minus launch.unset, plus launch.env and PWD=cwd."""
     env = {k: v for k, v in os.environ.items() if k not in launch.unset}
     return {**env, **launch.env, "PWD": cwd}
 
@@ -192,15 +169,8 @@ def _child_env(launch: Launch, cwd: str) -> dict[str, str]:
 def start(runtime: str, mode: str, prompt: str, spec: Spec, resume: str | None = None,
           idle_timeout: float | None = None, name: str | None = None, sid: str | None = None,
           events: str | None = None) -> Handle:
-    """Starts a session of `runtime` in `mode` on `prompt` and returns its Handle. resume continues that session id;
-    otherwise sid, else a new uuid4, names the new session; start() alone sets spec.sid. With access commands, the
-    adapter's runtime_note follows the prompt after a blank line. Refusals (ConfigError, nothing started): a bad mode,
-    idle_timeout, resume or sid, a sid other than resume, a caller-set spec.sid, a registry error, a Mode the runtime
-    lacks, name or events in headless mode, a bad tui name, settings or events file, a launch with no command; an
-    exception from the run's launch or the session record's write propagates. Every mode shares these steps up to the
-    session record, then starts the child, with _child_env's environment in launch.cwd, else spec.access.cwd, else
-    spec.workdir. tui: tmux session `name`, else <runtime>-<sid[:8]>, a running one refused (DriverError) before the
-    record; `events` gets its done, blocked and dead lines; no pane opens."""
+    """tui: tmux session `name`, else <runtime>-<sid[:8]>, a running one refused (DriverError) before the record;
+    `events` gets its done, blocked and dead lines; no pane opens."""
     if mode not in MODES:
         raise ConfigError(f"mode must be headless or tui, got {mode!r}")
     _idle(idle_timeout)
@@ -338,9 +308,8 @@ def show(name: str, split: str | None = None, split_from: str | None = None, ope
 
 
 def layout(split: str | None = None, split_from: str | None = None) -> str | None:
-    """The opener for show() once the pane it goes beside (split_from's, else the caller's) is found: tmux_host's
-    opener(), None only with split_from. Refusals: a bad or absent split or split_from (ConfigError), no pane
-    (DriverError)."""
+    """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found; None only with
+    split_from. Refusals: a bad split or split_from (ConfigError), no pane (DriverError)."""
     _placement(split, split_from)
     if split_from is not None and tmux_host.status(split_from) is None:
         raise ConfigError(f"no tmux session {split_from}")
@@ -377,7 +346,6 @@ def detach(name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, 
 
 
 def _probe_dir() -> str | None:
-    """PROBE_DIR, ~ expanded, made 0700 when missing; None when it cannot be made or is a symlink or no directory."""
     path = os.path.expanduser(PROBE_DIR)
     try:
         os.makedirs(path, 0o700, exist_ok=True)
@@ -387,10 +355,7 @@ def _probe_dir() -> str | None:
 
 
 def usage(runtime: str) -> Usage | None:
-    """`runtime`'s account usage: its Adapter's usage probe run (headless.probe, _child_env, at most PROBE_TIMEOUT
-    s) in the launch's cwd, else PROBE_DIR, its stdout read by the Adapter's usage(); None only when the probe fails:
-    the Adapter has no probe, it fails to start or times out, or its output has no reading (usage() gives None or
-    raises). A registry error is a ConfigError. Writes no run record."""
+    """None only when the probe fails: no probe, a failed start or timeout, or no reading in its output."""
     adapter = registry.adapter(runtime)
     launch = adapter.usage_probe()
     if launch is None or not launch.argv:
@@ -408,9 +373,6 @@ def usage(runtime: str) -> Usage | None:
 
 
 def session_info(runtime: str, sid: str, cwd: str) -> SessionStatus:
-    """Session `sid` of `runtime`, started in `cwd`, as its Adapter's session_status(); an OSError from it is
-    SessionStatus("unknown", None, ""). Refusals (ConfigError): a bad sid, a cwd that is no printable absolute path, a
-    registry error."""
     if error := sid_error(sid):
         raise ConfigError(error)
     if not printable_abs(cwd):

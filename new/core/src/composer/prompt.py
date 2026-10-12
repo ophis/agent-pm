@@ -2,24 +2,30 @@
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the guide's default text)
 and {{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its path in
-the workdir>. Every other run value is a PARAMETERS name, its value given once in # Parameters."""
+the workdir>. Every other run value is a PARAMETERS name, its value given once in # Parameters. The run reports in its
+replies (RETURN): PROGRESS mark lines and one OUTCOME block, which the Delegate parses.
+
+References: a link's target is `#a`, `a` an anchor of the prompt (link text `A › B`: a path there), or a `<scheme>://`
+URL; a task or method file's code span may be followed by ` › ` and a path in that file. Any other `›`, or a section
+title in parentheses, outside fences, code spans and links is an error. Only a run using a team dir file is checked; the
+error names the custom file to blame."""
 import os
 import re
 from collections.abc import Mapping
 
-from composer.base import (CODE_SPAN, FILE_REF, LINK, METHOD, OUTPUT, PAREN, SCHEME, SRC, ConfigError, _code, _fence,
-                           _read, _text, _without, anchor, fill, outline, unfenced)
+from composer.base import (CODE_SPAN, FILE_REF, LINK, METHOD, OUTPUT, PAREN, SCHEME, SRC, ConfigError, anchor, fill,
+                           outline, read_text)
 from composer.run import RunConfig, RunParams
-from composer.teams import PROGRESS, Team, _team, index, tasks_path
+from composer.teams import PROGRESS, Team, index, tasks_path, team_or_default
+from utils.markdown import unfenced
 
-OUTCOME = "agent-pm-outcome"   # the outcome block's info string; with PROGRESS, what the Delegate parses in replies
+OUTCOME = "agent-pm-outcome"
 RESUME = ("Resumed agent run after an interruption. These rules are current and may have changed since this session "
           "started. The input below is current: it adds to this session's earlier input. Continue the task this "
           "session already picked or was given, following your task file's `## Resume` section; never pick it "
           "again.\n\n")
 RULE = ("Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
         "value and written out in full, no name or shell variable left.")
-# The # Parameters section's names, in order: name → its value's source in _parameters.
 PARAMETERS = {"<Workdir>": "workdir", "<scripts>": "scripts", "<tasks>": "tasks", "<methods>": "methods",
               "<gate>": "gate", "<out-repo>": "output.repo", "<out-branch>": "output.branch",
               "<out-dir>": "output.dir", "<out-host>": "output.host"}
@@ -35,11 +41,7 @@ RETURN = ("## Return\n\nYour replies carry your reports:\n\n"
 
 
 def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> str:
-    """The agent run's prompt: RESUME on a resume, the guide, # Parameters (_parameters), the principles, the charter,
-    each template, output.md and the destination, RETURN, then # Input and the input, verbatim. A repeated heading in
-    the text before the input gets an `<a id>` line (_unique). `team` holds every file read (None: the team root
-    alone); a run using a team dir file has its prompt's references checked (_check_prompt)."""
-    team = _team(team)
+    team = team_or_default(team)
     names = {"role": run.role_title, "role_anchor": anchor(run.role_title), "language": run.language}
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
     if not (charter := team.charter(run.role)):
@@ -50,7 +52,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
         principles = _without(principles, "{{language}}")
     texts = {"guide.md": fill(guide, names, "guide.md"), "principles.md": fill(principles, names, "principles.md"),
              rel: fill(role, {}, rel)}
-    parts = list(texts.items())   # (label, text) of each part joined, # Parameters aside
+    parts = list(texts.items())
     for name in run.templates:
         body, label = team.read("templates", name)
         f = _fence(body)
@@ -64,7 +66,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     parts += [("output.md", texts["output.md"] + "\n" + texts[dest]), ("Return", RETURN)]
     joined = [part for _, part in parts]
     joined.insert(1, _parameters(run, params, texts, team))
-    own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")   # the text before the input
+    own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")
     if team.used(run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
     return own + f"\n{params.input.strip()}\n"
@@ -72,16 +74,6 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
 
 def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, str], *,
                      texts: Mapping[str, str] | None = None, labels: Mapping[str, str] | None = None) -> list[str]:
-    """What is wrong with the section references of a prompt's own text `own`, the role's task files `tasks` {task:
-    text} and the method files `methods` {label: text} its texts name: each error is `<label>: <what>: <offender>`, the
-    label `prompt`, `tasks/<task>.md` or the methods' own. Each unfenced text is checked for (1) every link `[t](#a)`:
-    `a` an anchor of `own`, and no relative target (`<scheme>://` is no reference); (2) a link text `A › B`: a path
-    of `own` whose anchor is `a`, any one of the entries of that path; (3) a task or method file reference, the code
-    span `<tasks>/<task>.md` (a task file of `tasks`, `<task>` every one) or `<methods>/<m>.md` (`methods/<m>.md` of
-    `methods`) then ` › ` and a path of each of them, their `# ` title dropped, the longest that matches; (4) no `›`
-    left once those, code spans and links are removed; (5) no `(name)` left, `name` the last title of a path of
-    `own` (a section named in parentheses, not linked). `texts` {label: text}: the texts checked in place of `own`
-    (its anchors and paths still `own`'s); `labels` {task: label}: a task's label in place of `tasks/<task>.md`."""
     outline_ = outline(own)
     anchors = {a for _, _, a, _ in outline_ if a}
     entries, titles = {}, {path[-1] for _, path, _, _ in outline_}
@@ -128,8 +120,6 @@ def reference_errors(own: str, tasks: Mapping[str, str], methods: Mapping[str, s
 
 
 def _task_path(after: str, paths) -> str | None:
-    """The longest of `paths` (tuples of titles) that `after`, the text following a file's code span, opens with
-    ` › `, as that text; a path ending inside a word doesn't count. None when there is none."""
     best = None
     for path in paths:
         want = " › " + " › ".join(path)
@@ -139,17 +129,15 @@ def _task_path(after: str, paths) -> str | None:
 
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
-    """Raises ConfigError on the first reference error of a run using team dir files (Team.used): one in a custom text
-    as it is, one in a built-in text naming the custom file that broke it."""
     used = team.used(run.role, run.templates)
     paths = {t: team.lookup("tasks", t) for t in index(run.role, team)}
-    tasks = {t: _text(p) for t, p in paths.items()}
+    tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))
     methods = {}
     for m in named:
         if os.path.isfile(path := os.path.join(team.root, "methods", f"{m}.md")):
-            methods[f"methods/{m}.md"] = _text(path)
+            methods[f"methods/{m}.md"] = read_text(path)
     errors = reference_errors(own, tasks, methods, texts=parts, labels=labels)
     if not errors:
         return
@@ -171,9 +159,6 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
 
 
 def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], team: Team) -> str:
-    """The # Parameters section: RULE, then each PARAMETERS name that `texts` ({label: text}), the role's task files or
-    the method files these name use, plus <Workdir>, <scripts> and <tasks> even unused, each with its value as inline
-    code. A used name without a value raises ConfigError naming the first text using it."""
     texts = dict(texts) | {label: body for body, label in (team.read("tasks", t) for t in index(run.role, team))}
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
     texts |= {rel: _read(team.root, rel) for rel in named if os.path.isfile(os.path.join(team.root, rel))}
@@ -191,9 +176,29 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
 
 
+def _read(root: str, rel: str) -> str:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        raise ConfigError(f"missing file {rel}")
+    with open(path) as f:
+        return f.read().strip() + "\n"
+
+
+def _without(text: str, placeholder: str) -> str:
+    return "".join(line for line in text.splitlines(True) if placeholder not in line)
+
+
+def _fence(text: str, least: int = 3) -> str:
+    ticks = max([len(r) + 1 for r in re.findall(r"`+", text)] + [least])
+    return "`" * ticks
+
+
+def _code(value: str) -> str:
+    f, pad = _fence(value, 1), " " if "`" in value else ""
+    return f"{f}{pad}{value}{pad}{f}"
+
+
 def _unique(text: str) -> str:
-    """`text` with an `<a id>` line before each heading whose anchor an earlier heading has, its id the anchor of
-    "<top-level title> <title>" (a top-level heading: of its title), then -2, -3, ... until free."""
     lines, taken, top, ids = text.split("\n"), set(), "", {}
     for i, path, own, heading in outline(text):
         if not heading:

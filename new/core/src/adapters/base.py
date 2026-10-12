@@ -1,12 +1,8 @@
-"""The Adapter interface. An Adapter is one runtime's abstract factory, built by src/driver/registry.py from the core
-config's [adapters.<name>] table minus `implementation`; headless() and tui() give the runtime's Headless or
-Tui, or None when it lacks that Mode. A run turns a prompt and a Spec into a Launch, and the runtime's output into
-the frozen event set (Event): SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited. Stderr, a diagnostic,
-sits beside it. A Tui's hooks map each of its hook labels to a hook kind (TURN_END, BLOCKED, ACTIVITY), which
-hook_events turns into events; no runtime's hook is named here. The Adapter also gives its account usage probe's
-command (usage_probe) and reads that probe's stdout as Usage, and a session's SessionStatus. A spec type refuses a bad
-value with ConfigError when built; sid_error is the one sid rule. Nothing here starts a process or touches tmux;
-imports no other layer."""
+"""The Adapter interface: one runtime's abstract factory, built from its [adapters.<name>] table minus `implementation`.
+Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
+Launch, and the runtime's output into the frozen event set (Event) plus Stderr. It also gives a usage probe's Launch,
+reads its stdout as Usage, and gives a session's SessionStatus. A spec type raises ConfigError on a bad value; times
+are epoch seconds. Starts no process; names no runtime's hook."""
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -21,7 +17,7 @@ ACTIVITY = "activity"
 
 
 class ConfigError(Exception):
-    """A config or spec error, raised by adapters and the Driver."""
+    """A config or spec error."""
 
 
 def _strings(value) -> bool:
@@ -33,7 +29,6 @@ def _clean(value) -> bool:
 
 
 def sid_error(sid) -> str | None:
-    """Why `sid` is no agent-pm session id (a non-empty printable str without "/"); None when it is one."""
     if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
         return None
     return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
@@ -41,11 +36,10 @@ def sid_error(sid) -> str | None:
 
 @dataclass(frozen=True)
 class Access:
-    """An agent run's runtime-neutral access intent; what each field grants is the adapter's to check."""
     dirs: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
-    cwd: str = ""           # the dir the run starts in; "": the workdir
-    project: bool = False   # whether the runtime loads cwd's project settings and instructions
+    cwd: str = ""
+    project: bool = False
 
     def __post_init__(self):
         for name in ("dirs", "commands"):
@@ -55,12 +49,11 @@ class Access:
 
 @dataclass(frozen=True, kw_only=True)
 class Spec:
-    """What a session runs with."""
-    workdir: str   # absolute; holds run.jsonl
+    workdir: str
     access: Access = Access()
     tier: int | None = None
     effort: str | None = None
-    sid: str | None = None   # agent-pm's session id, set by the Driver's start(), never by the caller
+    sid: str | None = None
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -78,13 +71,12 @@ class Spec:
 
 @dataclass(frozen=True)
 class Launch:
-    """The command a run's launch gives the Driver."""
-    argv: tuple[str, ...]                                  # argv[0] the runtime's executable
-    env: Mapping[str, str] = field(default_factory=dict)   # added to the caller's environment
-    unset: tuple[str, ...] = ()                            # removed from the caller's environment first
-    cwd: str = ""          # "": spec.access.cwd, else spec.workdir
-    transcript: str = ""   # where the runtime saves the session; "": unknown
-    resume: str = ""       # the shell command a human resumes with, each interpolated field shlex.quoted; "": none
+    argv: tuple[str, ...]
+    env: Mapping[str, str] = field(default_factory=dict)
+    unset: tuple[str, ...] = ()
+    cwd: str = ""
+    transcript: str = ""
+    resume: str = ""       # a human's shell command, each interpolated field shlex.quoted
 
     def __post_init__(self):
         env = self.env
@@ -98,7 +90,7 @@ class Launch:
 @dataclass(frozen=True)
 class SessionInfo:
     sid: str
-    native_id: str   # the runtime's own session id; "" until bound
+    native_id: str
     cwd: str
     project: bool
     transcript: str
@@ -122,7 +114,6 @@ class Reply:
 
 @dataclass(frozen=True)
 class TurnEnd:
-    """A turn's end: its reply and the count of background work still running. A headless session's final result."""
     reply: str = ""
     pending: int = 0
 
@@ -134,13 +125,11 @@ class Blocked:
 
 @dataclass(frozen=True)
 class LimitHit:
-    """The runtime reported its usage limit; resets_at: when it resets, epoch seconds, None when not given."""
     resets_at: float | None = None
 
 
 @dataclass(frozen=True)
 class Exited:
-    """The runtime's process ended; in headless mode only the Driver makes it."""
     returncode: int
 
 
@@ -158,23 +147,19 @@ class Window:
 
 @dataclass(frozen=True)
 class Usage:
-    """A runtime account's usage; a window the runtime does not report is None."""
-    five_hour: Window | None
+    five_hour: Window | None   # None: not reported
     weekly: Window | None
 
 
 @dataclass(frozen=True)
 class SessionStatus:
-    """What the runtime's own files say of a session."""
-    resumable: str              # one of RESUMABLE
-    last_active: float | None   # its newest write, epoch seconds; None: none found
-    resume_command: str         # the shell command a human resumes it with; "": none
+    resumable: str
+    last_active: float | None
+    resume_command: str
 
 
 @dataclass(frozen=True)
 class Stderr:
-    """A diagnostic line, outside the frozen event set: recorded as `stderr` and passed up. The Driver makes one per
-    stderr line of a headless session; an adapter may yield one too."""
     text: str
 
 
@@ -185,13 +170,12 @@ class Paste:
 
 @dataclass(frozen=True)
 class Key:
-    name: str   # a named key, e.g. "Enter"
+    name: str
 
 
 class Adapter(ABC):
-    """One runtime's abstract factory; a subclass per runtime."""
-    keys: frozenset[str] = frozenset()   # its own table keys
-    runtime_note: str = ""               # the Runtime note
+    keys: frozenset[str] = frozenset()
+    runtime_note: str = ""
 
     def __init__(self, config: Mapping):
         if extra := sorted(set(config) - self.keys):
@@ -200,44 +184,36 @@ class Adapter(ABC):
 
     @abstractmethod
     def headless(self) -> "Headless | None":
-        """A fresh Headless per call; None: headless mode unsupported."""
+        """A fresh Headless, or None."""
 
     @abstractmethod
     def tui(self) -> "Tui | None":
-        """The runtime's Tui; None: tui mode unsupported."""
+        """The Tui, or None."""
 
     def usage_probe(self) -> Launch | None:
-        """The command of a short headless runtime call whose stdout carries the account's usage (the Driver runs it
-        and gives its stdout to usage()); None: no source. A stdout-based source; step 4 (Codex) may revisit."""
         return None
 
     def usage(self, output: str) -> Usage | None:
-        """The probe's stdout as Usage; None only when the probe failed (no reading in it). Never raises on bad
-        output."""
+        """None only when the probe failed."""
         return None
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
-        """Session `sid` started in `cwd`, from the runtime's files; never raises on a file error."""
         return SessionStatus("unknown", None, "")
 
 
 class Headless(ABC):
-    """One headless session's runtime side, so launch may keep state for parse."""
-
     def __init__(self, adapter: Adapter):
         self.adapter = adapter
 
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool) -> Launch:
-        """The command; spec.sid is always set, and resume True continues that session."""
+        """The command; resume continues spec.sid."""
 
     @abstractmethod
     def parse(self, record: dict) -> Iterable[Event | Stderr]:
-        """One JSONL object's events, 0..n."""
+        """One JSONL object's events."""
 
     def events(self, lines: Iterable[str]) -> Iterator[Event | Stderr]:
-        """parse() of each line that is a JSON object; any other line is skipped (a runtime overrides this to report
-        it)."""
         for line in lines:
             try:
                 record = json.loads(line)
@@ -248,25 +224,21 @@ class Headless(ABC):
 
 
 class Tui(ABC):
-    """One tui session's runtime side: its command, its submissions, its hook calls as events and its visible pane's
-    usage-limit message."""
-    hooks: Mapping[str, str] = {}   # hook label → hook kind, set by each runtime
-    dialogs: tuple[str, ...] = ()   # screen texts of blocking dialogs that fire no hook
+    hooks: Mapping[str, str] = {}   # hook label → TURN_END, BLOCKED or ACTIVITY
+    dialogs: tuple[str, ...] = ()
 
     def __init__(self, adapter: Adapter):
         self.adapter = adapter
 
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
-        """As Headless.launch; argv installs each label L of `hooks` as a runtime hook running `hook + (L,)` with the
-        hook's JSON payload on stdin (installing them is the runtime's)."""
+        """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its payload on stdin."""
 
     @abstractmethod
     def reply(self, payload: dict) -> str:
-        """The turn's reply from a TURN_END hook's payload."""
+        """A TURN_END hook's reply."""
 
     def pending(self, payload: dict) -> int:
-        """The background work still running at a TURN_END hook."""
         return 0
 
     def activity(self, payload: dict) -> str:
@@ -290,9 +262,6 @@ class Tui(ABC):
         return Paste(text), Key("Enter")
 
     def hook_events(self, label: str, payload: dict, bound: str = "") -> list[Event]:
-        """Hook `label`'s events: SessionBound first when session_id(payload) is non-empty and not `bound`; then by the
-        label's kind in `hooks`: TURN_END → TurnEnd(reply, pending), BLOCKED → Blocked(blocked_reason), ACTIVITY →
-        Activity(activity), an unknown label nothing more."""
         found = []
         native = self.session_id(payload)
         if native and native != bound:

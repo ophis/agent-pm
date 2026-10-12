@@ -164,6 +164,14 @@ class ErrText(unittest.TestCase):
                 self.assertEqual(repo.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want)
 
 
+class TrustedDirs(unittest.TestCase):
+    def test_unset_is_empty_and_paths_are_real_paths(self):
+        self.assertEqual(repo.trusted_dirs({}), frozenset())
+        with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
+            got = repo.trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
+        self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
+
+
 class Worktree(Base):
     def worktree(self, *answers, branch="TASK-1-x", spec="o/n", config=None):
         run = Fake([*answers, HEAD])
