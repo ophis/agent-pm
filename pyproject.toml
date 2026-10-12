@@ -6,6 +6,7 @@ per-file-target-version = { "core/src/tmux_host.py" = "py39" }
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
 ignore = [
+    "E501",  # the formatter owns line length (100); the ~600 lines it can't wrap (strings, docstrings, comments) are a follow-up
     "SIM105",  # try/except/pass is the repo's best-effort idiom; contextlib.suppress only adds an import (21 sites)
 ]
 
