@@ -1,8 +1,9 @@
 """A local `team_dirs` read by delegate/cli.py as a subprocess over the fake `claude`: a dry run, --list, a run in
-headless mode of the team dir's role. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's
-part."""
+headless mode of the team dir's role; over fake_codex: one overlapping CODEX_HOME refused. Main's
+tests/integration/core/team_dirs_integration_test.py, the Delegate's part."""
 
 from new.tests.integration.composer.team_dirs_integration_test import IN_TEMP, TEAMS, make_team
+from new.tests.integration.delegate import codex_integration_test
 from new.tests.integration.delegate.cli_integration_test import CLI, Integration, mark
 from new.tests.unit.delegate.runner_test import block
 
@@ -55,6 +56,32 @@ class TeamDirs(Integration):
         self.assertIn(self.tasks, call["argv"])
         self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
         self.assertEqual(self.read(self.out), DONE["deliverable"])
+
+
+@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
+class CodexTeamDirs(codex_integration_test.Integration):
+    """--runtime codex over fake_codex, a team dir (the composer test's TEAM) as the local config's `team_dirs`."""
+
+    def setUp(self):
+        super().setUp()
+        self.team = make_team(self)
+        os.makedirs(os.path.join(self.home, ".agent-pm"), exist_ok=True)
+        with open(os.path.join(self.home, ".agent-pm", "core-new.local.toml"), "w") as f:
+            f.write(f"team_dirs = {json.dumps([self.team])}\n")
+
+    def test_one_overlapping_codex_home_exits_2_before_codex_starts(self):
+        for home in (os.path.join(self.team, "codex"), os.path.dirname(self.team)):
+            with self.subTest(home=home):
+                self.env["CODEX_HOME"] = home
+                res = self.drive([])
+                self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+                self.assertIn(
+                    f"delegate: team_dirs: {self.team} overlaps a dir codex can write {home}: "
+                    "the agent run can write there\n",
+                    res.stderr,
+                )
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(os.listdir(self.work), [])
 
 
 if __name__ == "__main__":
