@@ -65,7 +65,8 @@ flowchart TB
   D -->|instructions| ID
   D <==>|"agent: start · events, replies"| DR
   DR -->|loads| AD
-  L3 -->|"starts & hosts"| RT
+  CL --> P1
+  CX --> P2
   R ~~~ RU
   PP ~~~ CF
   C ~~~ DR
