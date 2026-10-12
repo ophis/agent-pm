@@ -551,7 +551,7 @@ class SessionInfoTest(Base):
 
 def fake_host() -> mock.Mock:
     """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), sessions [], option None."""
+    (absent), sessions [], option None, pane %1."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -561,6 +561,7 @@ def fake_host() -> mock.Mock:
     host.status.return_value = None
     host.sessions.return_value = []
     host.option.return_value = None
+    host.pane.return_value = "%1"
     return host
 
 
@@ -698,21 +699,21 @@ class TuiStartTest(TuiBase):
         self.host.read.return_value = "pane text"
         self.assertEqual((handle.state(), handle.screen()), ("live", "pane text"))
         handle.send("hi")
-        self.host.paste.assert_called_once_with("w1", "hi")
-        self.host.keys.assert_called_once_with("w1", "Enter")
+        self.host.paste.assert_called_once_with("%1", "hi")
+        self.host.keys.assert_called_once_with("%1", "Enter")
         handle.stop()
-        self.host.kill.assert_called_once_with("w1")
+        self.host.kill.assert_called_once_with("%1")
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
 
 class AttachTest(TuiBase):
     def started(self, *hooked) -> None:
-        """Tui session w1 started (sid SID), then a hooks.jsonl record per (label, payload) in `hooked`, its @sid SID;
-        the host's calls cleared."""
+        """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label, payload) in `hooked`,
+        its @sid SID; the host's calls cleared."""
         self.tui(name="w1", sid=SID, events=self.events)
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "w") as f:
             f.writelines(json.dumps({"ts": "", "label": label, "payload": payload}) + "\n" for label, payload in hooked)
-        self.host.option.side_effect = lambda name, key: SID if (name, key) == ("w1", "@sid") else None
+        self.host.option.side_effect = lambda target, key: SID if (target, key) == ("%1", "@sid") else None
         self.host.reset_mock()
 
     def test_a_handle_of_the_session_with_its_reply_native_id_and_next_records_events(self):
@@ -721,7 +722,7 @@ class AttachTest(TuiBase):
         self.assertEqual((handle.name, handle.sid, handle.runtime, handle.mode, handle.reply),
                          ("w1", SID, "fake", "tui", "r1"))
         self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
-        self.assertEqual(self.host.mock_calls, [mock.call.option("w1", "@sid"), mock.call.pane("w1")])
+        self.assertEqual(self.host.mock_calls, [mock.call.pane("w1"), mock.call.option("%1", "@sid")])
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(json.dumps({"ts": "", "label": "stop", "payload": {"last_message": "r2"}}) + "\n")
         self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))

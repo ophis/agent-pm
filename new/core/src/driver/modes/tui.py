@@ -46,11 +46,11 @@ def close(name: str) -> None:
         _close(name)
 
 
-def _close(name: str) -> None:
+def _close(name: str, pane: str | None = None) -> None:
     try:
-        tmux_host.kill(name)
+        tmux_host.kill(pane or name)
     except tmux_host.TuiError as e:
-        if tmux_host.status(name) is not None:
+        if tmux_host.status(pane or name) is not None:
             raise DriverError(f"cannot close tui session {name}: {e}") from None
     try:
         _remove(session_dir(name))
@@ -113,7 +113,7 @@ def _exit(status) -> int | None:
 
 
 class TuiMode:
-    """One tui session, driver.api's Mode, bound to its session's pane."""
+    """One tui session, driver.api's Mode, bound to its session's pane, which it acts on by id."""
 
     def __init__(self, name: str, run: Tui, sid: str, events: str | None):
         self.name, self.run, self.sid, self.events = name, run, sid, events
@@ -182,9 +182,11 @@ class TuiMode:
 
     @classmethod
     def attach(cls, name: str, state: dict, run: Tui) -> "TuiMode":
-        """read_state's session if tagged with its sid; reply: its last TURN_END's; events from its next record."""
+        """read_state's session, bound to the name's pane if that is tagged with its sid; reply: its last TURN_END's;
+        events from its next record."""
         try:
-            tagged, pane = tmux_host.option(name, "@sid"), tmux_host.pane(name)
+            pane = tmux_host.pane(name)
+            tagged = None if pane is None else tmux_host.option(pane, "@sid")
         except tmux_host.TuiError:
             tagged = pane = None
         if tagged != state["sid"]:
@@ -208,8 +210,8 @@ class TuiMode:
         found = self._read()
         if not found and not self._gone:
             status = tmux_host.status(self.name)
-            try:   # before _own: a screen read before its pane is confirmed is its own
-                screen = tmux_host.read(self.name) if status == tmux_host.RUNNING else None
+            try:
+                screen = tmux_host.read(self._pane) if status == tmux_host.RUNNING and self._pane else None
             except tmux_host.TuiError:
                 screen = None
             if (code := _exit(status := self._own(status))) is not None:
@@ -276,7 +278,7 @@ class TuiMode:
 
     def _mark_blocked(self) -> None:
         with contextlib.suppress(tmux_host.TuiError):
-            if tmux_host.option(self.name, "@state") != "blocked":
+            if tmux_host.option(self._pane, "@state") != "blocked":
                 tmux_host.mark("blocked", self.events, pane=self._pane)
 
     def returncode(self, timeout: float) -> int | None:
@@ -300,11 +302,11 @@ class TuiMode:
         try:
             for item in self.run.submit(text):
                 if isinstance(item, Paste):
-                    tmux_host.paste(self.name, item.text)
+                    tmux_host.paste(self._pane, item.text)
                 else:
                     if isinstance(last, Paste):
                         time.sleep(tmux_host.PAUSE)
-                    tmux_host.keys(self.name, item.name)
+                    tmux_host.keys(self._pane, item.name)
                 last = item
         except tmux_host.TuiError as e:
             raise DriverError(f"send to tui session {self.name}: {e}") from e
@@ -312,7 +314,7 @@ class TuiMode:
     def screen(self, lines: int | None = None) -> str:
         self._running()
         try:
-            return tmux_host.read(self.name, lines)
+            return tmux_host.read(self._pane, lines)
         except tmux_host.TuiError as e:
             raise DriverError(f"screen of tui session {self.name}: {e}") from e
 
@@ -321,11 +323,11 @@ class TuiMode:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """Under the name's lock, close() unless another pane holds the name; then ends (returncode: the code seen,
-        else -SIGHUP)."""
+        """Under the name's lock, unless another pane holds the name, kills its pane's session (no pane: the name's)
+        and removes the dir; then ends (returncode: the code seen, else -SIGHUP)."""
         if self._live:
             with lock(self.name):
                 if self._holder() in (self._pane, None, tmux_host.UNKNOWN):
-                    _close(self.name)
+                    _close(self.name, self._pane)
         self._live = False
         self._end()

@@ -1137,6 +1137,44 @@ class PaneId(unittest.TestCase):
                 tmux_host.pane("s", proc=Tmux(results={"display-message": result}))
 
 
+class PaneTarget(unittest.TestCase):
+    """status, kill, paste, keys, option and read take a pane id (%N) as their target."""
+
+    def calls(self, target, fake):
+        return [lambda: tmux_host.status(target, proc=fake), lambda: tmux_host.kill(target, proc=fake),
+                lambda: tmux_host.paste(target, "hi", proc=fake), lambda: tmux_host.keys(target, "Enter", proc=fake),
+                lambda: tmux_host.option(target, "@sid", proc=fake), lambda: tmux_host.read(target, proc=fake)]
+
+    def test_a_pane_id_is_the_target_as_is(self):
+        fake = Tmux(pane="0  ")
+        for call in self.calls("%12", fake):
+            call()
+        buffer = fake.calls[2][3]
+        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "%12", FORMAT],
+                                      ["tmux", "kill-session", "-t", "%12"],
+                                      ["tmux", "load-buffer", "-b", buffer, "-"],
+                                      ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "%12"],
+                                      ["tmux", "send-keys", "-t", "%12", "Enter"],
+                                      ["tmux", "show-options", "-v", "-t", "%12", "@sid"],
+                                      ["tmux", "capture-pane", "-p", "-J", "-t", "%12"]])
+
+    def test_a_gone_pane_is_absent(self):
+        gone = (1, "", "can't find pane: %12\n")
+        self.assertIsNone(tmux_host.status("%12", proc=Tmux(results={"display-message": gone})))
+        self.assertIsNone(tmux_host.option("%12", "@sid", proc=Tmux(results={"show-options": gone})))
+        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: can't find pane: %12$"):
+            tmux_host.kill("%12", proc=Tmux(results={"kill-session": gone}))
+
+    def test_a_bad_target_is_refused_before_tmux(self):
+        for target in ("%", "%x", "%1;", "%1 ", "%1:", "%1.0", "=%1", "%-1", "a b"):
+            with self.subTest(target=target):
+                fake = Tmux()
+                for call in self.calls(target, fake):
+                    with self.assertRaisesRegex(tmux_host.TuiError, "^invalid target "):
+                        call()
+                self.assertEqual(fake.calls, [])
+
+
 class Read(unittest.TestCase):
     def test_visible_pane_or_last_lines(self):
         for lines, printed, want, extra in ((None, "a\n  b\n\n \n", "a\n  b", []),

@@ -480,7 +480,7 @@ class PollTest(Base):
     def test_nothing_new_checks_status_the_screen_then_its_pane_once_then_waits_the_timeout_in_slices(self):
         mode = self.started()
         self.assertEqual(mode.poll(0.5), ([], False))
-        self.assertEqual(self.host.mock_calls, [mock.call.status(NAME), mock.call.read(NAME), mock.call.pane(NAME)])
+        self.assertEqual(self.host.mock_calls, [mock.call.status(NAME), mock.call.read("%1"), mock.call.pane(NAME)])
         self.assertTrue(all(0 < s <= 0.1 for _, s in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
 
@@ -552,7 +552,7 @@ class ScanTest(Base):
         mode = self.started()
         self.host.option.return_value = "done"
         self.scans(mode, "Sign in Trust this folder?")
-        self.assertEqual(self.host.mock_calls[3:], [mock.call.option(NAME, "@state"),
+        self.assertEqual(self.host.mock_calls[3:], [mock.call.option("%1", "@state"),
                                                     mock.call.mark("blocked", self.events, pane="%1")])
         self.host.reset_mock()
         self.host.option.return_value = "blocked"
@@ -626,13 +626,13 @@ class SendScreenTest(Base):
         self.host.paste.side_effect = lambda *args: self.log.append(("paste", *args))
         self.host.keys.side_effect = lambda *args: self.log.append(("keys", *args))
         mode.send("hi\nthere")
-        self.assertEqual(self.log, [("paste", NAME, "hi\nthere"), ("sleep", tmux_host.PAUSE), ("keys", NAME, "Enter")])
+        self.assertEqual(self.log, [("paste", "%1", "hi\nthere"), ("sleep", tmux_host.PAUSE), ("keys", "%1", "Enter")])
         self.log.clear()
         mode.run = Keys(self.run.adapter)
         mode.send("a")
-        self.assertEqual(self.log, [("keys", NAME, "Escape"), ("paste", NAME, "a"), ("sleep", tmux_host.PAUSE),
-                                    ("keys", NAME, "Enter"), ("keys", NAME, "Enter"), ("paste", NAME, "b"),
-                                    ("sleep", tmux_host.PAUSE), ("keys", NAME, "Tab")])
+        self.assertEqual(self.log, [("keys", "%1", "Escape"), ("paste", "%1", "a"), ("sleep", tmux_host.PAUSE),
+                                    ("keys", "%1", "Enter"), ("keys", "%1", "Enter"), ("paste", "%1", "b"),
+                                    ("sleep", tmux_host.PAUSE), ("keys", "%1", "Tab")])
 
     def test_send_or_screen_to_a_session_not_running_is_refused(self):
         mode = self.started()
@@ -660,7 +660,7 @@ class SendScreenTest(Base):
         mode = self.started()
         self.host.read.return_value = "a\nb"
         self.assertEqual((mode.screen(), mode.screen(5)), ("a\nb", "a\nb"))
-        self.assertEqual(self.host.read.call_args_list, [mock.call(NAME, None), mock.call(NAME, 5)])
+        self.assertEqual(self.host.read.call_args_list, [mock.call("%1", None), mock.call("%1", 5)])
 
 
 class CloseStopTest(Base):
@@ -718,7 +718,7 @@ class CloseStopTest(Base):
         self.assertEqual(self.host.mock_calls, [mock.call.status(NAME)])
         mode.begin(("/bin/run",), cwd=self.tmp, env={})
         mode.stop()
-        self.host.kill.assert_called_once_with(NAME)
+        self.host.kill.assert_called_once_with("%1")
         self.assertNoSessionDir()
 
 
@@ -801,12 +801,87 @@ class BoundTest(Base):
         self.host.read.assert_not_called()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
+    def test_with_no_pane_bound_it_reads_no_screen_and_stops_by_name(self):
+        self.host.pane.return_value = None   # begin found no pane
+        mode = self.prepare()
+        mode.begin(("/bin/run",), cwd=self.tmp, env={})
+        self.host.status.return_value = tmux_host.RUNNING
+        self.assertEqual(mode.poll(0), ([], True))
+        mode.stop()
+        self.host.read.assert_not_called()
+        self.host.kill.assert_called_once_with(NAME)
+
     def test_its_pane_unknown_is_no_scan_and_no_end(self):
         mode = self.started()
         self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
         self.host.read.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([], False))
         self.assertEqual((self.run.screens, mode.returncode(0), mode.state()), ([], None, "unknown"))
+
+
+class SwapTest(Base):
+    """A new session takes the name right after the Mode's pane check: every later call targets its pane (%1), so
+    none reaches the new pane (%2)."""
+
+    def swapped(self, screen: str = "") -> list:
+        """After started(): the next pane(NAME) answers %1, then %2 holds the name and %1 is gone (absent to status and
+        option, a TuiError to the rest). Returns (call, pane) for each call that reached a pane."""
+        holder, reached = ["%1"], []
+
+        def at(target):
+            return holder[0] if target in (NAME, holder[0]) else None
+
+        def check(name):
+            found, holder[0] = holder[0], "%2"
+            return found
+
+        def act(method, result):
+            def call(target, *args):
+                pane = at(target)
+                if pane is None and method != "option":
+                    raise tmux_host.TuiError(f"tmux: can't find pane: {target}")
+                if pane is not None:
+                    reached.append((method, pane))
+                return result
+            return call
+        self.host.pane.side_effect = check
+        self.host.status.side_effect = lambda target: tmux_host.RUNNING if at(target) else None
+        for method, result in (("paste", None), ("keys", None), ("read", screen), ("option", None), ("kill", None)):
+            getattr(self.host, method).side_effect = act(method, result)
+        return reached
+
+    def error(self, call) -> str | None:
+        try:
+            call()
+        except DriverError as e:
+            return str(e)
+        return None
+
+    def test_send_never_types_into_the_new_pane(self):
+        mode = self.started()
+        reached = self.swapped()
+        self.assertEqual((self.error(lambda: mode.send("hi")), reached),
+                         ("send to tui session w1: tmux: can't find pane: %1", []))
+
+    def test_screen_never_reads_the_new_pane(self):
+        mode = self.started()
+        reached = self.swapped()
+        self.assertEqual((self.error(mode.screen), reached),
+                         ("screen of tui session w1: tmux: can't find pane: %1", []))
+
+    def test_poll_reads_and_marks_by_its_pane_only(self):
+        mode = self.started()
+        reached = self.swapped("Sign in")
+        self.assertEqual((mode.poll(0), mode.poll(0)), (([Blocked("Sign in")], False), ([], True)))
+        self.assertEqual(reached, [("read", "%1")])
+        self.host.mark.assert_called_once_with("blocked", self.events, pane="%1")
+
+    def test_stop_never_kills_the_new_session(self):
+        mode = self.started()
+        reached = self.swapped()
+        mode.stop()
+        self.assertEqual((reached, os.path.isdir(self.dir)), ([], False))
+        self.host.kill.assert_called_once_with("%1")
 
 
 class AttachTest(Base):
@@ -827,7 +902,7 @@ class AttachTest(Base):
                            record("stop", session_id="n2", last_message="r2"), record("ask"), b"bad\n", partial[:7])
         self.assertEqual((mode.name, mode.sid, mode.events, mode.reply, mode.bound),
                          (NAME, SID, self.events, "r2", "n2"))
-        self.assertEqual(self.host.mock_calls, [mock.call.option(NAME, "@sid"), mock.call.pane(NAME)])
+        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME), mock.call.option("%1", "@sid")])
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
@@ -849,9 +924,34 @@ class AttachTest(Base):
                     self.attach()
                 self.assertEqual(str(caught.exception), "no tui session w1")
         self.host.option.side_effect = lambda name, key: {"@sid": SID}.get(key)
-        self.host.pane.side_effect = tmux_host.TuiError("tmux: denied")
-        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
-            self.attach()
+        for pane in (None, tmux_host.TuiError("tmux: denied")):
+            with self.subTest(pane=pane):
+                self.host.pane.return_value = pane
+                self.host.pane.side_effect = pane if isinstance(pane, Exception) else None
+                with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+                    self.attach()
+                self.host.option.assert_not_called()
+
+    def test_it_reads_the_sid_of_the_pane_it_took_so_a_pane_swapped_in_is_never_bound(self):
+        live = {"%7": SID}   # pane -> its session's @sid; the one pane holds the name
+
+        def then_swap(answer):
+            def call(*args):
+                found = answer(*args)
+                if self.host.pane.call_count + self.host.option.call_count == 1:
+                    live.clear()
+                    live["%8"] = SID   # a new session under the name
+                return found
+            return call
+        self.host.pane.side_effect = then_swap(lambda name: next(iter(live)))
+        self.host.option.side_effect = then_swap(lambda target, key: live.get(next(iter(live)) if target == NAME
+                                                                              else target))
+        try:
+            bound = self.attach()._pane
+        except DriverError as e:
+            bound = str(e)
+        self.assertEqual(bound, "no tui session w1")
+        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME), mock.call.option("%7", "@sid")])
 
     def test_an_attached_session_is_live_and_marks_dialogs_on_its_events_file(self):
         self.host.pane.return_value = "%7"
@@ -861,7 +961,7 @@ class AttachTest(Base):
         self.assertEqual(mode.poll(0), ([Blocked("Sign in")], False))
         self.host.mark.assert_called_once_with("blocked", self.events, pane="%7")
         mode.stop()
-        self.host.kill.assert_called_once_with(NAME)
+        self.host.kill.assert_called_once_with("%7")
 
     def test_an_attached_session_ends_once_another_pane_holds_its_name(self):
         self.host.pane.return_value = "%7"

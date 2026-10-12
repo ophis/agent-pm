@@ -29,9 +29,9 @@ ITERM_OPENER = re.compile(rf"[A-Za-z0-9]+:{ITERM_ID.pattern}")   # w0t0p0:<uniqu
 OPENER = re.compile(rf"{NAME.pattern}|{ITERM_OPENER.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
 USER_OPTION = re.compile(r"@[A-Za-z0-9_-]+")
-# a missing session or server (a stale socket: refused) or socket
-ABSENT = re.compile(r"can't find session.*|no server running.*|error connecting to .* \(No such file or directory\)",
-                    re.S)
+# a missing session, pane or server (a stale socket: refused) or socket
+ABSENT = re.compile(r"can't find (session|pane).*|no server running.*|"
+                    r"error connecting to .* \(No such file or directory\)", re.S)
 RUNNING = "running"
 UNKNOWN = "unknown"   # tmux failed otherwise, or is missing
 HANDOVER_TIMEOUT = 10
@@ -420,9 +420,9 @@ def _decorations(session: str, events: str | None, status_line: bool) -> list[li
             ["set-option", "-t", target, "status", "on" if status_line else "off"]]
 
 
-def status(session: str, *, proc=subprocess.run):
-    """RUNNING, None (no session or server), UNKNOWN, or the dead pane's exit status (signal n: -n)."""
-    target = f"={_name(session)}:"
+def status(target: str, *, proc=subprocess.run):
+    """RUNNING, None (target or server absent), UNKNOWN, or the dead pane's exit status (signal n: -n)."""
+    target = _target(target)
     try:
         res = _tmux(["display-message", "-p", "-t", target, "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"],
                     proc)
@@ -454,8 +454,8 @@ def sessions(prefix: str = "", *, proc=subprocess.run) -> list[str] | None:
     return sorted(n for n in res.stdout.split("\n") if NAME.fullmatch(n) and n.startswith(prefix))
 
 
-def kill(session: str, *, proc=subprocess.run) -> None:
-    _tmux_ok(["kill-session", "-t", f"={_name(session)}"], proc)
+def kill(target: str, *, proc=subprocess.run) -> None:
+    _tmux_ok(["kill-session", "-t", _target(target, "")], proc)
 
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
@@ -464,10 +464,10 @@ def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> N
     keys(session, "Enter", proc=proc)
 
 
-def paste(session: str, text: str, *, proc=subprocess.run) -> None:
+def paste(target: str, text: str, *, proc=subprocess.run) -> None:
     """A bracketed paste through a buffer of its own, deleted even on failure."""
-    target = f"={_name(session)}:"
-    buffer = f"tui-{session}-{uuid.uuid4().hex}"
+    buffer = f"tui-{target}-{uuid.uuid4().hex}"
+    target = _target(target)
     # load-buffer from stdin keeps text exact: send-keys -l lost long text's head, set-buffer a trailing ';'
     _tmux_ok(["load-buffer", "-b", buffer, "-"], proc, text)
     try:
@@ -478,18 +478,18 @@ def paste(session: str, text: str, *, proc=subprocess.run) -> None:
         raise
 
 
-def keys(session: str, *names: str, proc=subprocess.run) -> None:
+def keys(target: str, *names: str, proc=subprocess.run) -> None:
     """Presses tmux keys (Enter, Escape, C-c); a name tmux would misread raises first."""
-    target = f"={_name(session)}:"
+    target = _target(target)
     for name in names:
         if name.startswith("-") or name.endswith(";"):
             raise TuiError(f"tmux would misread {name!r}")
     _tmux_ok(["send-keys", "-t", target, *names], proc)
 
 
-def option(session: str, name: str, *, proc=subprocess.run) -> str | None:
-    """None when unset or the session absent."""
-    target = f"={_name(session)}:"
+def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
+    """None when unset or the target absent."""
+    target = _target(target)
     if not USER_OPTION.fullmatch(name):
         raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
     res = _tmux(["show-options", "-v", "-t", target, name], proc)
@@ -515,9 +515,9 @@ def pane(session: str, *, proc=subprocess.run) -> str | None:
     return found
 
 
-def read(session: str, lines: int | None = None, *, proc=subprocess.run) -> str:
+def read(target: str, lines: int | None = None, *, proc=subprocess.run) -> str:
     """The visible pane's text, or its last `lines` lines with history; trailing blank lines dropped."""
-    args = ["capture-pane", "-p", "-J", "-t", f"={_name(session)}:"]
+    args = ["capture-pane", "-p", "-J", "-t", _target(target)]
     if lines is not None:
         if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
             raise TuiError(f"lines must be a positive int, not {lines!r}")
@@ -1290,6 +1290,14 @@ def _name(session: str) -> str:
     if not NAME.fullmatch(session):
         raise TuiError(f"invalid session name {session!r}: want [A-Za-z0-9_-]+")
     return session
+
+
+def _target(target: str, suffix: str = ":") -> str:
+    if PANE.fullmatch(target):
+        return target
+    if not NAME.fullmatch(target):
+        raise TuiError(f"invalid target {target!r}: want a session name [A-Za-z0-9_-]+ or a pane id %N")
+    return f"={target}{suffix}"
 
 
 def _tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
