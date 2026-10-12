@@ -47,8 +47,11 @@ def main(argv: list[str]) -> int:
             if a.pending is not None and (n := pending(a.pending)) is not None:
                 line["pending"] = n
         else:
-            data = {k: v for k in ("status", "title", "summary", "questions", "url", "files")
-                    if (v := getattr(a, k)) is not None}
+            data = {
+                k: v
+                for k in ("status", "title", "summary", "questions", "url", "files")
+                if (v := getattr(a, k)) is not None
+            }
             if a.deliverable is not None:
                 with open(a.deliverable) as f:
                     data["deliverable"] = f.read()

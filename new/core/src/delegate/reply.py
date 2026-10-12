@@ -1,4 +1,5 @@
 """A reply's progress mark lines outside code fences (marks) and its outcome block (outcome_block)."""
+
 import re
 
 from composer import OUTCOME, PROGRESS
@@ -12,7 +13,11 @@ def marks(text: str) -> list[tuple[str, str]]:
     """(name, text) of each mark line, whitespace collapsed; one with a bad name or no text is skipped."""
     out = []
     for _, line in unfenced(text):
-        if (m := MARK.match(line)) and NAME.fullmatch(m["name"]) and (said := " ".join(m["text"].split())):
+        if (
+            (m := MARK.match(line))
+            and NAME.fullmatch(m["name"])
+            and (said := " ".join(m["text"].split()))
+        ):
             out.append((m["name"], said))
     return out
 

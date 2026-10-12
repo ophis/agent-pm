@@ -1,5 +1,7 @@
 """Codex's abstract factory."""
+
 from adapters.base import Adapter, SessionStatus
+
 from .common import CodexCommon
 from .headless import CodexHeadless
 from .tui import CodexTuiRun
@@ -7,7 +9,9 @@ from .tui import CodexTuiRun
 
 class CodexAdapter(Adapter):
     keys = frozenset({"tiers", "efforts", "shell_network", "env"})
-    runtime_note = "Run each shell call separately. Command approvals follow Codex automatic review."
+    runtime_note = (
+        "Run each shell call separately. Command approvals follow Codex automatic review."
+    )
 
     def __init__(self, config):
         super().__init__(config)

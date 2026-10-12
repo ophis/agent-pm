@@ -1,3 +1,5 @@
+from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
+
 import dataclasses
 import json
 import os
@@ -6,9 +8,17 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from adapters.base import Activity, Blocked, ConfigError, Key, LimitHit, Paste, SessionBound, TurnEnd
+from adapters.base import (
+    Activity,
+    Blocked,
+    ConfigError,
+    Key,
+    LimitHit,
+    Paste,
+    SessionBound,
+    TurnEnd,
+)
 from adapters.codex import CodexAdapter
-from new.tests.unit.adapters.codex.support import Base, CHILD, NATIVE
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
@@ -16,7 +26,10 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 class TuiTest(Base):
     def launch(self, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
-        with mock.patch("shutil.which", return_value="/protected/codex"), mock.patch("subprocess.Popen") as proc:
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            mock.patch("subprocess.Popen") as proc,
+        ):
             launch = run.launch("quoted ' prompt\nnext", self.spec, resume, HOOK)
         proc.assert_not_called()
         return run, launch, json.loads(launch.argv[-1])
@@ -52,19 +65,26 @@ class TuiTest(Base):
         self.assertIn(NATIVE, launch.resume)
 
     def test_resume_failure_happens_before_command(self):
-        with mock.patch("shutil.which") as which, self.assertRaisesRegex(ConfigError, "missing.*state"):
+        with (
+            mock.patch("shutil.which") as which,
+            self.assertRaisesRegex(ConfigError, "missing.*state"),
+        ):
             self.adapter.tui().launch("again", self.spec, True, HOOK)
         which.assert_not_called()
 
     def test_interactive_environment_drops_injected_defaults_and_parent_markers(self):
-        with mock.patch.dict(os.environ, {"CODEX_CI": "1", "NO_COLOR": "1", "CODEX_THREAD_ID": NATIVE}):
+        with mock.patch.dict(
+            os.environ, {"CODEX_CI": "1", "NO_COLOR": "1", "CODEX_THREAD_ID": NATIVE}
+        ):
             _, launch, _ = self.launch()
         self.assertNotIn("CODEX_CI", launch.env)
         self.assertNotIn("NO_COLOR", launch.env)
         self.assertIn("CODEX_CI", launch.unset)
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
-        adapter = CodexAdapter({"shell_network": False, "env": {"CODEX_CI": "configured", "PAGER": "less"}})
+        adapter = CodexAdapter(
+            {"shell_network": False, "env": {"CODEX_CI": "configured", "PAGER": "less"}}
+        )
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = adapter.tui().launch("hi", second, False, HOOK)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
@@ -74,25 +94,53 @@ class TuiTest(Base):
     def test_hook_mapping_null_reply_and_submit(self):
         run, _, _ = self.launch()
         self.assertEqual(run.submit("x"), (Paste("x"), Key("Enter")))
-        self.assertEqual(run.hook_events("SessionStart", self.payload()), [SessionBound(NATIVE), Activity("")])
-        self.assertEqual(run.hook_events("PostToolUse", self.payload(tool_name="Bash"), NATIVE), [Activity("Bash")])
-        self.assertEqual(run.hook_events("PermissionRequest", self.payload(tool_name="Bash"), NATIVE), [Blocked("Bash")])
-        self.assertEqual(run.hook_events("Stop", self.payload(last_assistant_message=None), NATIVE), [TurnEnd()])
-        self.assertEqual(run.hook_events("Stop", self.payload(last_assistant_message="raw", background_tasks=[1]), NATIVE),
-                         [TurnEnd("raw", 0)])
-        for fields in ({"agent_id": CHILD}, {"session_id": "invalid"}, {"session_id": CHILD}, {"cwd": str(self.extra)}):
+        self.assertEqual(
+            run.hook_events("SessionStart", self.payload()), [SessionBound(NATIVE), Activity("")]
+        )
+        self.assertEqual(
+            run.hook_events("PostToolUse", self.payload(tool_name="Bash"), NATIVE),
+            [Activity("Bash")],
+        )
+        self.assertEqual(
+            run.hook_events("PermissionRequest", self.payload(tool_name="Bash"), NATIVE),
+            [Blocked("Bash")],
+        )
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message=None), NATIVE), [TurnEnd()]
+        )
+        self.assertEqual(
+            run.hook_events(
+                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1]), NATIVE
+            ),
+            [TurnEnd("raw", 0)],
+        )
+        for fields in (
+            {"agent_id": CHILD},
+            {"session_id": "invalid"},
+            {"session_id": CHILD},
+            {"cwd": str(self.extra)},
+        ):
             self.assertEqual(run.hook_events("Stop", self.payload(**fields)), [])
         self.assertEqual(run.hook_events("unknown", self.payload()), [])
 
     def test_interrupt_retains_root_reply_on_live_and_attach_replay(self):
         run = self.adapter.tui()
-        self.assertEqual(run.hook_events("Interrupt", self.payload()), [SessionBound(NATIVE), TurnEnd()])
-        self.assertEqual(run.hook_events("Stop", self.payload(last_assistant_message="kept"), NATIVE), [TurnEnd("kept")])
-        self.assertEqual(run.hook_events("Interrupt", self.payload(last_assistant_message="discard"), NATIVE),
-                         [TurnEnd("kept")])
+        self.assertEqual(
+            run.hook_events("Interrupt", self.payload()), [SessionBound(NATIVE), TurnEnd()]
+        )
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message="kept"), NATIVE),
+            [TurnEnd("kept")],
+        )
+        self.assertEqual(
+            run.hook_events("Interrupt", self.payload(last_assistant_message="discard"), NATIVE),
+            [TurnEnd("kept")],
+        )
         attached = self.adapter.tui()
         attached.session_id(self.payload(hook_event_name="Stop", last_assistant_message="kept"))
-        self.assertEqual(attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd("kept")])
+        self.assertEqual(
+            attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd("kept")]
+        )
         attached.session_id(self.payload(hook_event_name="Stop", last_assistant_message=None))
         self.assertEqual(attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd()])
 
@@ -100,13 +148,23 @@ class TuiTest(Base):
         run = self.adapter.tui()
         run.adapter.common.config["env"] = {"TZ": "UTC"}
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        for prefix in ("You’ve hit your usage limit.", "You've hit your usage limit. Visit https://chatgpt.com/settings/usage "
-                       "to purchase more credits or", "Quota exceeded. Check your plan and billing details.",
-                       "Your workspace is out of credits."):
+        for prefix in (
+            "You’ve hit your usage limit.",
+            "You've hit your usage limit. Visit https://chatgpt.com/settings/usage "
+            "to purchase more credits or",
+            "Quota exceeded. Check your plan and billing details.",
+            "Your workspace is out of credits.",
+        ):
             with self.subTest(prefix=prefix):
-                self.assertEqual(run.limit("• " + prefix + " Try again at Jan 2nd, 2027 3:04 AM.\n› "), LimitHit(stamp))
+                self.assertEqual(
+                    run.limit("• " + prefix + " Try again at Jan 2nd, 2027 3:04 AM.\n› "),
+                    LimitHit(stamp),
+                )
         self.assertEqual(run.limit("You’ve hit your usage limit. Try again later."), LimitHit())
-        self.assertEqual(run.limit("You've hit your usage limit. Try again at Jan 2th, 2027 3:04 AM."), LimitHit())
+        self.assertEqual(
+            run.limit("You've hit your usage limit. Try again at Jan 2th, 2027 3:04 AM."),
+            LimitHit(),
+        )
         self.assertIsNone(run.limit("assistant: You've hit your usage limit. is a quoted example"))
         self.assertIsNone(run.limit("ordinary network error"))
 
@@ -114,7 +172,10 @@ class TuiTest(Base):
         for path in (self.cwd / "codex", self.extra / "driver.py"):
             spec = dataclasses.replace(self.spec, sid="unsafe-" + path.name)
             hook = HOOK if path.name == "codex" else (sys.executable, "-I", str(path))
-            with mock.patch("shutil.which", return_value=str(path if path.name == "codex" else "/protected/codex")):
+            with mock.patch(
+                "shutil.which",
+                return_value=str(path if path.name == "codex" else "/protected/codex"),
+            ):
                 with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
                     self.adapter.tui().launch("hi", spec, False, hook)
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
@@ -142,6 +203,8 @@ class TuiTest(Base):
 
     def test_driver_flattened_limit_screen_keeps_header_and_reset(self):
         adapter = CodexAdapter({"shell_network": False, "env": {"TZ": "UTC"}})
-        screen = "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › "
+        screen = (
+            "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › "
+        )
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))

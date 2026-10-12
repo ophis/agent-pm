@@ -6,7 +6,8 @@ from dataclasses import dataclass, replace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
-from config import CLONES, NAME, OWNER, REF, TASKS, RUNS_DIR, repo_slug, sh_run  # noqa: E402
+from config import CLONES, NAME, OWNER, REF, RUNS_DIR, TASKS, repo_slug, sh_run  # noqa: E402
+
 import repo  # noqa: E402
 from repo import GUARD, SHORT, common_dir, err_text, under  # noqa: E402
 
@@ -36,7 +37,10 @@ def _one(value):
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    for pat in (rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?", rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?"):
+    for pat in (
+        rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?",
+        rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?",
+    ):
         m = re.fullmatch(pat, v)
         if m and m.group(2) not in (".", ".."):
             return m.group(1), m.group(2)
@@ -48,7 +52,9 @@ def parse_repo(description) -> tuple[str, str] | Invalid:
     for line in (description or "").splitlines():
         if line.rstrip("\r") == "## Comments":
             break
-        m = re.match(r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I)
+        m = re.match(
+            r"^\s*(?:[-*>]\s+)?(?:\*\*|`)?repo:(?:\*\*)?\s*(.+?)\s*$", line.rstrip("\r"), re.I
+        )
         if m:
             one = _one(m.group(1).strip("`*").strip())
             if not one:
@@ -93,7 +99,11 @@ def _repo_info(o, n, run):
         return Transient(f"gh api repos/{o}/{n}: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
-        full, push, default = repo_slug(data["full_name"]), data["permissions"]["push"], data["default_branch"]
+        full, push, default = (
+            repo_slug(data["full_name"]),
+            data["permissions"]["push"],
+            data["default_branch"],
+        )
     except (ValueError, KeyError, TypeError):
         full = None
     if not full:
@@ -111,18 +121,49 @@ def _branches(ident, o, n, run, work):
     git = os.path.join(path, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
         # The agent run can write this clone's config; these keep it from running code as the harness.
-        res = run(["git", *GUARD, "-C", path, f"--git-dir={git}",
-                   "branch", "--list", f"{ident}-*", "--format=%(refname:short)"], SHORT)
+        res = run(
+            [
+                "git",
+                *GUARD,
+                "-C",
+                path,
+                f"--git-dir={git}",
+                "branch",
+                "--list",
+                f"{ident}-*",
+                "--format=%(refname:short)",
+            ],
+            SHORT,
+        )
         if res.returncode != 0:
             return Transient(f"git branch --list: {err_text(res)}")
-        read_only = {f"{ident}-{t}" for r, spec in TASKS.items() if spec.kind != "build" for t in config.role_tasks(r)}
+        read_only = {
+            f"{ident}-{t}"
+            for r, spec in TASKS.items()
+            if spec.kind != "build"
+            for t in config.role_tasks(r)
+        }
         if local := [b for b in res.stdout.split() if b not in read_only]:
             return local
-    res = run(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
-               "ls-remote", "--heads", f"https://github.com/{o}/{n}.git", f"{ident}-*"], SHORT)
+    res = run(
+        [
+            "git",
+            "-c",
+            "credential.helper=",
+            "-c",
+            "credential.helper=!gh auth git-credential",
+            "ls-remote",
+            "--heads",
+            f"https://github.com/{o}/{n}.git",
+            f"{ident}-*",
+        ],
+        SHORT,
+    )
     if res.returncode != 0:
         return Transient(f"git ls-remote: {err_text(res)}")
-    return [line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line]
+    return [
+        line.split("refs/heads/", 1)[1] for line in res.stdout.splitlines() if "refs/heads/" in line
+    ]
 
 
 def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Transient:
@@ -130,7 +171,9 @@ def check(issue, repos, *, run=sh_run, work=RUNS_DIR) -> Target | Invalid | Tran
     mapped = repo == NO_LINE and issue.project_id in repos
     tag = MAPPED if mapped else ""
     if mapped:
-        repo = repo_slug(repos[issue.project_id]) or Invalid(f"{MAPPED}{str(repos[issue.project_id])[:80]!r}: not <owner>/<name>")
+        repo = repo_slug(repos[issue.project_id]) or Invalid(
+            f"{MAPPED}{str(repos[issue.project_id])[:80]!r}: not <owner>/<name>"
+        )
     if isinstance(repo, Invalid):
         return repo
     asked = f"{tag}{repo[0]}/{repo[1]}"

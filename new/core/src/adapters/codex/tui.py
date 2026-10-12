@@ -6,22 +6,39 @@ import shutil
 import sys
 
 from adapters.base import ACTIVITY, BLOCKED, TURN_END, ConfigError, Launch, LimitHit, Tui
+
+from . import sessions
 from .common import flags, native_id
 from .headless import LIMIT_PREFIXES, reset_at
-from . import sessions
 
-HOOKS = (("SessionStart", "sessionStart"), ("UserPromptSubmit", "userPromptSubmit"),
-         ("PostToolUse", "postToolUse"), ("PermissionRequest", "permissionRequest"),
-         ("Stop", "stop"), ("Interrupt", "interrupt"))
+HOOKS = (
+    ("SessionStart", "sessionStart"),
+    ("UserPromptSubmit", "userPromptSubmit"),
+    ("PostToolUse", "postToolUse"),
+    ("PermissionRequest", "permissionRequest"),
+    ("Stop", "stop"),
+    ("Interrupt", "interrupt"),
+)
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
 class CodexTuiRun(Tui):
-    hooks = {"SessionStart": ACTIVITY, "UserPromptSubmit": ACTIVITY, "PostToolUse": ACTIVITY,
-             "PermissionRequest": BLOCKED, "Stop": TURN_END, "Interrupt": TURN_END}
-    dialogs = ("Trust this folder?", "Config, hooks, and exec policies from untrusted folders stay disabled.",
-               "Hooks need review", "Working directory · resume", "This conversation is open in another app",
-               "Sign in with ChatGPT to use Codex")
+    hooks = {
+        "SessionStart": ACTIVITY,
+        "UserPromptSubmit": ACTIVITY,
+        "PostToolUse": ACTIVITY,
+        "PermissionRequest": BLOCKED,
+        "Stop": TURN_END,
+        "Interrupt": TURN_END,
+    }
+    dialogs = (
+        "Trust this folder?",
+        "Config, hooks, and exec policies from untrusted folders stay disabled.",
+        "Hooks need review",
+        "Working directory · resume",
+        "This conversation is open in another app",
+        "Sign in with ChatGPT to use Codex",
+    )
 
     def __init__(self, adapter):
         super().__init__(adapter)
@@ -41,34 +58,90 @@ class CodexTuiRun(Tui):
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Driver hook command")
-        dependencies = [os.path.dirname(os.path.dirname(DIRECTORY)), sys.prefix, sys.base_prefix, sys.executable,
-                        exe, sessions.store_root(), *(word for word in hook if os.path.isabs(word))]
+        dependencies = [
+            os.path.dirname(os.path.dirname(DIRECTORY)),
+            sys.prefix,
+            sys.base_prefix,
+            sys.executable,
+            exe,
+            sessions.store_root(),
+            *(word for word in hook if os.path.isabs(word)),
+        ]
         try:
             sessions.protect(self.state, dependencies)
         except sessions.RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
         if not resume:
             self.state = common.save(self.state)
-        commands = {event: shlex.join((os.path.realpath(sys.executable), "-I",
-                                      os.path.join(DIRECTORY, "tui_hook.py"), self.state.workdir, self.state.sid,
-                                      json.dumps(list(hook), ensure_ascii=False), event)) for event in self.hooks}
-        hook_flags = [word for event, command in commands.items() for word in
-                      ("-c", f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
-                       f'timeout={3 if event == "Interrupt" else 10}}}]}}]')]
-        argv = [exe, *(["resume", self.native] if resume else []), "--no-daemon", "-C", snapshot["cwd"],
-                "-c", 'tui.notification_method="bel"', *flags(snapshot, interactive=True), *hook_flags,
-                *(["--", prompt] if prompt else [])]
-        data = {"argv": argv, "hook": list(hook), "commands": commands, "hook_flags": hook_flags,
-                "workdir": self.state.workdir, "sid": self.state.sid}
-        return Launch((os.path.realpath(sys.executable), "-I", os.path.join(DIRECTORY, "tui_start.py"),
-                       json.dumps(data, ensure_ascii=False)), env=env, unset=common.interactive_unset(),
-                      cwd=snapshot["cwd"], resume=common.resume_command(self.state) if resume else "")
+        commands = {
+            event: shlex.join(
+                (
+                    os.path.realpath(sys.executable),
+                    "-I",
+                    os.path.join(DIRECTORY, "tui_hook.py"),
+                    self.state.workdir,
+                    self.state.sid,
+                    json.dumps(list(hook), ensure_ascii=False),
+                    event,
+                )
+            )
+            for event in self.hooks
+        }
+        hook_flags = [
+            word
+            for event, command in commands.items()
+            for word in (
+                "-c",
+                f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
+                f"timeout={3 if event == 'Interrupt' else 10}}}]}}]",
+            )
+        ]
+        argv = [
+            exe,
+            *(["resume", self.native] if resume else []),
+            "--no-daemon",
+            "-C",
+            snapshot["cwd"],
+            "-c",
+            'tui.notification_method="bel"',
+            *flags(snapshot, interactive=True),
+            *hook_flags,
+            *(["--", prompt] if prompt else []),
+        ]
+        data = {
+            "argv": argv,
+            "hook": list(hook),
+            "commands": commands,
+            "hook_flags": hook_flags,
+            "workdir": self.state.workdir,
+            "sid": self.state.sid,
+        }
+        return Launch(
+            (
+                os.path.realpath(sys.executable),
+                "-I",
+                os.path.join(DIRECTORY, "tui_start.py"),
+                json.dumps(data, ensure_ascii=False),
+            ),
+            env=env,
+            unset=common.interactive_unset(),
+            cwd=snapshot["cwd"],
+            resume=common.resume_command(self.state) if resume else "",
+        )
 
     def session_id(self, payload):
         native, cwd = payload.get("session_id"), payload.get("cwd")
-        if (payload.get("agent_id") is not None or not native_id(native) or not isinstance(cwd, str)
-                or not os.path.isabs(cwd) or "\0" in cwd or self.native and native != self.native
-                or self.state and os.path.realpath(cwd) != self.state.snapshot["cwd"]):
+        if (
+            payload.get("agent_id") is not None
+            or not native_id(native)
+            or not isinstance(cwd, str)
+            or not os.path.isabs(cwd)
+            or "\0" in cwd
+            or self.native
+            and native != self.native
+            or self.state
+            and os.path.realpath(cwd) != self.state.snapshot["cwd"]
+        ):
             return ""
         self.native = native
         if payload.get("hook_event_name") == "Stop":
@@ -101,12 +174,18 @@ class CodexTuiRun(Tui):
 
     def limit(self, screen):
         screen = screen.replace("’", "'")
-        pattern = (r"(?m)(?:^[ \t]*(?:[■•✖!][ \t]*)?|(?<=[ \t])[■•✖!][ \t]*)"
-                   r"(?=You've hit your usage|Quota exceeded|Your workspace is out|You hit your spend cap)")
+        pattern = (
+            r"(?m)(?:^[ \t]*(?:[■•✖!][ \t]*)?|(?<=[ \t])[■•✖!][ \t]*)"
+            r"(?=You've hit your usage|Quota exceeded|Your workspace is out|You hit your spend cap)"
+        )
         for match in re.finditer(pattern, screen):
-            message = " ".join(screen[match.end():].split())
+            message = " ".join(screen[match.end() :].split())
             if message.startswith(LIMIT_PREFIXES):
                 reset = re.search(r"(?:Try|try) again at [^.]+\.", message)
-                return LimitHit(reset_at(reset.group() if reset else message,
-                                         self.adapter.common.config.get("env", {})))
+                return LimitHit(
+                    reset_at(
+                        reset.group() if reset else message,
+                        self.adapter.common.config.get("env", {}),
+                    )
+                )
         return None

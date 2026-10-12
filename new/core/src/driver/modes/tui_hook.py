@@ -2,6 +2,7 @@
 stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
 word (tmux_host.mark). Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and always
 exits 0 (a runtime may read both). Python 3.9, stdlib only, standalone."""
+
 from __future__ import annotations
 
 import fcntl
@@ -13,8 +14,8 @@ import stat
 import sys
 from datetime import datetime
 
-PAYLOAD_MAX = 16 << 20   # bytes of stdin parsed
-STATE_MAX = 1 << 20      # bytes of session.json read
+PAYLOAD_MAX = 16 << 20  # bytes of stdin parsed
+STATE_MAX = 1 << 20  # bytes of session.json read
 BLOCK = 1 << 16
 CUT = 4096
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -22,7 +23,9 @@ RUNTIME = re.compile(r"[a-z][a-z0-9_]*")
 WORDS = ("done", "blocked", "working")
 STATE = "session.json"
 HOOKS = "hooks.jsonl"
-TMUX_HOST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmux_host.py")
+TMUX_HOST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tmux_host.py"
+)
 
 
 def _abs(value) -> bool:
@@ -30,7 +33,9 @@ def _abs(value) -> bool:
 
 
 SESSION_STATE = {
-    "words": lambda v: isinstance(v, dict) and all(LABEL.fullmatch(k) and w in WORDS for k, w in v.items()),
+    "words": lambda v: (
+        isinstance(v, dict) and all(LABEL.fullmatch(k) and w in WORDS for k, w in v.items())
+    ),
     "events": lambda v: v is None or _abs(v),
     "sid": lambda v: isinstance(v, str) and v != "" and v.isprintable() and "/" not in v,
     "runtime": lambda v: isinstance(v, str) and RUNTIME.fullmatch(v) is not None,
@@ -94,7 +99,9 @@ def read_state(path: str) -> dict:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):   # first: fdopen raises on a directory, leaving fd open
+            if not stat.S_ISREG(
+                os.fstat(fd).st_mode
+            ):  # first: fdopen raises on a directory, leaving fd open
                 raise HookError(f"{path}: not a regular file")
             with os.fdopen(fd, "rb", closefd=False) as f:
                 data = f.read(STATE_MAX + 1)
@@ -131,7 +138,9 @@ def append(path: str, record: dict) -> None:
     line = (json.dumps(record) + "\n").encode()
     try:
         # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        fd = os.open(
+            path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
+        )
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise HookError(f"{path}: not a regular file")

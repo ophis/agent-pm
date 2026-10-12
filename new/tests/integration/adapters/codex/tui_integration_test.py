@@ -1,3 +1,6 @@
+from new.tests import NEW, SRC, live_tmux
+from new.tests.integration.adapters.codex import fake_codex, fake_tui
+
 import concurrent.futures
 import dataclasses
 import json
@@ -16,9 +19,17 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from new.tests import NEW, SRC, live_tmux
-from new.tests.integration.adapters.codex import fake_codex, fake_tui
-from adapters.base import Access, Activity, Blocked, ConfigError, Exited, LimitHit, SessionBound, Spec, TurnEnd
+from adapters.base import (
+    Access,
+    Activity,
+    Blocked,
+    ConfigError,
+    Exited,
+    LimitHit,
+    SessionBound,
+    Spec,
+    TurnEnd,
+)
 from adapters.codex import tui_start
 from driver import api, records, registry
 
@@ -98,35 +109,69 @@ class Live(unittest.TestCase):
         for path in (self.home, self.cwd, self.codex_home, self.extra):
             path.mkdir(parents=True, exist_ok=True)
         mkdtemp = tempfile.mkdtemp
-        with mock.patch.object(live_tmux.tempfile, "mkdtemp", side_effect=lambda: mkdtemp(dir=parent)):
+        with mock.patch.object(
+            live_tmux.tempfile, "mkdtemp", side_effect=lambda: mkdtemp(dir=parent)
+        ):
             self.server = live_tmux.Server(self, str(self.home))
         self.server.start("mgr")
         fake_tui.install(self.server.bin)
-        self.log, self.scenario, self.events = (self.root / n for n in ("runtime.jsonl", "scenario.json", "events"))
+        self.log, self.scenario, self.events = (
+            self.root / n for n in ("runtime.jsonl", "scenario.json", "events")
+        )
         self.scene()
         self.env = self.server.env(CODEX_HOME=str(self.codex_home), TZ="UTC")
         self.enterContext(mock.patch.dict(os.environ, self.env, clear=True))
-        self.config = {"adapters": {"codex": {"implementation": "adapters.codex:CodexAdapter",
-                       "shell_network": False, "tiers": {"1": "gpt-test"}, "efforts": {"low": "low"},
-                       "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario), "TZ": "UTC"}}}}
+        self.config = {
+            "adapters": {
+                "codex": {
+                    "implementation": "adapters.codex:CodexAdapter",
+                    "shell_network": False,
+                    "tiers": {"1": "gpt-test"},
+                    "efforts": {"low": "low"},
+                    "env": {
+                        "FAKE_LOG": str(self.log),
+                        "FAKE_SCENARIO": str(self.scenario),
+                        "TZ": "UTC",
+                    },
+                }
+            }
+        }
         registry.configure(self.config)
         self.addCleanup(registry.reset)
         self.common = registry.adapter("codex").common
-        self.spec = Spec(workdir=str(self.work), tier=1, effort="low",
-                         access=Access(cwd=str(self.cwd), project=True, dirs=(str(self.extra),), commands=("git status",)))
+        self.spec = Spec(
+            workdir=str(self.work),
+            tier=1,
+            effort="low",
+            access=Access(
+                cwd=str(self.cwd), project=True, dirs=(str(self.extra),), commands=("git status",)
+            ),
+        )
         self.sid = "caller-id"
 
     def scene(self, turns=None, **fields):
-        self.scenario.write_text(json.dumps({"tui_turns": [["first"]] if turns is None else turns, **fields}))
+        self.scenario.write_text(
+            json.dumps({"tui_turns": [["first"]] if turns is None else turns, **fields})
+        )
 
     def start(self, name="w1", prompt="hello", **kwargs):
-        handle = api.start("codex", "tui", prompt, kwargs.pop("spec", self.spec), name=name,
-                           **{"sid": self.sid, "events": str(self.events), **kwargs})
+        handle = api.start(
+            "codex",
+            "tui",
+            prompt,
+            kwargs.pop("spec", self.spec),
+            name=name,
+            **{"sid": self.sid, "events": str(self.events), **kwargs},
+        )
         self.addCleanup(handle.stop)
         return handle
 
     def logged(self):
-        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+        return (
+            [json.loads(line) for line in self.log.read_text().splitlines()]
+            if self.log.exists()
+            else []
+        )
 
     def calls(self, mode="tui"):
         return [row for row in self.logged() if row.get("mode") == mode]
@@ -139,7 +184,11 @@ class Live(unittest.TestCase):
             self.server.tmux("run-shell", "-b", "true")
             rows = live_tmux.events(str(self.events))
             return rows if len(rows) >= count else None
-        return [line.split(" ", 1)[1] for line in live_tmux.wait(check, WAIT, what=f"{count} event lines")]
+
+        return [
+            line.split(" ", 1)[1]
+            for line in live_tmux.wait(check, WAIT, what=f"{count} event lines")
+        ]
 
     def bound(self, sid=None):
         return self.common.load(str(self.work), sid or self.sid)
@@ -148,15 +197,26 @@ class Live(unittest.TestCase):
         return next((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
 
     def attach(self, text="", name="w1"):
-        result = subprocess.run([sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(self.config), name, text],
-                                env=dict(os.environ), text=True, capture_output=True, stdin=subprocess.DEVNULL,
-                                timeout=WAIT)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", ATTACH, SRC, json.dumps(self.config), name, text],
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=WAIT,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
     def headless(self, resume=False):
-        handle = api.start("codex", "headless", "headless", self.spec, sid=self.sid,
-                           resume=self.sid if resume else None)
+        handle = api.start(
+            "codex",
+            "headless",
+            "headless",
+            self.spec,
+            sid=self.sid,
+            resume=self.sid if resume else None,
+        )
         self.addCleanup(handle.stop)
         stream = Stream(self, handle)
         return stream.until(Exited)
@@ -170,7 +230,9 @@ class TuiIntegrationTest(Live):
         stream = Stream(self, handle)
         found = stream.until(TurnEnd)
         native = self.bound().native_id
-        self.assertEqual(found, [SessionBound(native), Activity(), Activity(), Blocked("Bash"), TurnEnd(raw)])
+        self.assertEqual(
+            found, [SessionBound(native), Activity(), Activity(), Blocked("Bash"), TurnEnd(raw)]
+        )
         self.assertEqual(self.lines(2), ["w1 blocked", "w1 done"])
         self.assertEqual(handle.reply, raw)
         self.assertEqual(len(self.server.panes("=mgr:")), 1)
@@ -181,17 +243,40 @@ class TuiIntegrationTest(Live):
         self.assertEqual(stat.S_IMODE(hook_store.stat().st_mode), 0o600)
         handle.send("more")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("second")])
-        self.assertEqual(self.attach("last"), [[self.sid, "live", "second", native], ["third", 0], "third"])
+        self.assertEqual(
+            self.attach("last"), [[self.sid, "live", "second", native], ["third", 0], "third"]
+        )
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("third")])
         self.assertEqual(self.lines(4), ["w1 blocked", "w1 done", "w1 done", "w1 done"])
-        call, = self.calls()
-        self.assertEqual(call["argv"][:5], ["--no-daemon", "-C", str(self.cwd), "-c", 'tui.notification_method="bel"'])
-        self.assertEqual(call["argv"][-2:], ["--", "quoted ' prompt\nnext\n\n" + registry.adapter("codex").runtime_note])
-        self.assertEqual([h["hook"] for h in self.hooks()], ["SessionStart", "UserPromptSubmit", "PermissionRequest",
-                                                          "Stop", "UserPromptSubmit", "Stop", "UserPromptSubmit", "Stop"])
-        self.assertTrue(all((h["exit"], h["stdout"], h["cwd"]) == (0, "", str(self.cwd)) for h in self.hooks()))
-        self.assertEqual([h["payload"]["prompt"] for h in self.hooks() if h["hook"] == "UserPromptSubmit"],
-                         [call["argv"][-1], "more", "last"])
+        (call,) = self.calls()
+        self.assertEqual(
+            call["argv"][:5],
+            ["--no-daemon", "-C", str(self.cwd), "-c", 'tui.notification_method="bel"'],
+        )
+        self.assertEqual(
+            call["argv"][-2:],
+            ["--", "quoted ' prompt\nnext\n\n" + registry.adapter("codex").runtime_note],
+        )
+        self.assertEqual(
+            [h["hook"] for h in self.hooks()],
+            [
+                "SessionStart",
+                "UserPromptSubmit",
+                "PermissionRequest",
+                "Stop",
+                "UserPromptSubmit",
+                "Stop",
+                "UserPromptSubmit",
+                "Stop",
+            ],
+        )
+        self.assertTrue(
+            all((h["exit"], h["stdout"], h["cwd"]) == (0, "", str(self.cwd)) for h in self.hooks())
+        )
+        self.assertEqual(
+            [h["payload"]["prompt"] for h in self.hooks() if h["hook"] == "UserPromptSubmit"],
+            [call["argv"][-1], "more", "last"],
+        )
         kinds = [r["kind"] for r in records.read(records.path(str(self.work)))]
         self.assertEqual(kinds, ["session", "client_session"])
         handle.stop()
@@ -204,18 +289,28 @@ class TuiIntegrationTest(Live):
         handle = self.start()
         live_tmux.wait(lambda: self.bound().native_id, WAIT, what="durable root binding")
         self.assertEqual(handle.info().native_id, "")
-        self.assertEqual([r["kind"] for r in records.read(records.path(str(self.work)))], ["session"])
+        self.assertEqual(
+            [r["kind"] for r in records.read(records.path(str(self.work)))], ["session"]
+        )
         native = self.bound().native_id
         handle.stop()
         self.scene([["recovered"]])
         resumed = self.start(resume=self.sid)
         stream = Stream(self, resumed)
-        self.assertEqual(stream.until(TurnEnd), [SessionBound(native), Activity(), Activity(), TurnEnd("recovered")])
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [SessionBound(native), Activity(), Activity(), TurnEnd("recovered")],
+        )
         self.assertEqual(self.calls()[-1]["argv"][:2], ["resume", native])
-        self.assertEqual(list((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")), [self.record()])
+        self.assertEqual(
+            list((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")),
+            [self.record()],
+        )
 
     def test_interrupt_completes_without_stop_and_replays_previous_reply_on_attach(self):
-        self.scene([["kept"], ["partial", {"kind": "interrupt"}], [{"kind": "interrupt"}], ["after"]])
+        self.scene(
+            [["kept"], ["partial", {"kind": "interrupt"}], [{"kind": "interrupt"}], ["after"]]
+        )
         handle = self.start()
         stream = Stream(self, handle)
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("kept"))
@@ -223,7 +318,10 @@ class TuiIntegrationTest(Live):
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
         self.assertEqual(self.lines(2), ["w1 done", "w1 done"])
         native = self.bound().native_id
-        self.assertEqual(self.attach("interrupt again"), [[self.sid, "live", "kept", native], ["kept", 0], "kept"])
+        self.assertEqual(
+            self.attach("interrupt again"),
+            [[self.sid, "live", "kept", native], ["kept", 0], "kept"],
+        )
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
         self.assertEqual(self.attach(), [self.sid, "live", "kept", native])
         handle.send("recover")
@@ -245,19 +343,40 @@ class TuiIntegrationTest(Live):
         self.assertEqual(self.lines(2), ["w1 done"] * 2)
 
     def test_root_child_cwd_and_rebinding_filters_publish_only_valid_hooks(self):
-        invalid = [{"agent_id": CHANGED, "last_assistant_message": "child"},
-                   {"cwd": str(self.extra), "last_assistant_message": "foreign cwd"},
-                   {"session_id": CHANGED, "last_assistant_message": "rebound"},
-                   {"session_id": "invalid", "last_assistant_message": "invalid"},
-                   {"hook_event_name": "Interrupt", "last_assistant_message": "wrong label"}]
-        self.scene([[*(dict(kind="hook", label="Stop", payload=value) for value in invalid),
-                     {"kind": "hook", "label": "PermissionRequest", "payload": {"agent_id": CHANGED}},
-                     {"kind": "tool", "tool_name": "Bash"}, "root"]])
+        invalid = [
+            {"agent_id": CHANGED, "last_assistant_message": "child"},
+            {"cwd": str(self.extra), "last_assistant_message": "foreign cwd"},
+            {"session_id": CHANGED, "last_assistant_message": "rebound"},
+            {"session_id": "invalid", "last_assistant_message": "invalid"},
+            {"hook_event_name": "Interrupt", "last_assistant_message": "wrong label"},
+        ]
+        self.scene(
+            [
+                [
+                    *(dict(kind="hook", label="Stop", payload=value) for value in invalid),
+                    {
+                        "kind": "hook",
+                        "label": "PermissionRequest",
+                        "payload": {"agent_id": CHANGED},
+                    },
+                    {"kind": "tool", "tool_name": "Bash"},
+                    "root",
+                ]
+            ]
+        )
         handle = self.start()
         stream = Stream(self, handle)
         found = stream.until(TurnEnd)
-        self.assertEqual(found, [SessionBound(self.bound().native_id), Activity(), Activity(), Activity("Bash"),
-                                 TurnEnd("root")])
+        self.assertEqual(
+            found,
+            [
+                SessionBound(self.bound().native_id),
+                Activity(),
+                Activity(),
+                Activity("Bash"),
+                TurnEnd("root"),
+            ],
+        )
         self.assertEqual(self.lines(1), ["w1 done"])
         self.assertEqual(self.attach()[2:], ["root", self.bound().native_id])
         stream.quiet()
@@ -274,22 +393,33 @@ class TuiIntegrationTest(Live):
         cfg.update(tiers={"1": "changed"}, efforts={"low": "high"}, shell_network=True)
         cfg["env"]["CODEX_HOME"] = str(changed)
         registry.configure(self.config)
-        spec = dataclasses.replace(self.spec, tier=4, effort="max", access=Access(cwd=str(changed), project=False, commands=("changed command",)))
+        spec = dataclasses.replace(
+            self.spec,
+            tier=4,
+            effort="max",
+            access=Access(cwd=str(changed), project=False, commands=("changed command",)),
+        )
         self.scene([["resumed"]])
         resumed = self.start(resume=self.sid, spec=spec)
         found = Stream(self, resumed).until(TurnEnd)
         self.assertEqual(found, [SessionBound(native), Activity(), Activity(), TurnEnd("resumed")])
         first, second = self.calls()
         self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
-        self.assertEqual((second["cwd"], second["env"]["CODEX_HOME"]), (str(self.cwd), str(self.codex_home)))
+        self.assertEqual(
+            (second["cwd"], second["env"]["CODEX_HOME"]), (str(self.cwd), str(self.codex_home))
+        )
         self.assertEqual(self.bound().snapshot, saved)
         starts = [h for h in self.hooks() if h["hook"] == "SessionStart"]
         self.assertEqual([h["payload"]["source"] for h in starts], ["startup", "resume"])
-        self.assertEqual(starts[0]["payload"]["transcript_path"], starts[1]["payload"]["transcript_path"])
+        self.assertEqual(
+            starts[0]["payload"]["transcript_path"], starts[1]["payload"]["transcript_path"]
+        )
         self.assertEqual(api.session_info("codex", self.sid, str(self.cwd)).resumable, "yes")
 
     def test_session_start_waits_for_first_submission_fresh_and_resumed(self):
-        spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, commands=()))
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, commands=())
+        )
         first = self.start(prompt="", spec=spec)
         live_tmux.wait(lambda: len(self.calls()) == 1, WAIT, what="interactive startup waits")
         time.sleep(0.3)
@@ -298,7 +428,9 @@ class TuiIntegrationTest(Live):
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
         first.stop()
         hooks = len(self.hooks())
-        spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, commands=()))
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, commands=())
+        )
         resumed = self.start(prompt="", resume=self.sid, spec=spec)
         live_tmux.wait(lambda: len(self.calls()) == 2, WAIT, what="interactive resume starts")
         time.sleep(0.3)
@@ -373,12 +505,18 @@ class TuiIntegrationTest(Live):
         roots = (str(self.home), self.server.bin, SRC, sys.prefix)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
-                spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, dirs=(root,)))
-                with mock.patch("subprocess.Popen", side_effect=AssertionError("spawned before guard")):
+                spec = dataclasses.replace(
+                    self.spec, access=dataclasses.replace(self.spec.access, dirs=(root,))
+                )
+                with mock.patch(
+                    "subprocess.Popen", side_effect=AssertionError("spawned before guard")
+                ):
                     with self.assertRaisesRegex(ConfigError, "writable|rewrite"):
                         self.start(sid=f"unsafe-{index}", spec=spec)
         (self.cwd / ".codex").mkdir()
-        spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, project=False))
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, project=False)
+        )
         with self.assertRaisesRegex(ConfigError, "project Codex settings"):
             self.start(spec=spec)
         self.assertEqual(self.logged(), [])
@@ -405,13 +543,22 @@ class TuiIntegrationTest(Live):
 
     def test_explicit_operator_environment_is_forwarded_and_not_written_to_config(self):
         cfg = self.config["adapters"]["codex"]
-        cfg["env"].update(NO_COLOR="0", CODEX_CI="operator", PAGER="less", FAKE_ADDITION="configured")
+        cfg["env"].update(
+            NO_COLOR="0", CODEX_CI="operator", PAGER="less", FAKE_ADDITION="configured"
+        )
         registry.configure(self.config)
         handle = self.start()
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         env = self.calls()[0]["env"]
-        self.assertEqual({key: env[key] for key in ("NO_COLOR", "CODEX_CI", "PAGER", "FAKE_ADDITION")},
-                         {"NO_COLOR": "0", "CODEX_CI": "operator", "PAGER": "less", "FAKE_ADDITION": "configured"})
+        self.assertEqual(
+            {key: env[key] for key in ("NO_COLOR", "CODEX_CI", "PAGER", "FAKE_ADDITION")},
+            {
+                "NO_COLOR": "0",
+                "CODEX_CI": "operator",
+                "PAGER": "less",
+                "FAKE_ADDITION": "configured",
+            },
+        )
         self.assertFalse((self.codex_home / "config.toml").exists())
         self.assertFalse((self.codex_home / "hooks.json").exists())
 
@@ -425,7 +572,9 @@ class TuiIntegrationTest(Live):
                 registry.configure(self.config)
                 handle = self.start(f"color{index}", sid=f"color-{index}")
                 self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
-                screen = self.server.tmux("capture-pane", "-p", "-e", "-t", f"=color{index}:").stdout
+                screen = self.server.tmux(
+                    "capture-pane", "-p", "-e", "-t", f"=color{index}:"
+                ).stdout
                 self.assertEqual("\x1b[36mfirst" in screen, value in (None, "0"))
                 self.assertEqual(self.calls()[-1]["env"]["NO_COLOR"], value)
                 handle.stop()
@@ -434,7 +583,9 @@ class TuiIntegrationTest(Live):
         for index, dialog in enumerate(("Trust this folder?", "Hooks need review")):
             with self.subTest(dialog=dialog):
                 release = self.root / f"release-{index}"
-                self.scene([[{"kind": "screen", "text": dialog}, {"kind": "pause", "file": str(release)}]])
+                self.scene(
+                    [[{"kind": "screen", "text": dialog}, {"kind": "pause", "file": str(release)}]]
+                )
                 handle = self.start(f"w{index}", sid=f"dialog-{index}")
                 found = Stream(self, handle).until(Blocked)
                 self.assertEqual(found[-1], Blocked(dialog))
@@ -455,8 +606,17 @@ class TuiIntegrationTest(Live):
 
     def test_usage_limit_without_reset_is_still_an_event(self):
         release = self.root / "release"
-        self.scene([[{"kind": "screen", "text": "■ Quota exceeded. Check your plan and billing details."},
-                     {"kind": "pause", "file": str(release)}]])
+        self.scene(
+            [
+                [
+                    {
+                        "kind": "screen",
+                        "text": "■ Quota exceeded. Check your plan and billing details.",
+                    },
+                    {"kind": "pause", "file": str(release)},
+                ]
+            ]
+        )
         self.assertEqual(Stream(self, self.start()).until(LimitHit)[-1], LimitHit())
 
 
@@ -465,19 +625,42 @@ class HookTrustIntegrationTest(Live):
         self.scene([["trusted"]])
         handle = self.start()
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("trusted"))
-        probe, = self.calls("app-server")
+        (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))
         received = [r["received"] for r in self.logged() if "received" in r]
-        self.assertEqual([r["method"] for r in received], ["initialize", "initialized", "hooks/list"])
+        self.assertEqual(
+            [r["method"] for r in received], ["initialize", "initialized", "hooks/list"]
+        )
         self.assertEqual(received[-1]["params"], {"cwds": [str(self.cwd)]})
-        self.assertEqual(received[0], {"id": 1, "method": "initialize", "params": {
-            "clientInfo": {"name": "agent-pm", "version": "0"}, "capabilities": {"experimentalApi": True}}})
+        self.assertEqual(
+            received[0],
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "agent-pm", "version": "0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+        )
         rows = next(r["catalog"] for r in self.logged() if "catalog" in r)
         argv = self.calls()[0]["argv"]
         config = fake_tui.configure([argv[i + 1] for i, word in enumerate(argv) if word == "-c"])
-        self.assertEqual(config["hooks"]["state"], {row["key"]: {"trusted_hash": row["currentHash"]} for row in rows})
-        self.assertEqual([row["eventName"] for row in rows],
-                         ["sessionStart", "userPromptSubmit", "postToolUse", "permissionRequest", "stop", "interrupt"])
+        self.assertEqual(
+            config["hooks"]["state"],
+            {row["key"]: {"trusted_hash": row["currentHash"]} for row in rows},
+        )
+        self.assertEqual(
+            [row["eventName"] for row in rows],
+            [
+                "sessionStart",
+                "userPromptSubmit",
+                "postToolUse",
+                "permissionRequest",
+                "stop",
+                "interrupt",
+            ],
+        )
         self.assertEqual([row["timeoutSec"] for row in rows], [10, 10, 10, 10, 10, 3])
         self.assertFalse((self.codex_home / "config.toml").exists())
 
@@ -490,17 +673,40 @@ class HookTrustIntegrationTest(Live):
             return False
 
     def test_disabled_unknown_malformed_and_mismatched_catalogs_never_start_interactive(self):
-        cases = ("off", "disabled", "foreign", "missing", "duplicate", "command", "hash", "malformed", "errors")
+        cases = (
+            "off",
+            "disabled",
+            "foreign",
+            "missing",
+            "duplicate",
+            "command",
+            "hash",
+            "malformed",
+            "errors",
+        )
         for index, case in enumerate(cases):
             with self.subTest(case=case):
                 self.scene(catalog_case=case)
-                handle = self.start(f"bad{index}", sid=f"bad-{index}", events=str(self.root / f"events-{index}"))
+                handle = self.start(
+                    f"bad{index}", sid=f"bad-{index}", events=str(self.root / f"events-{index}")
+                )
                 stream = Stream(self, handle)
                 self.server.tmux("run-shell", "-b", "true")
-                live_tmux.wait(lambda: "codex tui:" in self.server.tmux("capture-pane", "-p", "-S", "-1000", "-t", f"=bad{index}:").stdout, WAIT, what="preflight diagnostic")
+                live_tmux.wait(
+                    lambda: (
+                        "codex tui:"
+                        in self.server.tmux(
+                            "capture-pane", "-p", "-S", "-1000", "-t", f"=bad{index}:"
+                        ).stdout
+                    ),
+                    WAIT,
+                    what="preflight diagnostic",
+                )
                 self.assertEqual(stream.until(Exited), [Exited(1)])
                 self.assertFalse(any(row.get("mode") == "tui" for row in self.logged()))
-                self.assertTrue(all(not self.pid_exists(row["pid"]) for row in self.calls("app-server")))
+                self.assertTrue(
+                    all(not self.pid_exists(row["pid"]) for row in self.calls("app-server"))
+                )
                 self.assertIsNone(self.bound(f"bad-{index}").native_id)
                 handle.stop()
 
@@ -512,24 +718,44 @@ class HookTrustIntegrationTest(Live):
                 handle = self.start(f"u{index}", sid=f"user-{index}")
                 stream = Stream(self, handle)
                 if status in ("untrusted", "modified"):
-                    live_tmux.wait(lambda: "review it" in self.server.tmux("capture-pane", "-p", "-S", "-1000", "-t", f"=u{index}:").stdout,
-                                   WAIT, what="user hook trust diagnostic")
+                    live_tmux.wait(
+                        lambda: (
+                            "review it"
+                            in self.server.tmux(
+                                "capture-pane", "-p", "-S", "-1000", "-t", f"=u{index}:"
+                            ).stdout
+                        ),
+                        WAIT,
+                        what="user hook trust diagnostic",
+                    )
                     self.assertEqual(stream.until(Exited), [Exited(1)])
                     self.assertEqual(len(self.calls()), before)
                 else:
                     self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("first"))
                     self.assertEqual(len(self.calls()), before + 1)
                     if status != "disabled":
-                        live_tmux.wait(lambda: any(h.get("source") == "user" for h in self.hooks()), WAIT,
-                                       what="trusted user hook result")
-                        self.assertTrue(all(h["exit"] == 0 for h in self.hooks() if h.get("source") == "user"))
+                        live_tmux.wait(
+                            lambda: any(h.get("source") == "user" for h in self.hooks()),
+                            WAIT,
+                            what="trusted user hook result",
+                        )
+                        self.assertTrue(
+                            all(h["exit"] == 0 for h in self.hooks() if h.get("source") == "user")
+                        )
                 handle.stop()
         self.assertFalse((self.codex_home / "hooks.json").exists())
 
     def test_appserver_exit_is_retried_once_then_cleaned_up(self):
         self.scene(catalog_case="exit")
         handle = self.start()
-        live_tmux.wait(lambda: "app-server exited" in self.server.tmux("capture-pane", "-p", "-S", "-1000", "-t", "=w1:").stdout, WAIT, what="bounded retry diagnostic")
+        live_tmux.wait(
+            lambda: (
+                "app-server exited"
+                in self.server.tmux("capture-pane", "-p", "-S", "-1000", "-t", "=w1:").stdout
+            ),
+            WAIT,
+            what="bounded retry diagnostic",
+        )
         self.assertEqual(Stream(self, handle).until(Exited), [Exited(1)])
         probes = self.calls("app-server")
         self.assertEqual(len(probes), 2)
@@ -538,8 +764,14 @@ class HookTrustIntegrationTest(Live):
 
     def test_concurrent_independent_starts_serialize_the_same_home_probe(self):
         self.scene(catalog_delay=0.1)
+
         def start(index):
-            return self.start(f"parallel{index}", sid=f"parallel-{index}", events=str(self.root / f"parallel-{index}.events"))
+            return self.start(
+                f"parallel{index}",
+                sid=f"parallel-{index}",
+                events=str(self.root / f"parallel-{index}.events"),
+            )
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             handles = list(pool.map(start, (0, 1)))
         for handle in handles:
@@ -557,18 +789,37 @@ class HookTrustIntegrationTest(Live):
     def test_silent_appserver_times_out_and_kills_group_with_a_fake_clock(self):
         self.scene(catalog_case="silent")
         run = registry.adapter("codex").tui()
-        launch = run.launch("hello", dataclasses.replace(self.spec, sid=self.sid), False, (sys.executable, "-V"))
+        launch = run.launch(
+            "hello", dataclasses.replace(self.spec, sid=self.sid), False, (sys.executable, "-V")
+        )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}
         clock, select, wait = time.monotonic, tui_start.select.select, subprocess.Popen.wait
         started = clock()
-        with mock.patch.object(tui_start.time, "monotonic", side_effect=lambda: clock() * 100 if self.log.exists() and self.log.stat().st_size else clock()), \
-                mock.patch.object(tui_start.select, "select", side_effect=lambda r, w, e, t: select(r, w, e, min(t, 0.01))), \
-                mock.patch.object(subprocess.Popen, "wait", lambda proc, timeout=None: wait(
-                    proc, timeout=min(timeout, 0.01) if timeout is not None else None)):
+        with (
+            mock.patch.object(
+                tui_start.time,
+                "monotonic",
+                side_effect=lambda: (
+                    clock() * 100 if self.log.exists() and self.log.stat().st_size else clock()
+                ),
+            ),
+            mock.patch.object(
+                tui_start.select,
+                "select",
+                side_effect=lambda r, w, e, t: select(r, w, e, min(t, 0.01)),
+            ),
+            mock.patch.object(
+                subprocess.Popen,
+                "wait",
+                lambda proc, timeout=None: wait(
+                    proc, timeout=min(timeout, 0.01) if timeout is not None else None
+                ),
+            ),
+        ):
             with self.assertRaisesRegex(tui_start.StartError, "no answer"):
                 tui_start.hooks_list(data["argv"][0], data["hook_flags"], str(self.cwd), env)
         self.assertLess(clock() - started, 3)
-        probe, = self.calls("app-server")
+        (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))
         self.assertEqual(self.calls(), [])

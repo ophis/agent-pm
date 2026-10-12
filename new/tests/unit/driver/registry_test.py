@@ -2,6 +2,9 @@
 Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in
 sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
 its file reads. Each test drops the cache at its end."""
+
+from new.tests import SRC, fake_adapter, hermetic
+
 import importlib.abc
 import importlib.util
 import os
@@ -12,7 +15,6 @@ import types
 import unittest
 from unittest import mock
 
-from new.tests import SRC, fake_adapter, hermetic
 from adapters.base import Adapter, ConfigError
 from driver import registry
 
@@ -97,8 +99,8 @@ class TablesTest(Base):
         self.assertEqual(registry.configured(), ["claude", "codex"])
 
     def test_the_merged_tables_and_their_sorted_names(self):
-        path = self.write("config.toml", '[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n')
-        self.local('[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n')
+        path = self.write("config.toml", "[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n")
+        self.local("[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
         self.assertEqual(registry.tables(path), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}})
 
     def test_no_tables_when_absent_or_not_a_table(self):
@@ -154,7 +156,10 @@ class CacheTest(Base):
         for call in (registry.configured, lambda: registry.adapter("fake")):
             with self.assertRaises(ConfigError) as caught:
                 call()
-            self.assertTrue(str(caught.exception).startswith(f"core config {registry.CONFIG}: "), caught.exception)
+            self.assertTrue(
+                str(caught.exception).startswith(f"core config {registry.CONFIG}: "),
+                caught.exception,
+            )
         self.local(FAKE + 'scenario = "/s"\n')
         self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
 
@@ -180,21 +185,28 @@ class TuiTest(Base):
         self.assertEqual(registry.TuiSettings(), registry.TuiSettings(False, None, None))
 
     def test_the_global_keys_values(self):
-        for text, want in (('status_line = true\nworkers_per_column = 2\ngrid_retile = "all"\n', (True, 2, "all")),
-                           ('status_line = false\nworkers_per_column = 9999\ngrid_retile = "off"\n',
-                            (False, 9999, "off")),
-                           ('workers_per_column = 1\ngrid_retile = "open-close"\n' + FAKE, (False, 1, "open-close"))):
+        for text, want in (
+            ('status_line = true\nworkers_per_column = 2\ngrid_retile = "all"\n', (True, 2, "all")),
+            (
+                'status_line = false\nworkers_per_column = 9999\ngrid_retile = "off"\n',
+                (False, 9999, "off"),
+            ),
+            (
+                'workers_per_column = 1\ngrid_retile = "open-close"\n' + FAKE,
+                (False, 1, "open-close"),
+            ),
+        ):
             with self.subTest(text=text):
                 self.configure(text)
                 self.assertEqual(registry.tui(), registry.TuiSettings(*want))
 
     def test_a_tables_key_is_no_setting(self):
-        self.configure('[adapters.fake]\nstatus_line = true\n[roles.pm]\nworkers_per_column = 2\n')
+        self.configure("[adapters.fake]\nstatus_line = true\n[roles.pm]\nworkers_per_column = 2\n")
         self.assertEqual(registry.tui(), registry.TuiSettings())
 
     def test_read_with_the_adapters_once_from_the_merged_files(self):
         self.register(fake=fake_adapter)
-        self.local('status_line = true\nworkers_per_column = 4\n' + FAKE + 'scenario = "/s"\n')
+        self.local("status_line = true\nworkers_per_column = 4\n" + FAKE + 'scenario = "/s"\n')
         with mock.patch.object(registry, "read", wraps=registry.read) as read:
             self.assertEqual(registry.tui(), registry.TuiSettings(True, 4, None))
             self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
@@ -204,10 +216,18 @@ class TuiTest(Base):
         self.register(fake=fake_adapter)
         adapters = tomllib.loads(FAKE)["adapters"]
         for key, values, message in (
-                ("status_line", ("true", 1, 0, [True]), "status_line: want true or false"),
-                ("workers_per_column", (0, 10000, -1, True, 2.0, "2"),
-                 "workers_per_column: want an integer from 1 to 9999"),
-                ("grid_retile", ("All", "", "never", 1, ["all"]), "grid_retile: want one of all, open-close, off")):
+            ("status_line", ("true", 1, 0, [True]), "status_line: want true or false"),
+            (
+                "workers_per_column",
+                (0, 10000, -1, True, 2.0, "2"),
+                "workers_per_column: want an integer from 1 to 9999",
+            ),
+            (
+                "grid_retile",
+                ("All", "", "never", 1, ["all"]),
+                "grid_retile: want one of all, open-close, off",
+            ),
+        ):
             for value in values:
                 with self.subTest(key=key, value=value):
                     registry.configure({"adapters": adapters, key: value})
@@ -226,8 +246,10 @@ class AdapterTest(Base):
     def test_refuses_an_unsafe_name(self):
         for bad in ("Fake", "", "../fake", "a-b", "1a", "fake\n", "adapters.fake", 1, None):
             with self.subTest(bad=bad):
-                self.refused(f"unsafe runtime name {bad!r}: want a lowercase identifier",
-                             lambda: registry.adapter(bad))
+                self.refused(
+                    f"unsafe runtime name {bad!r}: want a lowercase identifier",
+                    lambda: registry.adapter(bad),
+                )
 
     def test_refuses_a_missing_table(self):
         message = f"no [adapters.fake] table in {registry.CONFIG} or {LOCAL_SHOWN}"
@@ -239,38 +261,60 @@ class AdapterTest(Base):
     def test_refuses_an_implementation_of_another_shape_or_package(self):
         self.register(fake=fake_adapter)
         message = '[adapters.fake].implementation must be "adapters.fake:<Class>Adapter"'
-        for line in ("", "implementation = 1\n", 'implementation = "adapters.fake:Fake"\n',
-                     'implementation = "adapters.fake:Adapter"\n', 'implementation = "adapters.fake.FakeAdapter"\n',
-                     'implementation = "fake:FakeAdapter"\n', 'implementation = "adapters.fake:FakeAdapter\\n"\n',
-                     'implementation = "adapters.fake:fake.FakeAdapter"\n',
-                     'implementation = "adapters.other:OtherAdapter"\n',
-                     'implementation = "adapters.Fake:FakeAdapter"\n'):
+        for line in (
+            "",
+            "implementation = 1\n",
+            'implementation = "adapters.fake:Fake"\n',
+            'implementation = "adapters.fake:Adapter"\n',
+            'implementation = "adapters.fake.FakeAdapter"\n',
+            'implementation = "fake:FakeAdapter"\n',
+            'implementation = "adapters.fake:FakeAdapter\\n"\n',
+            'implementation = "adapters.fake:fake.FakeAdapter"\n',
+            'implementation = "adapters.other:OtherAdapter"\n',
+            'implementation = "adapters.Fake:FakeAdapter"\n',
+        ):
             with self.subTest(line=line):
                 self.configure("[adapters.fake]\n" + line)
                 self.refused(message, lambda: registry.adapter("fake"))
 
     def test_refuses_a_missing_package(self):
         self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
-        self.refused("adapter 'nope' has no package adapters.nope", lambda: registry.adapter("nope"))
+        self.refused(
+            "adapter 'nope' has no package adapters.nope", lambda: registry.adapter("nope")
+        )
 
     def test_refuses_a_missing_parent_package(self):
         self.configure(FAKE)
-        with mock.patch.dict(sys.modules), mock.patch.object(sys, "path", [p for p in sys.path if p != SRC]):
+        with (
+            mock.patch.dict(sys.modules),
+            mock.patch.object(sys, "path", [p for p in sys.path if p != SRC]),
+        ):
             del sys.modules[Adapter.__module__.partition(".")[0]]
-            self.refused("adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake"))
+            self.refused(
+                "adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake")
+            )
 
     def test_refuses_a_package_that_fails_to_import(self):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
-        for source, shown in (("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
-                              ("from adapters.base import Absent\n", "cannot import name 'Absent'"),
-                              ("raise OSError('disk gone')\n", "disk gone"),
-                              ("def broken(:\n", "invalid syntax")):
-            with self.subTest(source=source), mock.patch.dict(sys.modules), \
-                    mock.patch.object(sys, "meta_path", [SourceFinder("adapters.broken", source), *sys.meta_path]):
+        for source, shown in (
+            ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
+            ("from adapters.base import Absent\n", "cannot import name 'Absent'"),
+            ("raise OSError('disk gone')\n", "disk gone"),
+            ("def broken(:\n", "invalid syntax"),
+        ):
+            with (
+                self.subTest(source=source),
+                mock.patch.dict(sys.modules),
+                mock.patch.object(
+                    sys, "meta_path", [SourceFinder("adapters.broken", source), *sys.meta_path]
+                ),
+            ):
                 with self.assertRaises(ConfigError) as caught:
                     registry.adapter("broken")
-                self.assertTrue(str(caught.exception).startswith(f"cannot import adapter 'broken': {shown}"),
-                                caught.exception)
+                self.assertTrue(
+                    str(caught.exception).startswith(f"cannot import adapter 'broken': {shown}"),
+                    caught.exception,
+                )
 
     def test_refuses_a_missing_class(self):
         self.register(empty=package("empty"))
@@ -282,13 +326,17 @@ class AdapterTest(Base):
             with self.subTest(value=value):
                 self.register(odd=package("odd", OddAdapter=value))
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
-                self.refused("adapters.odd:OddAdapter must be a concrete Adapter subclass",
-                             lambda: registry.adapter("odd"))
+                self.refused(
+                    "adapters.odd:OddAdapter must be a concrete Adapter subclass",
+                    lambda: registry.adapter("odd"),
+                )
 
     def test_an_unknown_key_is_the_adapters_config_error(self):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'model = "m"\nscenario = "/s"\nalpha = 1\n')
-        self.refused("unknown key 'alpha' in FakeAdapter's config", lambda: registry.adapter("fake"))
+        self.refused(
+            "unknown key 'alpha' in FakeAdapter's config", lambda: registry.adapter("fake")
+        )
 
 
 if __name__ == "__main__":

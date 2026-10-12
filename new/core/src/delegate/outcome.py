@@ -1,6 +1,7 @@
 """An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates it against SCHEMA
 and what SCHEMA can't say; save writes a file atomically. Its text stays untrusted: a path is shown as a repr, at most
 200 characters."""
+
 import json
 import os
 import posixpath
@@ -17,7 +18,10 @@ from composer import SCHEMA, RunConfig
 
 Status = Literal["done", "needs_input", "failed"]
 STATUSES = get_args(Status)
-SAVES_DELIVERABLE = ("local", "orchestrator")   # destinations whose deliverable comes back in the outcome
+SAVES_DELIVERABLE = (
+    "local",
+    "orchestrator",
+)  # destinations whose deliverable comes back in the outcome
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
 
 
@@ -48,7 +52,8 @@ def read(body: str, run: RunConfig, workdir: str) -> Outcome:
         if "deliverable" in data:
             raise InvalidOutcome("give deliverable or deliverable_file, not both")
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
-            "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)}
+            "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
+        }
     return validate(data, run, workdir)
 
 
@@ -57,7 +62,11 @@ def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
-    questions, files, deliverable = data.get("questions") or [], data.get("files") or [], data.get("deliverable") or ""
+    questions, files, deliverable = (
+        data.get("questions") or [],
+        data.get("files") or [],
+        data.get("deliverable") or "",
+    )
     if status not in STATUSES:
         raise InvalidOutcome(f"status {status!r} is not one of {', '.join(STATUSES)}")
     if not isinstance(title, str) or not title.strip() or not title.isprintable():
@@ -69,9 +78,18 @@ def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
     if status == "needs_input" and not 1 <= len(questions) <= 4:
         raise InvalidOutcome("needs_input must carry 1–4 questions")
     if status == "done" and run.output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
-        raise InvalidOutcome(f"done with a {run.output['type']} destination must carry the deliverable")
-    outcome = Outcome(status, title.strip(), summary, [str(q) for q in questions] if status == "needs_input" else [],
-                      _url(data.get("url") or "", run), [_file(p, workdir) for p in files], deliverable)
+        raise InvalidOutcome(
+            f"done with a {run.output['type']} destination must carry the deliverable"
+        )
+    outcome = Outcome(
+        status,
+        title.strip(),
+        summary,
+        [str(q) for q in questions] if status == "needs_input" else [],
+        _url(data.get("url") or "", run),
+        [_file(p, workdir) for p in files],
+        deliverable,
+    )
     _conform(data, _schema(), "outcome")
     return outcome
 
@@ -90,7 +108,9 @@ def _conform(value, schema: Mapping, where: str) -> None:
         props = schema.get("properties", {})
         if missing := [k for k in schema.get("required", ()) if k not in value]:
             raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
-        if schema.get("additionalProperties") is False and (extra := sorted(set(value) - set(props))):
+        if schema.get("additionalProperties") is False and (
+            extra := sorted(set(value) - set(props))
+        ):
             raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
         for k, v in value.items():
             if k in props:
@@ -112,7 +132,9 @@ def _conform(value, schema: Mapping, where: str) -> None:
         for i, v in enumerate(value):
             _conform(v, schema.get("items", {}), f"{where}[{i}]")
     if "enum" in schema and value not in schema["enum"]:
-        raise InvalidOutcome(f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}")
+        raise InvalidOutcome(
+            f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}"
+        )
 
 
 def _url(url: str, run: RunConfig) -> str:
@@ -120,8 +142,14 @@ def _url(url: str, run: RunConfig) -> str:
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
     parts = urlsplit(url) if isinstance(url, str) else None
-    if (parts is None or parts.scheme != "https" or not parts.netloc or not url.isprintable() or " " in url
-            or posixpath.normpath(unquote(parts.path)) != unquote(parts.path)):
+    if (
+        parts is None
+        or parts.scheme != "https"
+        or not parts.netloc
+        or not url.isprintable()
+        or " " in url
+        or posixpath.normpath(unquote(parts.path)) != unquote(parts.path)
+    ):
         raise InvalidOutcome("url must be a plain https link")
     if out["type"] == "github":
         host, prefix = out.get("host", "github.com"), f"/{out['repo']}/blob/{out['branch']}/"
@@ -136,14 +164,22 @@ def _file(path, workdir: str) -> str:
     base = Path(workdir).resolve()
     real = (base / path).resolve() if isinstance(path, str) and "\0" not in path else None
     # A hard link could bring an outside file (a key) into the workdir.
-    if (real is None or real.suffix != ".md" or not real.is_relative_to(base) or not real.is_file()
-            or real.stat().st_nlink != 1):
-        raise InvalidOutcome(f"file {str(path)[:200]!r} is not a single-link .md file under the workdir")
+    if (
+        real is None
+        or real.suffix != ".md"
+        or not real.is_relative_to(base)
+        or not real.is_file()
+        or real.stat().st_nlink != 1
+    ):
+        raise InvalidOutcome(
+            f"file {str(path)[:200]!r} is not a single-link .md file under the workdir"
+        )
     return str(real)
 
 
 def _read_file(real: str, workdir: str) -> str:
     """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
+
     def invalid(reason: str) -> InvalidOutcome:
         return InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}")
 

@@ -15,12 +15,25 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fake_codex
 
-EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "PermissionRequest", "Stop", "Interrupt")
+EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PostToolUse",
+    "PermissionRequest",
+    "Stop",
+    "Interrupt",
+)
 
 
 def install(directory):
     path = Path(directory) / "codex"
-    path.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + " -I " + shlex.quote(__file__) + ' "$@"\n')
+    path.write_text(
+        "#!/bin/sh\nexec "
+        + shlex.quote(sys.executable)
+        + " -I "
+        + shlex.quote(__file__)
+        + ' "$@"\n'
+    )
     path.chmod(0o755)
     return str(path)
 
@@ -35,9 +48,25 @@ def log(value):
 
 
 def started(mode, args):
-    log({"mode": mode, "pid": os.getpid(), "cwd": os.getcwd(), "argv": args,
-         "env": {key: os.environ.get(key) for key in (*fake_codex.MARKERS, *fake_codex.DEFAULTS,
-                                                     "CODEX_HOME", "PWD", "TMPDIR", "FAKE_ADDITION")}})
+    log(
+        {
+            "mode": mode,
+            "pid": os.getpid(),
+            "cwd": os.getcwd(),
+            "argv": args,
+            "env": {
+                key: os.environ.get(key)
+                for key in (
+                    *fake_codex.MARKERS,
+                    *fake_codex.DEFAULTS,
+                    "CODEX_HOME",
+                    "PWD",
+                    "TMPDIR",
+                    "FAKE_ADDITION",
+                )
+            },
+        }
+    )
 
 
 def configure(overrides):
@@ -67,22 +96,51 @@ def catalog(config, user=None):
                 snake = re.sub(r"(?<!^)(?=[A-Z])", "_", event).lower()
                 command = handler["command"]
                 timeout = handler.get("timeout", 3 if event == "Interrupt" else 600)
-                body = {"event_name": snake, "hooks": [{"async": False, "command": command,
-                                                        "timeout": timeout, "type": "command"}]}
-                digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                body = {
+                    "event_name": snake,
+                    "hooks": [
+                        {"async": False, "command": command, "timeout": timeout, "type": "command"}
+                    ],
+                }
+                digest = hashlib.sha256(
+                    json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
                 key = f"/<session-flags>/config.toml:{snake}:{index}:{handler_index}"
                 trust = state.get(key, {})
                 hashed = "sha256:" + digest
-                rows.append({"source": "sessionFlags", "eventName": event[0].lower() + event[1:],
-                             "handlerType": "command", "command": command, "key": key,
-                             "currentHash": hashed, "timeoutSec": timeout, "enabled": trust.get("enabled", True),
-                             "isManaged": False, "trustStatus": "trusted" if trust.get("trusted_hash") == hashed else
-                             "modified" if trust.get("trusted_hash") is not None else "untrusted"})
+                rows.append(
+                    {
+                        "source": "sessionFlags",
+                        "eventName": event[0].lower() + event[1:],
+                        "handlerType": "command",
+                        "command": command,
+                        "key": key,
+                        "currentHash": hashed,
+                        "timeoutSec": timeout,
+                        "enabled": trust.get("enabled", True),
+                        "isManaged": False,
+                        "trustStatus": "trusted"
+                        if trust.get("trusted_hash") == hashed
+                        else "modified"
+                        if trust.get("trusted_hash") is not None
+                        else "untrusted",
+                    }
+                )
     if user:
-        rows.append({"source": "user", "eventName": "stop", "handlerType": "command", "command": ":",
-                     "key": os.environ["CODEX_HOME"] + "/hooks.json:stop:0:0", "currentHash": "sha256:" + "f" * 64,
-                     "timeoutSec": 3, "enabled": user != "disabled", "isManaged": user == "managed",
-                     "trustStatus": "trusted" if user in ("disabled", "managed") else user})
+        rows.append(
+            {
+                "source": "user",
+                "eventName": "stop",
+                "handlerType": "command",
+                "command": ":",
+                "key": os.environ["CODEX_HOME"] + "/hooks.json:stop:0:0",
+                "currentHash": "sha256:" + "f" * 64,
+                "timeoutSec": 3,
+                "enabled": user != "disabled",
+                "isManaged": user == "managed",
+                "trustStatus": "trusted" if user in ("disabled", "managed") else user,
+            }
+        )
     return rows
 
 
@@ -142,10 +200,24 @@ def app_server(args):
             elif case == "hash":
                 rows[0]["currentHash"] = "invalid hash"
             log({"catalog": rows})
-            emit({"id": ident, "result": {"data": [{"cwd": cwd,
-                  "hooks": None if case == "malformed" else rows,
-                  "errors": [{"message": "bad hook file"}] if case == "errors" else [], "warnings": []}
-                  for cwd in message["params"]["cwds"]]}})
+            emit(
+                {
+                    "id": ident,
+                    "result": {
+                        "data": [
+                            {
+                                "cwd": cwd,
+                                "hooks": None if case == "malformed" else rows,
+                                "errors": [{"message": "bad hook file"}]
+                                if case == "errors"
+                                else [],
+                                "warnings": [],
+                            }
+                            for cwd in message["params"]["cwds"]
+                        ]
+                    },
+                }
+            )
     log({"probe_closed": os.getpid()})
     return 0
 
@@ -168,7 +240,9 @@ def interactive(args):
     os.chdir(parsed.C)
     started("tui", [*(["resume", resumed] if resumed else []), *args])
     rows = catalog(configure(parsed.c), scene.get("user_hook"))
-    if any(row["enabled"] and not row["isManaged"] and row["trustStatus"] != "trusted" for row in rows):
+    if any(
+        row["enabled"] and not row["isManaged"] and row["trustStatus"] != "trusted" for row in rows
+    ):
         print("Hooks need review", flush=True)
         for _ in sys.stdin:
             pass
@@ -182,22 +256,48 @@ def interactive(args):
     color = os.environ.get("NO_COLOR", "0") == "0"
 
     def fire(label, extra=None):
-        payload = {"session_id": native, "cwd": os.getcwd(), "transcript_path": str(path),
-                   "hook_event_name": label, "model": parsed.m or "fake-model", "permission_mode": "default",
-                   **(extra or {})}
+        payload = {
+            "session_id": native,
+            "cwd": os.getcwd(),
+            "transcript_path": str(path),
+            "hook_event_name": label,
+            "model": parsed.m or "fake-model",
+            "permission_mode": "default",
+            **(extra or {}),
+        }
         for row in rows:
             if row["eventName"] != label[0].lower() + label[1:] or not row["enabled"]:
                 continue
-            result = subprocess.run(["/bin/sh", "-c", row["command"]], input=json.dumps(payload),
-                                    cwd=os.getcwd(), text=True, capture_output=True, timeout=row["timeoutSec"])
-            log({"hook": label, "source": row["source"], "payload": payload, "key": row["key"], "pid": os.getpid(),
-                 "cwd": os.getcwd(), "exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr})
+            result = subprocess.run(
+                ["/bin/sh", "-c", row["command"]],
+                input=json.dumps(payload),
+                cwd=os.getcwd(),
+                text=True,
+                capture_output=True,
+                timeout=row["timeoutSec"],
+            )
+            log(
+                {
+                    "hook": label,
+                    "source": row["source"],
+                    "payload": payload,
+                    "key": row["key"],
+                    "pid": os.getpid(),
+                    "cwd": os.getcwd(),
+                    "exit": result.returncode,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
+            )
 
     def turn(text, steps):
         nonlocal initial
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_text(json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": os.getcwd()}}) + "\n")
+            path.write_text(
+                json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": os.getcwd()}})
+                + "\n"
+            )
         with path.open("a") as stream:
             stream.write(json.dumps({"type": "user", "text": text}) + "\n")
         if initial:
@@ -210,8 +310,14 @@ def interactive(args):
                 last = step
                 print("\x1b[36m" + step + "\x1b[0m" if color else step, flush=True)
             elif step["kind"] == "permission":
-                fire("PermissionRequest", {"turn_id": ident, "tool_name": step.get("tool_name", "Bash"),
-                                           "tool_input": {"command": "true"}})
+                fire(
+                    "PermissionRequest",
+                    {
+                        "turn_id": ident,
+                        "tool_name": step.get("tool_name", "Bash"),
+                        "tool_input": {"command": "true"},
+                    },
+                )
             elif step["kind"] == "tool":
                 fire("PostToolUse", {"turn_id": ident, "tool_name": step.get("tool_name", "Bash")})
             elif step["kind"] == "hook":

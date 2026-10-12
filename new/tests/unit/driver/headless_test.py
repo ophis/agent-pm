@@ -1,5 +1,8 @@
 """new/core/src/driver/modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
 bounded waits, send and screen refused, and probe(), over real Python children."""
+
+from new.tests import hermetic  # noqa: F401
+
 import json
 import os
 import signal
@@ -12,14 +15,13 @@ import time
 import unittest
 from unittest import mock
 
-from new.tests import hermetic  # noqa: F401
 from adapters.base import Adapter, Headless, Launch, Reply, Stderr
 from driver.errors import DriverError
 from driver.modes import headless
 from driver.modes.headless import HeadlessMode
 
-WAIT = 10           # upper bound on any wait, in seconds
-PROBE_TIMEOUT = 2   # probe()'s timeout where it must pass, in seconds
+WAIT = 10  # upper bound on any wait, in seconds
+PROBE_TIMEOUT = 2  # probe()'s timeout where it must pass, in seconds
 SLEEPER = "import time; time.sleep(60)"
 
 
@@ -30,9 +32,11 @@ def python(code: str) -> tuple[str, ...]:
 def spawning(then: str = "") -> str:
     """Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as {"text"}, then runs
     `then`."""
-    return ("import json, subprocess, sys, time\n"
-            f"grandchild = subprocess.Popen([sys.executable, '-I', '-c', {SLEEPER!r}])\n"
-            "print(json.dumps({'text': str(grandchild.pid)}), flush=True)\n" + then)
+    return (
+        "import json, subprocess, sys, time\n"
+        f"grandchild = subprocess.Popen([sys.executable, '-I', '-c', {SLEEPER!r}])\n"
+        "print(json.dumps({'text': str(grandchild.pid)}), flush=True)\n" + then
+    )
 
 
 def kill(pid: int) -> None:
@@ -49,7 +53,9 @@ def gone(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
-    stat = subprocess.run(("ps", "-o", "stat=", "-p", str(pid)), capture_output=True, text=True).stdout
+    stat = subprocess.run(
+        ("ps", "-o", "stat=", "-p", str(pid)), capture_output=True, text=True
+    ).stdout
     return stat.strip().startswith("Z")
 
 
@@ -131,6 +137,7 @@ class Base(unittest.TestCase):
                 out["value"] = call()
             except BaseException as e:
                 out["error"] = e
+
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         thread.join(WAIT)
@@ -142,13 +149,17 @@ class Base(unittest.TestCase):
 
 
 class Streams(Base):
-    def test_stdout_lines_become_the_runs_events_and_stderr_lines_stderr_ended_after_stdout_then_stderr(self):
+    def test_stdout_lines_become_the_runs_events_and_stderr_lines_stderr_ended_after_stdout_then_stderr(
+        self,
+    ):
         calls = []
 
         def popen(*args, **kwargs):
             calls.append(kwargs)
             return subprocess.Popen(*args, **kwargs)
-        self.begin("""
+
+        self.begin(
+            """
             import json, os, sys, time
             print(json.dumps({"text": os.getcwd()}))
             print("not json")
@@ -158,10 +169,15 @@ class Streams(Base):
             time.sleep(0.3)
             sys.stderr.buffer.write(b"bad \\xff\\n")
             sys.exit(3)
-        """, env={"HM_PROBE": "probe"}, popen=popen)
+        """,
+            env={"HM_PROBE": "probe"},
+            popen=popen,
+        )
         found = self.drain()
         late = Stderr("bad \ufffd")
-        self.assertEqual([e for e in found if e != late], [Reply(os.path.realpath(self.dir)), Stderr("probe")])
+        self.assertEqual(
+            [e for e in found if e != late], [Reply(os.path.realpath(self.dir)), Stderr("probe")]
+        )
         self.assertEqual(found.count(late), 1)
         self.assertIs(calls[0]["stdin"], subprocess.DEVNULL)
         self.assertEqual(calls[0]["process_group"], 0)
@@ -230,9 +246,11 @@ class Stop(Base):
 
     def test_waits_at_most_stop_wait_and_ignores_a_vanished_process(self):
         self.begin(SLEEPER)
-        with (mock.patch("os.killpg", side_effect=ProcessLookupError),
-              mock.patch.object(self.mode.proc, "kill", side_effect=ProcessLookupError) as killed,
-              mock.patch.object(headless, "STOP_WAIT", 0.3)):
+        with (
+            mock.patch("os.killpg", side_effect=ProcessLookupError),
+            mock.patch.object(self.mode.proc, "kill", side_effect=ProcessLookupError) as killed,
+            mock.patch.object(headless, "STOP_WAIT", 0.3),
+        ):
             began = time.monotonic()
             self.promptly(self.mode.stop)
             self.assertGreaterEqual(time.monotonic() - began, 0.3)
@@ -252,7 +270,11 @@ class Stop(Base):
         self.mode.stop()
         self.assertEqual(self.mode.state(), "absent")
         with self.assertRaises(FileNotFoundError):
-            self.mode.begin((sys.executable, "-c", ""), cwd=os.path.join(self.dir, "missing"), env=dict(os.environ))
+            self.mode.begin(
+                (sys.executable, "-c", ""),
+                cwd=os.path.join(self.dir, "missing"),
+                env=dict(os.environ),
+            )
         self.mode.stop()
         self.assertEqual(self.mode.state(), "absent")
 
@@ -262,10 +284,15 @@ class TuiOnly(Base):
         for when in ("before", "after"):
             if when == "after":
                 self.begin(SLEEPER)
-            for call, message in ((lambda: self.mode.send("x"), "send: tui mode only"),
-                                  (self.mode.screen, "screen: tui mode only"),
-                                  (lambda: self.mode.screen(5), "screen: tui mode only")):
-                with self.subTest(when=when, message=message), self.assertRaises(DriverError) as caught:
+            for call, message in (
+                (lambda: self.mode.send("x"), "send: tui mode only"),
+                (self.mode.screen, "screen: tui mode only"),
+                (lambda: self.mode.screen(5), "screen: tui mode only"),
+            ):
+                with (
+                    self.subTest(when=when, message=message),
+                    self.assertRaises(DriverError) as caught,
+                ):
                     call()
                 self.assertEqual(str(caught.exception), message)
 
@@ -292,18 +319,24 @@ class Probe(unittest.TestCase):
         def popen(*args, **kwargs):
             made.append(real(*args, **kwargs))
             return made[-1]
+
         with mock.patch("subprocess.Popen", side_effect=popen) as spy:
-            out = headless.probe(argv, cwd=self.dir, env={**os.environ, **(env or {})}, timeout=timeout)
+            out = headless.probe(
+                argv, cwd=self.dir, env={**os.environ, **(env or {})}, timeout=timeout
+            )
         return out, spy, made
 
     def test_its_stdout_alone_run_in_cwd_with_env_leading_its_own_group(self):
-        out, spy, _ = self.probe(python("""
+        out, spy, _ = self.probe(
+            python("""
             import os, sys
             print(os.getcwd())
             print(os.environ["HM_PROBE"])
             print(os.getpgrp() == os.getpid())
             sys.stderr.write("noise\\n")
-        """), env={"HM_PROBE": "probe"})
+        """),
+            env={"HM_PROBE": "probe"},
+        )
         self.assertEqual(out, f"{os.path.realpath(self.dir)}\nprobe\nTrue\n")
         self.assertIs(spy.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIs(spy.call_args.kwargs["stderr"], subprocess.DEVNULL)
@@ -315,7 +348,8 @@ class Probe(unittest.TestCase):
 
     def test_after_timeout_its_group_is_killed_it_is_reaped_and_the_result_none(self):
         pids = os.path.join(self.dir, "grandchild.json")
-        out, _, made = self.probe(python(f"""
+        out, _, made = self.probe(
+            python(f"""
             import json, os, subprocess, sys, time
             grandchild = subprocess.Popen([sys.executable, "-I", "-c", {SLEEPER!r}])
             with open({pids!r} + ".tmp", "w") as f:
@@ -323,7 +357,9 @@ class Probe(unittest.TestCase):
             os.replace({pids!r} + ".tmp", {pids!r})
             print("partial", flush=True)
             time.sleep(60)
-        """), timeout=PROBE_TIMEOUT)
+        """),
+            timeout=PROBE_TIMEOUT,
+        )
         with open(pids, encoding="utf-8") as f:
             grandchild = json.load(f)
         self.addCleanup(kill, grandchild)

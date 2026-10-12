@@ -1,5 +1,6 @@
 """Markdown code fences: 3+ backticks or tildes, closed by a line of only that char, as many or more; an unclosed one
 runs to the end."""
+
 import re
 
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -32,7 +33,7 @@ def fenced(text: str) -> list[tuple[str, str]]:
             else:
                 body.append(line)
         elif m := FENCE.match(line):
-            fence, info, body = (m[1][0], len(m[1])), line[m.end():].strip(), []
+            fence, info, body = (m[1][0], len(m[1])), line[m.end() :].strip(), []
     if fence:
         out.append((info, "\n".join(body)))
     return out

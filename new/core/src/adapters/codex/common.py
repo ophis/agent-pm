@@ -1,5 +1,6 @@
 """Codex access, settings, usage parsing and inspection. Both Modes share ~/.agent-pm/core-new-sessions/codex/;
 recovery and session files have bounded nonblocking reads with regular-file, ownership and symlink checks."""
+
 import json
 import math
 import os
@@ -10,10 +11,29 @@ from functools import wraps
 
 from adapters.base import ConfigError, Launch, Usage, Window
 
-from .sessions import (RecoveryError, SessionFile, SessionState, absolute_path, bind_session, create_session,
-                       session_identity, implicit_writable_roots, inside, load_session, read_metadata, read_state,
-                       recovery_snapshot, save_session, session_paths, validate_snapshot, store_directory, store_root,
-                       check_writable_roots, native_id, session_file)
+from .sessions import (
+    RecoveryError,
+    SessionFile,
+    SessionState,
+    absolute_path,
+    bind_session,
+    check_writable_roots,
+    create_session,
+    implicit_writable_roots,
+    inside,
+    load_session,
+    native_id,
+    read_metadata,
+    read_state,
+    recovery_snapshot,
+    save_session,
+    session_file,
+    session_identity,
+    session_paths,
+    store_directory,
+    store_root,
+    validate_snapshot,
+)
 
 
 def _recover(method):
@@ -23,36 +43,47 @@ def _recover(method):
             return method(*args, **kwargs)
         except RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
+
     return translated
 
 
 def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
     if not inside(real_cwd, real_workdir):
-        raise ConfigError(f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load")
+        raise ConfigError(
+            f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load"
+        )
 
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
     config_home = _config_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
     if inside(config_home, workdir) or inside(real_config_home, real_workdir):
-        raise ConfigError(f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
-                          "move Codex config outside the workdir")
+        raise ConfigError(
+            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
+            "move Codex config outside the workdir"
+        )
 
     for start in (cwd, real_cwd):
         ancestor = start
         while True:
             candidate = os.path.join(ancestor, ".codex")
-            if os.path.lexists(candidate) and (os.path.isdir(candidate) or os.path.islink(candidate)):
+            if os.path.lexists(candidate) and (
+                os.path.isdir(candidate) or os.path.islink(candidate)
+            ):
                 real_candidate = os.path.realpath(candidate)
-                genuine_user_home = (candidate in (default_home, real_default_home)
-                                     and real_candidate == real_default_home
-                                     and not os.path.islink(candidate)
-                                     and not inside(candidate, workdir)
-                                     and not inside(real_candidate, real_workdir))
+                genuine_user_home = (
+                    candidate in (default_home, real_default_home)
+                    and real_candidate == real_default_home
+                    and not os.path.islink(candidate)
+                    and not inside(candidate, workdir)
+                    and not inside(real_candidate, real_workdir)
+                )
                 if not genuine_user_home:
-                    raise ConfigError(f"project Codex settings at {candidate} may load in an untrusted run; "
-                                      "use a clean workdir or trusted_dirs")
+                    raise ConfigError(
+                        f"project Codex settings at {candidate} may load in an untrusted run; "
+                        "use a clean workdir or trusted_dirs"
+                    )
             parent = os.path.dirname(ancestor)
             if parent == ancestor:
                 break
@@ -60,15 +91,26 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
 
 
 def _config_home(cwd: str, config_home: str | None = None) -> str:
-    return os.path.abspath(os.path.join(
-        cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")))
+    return os.path.abspath(
+        os.path.join(
+            cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")
+        )
+    )
 
 
 def flags(snapshot: dict, *, interactive: bool) -> list[str]:
-    result = ["-s", "workspace-write", "-c", 'approval_policy="on-request"',
-              "-c", 'approvals_reviewer="auto_review"',
-              "-c", f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
-              "-c", "sandbox_workspace_write.writable_roots=[]"]
+    result = [
+        "-s",
+        "workspace-write",
+        "-c",
+        'approval_policy="on-request"',
+        "-c",
+        'approvals_reviewer="auto_review"',
+        "-c",
+        f"sandbox_workspace_write.network_access={str(snapshot['network']).lower()}",
+        "-c",
+        "sandbox_workspace_write.writable_roots=[]",
+    ]
     if snapshot["model"] is not None:
         result.extend(("-m", snapshot["model"]))
     if snapshot["effort"] is not None:
@@ -123,9 +165,22 @@ def _usage(snapshot) -> Usage | None:
 
 
 class CodexCommon:
-    unset = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_VERSION", "CODEX_SANDBOX",
-             "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_PERMISSION_PROFILE", "CLAUDECODE")
-    defaults = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat", "GH_PAGER": "cat"}
+    unset = (
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CODEX_VERSION",
+        "CODEX_SANDBOX",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+        "CODEX_PERMISSION_PROFILE",
+        "CLAUDECODE",
+    )
+    defaults = {
+        "NO_COLOR": "1",
+        "CODEX_CI": "1",
+        "PAGER": "cat",
+        "GIT_PAGER": "cat",
+        "GH_PAGER": "cat",
+    }
 
     def __init__(self, config):
         self.config = dict(config)
@@ -133,14 +188,24 @@ class CodexCommon:
             raise ConfigError("Codex shell_network must be a boolean")
         for name in ("tiers", "efforts"):
             values = config.get(name, {})
-            if not isinstance(values, dict) or any(not isinstance(key, str) or not isinstance(value, str)
-                                                 or not value.strip() or not value.isprintable()
-                                                 for key, value in values.items()):
+            if not isinstance(values, dict) or any(
+                not isinstance(key, str)
+                or not isinstance(value, str)
+                or not value.strip()
+                or not value.isprintable()
+                for key, value in values.items()
+            ):
                 raise ConfigError(f"Codex {name} must map strings to printable text")
         env = config.get("env", {})
-        if not isinstance(env, dict) or any(not isinstance(key, str) or not key or "=" in key or "\0" in key
-                                           or not isinstance(value, str) or "\0" in value
-                                           for key, value in env.items()):
+        if not isinstance(env, dict) or any(
+            not isinstance(key, str)
+            or not key
+            or "=" in key
+            or "\0" in key
+            or not isinstance(value, str)
+            or "\0" in value
+            for key, value in env.items()
+        ):
             raise ConfigError("Codex env must map environment names to strings without NUL")
 
     def _mapped(self, name, value):
@@ -169,15 +234,26 @@ class CodexCommon:
             return state
         workdir, sid = session_identity(spec.workdir, spec.sid)
         cwd = absolute_path(spec.access.cwd or workdir, "cwd")
-        home = absolute_path(_config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home")
+        home = absolute_path(
+            _config_home(cwd, self.config.get("env", {}).get("CODEX_HOME")), "codex_home"
+        )
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
-        snapshot = validate_snapshot({"cwd": cwd, "project": spec.access.project,
-                              "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
-                              "commands": list(spec.access.commands), "model": self._mapped("tiers", spec.tier),
-                              "effort": self._mapped("efforts", spec.effort),
-                              "network": self.config["shell_network"], "codex_home": home})
-        return create_session(workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]], persist=persist)
+        snapshot = validate_snapshot(
+            {
+                "cwd": cwd,
+                "project": spec.access.project,
+                "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
+                "commands": list(spec.access.commands),
+                "model": self._mapped("tiers", spec.tier),
+                "effort": self._mapped("efforts", spec.effort),
+                "network": self.config["shell_network"],
+                "codex_home": home,
+            }
+        )
+        return create_session(
+            workdir, sid, snapshot, [workdir, cwd, home, *snapshot["dirs"]], persist=persist
+        )
 
     @_recover
     def save(self, state: SessionState) -> SessionState:
@@ -192,16 +268,25 @@ class CodexCommon:
         return bind_session(workdir, sid, identifier)
 
     def environment(self, snapshot: dict, *, interactive: bool = False) -> dict[str, str]:
-        return {**({} if interactive else self.defaults), **self.config.get("env", {}),
-                "CODEX_HOME": snapshot["codex_home"]}
+        return {
+            **({} if interactive else self.defaults),
+            **self.config.get("env", {}),
+            "CODEX_HOME": snapshot["codex_home"],
+        }
 
     def interactive_unset(self) -> tuple[str, ...]:
-        return (*self.unset, *(key for key in self.defaults if key not in self.config.get("env", {})))
+        return (
+            *self.unset,
+            *(key for key in self.defaults if key not in self.config.get("env", {})),
+        )
 
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
-        return Launch((os.path.realpath(sys.executable), script),
-                      env={**self.defaults, **self.config.get("env", {})}, unset=self.unset)
+        return Launch(
+            (os.path.realpath(sys.executable), script),
+            env={**self.defaults, **self.config.get("env", {})},
+            unset=self.unset,
+        )
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
@@ -221,7 +306,9 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
-        command = shlex.join(["codex", "resume", *flags(snapshot, interactive=True), state.native_id])
+        command = shlex.join(
+            ["codex", "resume", *flags(snapshot, interactive=True), state.native_id]
+        )
         return f"cd {shlex.quote(snapshot['cwd'])} && CODEX_HOME={shlex.quote(snapshot['codex_home'])} {command}"
 
     @_recover
@@ -260,8 +347,11 @@ class CodexCommon:
                 candidates.append((payload["id"], parent, metadata.mtime))
         related, newest = {state.native_id}, found.mtime
         while True:
-            children = [(identifier, stamp) for identifier, parent, stamp in candidates
-                        if parent in related and identifier not in related]
+            children = [
+                (identifier, stamp)
+                for identifier, parent, stamp in candidates
+                if parent in related and identifier not in related
+            ]
             added = {identifier for identifier, stamp in children} - related
             if not added:
                 return newest
@@ -276,14 +366,23 @@ class CodexCommon:
             state = self.lookup(sid, cwd)
             if state is None:
                 return result
-            result = replace(result, native_id=state.native_id or "", cwd=state.snapshot["cwd"],
-                             project=state.snapshot["project"])
+            result = replace(
+                result,
+                native_id=state.native_id or "",
+                cwd=state.snapshot["cwd"],
+                project=state.snapshot["project"],
+            )
             if state.native_id is None:
                 return result
             result = replace(result, resume=self.resume_command(state))
             found = session_file(state.snapshot, state.native_id)
             if found is None:
                 return result
-            return replace(result, transcript=found.path, resumable="yes", last_active=self.last_active(state, found))
+            return replace(
+                result,
+                transcript=found.path,
+                resumable="yes",
+                last_active=self.last_active(state, found),
+            )
         except (ConfigError, RecoveryError, OSError):
             return replace(result, resumable="unknown")
