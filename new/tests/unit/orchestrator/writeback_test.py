@@ -3,6 +3,7 @@ client id found again on resume (FR-54), the usage-limit path (FR-59) and runs.n
 
 from new.tests import hermetic  # noqa: F401
 from new.tests.unit.orchestrator import board_ids
+from new.tests.unit.orchestrator.run_fixtures import logged, show
 
 import config
 
@@ -125,26 +126,6 @@ class Gql:
 
 def mine(body, issue=UUID):
     return {"body": body, "issue": issue, "mine": True}
-
-
-def logged():
-    try:
-        with open(os.path.join(linear.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
-            lines = [json.loads(line) for line in f]
-    except FileNotFoundError:
-        return []
-    for d in lines:
-        assert list(d)[:3] == ["ts", "src", "kind"], d
-    return lines
-
-
-def show(event):
-    fields = [
-        f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}"
-        for k, v in event.items()
-        if k not in ("ts", "src", "kind", "issue")
-    ]
-    return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 
 
 READ = ("read", {"i": UUID})
