@@ -2437,6 +2437,7 @@ class ResumeTest(RosterCase):
     def test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order(
         self,
     ):
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u1"}))
         cwd, finished = os.path.join(self.dir, "it's a role"), os.path.join(self.dir, "finished")
         os.mkdir(finished)
         with open(os.path.join(finished, "run.jsonl"), "w") as f:
@@ -2477,7 +2478,7 @@ class ResumeTest(RosterCase):
             ),
         )
         ran = {name: roster.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
-        env = {n: {"PYTHONPATH": ROOT} if n in "ab" else {} for n in ran}
+        env = {n: {"PYTHONPATH": f"{ROOT}:/u1"} if n in "ab" else {} for n in ran}
         self.assertEqual(
             self.runs.recoveries,
             [
@@ -2511,18 +2512,26 @@ class ResumeTest(RosterCase):
             "b": entry(cwd=self.dir, resume=started("b")),
             "p1": entry("pipeline", cwd=self.dir),
         }
-        for given, user in ((f"{ROOT}:/u1", "/u1"), (ROOT, None)):
-            with self.subTest(given=given), mock.patch.dict(os.environ, {"PYTHONPATH": given}):
+        for given, user in ((f"{ROOT}:/u1", "/u1"), (ROOT, None), (None, None)):
+            with self.subTest(given=given), mock.patch.dict(os.environ):
+                os.environ.pop("PYTHONPATH", None)
+                if given is not None:
+                    os.environ["PYTHONPATH"] = given
                 self.seed(MGR, **entries)
                 self.runs = Runs()
                 self.assertEqual(self.main_with(Api(), "attach", "--resume")[0], 0)
+                envs = {Runs.key(argv): kw["env"] for argv, kw, _ in self.runs.recoveries}
                 self.assertEqual(
+                    {k: env.get("PYTHONPATH") for k, env in envs.items()},
                     {
-                        Runs.key(argv): kw["env"].get("PYTHONPATH")
-                        for argv, kw, _ in self.runs.recoveries
+                        "/x/drive.py": user,
+                        "b": ROOT if user is None else f"{ROOT}:{user}",
+                        "/x/router.py": user,
                     },
-                    {"/x/drive.py": user, "b": ROOT, "/x/router.py": user},
                 )
+                with mock.patch.dict(os.environ, envs["b"], clear=True):
+                    crew._drop_import_root()
+                    self.assertEqual(os.environ.get("PYTHONPATH"), user)
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):
         refusal = "router.py: TASK-1 has a live agent run: tmux attach -t '=agent-pm-pm-TASK-1'"

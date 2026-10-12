@@ -1,6 +1,6 @@
 """Claude Code configuration, launch metadata, usage and session inspection shared by both Modes. A launch's env and
-resume command carry the session env. plain is a plain session's (adapters.base): the session id, tier, effort and
---name, then --settings, `hooks` merged into the first --settings in spec.flags, then the rest of spec.flags; the
+resume command carry a role run's Access.env. plain is a plain session's (adapters.base): the session id, tier, effort
+and --name, then --settings, `hooks` merged into the first --settings in spec.flags, then the rest of spec.flags; the
 config's env without ENV. refuse: a session flag before "--"."""
 
 import json

@@ -4,9 +4,9 @@ with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (wh
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
 reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits 1 on an error, 2 on a usage
 error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONPATH=<absolute IMPORT_ROOT> python3
--P -m agent_pm.crew …`, the form of each crew command it prints or runs (a worker entry's recovery); main first drops
-each PYTHONPATH entry resolving to IMPORT_ROOT, so workers and recovered role or pipeline entries get the user's
-own."""
+-P -m agent_pm.crew …`, the form of each crew command it prints. main first drops each PYTHONPATH entry resolving to
+IMPORT_ROOT, so workers and recovered role or pipeline entries get the user's own; a recovered crew entry gets
+IMPORT_ROOT before it."""
 
 import argparse
 import contextlib
@@ -499,8 +499,10 @@ def _reopen(panes: dict, entries: dict, live: dict[str, api.SessionRow]) -> tupl
     return shown, opened
 
 
-def _pythonpath(argv: list[str]) -> dict[str, str]:
-    return {"PYTHONPATH": IMPORT_ROOT} if tuple(argv[1:4]) == roster.CREW_MODULE else {}
+def _pythonpath(argv: list[str], user: str | None = None) -> dict[str, str]:
+    if tuple(argv[1:4]) != roster.CREW_MODULE:
+        return {}
+    return {"PYTHONPATH": os.pathsep.join(filter(None, (IMPORT_ROOT, user)))}
 
 
 def _command(argv: list[str]) -> str:
@@ -598,7 +600,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             res = subprocess.run(
                 argv,
                 cwd=e["cwd"],
-                env={**os.environ, **_pythonpath(argv)},
+                env={**os.environ, **_pythonpath(argv, os.environ.get("PYTHONPATH"))},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
