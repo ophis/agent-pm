@@ -215,6 +215,11 @@ class Adapter(ABC):
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
+    def writable_dirs(self, spec: Spec, resume: bool) -> tuple[str, ...]:
+        """The dirs a session under spec can write by the runtime's own grants (resume: spec.sid's session's); reads,
+        never writes. A runtime granting itself any write dir must override it: this default claims none."""
+        return ()
+
 
 class Headless(ABC):
     def __init__(self, adapter: Adapter):
