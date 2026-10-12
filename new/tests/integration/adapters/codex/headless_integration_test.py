@@ -67,7 +67,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
             access=Access(
                 cwd=str(self.cwd),
                 project=True,
-                dirs=(str(self.extra), str(self.tasks)),
+                dirs=(str(self.extra),),
+                reads=(str(self.tasks),),
                 commands=("git status",),
             ),
         )
@@ -152,8 +153,6 @@ class HeadlessIntegrationTest(unittest.TestCase):
             "model_reasoning_effort=low",
             "--add-dir",
             str(self.extra),
-            "--add-dir",
-            str(self.tasks),
             *(["resume", NATIVE] if resume else []),
             "--",
             prompt + "\n\n" + self.adapter.runtime_note,
@@ -349,7 +348,7 @@ class HeadlessIntegrationTest(unittest.TestCase):
             [first["prompt"], second["prompt"]],
         )
 
-    def test_add_dir_order_and_tasks_prompt_survive_resume(self):
+    def test_add_dir_order_survives_resume_and_the_tasks_dir_is_read_unadded(self):
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):
             with self.subTest(resume=resume):
@@ -376,7 +375,8 @@ class HeadlessIntegrationTest(unittest.TestCase):
                     for i, arg in enumerate(entry["argv"])
                     if arg == "--add-dir"
                 ]
-                self.assertEqual(dirs, [str(self.extra), str(self.tasks)])
+                self.assertEqual(dirs, [str(self.extra)])
+                self.assertNotIn(str(self.tasks), dirs)
                 self.assertIn(f"`{self.tasks}`", entry["prompt"])
                 self.assertFalse((self.work / "tasks").exists())
 
