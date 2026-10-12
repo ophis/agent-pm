@@ -36,6 +36,7 @@ ABSENT = re.compile(
     r"error connecting to .* \(No such file or directory\)",
     re.S,
 )
+HOST = "tmux"  # its [hosts.<name>] table
 RUNNING = "running"
 UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
 HANDOVER_TIMEOUT = 10

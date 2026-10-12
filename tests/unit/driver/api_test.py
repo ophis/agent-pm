@@ -1,7 +1,7 @@
 """session/engine/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
 session_info() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
 fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
-registry.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
+Session.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
 patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
 run; claude and codex, from the committed config, refuse it. The Mode protocol, and a Handle over a scripted Mode on a
 fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
@@ -25,7 +25,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters import base, registry, selection
+from agent_pm.session.adapters import base, selection
 from agent_pm.session.adapters.base import Access, Launch
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import DriverError
@@ -34,7 +34,7 @@ from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils.paths import IMPORT_ROOT
 
 from tests import fake_adapter
-from tests.case import Case
+from tests.case import Case, committed
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -222,7 +222,7 @@ class Base(Case):
             **(tables or {}),
         }
         tables[runtime].update(extra)
-        registry.configure({"adapters": tables, **(settings or {})})
+        self.configure_session(tables, settings or {})
 
     def spec(self, **fields) -> api.Spec:
         return api.Spec(workdir=self.workdir, **fields)
@@ -428,7 +428,7 @@ class ChecksTest(Base):
     def test_a_registry_error_passes_through(self):
         self.refused(
             api.ConfigError,
-            f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}",
+            "no [adapters.nope] table in the configured adapters",
             lambda: self.start(runtime="nope"),
         )
         self.configure(model="m")
@@ -733,7 +733,7 @@ class InProcessTest(Base):
                 )
 
     def test_claude_and_codex_do_not_support_it(self):
-        registry.configure({"adapters": registry.tables(registry.CONFIG, os.devnull)})
+        self.configure_session(committed())
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 self.refused(
@@ -1102,7 +1102,7 @@ class SessionInfoTest(Base):
             api.session_info("nope", "s1", self.dir)
         self.assertEqual(
             str(caught.exception),
-            f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}",
+            "no [adapters.nope] table in the configured adapters",
         )
 
 
@@ -1126,7 +1126,7 @@ class WritableDirsTest(Base):
     def test_refuses_a_spec_sid_a_bad_resume_or_an_unknown_runtime(self):
         set_sid = "spec.sid is set by writable_dirs(): pass resume="
         bad_sid = 'sid must be a non-empty printable string without "/", got '
-        unknown = f"no [adapters.nope] table in {registry.CONFIG} or {registry.LOCAL}"
+        unknown = "no [adapters.nope] table in the configured adapters"
         cases = [
             ("s1", None, "probe", set_sid),
             ("s1", "s1", "probe", set_sid),
@@ -1599,12 +1599,12 @@ class AttachTest(TuiBase):
         self.configure(tui=False)
         for message in (
             "no tui session w1: runtime 'fake' has no tui mode",
-            f"no tui session w1: no [adapters.fake] table in {registry.CONFIG} or {registry.LOCAL}",
+            "no tui session w1: no [adapters.fake] table in the configured adapters",
         ):
             with self.subTest(message=message), self.assertRaises(api.DriverError) as caught:
                 api.attach("w1")
             self.assertEqual(str(caught.exception), message)
-            registry.configure({"adapters": {}})
+            self.configure_session({})
         self.host.option.assert_not_called()
 
 

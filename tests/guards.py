@@ -10,7 +10,8 @@ layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (p
 core_standalone(core) no file names LINEAR
 runtime_names(core)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
-adapters_key(core)    no str constant "adapters" outside registry.py
+session_only(core)    session/ imports only stdlib, session and utils (UPWARD aside), names none of SESSION_WORDS
+adapters_key(core)    no str constant "adapters" outside config.py
 syntax_311(repo)      every .py parses as Python 3.11
 pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
 private_imports(root) no other module's _name
@@ -22,7 +23,8 @@ import_hygiene(repo)  no sys.path mutation, module-level environment write or E4
 namespace_package(repo) each ROOTS' src/ holds only its package, no __init__.py, exactly OWN's subpackages
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
-                      (composer's in config.py only), no bare name; any module name (packages cannot clash)
+                      (composer's and `from session import Session` in config.py only), no bare name; any module name
+                      (packages cannot clash)
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
@@ -41,6 +43,7 @@ MODES = "session.modes"
 RECORDS = "session.engine.records"
 HOSTS = "session.hosts"
 HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the layers, in unit SESSION
+HOST_TABLES = f"{HOSTS}.tables"
 LAYERS = (
     "session.adapters",
     SESSION_API,
@@ -58,13 +61,12 @@ ALLOWED = {
     ("delegate", SESSION),
     ("delegate", SESSION_API),
     ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
-    *(
-        (SESSION_API, unit)
-        for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)
-    ),
+    *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     (SESSION_TYPES, "session.adapters"),
     ("session.adapters.registry", HOSTS),  # until TASK-368
+    ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
+    ("config", HOSTS),  # the [hosts] parser; PURE narrows it to HOST_TABLES
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
@@ -77,7 +79,7 @@ ORCH = "linear_orchestrator"
 UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
-    "config": ("utils", "config"),
+    "config": ("utils", "config", HOST_TABLES),
     "delegate.event": SHARED,
     "delegate.event.outcome": (*SHARED, "delegate.composer"),
     TOOLS: ("utils", "config"),
@@ -90,6 +92,7 @@ BARE = (
     "repo",
     ORCH,
 )
+SESSION_WORDS = ("config_file", "tomllib", "agent_pm.config")
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -265,9 +268,27 @@ def old_core(repo: str) -> list[str]:
     return sorted(found)
 
 
+def session_only(core: str) -> list[str]:
+    found = set()
+    for rel, names, imports in _modules(core):
+        name = ".".join(names or ())
+        if _within(name, SESSION):
+            found.update(
+                f"{rel}: session imports {m}"
+                for m, inner in imports
+                if m.split(".")[0] not in sys.stdlib_module_names
+                and not (_within(inner, SESSION) or _within(inner, "utils"))
+                and (name, _unit(inner)) not in UPWARD
+            )
+    for rel, text in _files(core, ".py"):
+        if rel.startswith(f"src/{_top(core)}/{SESSION}/"):
+            found.update(f"{rel}: names {w}" for w in SESSION_WORDS if w in text)
+    return sorted(found)
+
+
 def adapters_key(core: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/agent_pm/session/adapters/registry.py"):
+    for rel, text in _files(core, ".py", skip="src/agent_pm/config.py"):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -558,7 +579,11 @@ def _denied(rel, module, name, exported):
             and name not in exported[target]
             or (target == COMPOSER and rel != CONFIG_PY)
         )
-    return not (_shared(target) or (module, name) == (f"{CORE_PKG}.{SESSION}", "api"))
+    return not (
+        _shared(target)
+        or (module, name) == (f"{CORE_PKG}.{SESSION}", "api")
+        or (module, name, rel) == (f"{CORE_PKG}.{SESSION}", "Session", CONFIG_PY)
+    )
 
 
 def _shared(module):

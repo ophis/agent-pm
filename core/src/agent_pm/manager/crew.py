@@ -5,9 +5,9 @@ it in the roster and watches it EARLY s for a death or a dialog. attach syncs th
 reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits 1 on an error, 2 on a usage
 error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONPATH=<absolute IMPORT_ROOT>[:U] python3
 -P -m agent_pm.manager.crew …`, the form of each crew command it prints. main first sets PYTHONPATH to U, the caller's minus
-each entry resolving to IMPORT_ROOT (unset when empty): what workers and recovered role or pipeline entries get.
-IMPORT_ROOT, then U, appears only in a command running crew: each one it prints (U as at print time) and a recovered
-worker entry."""
+each entry resolving to IMPORT_ROOT (unset when empty): what workers and recovered role or pipeline entries get; then
+configures the session from the core config. IMPORT_ROOT, then U, appears only in a command running crew: each one it
+prints (U as at print time) and a recovered worker entry."""
 
 import argparse
 import contextlib
@@ -22,8 +22,9 @@ import time
 import uuid
 from collections.abc import Iterator
 
+import agent_pm.config
 from agent_pm.manager import roster
-from agent_pm.session import api
+from agent_pm.session import Session, api
 from agent_pm.utils.files import save
 from agent_pm.utils.paths import IMPORT_ROOT, printable_abs
 
@@ -774,6 +775,13 @@ def _drop_import_root() -> None:
         os.environ["PYTHONPATH"] = user
 
 
+def _configure() -> None:
+    try:
+        Session.configure(**agent_pm.config.session_settings())
+    except (ValueError, api.ConfigError) as e:
+        raise WorkersError(str(e)) from None
+
+
 def main(argv=None) -> int:
     _drop_import_root()
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -846,6 +854,7 @@ def main(argv=None) -> int:
     if a.cmd == "attach" and (a.after is None) != (a.gen is None):
         ap.error("--after and --gen go together")
     try:
+        _configure()
         if a.cmd == "attach":
             text, entries = attach(_directory(a.manager), _own(), after=a.after, gen=a.gen)
             print(text, end="", flush=True)

@@ -42,7 +42,7 @@ from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.adapters.selection import select
 
-from tests.case import Case
+from tests.case import Case, committed
 from tests.selection import configured
 
 
@@ -1759,7 +1759,7 @@ class WritableDirsTest(Base):
 
 class CommittedConfigTest(Base):
     def test_the_claude_table_builds_a_claude_adapter(self):
-        tables = registry.tables(registry.CONFIG, os.path.join(self.tmp, "absent.toml"))
+        tables = committed()
         self.assertEqual(
             tables["claude"],
             {
@@ -1768,7 +1768,7 @@ class CommittedConfigTest(Base):
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },
         )
-        registry.configure({"adapters": tables})
+        self.configure_session(tables)
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (

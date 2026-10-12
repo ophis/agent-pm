@@ -17,7 +17,6 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
 from agent_pm.session.hosts.tmux import tmux_host
 
 from tests import live_tmux
@@ -55,7 +54,7 @@ class Live(Case):
     def configure(self, **settings) -> None:
         """The tui settings show() reads: these, over the earlier ones."""
         self.settings.update(settings)
-        registry.configure({"adapters": {}, **self.settings})
+        self.configure_session({}, self.settings)
 
     def per_column(self, n: int) -> None:
         self.configure(workers_per_column=n)

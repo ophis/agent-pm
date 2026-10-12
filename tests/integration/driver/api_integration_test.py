@@ -1,5 +1,5 @@
 """session.engine.api over fake runtimes: events, idle timeouts, exits, stop, process groups, inherited pipes,
-launch environment, limits and resume. Custom adapters use registry.configure with in-process module tables."""
+launch environment, limits and resume. Custom adapters: in-process module tables."""
 
 import dataclasses
 import io
@@ -17,7 +17,6 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
     Activity,
@@ -141,7 +140,7 @@ class Base(Case):
             for name in ("fake", "launching")
         }
         tables["launching"].update(extra)
-        registry.configure({"adapters": tables})
+        self.configure_session(tables)
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
         handle = api.start(
@@ -336,13 +335,11 @@ class ExitTest(Base):
 class ProcessGroupTest(Base):
     def script(self, code: str, **kwargs) -> api.Handle:
         """A started session of runtime `script` running `code`."""
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    "script": {
-                        "implementation": "adapters.script:ScriptAdapter",
-                        "script": textwrap.dedent(code),
-                    }
+                "script": {
+                    "implementation": "adapters.script:ScriptAdapter",
+                    "script": textwrap.dedent(code),
                 }
             }
         )

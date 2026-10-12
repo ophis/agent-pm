@@ -22,6 +22,7 @@ from unittest import mock
 
 from agent_pm.manager import crew, roster
 from agent_pm.session import api
+from agent_pm.session.adapters import registry
 
 from tests.case import ROOT, Case
 
@@ -972,6 +973,22 @@ class MainTest(WorkerCase):
         rc, out, err = self.run_main("restart", "w1")
         self.assertEqual((rc, out, err), (0, "", "tui: session w1: tmux attach -t '=w1'\n"))
         self.assertEqual(self.api.starts[-1]["resume"], SID)
+
+    def test_main_configures_the_session_from_the_core_config_before_reaching_it(self):
+        seen, attach = [], api.attach
+        self.api.tuis["w1"] = ("done", "")
+        with mock.patch.object(
+            api, "attach", lambda name: seen.append(registry.configured()) or attach(name)
+        ):
+            self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
+        self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
+
+    def test_a_core_config_error_exits_1(self):
+        self.local("x = \n")
+        rc, out, err = self.run_main("reply", "w1")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertTrue(err.startswith("workers: core config "), err)
+        self.assertEqual(self.api.calls, [])
 
     def test_reply(self):
         for reply, want in (("done", (0, "done\n", "")), ("", (0, "", "")), (None, (0, "", ""))):

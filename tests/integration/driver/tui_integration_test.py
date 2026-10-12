@@ -18,15 +18,14 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.session import api
-from agent_pm.session.adapters import registry
+from agent_pm.session import Session, api
 from agent_pm.session.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
 from agent_pm.session.engine import records
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from tests import fake_adapter, live_tmux
-from tests.case import PY, Case, child_env
+from tests.case import PY, Case, child_env, settings
 
 MANAGER = "mgr"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -39,8 +38,8 @@ spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", 
 sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
-registry.configure(json.loads(config))
+from agent_pm.session import Session
+Session.configure(**json.loads(config))
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
@@ -119,8 +118,8 @@ class Live(Case):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.events = os.path.join(self.dir, "events")
-        self.config = {
-            "adapters": {
+        self.config = settings(
+            {
                 "fake": {
                     "implementation": "adapters.fake:FakeAdapter",
                     "tui": True,
@@ -128,11 +127,11 @@ class Live(Case):
                     "log": os.path.join(self.dir, "runtime.log"),
                 }
             }
-        }
+        )
         patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
-        registry.configure(self.config)
+        Session.configure(**self.config)
 
     def start(self, name: str, *steps, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""

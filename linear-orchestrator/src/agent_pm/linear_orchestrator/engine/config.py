@@ -1,6 +1,6 @@
 """The Linear orchestrator's config: load() reads linear-orchestrator/config.toml (its local file merged) and the core
-config once and returns a frozen Config with a resolved RunConfig per role, or raises ConfigError; plus TUI names and
-shared helpers."""
+config once, configures the session from the core config (every entry's main calls load first) and returns a frozen
+Config with a resolved RunConfig per role, or raises ConfigError; plus TUI names and shared helpers."""
 
 import os
 import re
@@ -13,6 +13,7 @@ from typing import Literal
 
 import agent_pm.config
 from agent_pm.delegate import composer
+from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.paths import temp_dirs, under
 from agent_pm.utils.repos import NAME, OWNER
@@ -155,10 +156,21 @@ def load(
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg, root)
     try:
-        return _load(cfg, root, work, local, core, core_local)
+        found = _load(cfg, root, work, local, core, core_local)
+        _configure(core, core_local)
+        return found
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
+
+
+def _configure(core, core_local):
+    try:
+        Session.configure(
+            **agent_pm.config.session_settings(config_file.read_config(core, core_local))
+        )
+    except (OSError, ValueError, api.ConfigError) as e:
+        raise ConfigError(f"core: {e}") from None
 
 
 def session(role, issue):

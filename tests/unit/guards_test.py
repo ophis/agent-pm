@@ -59,6 +59,7 @@ class RealTree(Case):
             (guards.core_standalone, CORE),
             (guards.runtime_names, CORE),
             (guards.old_core, REPO),
+            (guards.session_only, CORE),
             (guards.adapters_key, CORE),
             (guards.syntax_311, REPO),
             (guards.private_imports, CORE),
@@ -126,9 +127,7 @@ class EveryTest(Sample):
     def test_is_a_case(self):
         loader, found = unittest.TestLoader(), []
         for suite in ("unit", "integration"):
-            tests = loader.discover(
-                os.path.join(REPO, "tests", suite), "*_test.py", REPO
-            )
+            tests = loader.discover(os.path.join(REPO, "tests", suite), "*_test.py", REPO)
             found += [test.id() for test in flat(tests) if not isinstance(test, Case)]
         self.assertEqual((loader.errors, found), ([], []))
 
@@ -226,7 +225,7 @@ class LayerImports(Sample):
                 f"{PKG}/x.py": "import agent_pm.session.adapters\n",
                 f"{PKG}/y.py": "from agent_pm.session.engine import records\n",
                 f"{PKG}/session/engine/base.py": "from agent_pm.session.engine.types import Spec\n"
-                "from agent_pm.session.modes import tui\n",
+                "from agent_pm.session.modes import tui\nfrom agent_pm.session.adapters import registry\n",
             }
         )
         self.assertEqual(
@@ -364,11 +363,12 @@ class LayerImports(Sample):
 
 
 class PureUtils(Sample):
-    def test_config_imports_only_the_standard_library_and_utils(self):
+    def test_config_imports_only_the_standard_library_utils_and_the_hosts_parser(self):
         root = self.tree(
             {
                 f"{PKG}/config.py": "import os\nfrom agent_pm.utils.paths import CORE\n"
                 "from agent_pm.session import api\nimport agent_pm.manager.crew\n"
+                "from agent_pm.session.hosts import tables\nfrom agent_pm.session.hosts.tmux import tmux_host\n"
             }
         )
         self.assertEqual(
@@ -376,6 +376,7 @@ class PureUtils(Sample):
             [
                 f"{PKG}/config.py: config imports agent_pm.manager.crew",
                 f"{PKG}/config.py: config imports agent_pm.session.api",
+                f"{PKG}/config.py: config imports agent_pm.session.hosts.tmux",
             ],
         )
 
@@ -571,13 +572,65 @@ class OldCore(Sample):
 
 
 class AdaptersKey(Sample):
-    def test_the_literal_key_only_in_the_registry(self):
+    def test_the_literal_key_only_in_config_py(self):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
         root = self.tree(
-            {f"{PKG}/delegate/composer/x.py": sample, f"{PKG}/session/adapters/registry.py": sample}
+            {
+                f"{PKG}/delegate/composer/x.py": sample,
+                f"{PKG}/session/adapters/registry.py": sample,
+                f"{PKG}/config.py": sample,
+            }
         )
         self.assertEqual(
-            guards.adapters_key(root), [f'{PKG}/delegate/composer/x.py:2: literal key "adapters"']
+            guards.adapters_key(root),
+            [
+                f'{PKG}/delegate/composer/x.py:2: literal key "adapters"',
+                f'{PKG}/session/adapters/registry.py:2: literal key "adapters"',
+            ],
+        )
+
+
+class SessionOnly(Sample):
+    def test_session_imports_only_stdlib_session_and_utils(self):
+        root = self.tree(
+            {
+                f"{PKG}/session/engine/base.py": "import os\nfrom agent_pm.session.adapters import registry\n"
+                "from agent_pm.utils.record import Record\nfrom agent_pm import config\n",
+                f"{PKG}/session/adapters/x.py": "import agent_pm.config\nfrom agent_pm.delegate.event import reply\n",
+                f"{PKG}/session/hosts/y.py": "from agent_pm.manager import roster\n",
+                f"{PKG}/delegate/x.py": "from agent_pm import config\n",
+            }
+        )
+        self.assertEqual(
+            guards.session_only(root),
+            [
+                f"{PKG}/session/adapters/x.py: names agent_pm.config",
+                f"{PKG}/session/adapters/x.py: session imports agent_pm.config",
+                f"{PKG}/session/adapters/x.py: session imports agent_pm.delegate.event.reply",
+                f"{PKG}/session/engine/base.py: session imports agent_pm.config",
+                f"{PKG}/session/hosts/y.py: session imports agent_pm.manager.roster",
+            ],
+        )
+
+    def test_upward_is_the_one_exception(self):
+        root = self.tree(
+            {
+                f"{PKG}/session/adapters/print_prompt/in_process.py": "from agent_pm.delegate.event.reply import OUTCOME\n"
+            }
+        )
+        self.assertEqual(guards.session_only(root), [])
+
+    def test_no_session_source_names_a_config_reader(self):
+        root = self.tree(
+            {
+                f"{PKG}/session/x.py": "from agent_pm.utils.config_file import read_config\n",
+                f"{PKG}/session/y.py": "# tomllib\n",
+                f"{PKG}/utils/z.py": "import tomllib\n",
+            }
+        )
+        self.assertEqual(
+            guards.session_only(root),
+            [f"{PKG}/session/x.py: names config_file", f"{PKG}/session/y.py: names tomllib"],
         )
 
 
@@ -889,6 +942,14 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/run.py:1: imports agent_pm.delegate.composer.resolve",
                 f"{OPKG}/run.py:2: imports agent_pm.delegate.composer",
             ],
+        )
+
+    def test_session_s_abc_only_in_config_py(self):
+        sample = "from agent_pm.session import Session, api\n"
+        root = self.tree({f"{OPKG}/engine/config.py": sample, f"{OPKG}/engine/router.py": sample})
+        self.assertEqual(
+            guards.orchestrator_imports(root),
+            [f"{OPKG}/engine/router.py:1: imports agent_pm.session.Session"],
         )
 
     def test_bare_and_relative_names(self):

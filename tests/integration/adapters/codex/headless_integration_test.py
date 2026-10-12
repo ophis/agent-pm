@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import api
+from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
@@ -28,7 +28,7 @@ from agent_pm.session.adapters.base import (
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine import records
 
-from tests.case import REPO, Case
+from tests.case import REPO, Case, settings
 from tests.integration.adapters.codex import fake_codex
 from tests.selection import configured
 
@@ -91,9 +91,7 @@ class HeadlessIntegrationTest(Case):
         cfg = self.adapter.config | {
             "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)}
         }
-        self.config = {
-            "adapters": {"codex": {"implementation": "adapters.codex:CodexAdapter", **cfg}}
-        }
+        self.config = settings({"codex": {"implementation": "adapters.codex:CodexAdapter", **cfg}})
         self.enterContext(
             mock.patch.dict(
                 os.environ,
@@ -104,7 +102,7 @@ class HeadlessIntegrationTest(Case):
                 },
             )
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
 
     def scene(self, steps=None, **fields):
         if steps is not None:
@@ -251,10 +249,10 @@ class HeadlessIntegrationTest(Case):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
         self.drain(api.start("codex", "headless", "one", self.spec, sid=self.sid))
         self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
-        registry.configure(self.config)
+        Session.configure(**self.config)
         self.drain(
             api.start("codex", "headless", "again", self.spec, resume=self.sid, sid=self.sid)
         )
@@ -319,7 +317,7 @@ class HeadlessIntegrationTest(Case):
         native_tmp = self.root / "native-tmp"
         native_tmp.mkdir()
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(native_tmp)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         for resume in (False, True):
             with self.subTest(resume=resume):
                 found = self.drain(
@@ -342,7 +340,7 @@ class HeadlessIntegrationTest(Case):
         for index, root in enumerate((self.home, self.home / ".agent-pm", store, alias)):
             with self.subTest(root=root):
                 self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)
-                registry.configure(self.config)
+                Session.configure(**self.config)
                 with mock.patch(
                     "subprocess.Popen", side_effect=AssertionError("spawned before TMPDIR guard")
                 ) as spawn:
@@ -358,7 +356,7 @@ class HeadlessIntegrationTest(Case):
         self.drain(api.start("codex", "headless", "first", self.spec, sid=self.sid))
         saved = self.common.load(str(self.work), self.sid).snapshot
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(self.home)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         changed = dataclasses.replace(self.spec, env={"NEW_POLICY_KEY": "fresh"})
         self.drain(api.start("codex", "headless", "again", changed, resume=self.sid))
         self.assertEqual(self.common.load(str(self.work), self.sid).snapshot, saved)
@@ -375,7 +373,7 @@ class HeadlessIntegrationTest(Case):
             efforts={"low": "high"},
         )
         cfg["env"]["CODEX_HOME"] = str(alternate)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         access = Access(
             cwd=str(alternate), dirs=(str(alternate),), commands=("changed command",), project=False
         )
@@ -417,7 +415,7 @@ class HeadlessIntegrationTest(Case):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):
             with self.subTest(resume=resume):

@@ -1,9 +1,15 @@
-"""config.py: hosts(), a merged core config's [hosts] tables and core [delegates]."""
+"""config.py: hosts(), a merged core config's [hosts] tables (their cases: session/host_tables_test.py) and core
+[delegates]; session_settings(), Session.configure's keyword arguments."""
 
+import os
 import tomllib
 import unittest
+from unittest import mock
 
-from agent_pm.config import Hosts, hosts
+import agent_pm.config
+from agent_pm.config import CONFIG, Hosts, hosts, session_settings
+from agent_pm.session.hosts import tables
+from agent_pm.utils.config_file import read_config
 
 from tests.case import Case
 
@@ -53,40 +59,13 @@ class HostsTest(Case):
         hosts(config).tables["a"]["per_column"] = 3
         self.assertEqual(config["hosts"]["a"]["per_column"], 2)
 
-    def test_no_hosts_table(self):
-        for config in ({}, {"hosts": 1}, {"hosts": "a"}):
-            with self.subTest(config=config):
-                self.refused(config, "[hosts]: missing")
-
-    def test_a_key_that_is_neither_default_nor_a_table(self):
-        self.refused(
-            parsed(base=TWO.replace('default = "a"', 'default = "a"\nnoise = 1')),
-            "[hosts] noise: want default or a [hosts.<name>] table",
-        )
-
-    def test_a_table_name_that_is_not_a_host_name(self):
-        for key, name in (("A", "A"), ("1a", "1a"), ("a-b", "a-b"), ('"a b"', "a b"), ('""', "")):
-            with self.subTest(name=name):
-                self.refused(
-                    parsed(f'[hosts.{key}]\nimplementation = "pkg.c:CHost"\n'),
-                    f"[hosts.{name}]: want a name matching [a-z][a-z0-9_]*",
-                )
-
-    def test_a_table_without_a_class_path(self):
-        for line in ("", 'implementation = "pkg.mod.AHost"\n', "implementation = 1\n"):
-            with self.subTest(line=line):
-                self.refused(
-                    parsed(base=TWO.replace('implementation = "pkg.mod:AHost"\n', line)),
-                    "[hosts.a].implementation: want module.path:Class",
-                )
-
-    def test_the_default_must_name_a_table(self):
-        for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []"):
-            with self.subTest(line=line):
-                self.refused(
-                    parsed(base=TWO.replace('default = "a"', line)),
-                    f"[hosts] default: want one of {NAMES}",
-                )
+    def test_the_hosts_table_goes_through_the_session_parser(self):
+        config = parsed()
+        with mock.patch.object(tables, "parse", wraps=tables.parse) as parse:
+            hosts(config)
+        parse.assert_called_once_with(config["hosts"])
+        with self.assertRaisesRegex(ValueError, r"\A\[hosts\]: missing\Z"):
+            hosts({})
 
     def test_core_delegates_takes_only_harness_host(self):
         self.refused(
@@ -105,6 +84,35 @@ class HostsTest(Case):
                     parsed(f"[delegates]\nharness_host = {value}\n"),
                     f"[delegates] harness_host: want one of {NAMES}",
                 )
+
+
+class SessionSettingsTest(Case):
+    def test_the_adapters_hosts_and_default_of_a_merged_config(self):
+        config = parsed('[adapters.a]\nimplementation = "adapters.a:AAdapter"\n')
+        self.assertEqual(
+            session_settings(config),
+            {
+                "adapters": {"a": {"implementation": "adapters.a:AAdapter"}},
+                "hosts": hosts(config).tables,
+                "default_host": "a",
+            },
+        )
+        self.assertEqual(session_settings(parsed())["adapters"], {})
+
+    def test_unset_it_reads_the_core_config_and_local_file(self):
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+            f.write("[hosts.tmux]\nstatus_line = true\n")
+        found = session_settings()
+        self.assertEqual(found, session_settings(read_config(CONFIG, agent_pm.config.LOCAL)))
+        self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
+        self.assertEqual(found["default_host"], "tmux")
+        self.assertIs(found["hosts"]["tmux"]["status_line"], True)
+
+    def test_an_unreadable_core_config_is_a_value_error(self):
+        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+            f.write("x = \n")
+        with self.assertRaisesRegex(ValueError, f"\\Acore config {CONFIG}: "):
+            session_settings()
 
 
 if __name__ == "__main__":

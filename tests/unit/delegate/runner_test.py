@@ -37,7 +37,6 @@ from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.event.outcome import save
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
 
 from tests import fake_adapter
@@ -155,14 +154,12 @@ class Base(Case):
         patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         patch.start()
         self.addCleanup(patch.stop)
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    "fake": {
-                        "implementation": "adapters.fake:FakeAdapter",
-                        "scenario": self.scenario,
-                        "log": self.log,
-                    }
+                "fake": {
+                    "implementation": "adapters.fake:FakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
                 }
             }
         )
@@ -734,14 +731,12 @@ class InProcess(Base):
 
     def setUp(self):
         super().setUp()
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    "fake": {
-                        "implementation": "adapters.fake:InProcessFakeAdapter",
-                        "scenario": self.scenario,
-                        "log": self.log,
-                    }
+                "fake": {
+                    "implementation": "adapters.fake:InProcessFakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
                 }
             }
         )

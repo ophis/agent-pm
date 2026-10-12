@@ -15,6 +15,7 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
+import agent_pm.config
 from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
@@ -24,7 +25,7 @@ from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
 
 from tests import fake_adapter
-from tests.case import REPO, Case
+from tests.case import REPO, Case, committed
 from tests.unit.composer.team_test import POET, VERSE
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -63,16 +64,15 @@ class Base(Case):
         self.enterContext(
             mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         )
-        self.addCleanup(registry.reset)
         self.local("")
 
     def local(self, text):
-        """The local config `text`, the registry's adapters re-read with it."""
+        """The local config `text`, the session configured with its adapters and the fake runtime."""
         local = os.path.join(self.agent_pm, "core-new.local.toml")
         with open(local, "w") as f:
             f.write(text)
         fake = {"implementation": "adapters.fake:FakeAdapter"}
-        registry.configure({"adapters": registry.tables(registry.CONFIG, local) | {"fake": fake}})
+        self.configure_session(committed(local) | {"fake": fake})
 
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
@@ -92,6 +92,20 @@ class Base(Case):
         with self.assertRaises(ConfigError) as cm:
             self.planned(*args, **kw)
         return str(cm.exception)
+
+
+class Configures(Base):
+    def test_plan_configures_the_session_from_the_core_config_first(self):
+        registry.reset()
+        got, _ = self.planned()
+        self.assertEqual(got.runtime, "fake")
+        self.assertIn("fake", registry.configured())
+
+    def test_a_core_config_error_refuses_the_plan(self):
+        with mock.patch.object(
+            agent_pm.config, "session_settings", side_effect=ValueError("[hosts]: missing")
+        ):
+            self.assertEqual(self.refused(), "[hosts]: missing")
 
 
 class Cwd(Base):

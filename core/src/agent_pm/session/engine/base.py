@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 
+from agent_pm.session.adapters import registry
 from agent_pm.session.engine.types import (
     Event,
     IdleTimeout,
@@ -82,7 +83,9 @@ class Session(ABC):
         hosts: Mapping[str, Mapping],
         default_host: str,
     ) -> None:
-        raise _later("configure")
+        """Every caller's first step before it starts or attaches a session: the session reads no config. Calling
+        it again replaces the settings; bad input: ConfigError, the settings kept."""
+        registry.configure(adapters=adapters, hosts=hosts, default_host=default_host)
 
     @classmethod
     def start(

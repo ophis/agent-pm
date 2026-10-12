@@ -1,28 +1,29 @@
-"""adapters/registry.py: the [adapters.<name>] tables and the tui settings, their per-process cache and
-Adapter loading (the config pair, merge and read: unit/utils/config_file_test.py). Adapter packages are registered in
-sys.modules or the import system only for the test's span; the registry itself is never patched, except a wrap counting
-its file reads. Each test drops the cache at its end."""
+"""adapters/registry.py: what Session.configure stores (the [adapters.<name>] tables, the hosts' tables and the default
+host), the tui settings from [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the
+import system only for the test's span; the registry itself is never patched. Case resets it around each test."""
 
+import importlib
 import importlib.abc
 import importlib.util
-import os
 import sys
-import tempfile
 import tomllib
 import types
 import unittest
 from unittest import mock
 
 import agent_pm.session
+import agent_pm.session.hosts.tmux
+from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter, ConfigError
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.utils import registry as class_registry
 
 from tests import fake_adapter
-from tests.case import Case
+from tests.case import HOSTS, Case, committed, settings
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
-LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
+UNCONFIGURED = "the session is not configured: call Session.configure first"
 
 
 class OddAdapter:
@@ -62,25 +63,9 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 
 class Base(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-
-    def write(self, name, content) -> str:
-        path = os.path.join(self.dir, name)
-        with open(path, "wb") as f:
-            f.write(content if isinstance(content, bytes) else content.encode())
-        return path
-
-    def local(self, text):
-        """`text` as this test's ~/.agent-pm/core-new.local.toml."""
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w", encoding="utf-8") as f:
-            f.write(text)
-
-    def configure(self, text):
-        """TOML `text` as the registry's config, no file read."""
-        registry.configure(tomllib.loads(text))
+    def configure(self, text, tmux=None):
+        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through Session.configure."""
+        Session.configure(**settings(tomllib.loads(text).get("adapters", {}), tmux))
 
     def register(self, **modules):
         """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of the test."""
@@ -96,111 +81,71 @@ class Base(Case):
         self.assertEqual(str(caught.exception), message)
 
 
-class TablesTest(Base):
-    def test_committed_config_has_its_tables(self):
-        self.assertEqual(
-            list(registry.tables(registry.CONFIG, os.devnull)), ["claude", "codex", "print_prompt"]
-        )
-        self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
+class ConfigureTest(Base):
+    def test_unconfigured_every_read_says_so(self):
+        for call in (lambda: registry.adapter("claude"), registry.configured, registry.tui):
+            with self.subTest(call=call):
+                self.refused(UNCONFIGURED, call)
 
-    def test_committed_config_has_no_destination_key_and_builds_print_prompt(self):
-        for name, table in registry.tables(registry.CONFIG, os.devnull).items():
+    def test_configured_the_adapters_and_tui_settings_are_read_without_a_file(self):
+        self.register(fake=fake_adapter)
+        with mock.patch("builtins.open") as opened:
+            self.configure(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n', {"status_line": True})
+            self.assertEqual(registry.configured(), ["a", "fake"])
+            self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
+            self.assertEqual(registry.tui(), registry.TuiSettings(True, None, None))
+        opened.assert_not_called()
+
+    def test_the_committed_adapters_build_print_prompt(self):
+        Session.configure(**settings(committed()))
+        self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
+        for name, table in committed().items():
             with self.subTest(name=name):
                 self.assertEqual({"roles", "output"} & set(table), set())
         self.assertIs(type(registry.adapter("print_prompt")), PrintPromptAdapter)
 
-    def test_the_merged_tables_and_their_sorted_names(self):
-        path = self.write("config.toml", "[adapters.b]\nk = 1\n[adapters.a]\nk = 1\n")
-        local = self.write("local.toml", "[adapters.b]\nk = 2\n[adapters.c]\nk = 3\n")
-        self.assertEqual(
-            registry.tables(path, local), {"a": {"k": 1}, "b": {"k": 2}, "c": {"k": 3}}
-        )
-
-    def test_read_takes_both_paths_and_reads_only_those(self):
-        self.local("x = \n")
-        path = self.write("config.toml", "[adapters.a]\nk = 1\n")
-        local = self.write("local.toml", "[adapters.a]\nk = 2\n")
-        self.assertEqual(registry.read(path, local)["adapters"], {"a": {"k": 2}})
-        self.assertEqual(registry.read(path, os.devnull)["adapters"], {"a": {"k": 1}})
-        for args in ((), (path,)):
-            with self.subTest(args=args), self.assertRaises(TypeError):
-                registry.read(*args)
-
-    def test_no_tables_when_absent_or_not_a_table(self):
-        for text in ("x = 1\n", "adapters = 1\n", 'adapters = ["fake"]\n'):
-            with self.subTest(text=text):
-                path = self.write("config.toml", text)
-                self.assertEqual(registry.tables(path, os.devnull), {})
-
-    def config_error(self, path, local):
-        with self.assertRaises(ConfigError) as caught:
-            registry.tables(path, local)
-        self.assertTrue(str(caught.exception).startswith(f"core config {path}: "), caught.exception)
-
-    def test_an_unreadable_or_invalid_config_is_a_config_error(self):
-        absent = os.path.join(self.dir, "absent.toml")
-        self.config_error(absent, absent)
-        self.config_error(self.dir, absent)
-        for content in (b"[adapters\n", b'a = "\xff"\n'):
-            with self.subTest(content=content):
-                self.config_error(self.write("config.toml", content), absent)
-
-    def test_an_invalid_local_file_is_a_config_error(self):
-        path = self.write("config.toml", "a = 1\n")
-        for content in (b"x = \n", b"\xfe = 1\n"):
-            with self.subTest(content=content):
-                self.config_error(path, self.write("local.toml", content))
-
-
-class CacheTest(Base):
-    def test_the_first_use_reads_the_files_once(self):
+    def test_configuring_again_replaces_and_reset_drops(self):
         self.register(fake=fake_adapter)
-        self.local(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n')
-        with mock.patch.object(registry, "read", wraps=registry.read) as read:
-            first = registry.adapter("fake")
-            second = registry.adapter("fake")
-            self.assertEqual(
-                registry.configured(), ["a", "claude", "codex", "fake", "print_prompt"]
-            )
-        read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
-        self.assertIsNot(first, second)
-        self.assertEqual((first.config, second.config), ({"scenario": "/s"}, {"scenario": "/s"}))
-
-    def test_reset_makes_the_next_use_read_the_files_again(self):
-        self.register(fake=fake_adapter)
-        self.local(FAKE + 'scenario = "/a"\n')
-        self.assertEqual(registry.adapter("fake").config, {"scenario": "/a"})
-        self.local(FAKE + 'scenario = "/b"\n')
-        self.assertEqual(registry.adapter("fake").config, {"scenario": "/a"})
-        registry.reset()
+        self.configure(FAKE + 'scenario = "/a"\n', {"workers_per_column": 2})
+        self.configure(FAKE + 'scenario = "/b"\n')
         self.assertEqual(registry.adapter("fake").config, {"scenario": "/b"})
+        self.assertEqual(registry.tui(), registry.TuiSettings())
+        registry.reset()
+        self.refused(UNCONFIGURED, registry.configured)
 
-    def test_a_failed_read_is_not_cached(self):
-        self.register(fake=fake_adapter)
-        self.local("x = \n")
-        for call in (registry.configured, lambda: registry.adapter("fake")):
-            with self.assertRaises(ConfigError) as caught:
-                call()
-            self.assertTrue(
-                str(caught.exception).startswith(f"core config {registry.CONFIG}: "),
-                caught.exception,
-            )
-        self.local(FAKE + 'scenario = "/s"\n')
-        self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
+    def test_refuses_bad_input_and_keeps_what_was_configured(self):
+        self.configure(FAKE)
+        tables = "adapters: want a mapping of [adapters.<name>] tables"
+        hosts = "hosts: want a mapping of [hosts.<name>] tables"
+        for kw, message in (
+            ({"adapters": 1}, tables),
+            ({"adapters": ["fake"]}, tables),
+            ({"adapters": {"fake": 1}}, tables),
+            ({"hosts": 1}, hosts),
+            ({"hosts": {**HOSTS, "default": {}}}, hosts),
+            ({"hosts": {"tmux": 1}}, "[hosts] tmux: want default or a [hosts.<name>] table"),
+            (
+                {"hosts": {"tmux": {"implementation": "agent_pm.TmuxHost"}}},
+                "[hosts.tmux].implementation: want module.path:Class",
+            ),
+            ({"default_host": "pty"}, "[hosts] default: want one of tmux"),
+            ({"default_host": None}, "[hosts] default: want one of tmux"),
+        ):
+            with self.subTest(kw=kw):
+                given = {**settings({}), **kw}
+                self.refused(message, lambda: Session.configure(**given))
+                self.assertEqual(registry.configured(), ["fake"])
 
-    def test_configure_sets_the_cache_without_reading_a_file(self):
-        self.register(fake=fake_adapter)
-        self.local(FAKE + 'scenario = "/file"\n')
-        self.assertEqual(registry.adapter("fake").config, {"scenario": "/file"})
-        with mock.patch.object(registry, "read", wraps=registry.read) as read:
-            self.configure(FAKE + 'scenario = "/given"\n[adapters.a]\nk = 1\n')
-            self.assertEqual(registry.adapter("fake").config, {"scenario": "/given"})
-            self.assertEqual(registry.configured(), ["a", "fake"])
-            for config in ({}, {"adapters": 1}, {"adapters": ["fake"]}, {"other": {"fake": {}}}):
-                with self.subTest(config=config):
-                    registry.configure(config)
-                    self.assertEqual(registry.configured(), [])
-        read.assert_not_called()
+    def test_the_forward_tmux_host_name_is_never_loaded(self):
+        with (
+            mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
+            mock.patch.object(class_registry, "load") as load,
+        ):
+            Session.configure(**settings({}, {"workers_per_column": 4}))
+            self.assertEqual(registry.tui(), registry.TuiSettings(False, 4, None))
+        imp.assert_not_called()
+        load.assert_not_called()
+        self.assertFalse(hasattr(agent_pm.session.hosts.tmux, "TmuxHost"))
 
 
 class TuiTest(Base):
@@ -208,38 +153,31 @@ class TuiTest(Base):
         self.configure(FAKE)
         self.assertEqual(registry.tui(), registry.TuiSettings(False, None, None))
         self.assertEqual(registry.TuiSettings(), registry.TuiSettings(False, None, None))
-
-    def test_the_global_keys_values(self):
-        for text, want in (
-            ('status_line = true\nworkers_per_column = 2\ngrid_retile = "all"\n', (True, 2, "all")),
-            (
-                'status_line = false\nworkers_per_column = 9999\ngrid_retile = "off"\n',
-                (False, 9999, "off"),
-            ),
-            (
-                'workers_per_column = 1\ngrid_retile = "open-close"\n' + FAKE,
-                (False, 1, "open-close"),
-            ),
-        ):
-            with self.subTest(text=text):
-                self.configure(text)
-                self.assertEqual(registry.tui(), registry.TuiSettings(*want))
-
-    def test_a_tables_key_is_no_setting(self):
-        self.configure("[adapters.fake]\nstatus_line = true\n[roles.pm]\nworkers_per_column = 2\n")
+        Session.configure(adapters={}, hosts={"other": HOSTS["tmux"]}, default_host="other")
         self.assertEqual(registry.tui(), registry.TuiSettings())
 
-    def test_read_with_the_adapters_once_from_the_merged_files(self):
-        self.register(fake=fake_adapter)
-        self.local("status_line = true\nworkers_per_column = 4\n" + FAKE + 'scenario = "/s"\n')
-        with mock.patch.object(registry, "read", wraps=registry.read) as read:
-            self.assertEqual(registry.tui(), registry.TuiSettings(True, 4, None))
-            self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
-        read.assert_called_once_with(registry.CONFIG, registry.LOCAL)
+    def test_the_hosts_tmux_keys_values(self):
+        for tmux, want in (
+            (
+                {"status_line": True, "workers_per_column": 2, "grid_retile": "all"},
+                (True, 2, "all"),
+            ),
+            (
+                {"status_line": False, "workers_per_column": 9999, "grid_retile": "off"},
+                (False, 9999, "off"),
+            ),
+            ({"workers_per_column": 1, "grid_retile": "open-close"}, (False, 1, "open-close")),
+        ):
+            with self.subTest(tmux=tmux):
+                self.configure(FAKE, tmux)
+                self.assertEqual(registry.tui(), registry.TuiSettings(*want))
+
+    def test_an_adapters_key_is_no_setting(self):
+        self.configure("[adapters.fake]\nstatus_line = true\nworkers_per_column = 2\n")
+        self.assertEqual(registry.tui(), registry.TuiSettings())
 
     def test_a_value_of_the_wrong_type_or_range_is_a_config_error_naming_its_key(self):
         self.register(fake=fake_adapter)
-        adapters = tomllib.loads(FAKE)["adapters"]
         for key, values, message in (
             ("status_line", ("true", 1, 0, [True]), "status_line: want true or false"),
             (
@@ -255,7 +193,7 @@ class TuiTest(Base):
         ):
             for value in values:
                 with self.subTest(key=key, value=value):
-                    registry.configure({"adapters": adapters, key: value})
+                    self.configure(FAKE, {key: value})
                     self.refused(message, registry.tui)
                     self.assertIs(type(registry.adapter("fake")), fake_adapter.FakeAdapter)
 
@@ -278,11 +216,10 @@ class AdapterTest(Base):
                 )
 
     def test_refuses_a_missing_table(self):
-        message = f"no [adapters.fake] table in {registry.CONFIG} or {LOCAL_SHOWN}"
-        for text in ("", "[adapters]\nfake = 1\n"):
-            with self.subTest(text=text):
-                self.configure(text)
-                self.refused(message, lambda: registry.adapter("fake"))
+        self.configure('[adapters.other]\nimplementation = "adapters.other:OtherAdapter"\n')
+        self.refused(
+            "no [adapters.fake] table in the configured adapters", lambda: registry.adapter("fake")
+        )
 
     def test_refuses_an_implementation_of_another_shape_or_package(self):
         self.register(fake=fake_adapter)

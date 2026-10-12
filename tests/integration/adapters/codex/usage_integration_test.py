@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Usage, Window
 from agent_pm.session.adapters.codex import CodexAdapter
 
@@ -59,13 +58,11 @@ class UsageIntegrationTest(Case):
         )
 
     def probe(self, case="normal", **env):
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    "codex": {
-                        "implementation": "adapters.codex:CodexAdapter",
-                        "env": {"FAKE_LOG": str(self.log), "FAKE_CASE": case, **env},
-                    }
+                "codex": {
+                    "implementation": "adapters.codex:CodexAdapter",
+                    "env": {"FAKE_LOG": str(self.log), "FAKE_CASE": case, **env},
                 }
             }
         )

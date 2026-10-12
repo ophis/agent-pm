@@ -6,6 +6,7 @@ import unittest
 
 from agent_pm import session
 from agent_pm.session import (
+    ConfigError,
     Displayable,
     DriverError,
     Host,
@@ -105,10 +106,13 @@ class Abstract(Case):
 
 
 class SessionClassMethods(Case):
-    def test_each_raises_on_the_bare_abc_naming_task_365(self):
+    def test_configure_is_concrete_and_refuses_bad_input(self):
+        with self.assertRaisesRegex(ConfigError, r"\Ahosts: want a mapping"):
+            Session.configure(adapters={}, hosts=1, default_host="fake")
+
+    def test_each_but_configure_raises_on_the_bare_abc_naming_task_365(self):
         spec = api.Spec(workdir=self.home)
         calls = {
-            "configure": ((), {"adapters": {}, "hosts": {}, "default_host": "fake"}),
             "start": (("fake", "headless", "hi", spec), {"sid": None, "display": None}),
             "attach": (("w1",), {"idle_timeout": None}),
             "list": ((), {"display": None}),

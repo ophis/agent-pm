@@ -27,7 +27,7 @@ from agent_pm.session import api
 from agent_pm.session.adapters import base, registry
 
 from tests import fake_adapter
-from tests.case import PY, Case, child_env
+from tests.case import PY, Case, child_env, committed
 from tests.unit.delegate.runner_test import (
     DONE,
     START,
@@ -93,14 +93,12 @@ class Base(Case):
         self.enterContext(
             mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
         )
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    "fake": {
-                        "implementation": "adapters.fake:FakeAdapter",
-                        "scenario": self.scenario,
-                        "log": self.log,
-                    }
+                "fake": {
+                    "implementation": "adapters.fake:FakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
                 }
             }
         )
@@ -339,6 +337,12 @@ class DryRun(Base):
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
 
+    def test_main_configures_the_session_through_the_plan(self):
+        registry.reset()
+        code, _, err = self.runs("--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("fake", registry.configured())
+
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
         code, out, _ = self.runs("--dry-run", task=None)
         shown = json.loads(out)
@@ -511,16 +515,14 @@ class InProcess(Base):
             mock.patch.dict(sys.modules, {"agent_pm.session.adapters.refusing": refusing})
         )
         classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
-        registry.configure(
+        self.configure_session(
             {
-                "adapters": {
-                    name: {
-                        "implementation": f"adapters.{name}:{cls}",
-                        "scenario": self.scenario,
-                        "log": self.log,
-                    }
-                    for name, cls in classes.items()
+                name: {
+                    "implementation": f"adapters.{name}:{cls}",
+                    "scenario": self.scenario,
+                    "log": self.log,
                 }
+                for name, cls in classes.items()
             }
         )
 
@@ -555,7 +557,7 @@ class InProcess(Base):
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_claude_and_codex_refuse_it_with_exit_2(self):
-        registry.configure({"adapters": registry.tables(registry.CONFIG, os.devnull)})
+        self.configure_session(committed())
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 code, out, err = self.runs("--mode", "in_process", runtime=runtime)

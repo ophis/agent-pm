@@ -1,5 +1,5 @@
 """session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
-registry.configure, runs tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
+Session.configure, runs tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
 api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
 
@@ -17,7 +17,6 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Activity,
     Exited,
@@ -60,9 +59,9 @@ PROBE = [
 # (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
+from agent_pm.session import Session
 signal.signal(signal.SIGINT, signal.default_int_handler)
-registry.configure({"adapters": {"claude": json.loads(sys.argv[1])}})
+Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
 handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[2]))
 try:
     for event in handle.events():
@@ -109,7 +108,7 @@ class Base(Case):
         )
         patch.start()
         self.addCleanup(patch.stop)
-        registry.configure({"adapters": {"claude": TABLE}})
+        self.configure_session({"claude": TABLE})
         self.scenario()
 
     def scenario(self, **fields):

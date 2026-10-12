@@ -16,6 +16,8 @@ import agent_pm.config
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
 from agent_pm.utils.repos.git import GUARD
 from agent_pm.utils.repos.shell import SHORT
@@ -557,7 +559,9 @@ class Runnable(ConfigFile, Case):
         self.assertEqual(agent_pm.config.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
 
 
-CORE_TOML = """tier = 2
+HOSTS_TOML = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nimplementation = "agent_pm.session.hosts.tmux:TmuxHost"\n'
+CORE_TOML = (
+    """tier = 2
 effort = "high"
 runtime = "claude"
 output = { type = "local" }
@@ -571,6 +575,8 @@ output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Design
 [roles.engineer]
 output = { type = "pull-request" }
 """
+    + HOSTS_TOML
+)
 DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }'
 DIRS = {"researcher": "Research/", "pm": "Designs/"}
 
@@ -660,6 +666,22 @@ class OtherRoot(ConfigFile, Case):
                 self.fails(f"core: trusted_dirs: {entry} is or contains work_dir {work}", text)
         self.core(f'trusted_dirs = ["{os.path.join(work, "x")}", "{self.dir}/other"]\n' + CORE_TOML)
         self.assertEqual(self.load(text).work_dir, work)
+
+    def test_load_configures_the_session_from_the_core_config(self):
+        self.core(CORE_TOML + '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n')
+        self.refused_unconfigured()
+        self.load(PIPELINE)
+        self.assertEqual(registry.configured(), ["a"])
+        self.assertEqual(registry.tui(), registry.TuiSettings())
+
+    def test_a_core_config_without_hosts_stops_the_caller(self):
+        self.core(CORE_TOML.replace(HOSTS_TOML, ""))
+        self.fails("core: [hosts]: missing", PIPELINE)
+        self.refused_unconfigured()
+
+    def refused_unconfigured(self):
+        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+            registry.configured()
 
     def test_no_core_table(self):
         self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, "")
@@ -1173,6 +1195,8 @@ IMPORT_ALONE = """import json, os, sys
 opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.session import api
+from agent_pm.session.adapters import registry
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
 print(json.dumps({

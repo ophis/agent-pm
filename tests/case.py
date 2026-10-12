@@ -1,5 +1,5 @@
-"""Case, every test's base, and the child helpers: namespace package agent_pm only from this tree's import
-roots (ROOT, ORCH_ROOT)."""
+"""Case, every test's base, the session settings helpers (HOSTS, settings, committed) and the child helpers: namespace
+package agent_pm only from this tree's import roots (ROOT, ORCH_ROOT)."""
 
 import os
 import sys
@@ -8,14 +8,30 @@ import unittest
 from unittest import mock
 
 import agent_pm
+import agent_pm.config
+from agent_pm.session import Session
 from agent_pm.session.adapters import registry
+from agent_pm.utils.config_file import read_config
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(REPO, "core")
 ROOT = os.path.join(CORE, "src")
 ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 PY = (sys.executable, "-P", "-s")
+_session_settings = agent_pm.config.session_settings
 PYTHONPATH = "core/src:linear-orchestrator/src"
+HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
+
+
+def settings(adapters, tmux=None) -> dict:
+    """Session.configure's keyword arguments: `adapters`, HOSTS with `tmux`'s keys in [hosts.tmux], default tmux."""
+    hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
+    return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
+
+
+def committed(local: str = os.devnull) -> dict:
+    """The core config's [adapters] tables, `local` merged (none by default), even under Case.configure_session."""
+    return _session_settings(read_config(agent_pm.config.CONFIG, local))["adapters"]
 
 
 class Case(unittest.TestCase):
@@ -43,6 +59,15 @@ class Case(unittest.TestCase):
                 return super().run(result)
             finally:
                 registry.reset()
+
+    def configure_session(self, adapters, tmux=None) -> None:
+        """Session.configure with settings(adapters, tmux), also what agent_pm.config.session_settings returns for
+        the rest of the test, so an entry configuring again keeps them."""
+        given = settings(adapters, tmux)
+        self.enterContext(
+            mock.patch.object(agent_pm.config, "session_settings", return_value=given)
+        )
+        Session.configure(**given)
 
 
 def _foreign() -> str | None:

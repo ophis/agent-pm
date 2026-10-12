@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import api
+from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     Access,
@@ -34,15 +34,15 @@ from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.engine import records
 
 from tests import live_tmux
-from tests.case import PY, REPO, ROOT, Case, child_env
+from tests.case import PY, REPO, ROOT, Case, child_env, settings
 from tests.integration.adapters.codex import fake_codex, fake_tui
 
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
 from agent_pm.session import api
-from agent_pm.session.adapters import registry
-registry.configure(json.loads(sys.argv[1]))
+from agent_pm.session import Session
+Session.configure(**json.loads(sys.argv[1]))
 h = api.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]
 if sys.argv[3]:
@@ -125,8 +125,8 @@ class Live(Case):
         self.scene()
         self.env = self.server.env(CODEX_HOME=str(self.codex_home), TZ="UTC")
         self.enterContext(mock.patch.dict(os.environ, self.env, clear=True))
-        self.config = {
-            "adapters": {
+        self.config = settings(
+            {
                 "codex": {
                     "implementation": "adapters.codex:CodexAdapter",
                     "tiers": {"1": "gpt-test"},
@@ -138,8 +138,8 @@ class Live(Case):
                     },
                 }
             }
-        }
-        registry.configure(self.config)
+        )
+        Session.configure(**self.config)
         self.addCleanup(registry.reset)
         self.common = registry.adapter("codex").common
         self.spec = Spec(
@@ -430,13 +430,13 @@ class TuiIntegrationTest(Live):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
         handle = self.start()
         Stream(self, handle).until(TurnEnd)
         native = self.bound().native_id
         handle.stop()
         self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
-        registry.configure(self.config)
+        Session.configure(**self.config)
         resumed = self.start(resume=self.sid)
         Stream(self, resumed).until(TurnEnd)
         first, second = self.calls()
@@ -476,7 +476,7 @@ class TuiIntegrationTest(Live):
             efforts={"low": "high"},
         )
         cfg["env"]["CODEX_HOME"] = str(changed)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         spec = dataclasses.replace(
             self.spec,
             tier=4,
@@ -647,7 +647,7 @@ class TuiIntegrationTest(Live):
         cfg["env"].update(
             NO_COLOR="0", CODEX_CI="operator", PAGER="less", FAKE_ADDITION="configured"
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
         handle = self.start()
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         env = self.calls()[0]["env"]
@@ -670,7 +670,7 @@ class TuiIntegrationTest(Live):
                 env.pop("NO_COLOR", None)
                 if value is not None:
                     env["NO_COLOR"] = value
-                registry.configure(self.config)
+                Session.configure(**self.config)
                 handle = self.start(f"color{index}", sid=f"color-{index}")
                 self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
                 screen = self.server.tmux(
@@ -734,7 +734,7 @@ class TuiIntegrationTest(Live):
         runtime_home = self.root / "runtime-home"
         runtime_home.mkdir()
         self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         self.scene([["configured home"]])
         first = self.start()
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("configured home"))
@@ -754,7 +754,7 @@ class TuiIntegrationTest(Live):
                 runtime_home = grant / "runtime-home"
                 runtime_home.mkdir()
                 self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
-                registry.configure(self.config)
+                Session.configure(**self.config)
                 name, sid = f"configured{index}", f"configured-{index}"
                 before = len(self.calls())
                 first = self.start(name, sid=sid)
@@ -785,7 +785,7 @@ class TuiIntegrationTest(Live):
         first_tmp.mkdir()
         next_tmp.mkdir()
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(first_tmp)
-        registry.configure(self.config)
+        Session.configure(**self.config)
         fresh = api.writable_dirs("codex", self.spec)
         self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
@@ -798,7 +798,7 @@ class TuiIntegrationTest(Live):
         self.config["adapters"]["codex"]["env"].update(
             {"TMPDIR": str(next_tmp), "CODEX_HOME": str(ignored_home)}
         )
-        registry.configure(self.config)
+        Session.configure(**self.config)
         changed_spec = dataclasses.replace(
             self.spec, access=Access(cwd=str(self.extra), project=True)
         )
