@@ -5,9 +5,10 @@ import sys
 import tempfile
 import unittest
 
-from new.tests import CORE, NEW, SRC, guards
+from new.tests import CORE, NEW, ORCH_SRC, ORCHESTRATOR, SRC, guards
 
 OLD = "/".join(("core", "src"))
+ORCH_GUARDS = (guards.orchestrator_imports, guards.orchestrator_text, guards.config_once)
 
 
 class Sample(unittest.TestCase):
@@ -26,11 +27,13 @@ class RealTree(unittest.TestCase):
     def test_each_guard_is_clean(self):
         for guard, root in ((guards.layer_imports, CORE), (guards.runtime_names, CORE), (guards.old_core, NEW),
                             (guards.adapters_key, CORE), (guards.syntax_311, NEW), (guards.private_imports, CORE),
-                            (guards.modes_import_api, CORE), (guards.tmux_calls, CORE), (guards.syntax_39, CORE)):
-            with self.subTest(guard.__name__):
+                            (guards.modes_import_api, CORE), (guards.tmux_calls, CORE), (guards.syntax_39, CORE),
+                            *((guard, ORCHESTRATOR) for guard in ORCH_GUARDS), (guards.private_imports, ORCHESTRATOR),
+                            (guards.syntax_311, ORCHESTRATOR), (guards.old_core, ORCHESTRATOR)):
+            with self.subTest(guard.__name__, root=root):
                 self.assertEqual(guard(root), [])
 
-    def test_src_never_reaches_the_old_core(self):
+    def test_src_and_orchestrator_never_reach_the_old_core(self):
         old = os.path.realpath(os.path.join(os.path.dirname(NEW), "core", "src"))
         src = os.path.realpath(SRC)
         for top, dirs, files in os.walk(SRC):
@@ -40,6 +43,10 @@ class RealTree(unittest.TestCase):
                 parts = parts[:-1] if parts[-1] == "__init__" else parts
                 module = importlib.import_module(".".join(parts))
                 self.assertEqual(os.path.commonpath([src, os.path.realpath(module.__file__)]), src)
+        orch = os.path.realpath(ORCH_SRC)
+        for name in sorted(f for f in os.listdir(ORCH_SRC) if f.endswith(".py")) if os.path.isdir(ORCH_SRC) else []:
+            module = importlib.import_module(name[:-3])
+            self.assertEqual(os.path.dirname(os.path.realpath(module.__file__)), orch)
         for name, module in list(sys.modules.items()):
             file = getattr(module, "__file__", None)
             if file:
@@ -203,6 +210,84 @@ class Syntax311(Sample):
         found = guards.syntax_311(root)
         self.assertEqual(len(found), 1, found)
         self.assertTrue(found[0].startswith("x.py: "), found)
+
+
+class OrchestratorImports(Sample):
+    def test_forbidden_imports_name_the_file_and_line(self):
+        root = self.tree({"src/a.py": "import adapters\nfrom driver.modes import x\nimport tmux_host\nimport repo\n",
+                          "src/b.py": "from delegate import runner\nfrom delegate.outcome import Outcome\nimport core\n"
+                                      "import attended\n",
+                          "src/run.py": "from composer import resolve\n"})
+        self.assertEqual(guards.orchestrator_imports(root), [
+            "src/a.py:1: imports adapters", "src/a.py:2: imports driver.modes.x", "src/a.py:3: imports tmux_host",
+            "src/a.py:4: imports repo", "src/b.py:1: imports delegate.runner",
+            "src/b.py:2: imports delegate.outcome.Outcome", "src/b.py:3: imports core", "src/b.py:4: imports attended",
+            "src/run.py:1: imports composer.resolve"])
+
+    def test_submodules_by_attribute_other_forms_and_module_names(self):
+        root = self.tree({"src/a.py": "import delegate as d\nd.runner.run()\nimport driver.api\nfrom . import b\n"
+                                      "import third_party\n__import__('adapters.base')\n",
+                          "src/config.py": "import composer\ncomposer.run.resolve()\n",
+                          "src/utils.py": "", "src/attended.py": ""})
+        self.assertEqual(guards.orchestrator_imports(root), [
+            "src/a.py:2: uses delegate.runner", "src/a.py:3: imports driver.api", "src/a.py:4: imports .b",
+            "src/a.py:5: imports third_party", "src/a.py:6: imports adapters.base",
+            "src/attended.py: module named attended",
+            "src/config.py:2: uses composer.run", "src/utils.py: module named utils"])
+
+    def test_allowed_imports_are_clean(self):
+        root = self.tree({"src/config.py": "import os\nfrom composer import resolve\nimport composer\n"
+                                           "composer.index()\nfrom utils.files import save\n",
+                          "src/run.py": "import config\nfrom delegate import run, Result\nimport delegate\n"
+                                        "delegate.Begun\nfrom driver import api\nimport utils.shell\n"})
+        self.assertEqual(guards.orchestrator_imports(root), [])
+
+
+class OrchestratorText(Sample):
+    def test_runtime_names_and_tool_strings_name_the_file_and_line(self):
+        root = self.tree({"src/router.py": 'X = "codex"\n',
+                          "src/a.py": 'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n# Claude\n',
+                          "config.toml": '# claude\nx = "tmux"\ny = \'adapters\'\nz = "tmux ls"  # "tmux"\n'})
+        self.assertEqual(guards.orchestrator_text(root), [
+            "config.toml:1: runtime name claude", 'config.toml:2: str constant "tmux"',
+            'config.toml:3: str constant "adapters"', 'src/a.py:2: str constant "tmux"',
+            'src/a.py:3: str constant "adapters"', "src/a.py:4: runtime name Claude",
+            "src/router.py:1: runtime name codex"])
+
+    def test_claude_md_and_longer_strings_are_clean(self):
+        root = self.tree({"src/a.py": '"""Reads CLAUDE.md."""\nP = "CLAUDE.md"\nH = "tmux attach"\n',
+                          "config.toml": '# see CLAUDE.md\nx = "tmux attach"\n'})
+        self.assertEqual(guards.orchestrator_text(root), [])
+
+
+class ConfigOnce(Sample):
+    def test_load_and_use_logs_outside_an_entry_main(self):
+        root = self.tree({"src/run.py": "import config\nimport linear\n\ndef main():\n    config.load()\n"
+                                        "    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                          "src/writeback.py": "import config\nfrom linear import use_logs\n\ndef main():\n"
+                                              "    config.load()\n    use_logs(None)\n",
+                          "src/promote.py": "import config as c\n\nclass P:\n    def main(self):\n        c.load()\n"})
+        self.assertEqual(guards.config_once(root), [
+            "src/promote.py:5: calls config.load outside an entry main",
+            "src/run.py:9: calls config.load outside an entry main",
+            "src/writeback.py:5: calls config.load outside an entry main",
+            "src/writeback.py:6: calls linear.use_logs outside an entry main"])
+
+    def test_load_helpers_outside_config_py(self):
+        root = self.tree({"src/run.py": "import config\nconfig.runnable(1)\n",
+                          "src/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n    docs()\n",
+                          "src/promote.py": "import config\nimport linear\n\ndef main():\n    try:\n"
+                                            "        cfg = config.load()\n    except SystemExit:\n"
+                                            "        linear.use_logs(None)\n"})
+        self.assertEqual(guards.config_once(root), ["src/run.py:2: calls config.runnable"])
+
+
+class OrchestratorAbsent(Sample):
+    def test_an_absent_or_empty_tree_is_clean(self):
+        for root in (os.path.join(self.tree({}), "missing"), self.tree({"config.toml": ""})):
+            for guard in ORCH_GUARDS:
+                with self.subTest(guard.__name__, root=root):
+                    self.assertEqual(guard(root), [])
 
 
 if __name__ == "__main__":
