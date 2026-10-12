@@ -1,5 +1,5 @@
 """driver.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
-the real ClaudeAdapter runs new/tests/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
+the real ClaudeAdapter runs new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
 Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
 process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
 
@@ -26,8 +26,9 @@ from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.driver import api, registry, tmux_host
 from agent_pm.session.driver.modes import tui
 
-from new.tests import fake_claude, live_tmux
+from new.tests import live_tmux
 from new.tests.case import PY, child_env
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.driver import detach_integration_test as detach_live
 from new.tests.integration.driver import tui_integration_test as tui_live
 

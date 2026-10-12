@@ -1,6 +1,6 @@
 """agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a manager runs it, on a private tmux
 server (new/tests/live_tmux.py) with a control-mode client on the manager. Workers are plain tui sessions of the real
-Adapters running new/tests/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
+Adapters running new/tests/integration/adapters/claude/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
 through the Driver's tmux_host.py send. HOME and the server's root lie under AGENT_PM_TEST_TMP (else new/), outside
 the temp dirs a plain Codex session can write."""
 
@@ -20,8 +20,9 @@ from unittest import mock
 
 from agent_pm.manager import crew, roster
 
-from new.tests import fake_claude, live_tmux
+from new.tests import live_tmux
 from new.tests.case import NEW, PY, ROOT, Case
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.adapters.codex import fake_codex, fake_tui
 
 CREW = [*PY, "-m", "agent_pm.manager.crew"]

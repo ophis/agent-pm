@@ -15,7 +15,7 @@ DIRECTORY = "new/tests/integration"
 WORKFLOW = ROOT / ".github/workflows/test.yml"
 JOBS = {
     "driver": ["driver/"],
-    "adapters": ["adapters/", "fake_claude_integration_test.py"],
+    "adapters": ["adapters/"],
     "delegate-composer": ["delegate/", "composer/"],
     "orchestrator": ["orchestrator/"],
     "crew": ["tmux/"],

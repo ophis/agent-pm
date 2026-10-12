@@ -1,4 +1,4 @@
-"""delegate.run in process over new/tests/fake_claude.py (on PATH as `claude`, the core config's Adapter table), HOME
+"""delegate.run in process over new/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`, the core config's Adapter table), HOME
 and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the fix resume (FR-21), a usage limit
 (FR-58)."""
 
@@ -15,8 +15,8 @@ from agent_pm.role.delegate import Begun, Finished, Limit, Progress, run
 from agent_pm.role.delegate.runner import FIX
 from agent_pm.session.driver import registry
 
-from new.tests import fake_claude
 from new.tests.case import Case
+from new.tests.integration.adapters.claude import fake_claude
 from new.tests.integration.delegate.cli_integration_test import (
     DONE,
     RESETS,
