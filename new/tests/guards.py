@@ -1,13 +1,14 @@
 """The new core's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)  imports go one way (new/README.md), none imports repo; reads nested, relative and literal
-                     import_module/__import__ imports
-runtime_names(core)  no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
-                     Adapter
-old_core(new)        no import of top-level `core`, no string constant naming the old core's source dir (OLD)
-adapters_key(core)   no string constant "adapters" outside src/driver/
-syntax_311(new)      every .py parses as Python 3.11
-pure_utils(core)     src/utils/ imports only the standard library
+layer_imports(core)   imports go one way (new/README.md), none imports repo; reads nested, relative and literal
+                      import_module/__import__ imports
+runtime_names(core)   no runtime name (RUNTIME) outside src/adapters/, but in a .toml's comments and lines naming an
+                      Adapter
+old_core(new)         no import of top-level `core`, no string constant naming the old core's source dir (OLD)
+adapters_key(core)    no string constant "adapters" outside src/driver/
+syntax_311(new)       every .py parses as Python 3.11
+pure_utils(core)      src/utils/ imports only the standard library
+private_imports(root) no other module's _name
 """
 import ast
 import os
@@ -90,6 +91,33 @@ def syntax_311(new: str) -> list[str]:
         except SyntaxError as e:
             found.append(f"{rel}: {e}")
     return sorted(found)
+
+
+def private_imports(root: str) -> list[str]:
+    found = set()
+    for rel, text in _files(root, ".py"):
+        tree = ast.parse(text, rel)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(a.asname or a.name for a in node.names)
+                module = "." * node.level + (f"{node.module}." if node.module else "")
+                found.update(f"{rel}:{node.lineno}: private {module}{a.name}" for a in node.names if _private(a.name))
+            elif isinstance(node, ast.Import):
+                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _private(node.attr):
+                chain, base = [node.attr], node.value
+                while isinstance(base, ast.Attribute):
+                    chain.append(base.attr)
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in imported:
+                    found.add(f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}")
+    return sorted(found)
+
+
+def _private(name):
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
 def _files(root, suffixes, skip=None):

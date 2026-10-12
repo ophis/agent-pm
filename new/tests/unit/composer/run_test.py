@@ -394,22 +394,25 @@ class Access(Fake):
         return access(run, self.work, cwd=self.work if cwd is None else cwd, project=project, repo_dir=repo_dir,
                       team=found or team(self.root))
 
-    def test_dirs_and_commands_filled_and_the_gate_apart_verbatim(self):
-        gate = "python3 /u/usage.py {{workdir}} *"
-        for name, cfg, repo_dir, dirs, commands, want in (
-                ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, [self.tasks], [f"{SRC}/x *"], gate),
-                ("no gate", {"commands": ["x"]}, None, [self.tasks], ["x"], ""),
+    def test_dirs_writes_and_commands_filled_and_the_gate_apart_verbatim(self):
+        gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
+        for name, cfg, repo_dir, dirs, writes, commands, want in (
+                ("gate", {"commands": ["{{scripts}}/x *"], "gate": gate}, None, [self.tasks], [], [f"{SRC}/x *"],
+                 gate),
+                ("no gate", {"commands": ["x"]}, None, [self.tasks], [], ["x"], ""),
                 ("repo entry binds to the repo dir",
                  {"write": ["repo"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}, self.repo,
-                 [self.tasks, self.repo], [f"{SRC}/x --dir {self.work}/src *"], ""),
-                ("no repo dir drops the repo entry", {"read": ["repo"]}, None, [self.tasks], [], ""),
+                 [self.tasks, self.repo], [self.repo], [f"{SRC}/x --dir {self.work}/src *"], ""),
+                ("no repo dir drops the repo entry", {"read": ["repo"], "write": ["repo", "~/w", "~/w"]}, None,
+                 [self.tasks, home], [home], [], ""),
                 ("methods fills read and write, deduped",
                  {"read": ["{{methods}}", self.tasks], "write": ["{{methods}}/out", "{{methods}}"]}, None,
-                 [self.tasks, self.methods, os.path.join(self.methods, "out")], [], "")):
+                 [self.tasks, self.methods, os.path.join(self.methods, "out")],
+                 [os.path.join(self.methods, "out"), self.methods], [], "")):
             with self.subTest(name):
                 self.assertEqual(self.intent(repo_dir=repo_dir, **cfg),
-                                 Intent(dirs=tuple(dirs), commands=tuple(commands), gate=want, cwd=self.work,
-                                        project=False))
+                                 Intent(dirs=tuple(dirs), writes=tuple(writes), commands=tuple(commands), gate=want,
+                                        cwd=self.work, project=False))
 
     def test_the_workdir_comes_first_only_when_the_cwd_is_another_dir(self):
         other, link = os.path.join(self.tmp, "other"), os.path.join(self.tmp, "link")

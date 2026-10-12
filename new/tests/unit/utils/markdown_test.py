@@ -1,9 +1,21 @@
-"""utils/markdown.py: fenced blocks; unfenced is composer's (base_test.py tests it)."""
+"""utils/markdown.py: unfenced lines and fenced blocks."""
 import unittest
 
 from new.tests import SRC  # noqa: F401
 from composer import base
 from utils.markdown import fenced, unfenced
+
+
+class Unfenced(unittest.TestCase):
+    def test_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
+        for text, want in (("a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
+                            [(0, "a"), (12, "e")]),
+                           ("``\nx", [(0, "``"), (1, "x")])):
+            with self.subTest(text=text):
+                self.assertEqual(unfenced(text), want)
+
+    def test_composer_holds_no_copy(self):
+        self.assertFalse(hasattr(base, "unfenced"))
 
 
 class Fenced(unittest.TestCase):
@@ -29,11 +41,6 @@ class Fenced(unittest.TestCase):
         for text in ("", "plain\ntext", "``\nx\n``", "a ```b```"):
             with self.subTest(text=text):
                 self.assertEqual(fenced(text), [])
-
-
-class Moved(unittest.TestCase):
-    def test_composer_uses_these(self):
-        self.assertIs(base.unfenced, unfenced)
 
 
 if __name__ == "__main__":

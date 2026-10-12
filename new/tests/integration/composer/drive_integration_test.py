@@ -16,8 +16,8 @@ class NewRun(child.Case):
         self.assertFalse(got["prompt"].startswith(RESUME))
         self.assertTrue(got["prompt"].endswith("\n# Input\n\nHello.\n"))
         self.assertEqual(got["trusted"], [], "no trusted_dirs: the caller loads no project settings")
-        self.assertEqual(got["intent"], {"dirs": [self.work, TASKS], "commands": [], "gate": "", "cwd": self.proj,
-                                         "project": False})
+        self.assertEqual(got["intent"], {"dirs": [self.work, TASKS], "writes": [], "commands": [], "gate": "",
+                                         "cwd": self.proj, "project": False})
         self.assertEqual(os.listdir(self.work), [])
 
 

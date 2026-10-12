@@ -58,13 +58,6 @@ text **not** an item
 
 
 class Outline(unittest.TestCase):
-    def test_unfenced_skips_fences_by_char_and_length_and_two_backticks_are_no_fence(self):
-        for text, want in (("a\n```\nb\n~~~\n```\n````\n```\nc\n````\n~~~ js\nd\n~~~  \ne\n  ```\nf\n~~~\ng",
-                            [(0, "a"), (12, "e")]),
-                           ("``\nx", [(0, "``"), (1, "x")])):
-            with self.subTest(text=text):
-                self.assertEqual(base.unfenced(text), want)
-
     def test_headings_and_bold_items_outside_fences_with_their_paths_anchors_and_lines(self):
         steps = ("Role", "Steps")
         self.assertEqual(base.outline(OUTLINED), [

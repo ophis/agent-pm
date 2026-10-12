@@ -16,6 +16,7 @@ from new.tests import NEW, hermetic
 from new.tests.unit.composer.team_test import POET, VERSE
 import composer
 from composer import RunConfig, RunParams
+from composer.base import SRC
 from composer.prompt import RESUME
 from delegate import ConfigError, plan
 from delegate.plan import place
@@ -205,7 +206,7 @@ class Planned(Base):
     KEYS = {"read": ["{{methods}}"], "commands": ["{{scripts}}/x --dir {{workdir}}/src *"]}
 
     def test_the_access_is_the_intents_with_the_gate_last(self):
-        command, gate = f"{composer.SRC}/x --dir {self.work}/src *", "python3 /u/usage.py *"
+        command, gate = f"{SRC}/x --dir {self.work}/src *", "python3 /u/usage.py *"
         for value, commands in ((gate, (command, gate)), ("", (command,))):
             with self.subTest(gate=value):
                 got, _ = self.planned(keys=self.KEYS | {"gate": value})

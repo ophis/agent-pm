@@ -17,9 +17,11 @@ from new.tests.unit.composer.prompt_test import (RUN, composed, heading_anchors,
                                                  section, task_text)
 from new.tests.unit.composer.team_test import INTRO
 import composer
-from composer.prompt import RETURN, RULE
+from composer.base import CONFIG, SRC, anchor, fill, outline
+from composer.prompt import RETURN, RULE, reference_errors
 from composer.run import check_old_keys
 from composer.teams import START
+from utils.markdown import unfenced
 
 CATALOG = composer.catalog()
 ROLES = list(CATALOG)
@@ -46,10 +48,11 @@ repo = "ophis/private_docs"
 branch = "main"
 dir = "Product Design/"
 """
-API = ["ConfigError", "SRC", "TEAM", "CONFIG", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Intent",
-       "Team", "team", "team_dirs", "tasks_path", "roles", "index", "catalog", "check_team_dirs", "check_overlap",
-       "resolve", "trusted_dirs", "bind", "access", "render", "reference_errors", "outline", "unfenced", "anchor",
-       "fill", "team_paths"]
+API = ["ConfigError", "TEAM", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Team", "team", "team_dirs",
+       "index", "catalog", "check_team_dirs", "check_overlap", "team_paths", "resolve", "trusted_dirs", "access",
+       "render"]
+DROPPED = ["SRC", "CONFIG", "Intent", "roles", "tasks_path", "reference_errors", "bind", "fill", "outline", "unfenced",
+           "anchor"]
 TICKET = re.compile(r"TASK-\d+")   # an internal ticket id
 # The format examples the team's text may hold: path in the team root → its examples, each allowed once.
 TICKET_EXAMPLES = {"principles.md": ["(e.g. `TASK-142`)"]}
@@ -117,14 +120,14 @@ def team_texts():
 
 class Package(unittest.TestCase):
     def test_the_api_is_the_modules_names(self):
-        self.assertEqual(sorted(composer.__all__), sorted(API))
+        self.assertEqual(composer.__all__, API)
+        self.assertEqual([name for name in DROPPED if hasattr(composer, name)], [])
         self.assertIs(composer.render, composer.prompt.render)
         self.assertIs(composer.resolve, composer.run.resolve)
-        self.assertIs(composer.tasks_path, composer.teams.tasks_path)
         self.assertIsInstance(composer.teams, types.ModuleType)
         self.assertIs(composer.team, composer.teams.team)
         self.assertIs(composer.team_paths, composer.teams.team_paths)
-        self.assertEqual(composer.CONFIG, os.path.join(CORE, "config.toml"))
+        self.assertEqual(CONFIG, os.path.join(CORE, "config.toml"))
         self.assertEqual((composer.PROGRESS, composer.OUTCOME), ("agent-pm-progress", "agent-pm-outcome"))
 
 
@@ -134,7 +137,7 @@ class Acceptance(unittest.TestCase):
         self.assertEqual(ROLES, ["researcher", "pm", "engineer", "dummy-tester"])
         for role, task in RUNS:
             with self.subTest(role=role, task=task):
-                self.assertEqual(composer.reference_errors(*role_sources(role, task)), [])
+                self.assertEqual(reference_errors(*role_sources(role, task)), [])
 
     def test_each_prompt_returns_in_replies_with_neutral_return_and_parameters(self):
         self.assertNotRegex(RETURN, RUNTIME)
@@ -173,7 +176,7 @@ class Acceptance(unittest.TestCase):
         for name in os.listdir(TASKS):
             text = task_text(name.removesuffix(".md"))
             self.assertEqual(len(START.findall(text)), 1, name)
-            self.assertIn("## Resume", [line.rstrip() for _, line in composer.unfenced(text)], name)
+            self.assertIn("## Resume", [line.rstrip() for _, line in unfenced(text)], name)
 
     def test_the_root_core_team_is_unchanged_from_main(self):
         def git(*args):
@@ -187,7 +190,7 @@ class Acceptance(unittest.TestCase):
             self.assertEqual(hashlib.sha256(f.read()).hexdigest(), SCHEMA_SHA256)
 
     def test_no_language_no_language_rule(self):
-        with open(composer.CONFIG) as f:
+        with open(CONFIG) as f:
             cfg = f.read()
         self.assertIn('\nlanguage = "English"\n', cfg)
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,7 +225,7 @@ class Shipped(unittest.TestCase):
                 text = f.read()
             for example in examples:
                 self.assertEqual(text.count(example), 1, (rel, example))
-        with open(composer.CONFIG) as f:
+        with open(CONFIG) as f:
             self.assertEqual(TICKET.findall(f.read()), [])
         for role, task in RUNS:
             prompt = words(composed(role, task)[0])
@@ -230,7 +233,7 @@ class Shipped(unittest.TestCase):
 
     def test_no_orchestration_or_tracker_words(self):
         texts = team_texts() | {f"{role} {task}": words(composed(role, task)[0]) for role, task in RUNS}
-        for path in [composer.CONFIG, *glob.glob(os.path.join(composer.SRC, "composer", "*.py"))]:
+        for path in [CONFIG, *glob.glob(os.path.join(SRC, "composer", "*.py"))]:
             with open(path) as f:
                 texts[path] = f.read()
         for label, text in texts.items():
@@ -247,7 +250,7 @@ class Shipped(unittest.TestCase):
                 self.assertEqual(generic_names(text), want)
 
     def test_config_comments_name_skills_by_slash_command(self):
-        with open(composer.CONFIG) as f:
+        with open(CONFIG) as f:
             self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
 
     def test_text_holds_only_the_placeholders_render_fills(self):
@@ -257,7 +260,7 @@ class Shipped(unittest.TestCase):
                 self.assertLessEqual(set(re.findall(r"\{\{(\w+)", text)), inline, rel)
 
     def test_local_lines_uncommented_are_a_valid_local_file(self):
-        with open(composer.CONFIG) as f:
+        with open(CONFIG) as f:
             local = tomllib.loads("".join(line.removeprefix("# local: ") for line in f if line.startswith("# local: ")))
         self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "team_dirs"}, set(local))
         self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
@@ -296,7 +299,7 @@ class Shipped(unittest.TestCase):
     def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
         with open(os.path.join(composer.TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
-        heads = [path[1] for _, path, _, heading in composer.outline(charter) if heading and len(path) == 2]
+        heads = [path[1] for _, path, _, heading in outline(charter) if heading and len(path) == 2]
         self.assertEqual(heads, ["Tasks", "Rules", "Input processing", "Repo", "Autopilot", "Finish"])
         lines = ("Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
                  "or branch.", "Commits merged from `origin/<base>` are not this build's work.",
@@ -407,7 +410,7 @@ class RealCore(unittest.TestCase):
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role, task in RUNS:
-            self.assertEqual(composer.reference_errors(*role_sources(role, task)), [], (role, task))
+            self.assertEqual(reference_errors(*role_sources(role, task)), [], (role, task))
 
     def test_every_prompts_own_headings_have_unique_anchors(self):
         for role, task in RUNS:
@@ -423,7 +426,7 @@ class RealCore(unittest.TestCase):
                 g = guide(prompt)
                 self.assertTrue(g.startswith("# Guide\n"))
                 self.assertIn("`<tasks>/<task>.md`", g)
-                self.assertIn(f"[{run.role_title} rules](#{composer.anchor(run.role_title)}) > your task file's rules",
+                self.assertIn(f"[{run.role_title} rules](#{anchor(run.role_title)}) > your task file's rules",
                               g)
                 self.assertEqual(prompt.count("On conflict:"), 1)
                 self.assertIn("On conflict:", g)
@@ -497,13 +500,13 @@ class RealCore(unittest.TestCase):
             prompt, run = composed(role)
             prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = composer.fill(cmd, {"scripts": composer.SRC, "workdir": RUN.workdir}, role).removesuffix(" *")
+                cmd = fill(cmd, {"scripts": SRC, "workdir": RUN.workdir}, role).removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
 
     def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
         for role, task in RUNS:
             prompt, _ = composed(role, task)
-            for value in (RUN.workdir, composer.SRC, RULE):
+            for value in (RUN.workdir, SRC, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 

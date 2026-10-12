@@ -102,23 +102,20 @@ def plan(run: RunConfig, task: str | None, input: str, workdir: str, *, runtime:
     intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=repo, team=team)
     access = api.Access(intent.dirs, intent.commands + ((intent.gate,) if intent.gate else ()), here, project)
     spec = api.Spec(workdir=workdir, access=access, tier=run.tier, effort=run.effort)
-    _check_team_dirs(run, team, guarded, workdir, here, repo, intent.dirs)
+    _check_team_dirs(run, team, guarded, workdir, here, intent.writes, intent.dirs)
     params = RunParams(input=input, out=out or os.path.join(workdir, DELIVERABLE), workdir=workdir,
                        resume=resume is not None)
     return Plan(runtime, mode, sid, resume is not None, composer.render(run, params, team=team), spec, run, params, out)
 
 
 def _check_team_dirs(run: RunConfig, team: Team, guarded: tuple[str, ...], workdir: str, here: str,
-                     repo: str | None, dirs: tuple[str, ...]) -> None:
+                     write_dirs: tuple[str, ...], dirs: tuple[str, ...]) -> None:
     """`team`'s dirs checked whole (composer.check_team_dirs), the `guarded` ones for overlap only, against what the run
     can write: the workdir, the cwd, each write dir and each added dir but the role's own tasks dir. Dirs an Adapter
     adds itself are its own to guard: driver.api exposes none."""
     if not team.dirs and not guarded:
         return
-    methods = os.path.join(team.root, "methods")
-    writes = [("the workdir", workdir), ("the cwd", here)]
-    writes += [(f"write dir {e}", p) for e in run.write
-               if (p := composer.bind(composer.fill(e, {"methods": methods}, "write"), repo))]
+    writes = [("the workdir", workdir), ("the cwd", here)] + [(f"write dir {p}", p) for p in write_dirs]
     own = team.tasks_dir(run.role)
     writes += [("a dir the run adds", p) for p in dirs if not own or os.path.realpath(p) != os.path.realpath(own)]
     composer.check_team_dirs(team.dirs, writes=writes)

@@ -14,13 +14,11 @@ Formats of roles/, tasks/ and templates/ files, the team root's and a team dir's
 A role's index is checked whenever it is read, a team dir file whenever it is looked up; a defect raises ConfigError
 naming the file.
 """
-from composer.base import CONFIG, SCHEMA, SRC, TEAM, ConfigError, anchor, fill, outline, unfenced
-from composer.teams import (PROGRESS, Team, catalog, check_overlap, check_team_dirs, index, roles, tasks_path, team,
-                            team_dirs, team_paths)
-from composer.run import Intent, RunConfig, RunParams, access, bind, resolve, trusted_dirs
-from composer.prompt import OUTCOME, reference_errors, render
+from composer.base import SCHEMA, TEAM, ConfigError
+from composer.teams import PROGRESS, Team, catalog, check_overlap, check_team_dirs, index, team, team_dirs, team_paths
+from composer.run import RunConfig, RunParams, access, resolve, trusted_dirs
+from composer.prompt import OUTCOME, render
 
-__all__ = ["ConfigError", "SRC", "TEAM", "CONFIG", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Intent",
-           "Team", "team", "team_dirs", "tasks_path", "roles", "index", "catalog", "check_team_dirs", "check_overlap",
-           "resolve", "trusted_dirs", "bind", "access", "render", "reference_errors", "outline", "unfenced", "anchor",
-           "fill", "team_paths"]
+__all__ = ["ConfigError", "TEAM", "SCHEMA", "PROGRESS", "OUTCOME", "RunConfig", "RunParams", "Team", "team",
+           "team_dirs", "index", "catalog", "check_team_dirs", "check_overlap", "team_paths", "resolve", "trusted_dirs",
+           "access", "render"]
