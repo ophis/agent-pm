@@ -35,6 +35,7 @@ ABSENT = re.compile(r"can't find session.*|no server running.*|error connecting 
 RUNNING = "running"
 UNKNOWN = "unknown"   # tmux failed otherwise, or is missing
 HANDOVER_TIMEOUT = 10
+ERRPIPE = "errpipe"
 POLL = 0.1
 RESPAWN_WAIT = 10
 PAUSE = 0.5
@@ -108,25 +109,30 @@ APPLESCRIPT = """on run argv
 end run"""
 TERMINAL_KEYS = ("TMUX", "TMUX_PANE", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
                  "ITERM_SESSION_ID", "ITERM_PROFILE", "LC_TERMINAL", "LC_TERMINAL_VERSION", "COLUMNS", "LINES")
-# Runs as `python -I -c EXEC <file>`, so no '#' or trailing ';'. Resets SIGPIPE and SIGXFSZ as Popen does; `block`
-# stays blocked across execve; a cwd it cannot enter leaves the handover untaken; it waits up to RESPAWN_WAIT s for
-# `after` to exit or turn zombie.
+# Runs as `python -I -c EXEC <handover> <errpipe>`: no '#' or trailing ';'. As Popen: SIGPIPE and SIGXFSZ reset, an
+# OSError's errno written to the errpipe, which execve closes. `block` stays blocked across execve; a cwd it cannot
+# enter or no errpipe reader: handover untaken; it waits up to RESPAWN_WAIT s for `after` to exit or turn zombie.
 EXEC = f"""import json, os, signal, sys, time
 with open(sys.argv[1]) as f: h = json.load(f)
 signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
-os.chdir(h['cwd'])
-os.unlink(sys.argv[1])
-for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
-    try: os.kill(h['after'], 0)
-    except OSError: break
-    try:
-        with open('/proc/%d/stat' % h['after'], 'rb') as f: z = f.read().rsplit(b')', 1)[-1].split()[:1] == [b'Z']
-    except OSError: z = False
-    if z: break
-    time.sleep({POLL})
-h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
-for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
-os.execve(h['argv'][0], h['argv'], h['env'])"""
+w = os.open(sys.argv[2], os.O_WRONLY | os.O_NONBLOCK)
+try:
+    os.chdir(h['cwd'])
+    os.unlink(sys.argv[1])
+    for _ in range({round(RESPAWN_WAIT / POLL)} if h.get('after') else 0):
+        try: os.kill(h['after'], 0)
+        except OSError: break
+        try:
+            with open('/proc/%d/stat' % h['after'], 'rb') as f: z = f.read().rsplit(b')', 1)[-1].split()[:1] == [b'Z']
+        except OSError: z = False
+        if z: break
+        time.sleep({POLL})
+    h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
+    for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+    os.execve(h['argv'][0], h['argv'], h['env'])
+except OSError as e:
+    os.write(w, b'%d' % e.errno)
+    raise"""
 
 
 class TuiError(Exception):
@@ -164,14 +170,14 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its terminal keys the
     pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line to @events), the `<session> <state>`
     border and the status line set in the same tmux call (an instant death still gets its dead line); opens no pane.
-    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Raising, it
-    leaves no session of its own."""
+    A running session is refused, a dead one replaced; argv reaches the pane through a 0600 handover file. Returns once
+    argv has exec'd; a failed exec raises. Raising, it leaves no session of its own."""
     _name(session)
     options = _tags(session, tags or {})
     argv = _command(argv, env)
     if events is not None:
         events = events_file(events)
-    tmp = None
+    tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
@@ -181,7 +187,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if isinstance(state, int):
             kill(session, proc=proc)
-        _handover(path, argv, cwd, env)
+        pipe = _handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
         decorations = [arg for args in _decorations(session, events, status_line) for arg in (";", *args)]
         # new-session may have run even when the tmux call fails
@@ -193,7 +199,7 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
             if _err(res).startswith("duplicate session:"):   # another start took the name: not ours to kill
                 may_run = False
             raise TuiError(f"tmux: {_err(res)}")
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep):
             raise TuiError("the session did not start")
         may_run = False
     except OSError as e:
@@ -201,6 +207,8 @@ def start(session: str, argv: list[str], *, cwd: str, env: dict[str, str], event
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
+        if pipe is not None:
+            os.close(pipe)
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
@@ -223,12 +231,12 @@ def detach(session: str, argv: list[str], *, cwd: str, env: dict[str, str], bloc
     argv = _command(argv, env)
     iterm = env.get("ITERM_SESSION_ID", "")
     terminal = ["-e", f"ITERM_SESSION_ID={iterm}"] if ITERM_OPENER.fullmatch(iterm) else []
-    tmp = None
+    tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
-        _handover(path, argv, cwd, env, block=[int(s) for s in block])
+        pipe = _handover(path, argv, cwd, env, block=[int(s) for s in block])
         may_run = True
         res = _tmux(["new-session", "-d", *terminal, "-s", session, *wrapper,
                      *([";", "set-option", "-t", f"={session}:", "@opener", opener] if opener is not None else [])],
@@ -238,7 +246,7 @@ def detach(session: str, argv: list[str], *, cwd: str, env: dict[str, str], bloc
                 may_run = False
                 raise TuiError(f"session {session} exists")
             raise TuiError(f"tmux: {_err(res)}")
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep):
             raise TuiError(f"session {session} did not start")
         may_run = False
     except OSError as e:
@@ -246,6 +254,8 @@ def detach(session: str, argv: list[str], *, cwd: str, env: dict[str, str], bloc
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)   # first, so a late wrapper finds no file to run
+        if pipe is not None:
+            os.close(pipe)
         if may_run:
             with contextlib.suppress(TuiError):
                 kill(session, proc=proc)
@@ -254,24 +264,27 @@ def detach(session: str, argv: list[str], *, cwd: str, env: dict[str, str], bloc
 def respawn(session: str, argv: list[str], *, cwd: str, env: dict[str, str], proc=subprocess.run,
             sleep=time.sleep) -> None:
     """Runs argv in the session's pane in place of its command (respawn-pane -k), clearing its history in the same
-    command; argv starts once the old process is gone, or after RESPAWN_WAIT s."""
+    command; argv starts once the old process is gone, or after RESPAWN_WAIT s. Returns as start does."""
     _name(session)
     argv = _command(argv, env)
-    tmp = None
+    tmp = pipe = None
     try:
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
         target = f"={session}:"
         pid = _tmux_ok(["display-message", "-p", "-t", target, "#{pane_pid}"], proc).stdout.strip()
-        _handover(path, argv, cwd, env, after=int(pid) if re.fullmatch(r"[1-9][0-9]*", pid) else None)
+        after = int(pid) if re.fullmatch(r"[1-9][0-9]*", pid) else None
+        pipe = _handover(path, argv, cwd, env, after=after)
         _tmux_ok(["clear-history", "-t", target, ";", "respawn-pane", "-k", "-t", target, *wrapper], proc)
-        if not _taken(path, sleep):
+        if not _started(path, pipe, argv[0], sleep, RESPAWN_WAIT if after else 0):
             raise TuiError("the pane did not respawn")
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
+        if pipe is not None:
+            os.close(pipe)
 
 
 def _command(argv: list[str], env: dict[str, str]) -> list[str]:
@@ -284,20 +297,23 @@ def _command(argv: list[str], env: dict[str, str]) -> list[str]:
 
 
 def _wrapper(tmp: str) -> tuple[str, list[str]]:
-    path = os.path.join(tmp, "handover.json")
-    for arg in (sys.executable, path):
+    path, fifo = os.path.join(tmp, "handover.json"), os.path.join(tmp, ERRPIPE)
+    for arg in (sys.executable, path, fifo):
         if "#" in arg or arg.endswith(";"):
             raise TuiError(f"tmux would misread {arg!r}")
-    return path, [sys.executable, "-I", "-c", EXEC, path]
+    return path, [sys.executable, "-I", "-c", EXEC, path, fifo]
 
 
 def _handover(path: str, argv: list[str], cwd: str, env: dict[str, str], after: int | None = None,
-              block: list[int] | None = None) -> None:
+              block: list[int] | None = None) -> int:
     cwd = os.path.abspath(cwd)
     child = {k: v for k, v in env.items() if k not in TERMINAL_KEYS}
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
         json.dump({"argv": argv, "cwd": cwd, "env": {**child, "PWD": cwd}, **({"after": after} if after else {}),
                    **({"block": block} if block is not None else {})}, f)
+    fifo = os.path.join(os.path.dirname(path), ERRPIPE)
+    os.mkfifo(fifo, 0o600)
+    return os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
 
 
 def _tags(session: str, tags: dict[str, str]) -> list[str]:
@@ -309,12 +325,30 @@ def _tags(session: str, tags: dict[str, str]) -> list[str]:
     return args
 
 
-def _taken(path: str, sleep) -> bool:
-    for _ in range(round(HANDOVER_TIMEOUT / POLL)):
-        if not os.path.exists(path):
-            return True
+def _started(path: str, pipe: int, command: str, sleep, extra: float = 0) -> bool:
+    """Whether the handover went in HANDOVER_TIMEOUT s, then the errpipe hit EOF (execve) in HANDOVER_TIMEOUT + extra
+    s; an errno read raises."""
+    polls, out = 0, b""
+    while os.path.exists(path):
+        if polls == round(HANDOVER_TIMEOUT / POLL):
+            return False
         sleep(POLL)
-    return not os.path.exists(path)
+        polls += 1
+    while True:   # only now: a FIFO no writer opened reads as EOF
+        try:
+            chunk = os.read(pipe, 64)
+        except BlockingIOError:
+            if polls >= round((HANDOVER_TIMEOUT + extra) / POLL):
+                return False
+            sleep(POLL)
+            polls += 1
+            continue
+        if not chunk:
+            break
+        out += chunk
+    if out:
+        raise TuiError(f"cannot run {command}: {os.strerror(int(out))}")
+    return True
 
 
 def mark(word: str, events: str | None, *, pane: str | None = None, tmux: str = "tmux",

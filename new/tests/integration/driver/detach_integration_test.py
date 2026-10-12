@@ -1,8 +1,10 @@
 """driver.api.detach on a private tmux server (new/tests/live_tmux.py), os.environ that server's env: a child that
 reports its blocked signals, unblocks them and runs until told to end; its session live then absent, its @opener, a
-taken name, a cwd it cannot enter."""
+taken name, a cwd it cannot enter, a script whose interpreter is missing."""
+import errno
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -90,6 +92,16 @@ class DetachTest(unittest.TestCase):
         with self.assertRaisesRegex(tmux_host.TuiError, "^session d2 did not start$"):
             tmux_host.detach("d2", self.argv("d2"), cwd=missing, env=self.server.env(),
                              sleep=lambda seconds: time.sleep(seconds / 10))
+        live_tmux.wait(self.gone, what="no session left")
+
+    def test_a_script_whose_interpreter_is_missing_fails_it_leaving_no_session(self):
+        script = os.path.join(self.dir, "script")
+        with open(script, "w") as f:
+            f.write("#!/nonexistent/interpreter\n")
+        os.chmod(script, 0o755)
+        error = f"detach d1: cannot run {script}: {os.strerror(errno.ENOENT)}"
+        with self.assertRaisesRegex(api.DriverError, "^" + re.escape(error) + "$"):
+            api.detach("d1", [script], self.dir, self.server.env())
         live_tmux.wait(self.gone, what="no session left")
 
 

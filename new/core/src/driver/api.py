@@ -357,7 +357,8 @@ def attach_command(name: str) -> str:
 
 
 def detach(name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None) -> None:
-    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv runs."""
+    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd (a
+    failed exec raises)."""
     _name(name)
     if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
         raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
