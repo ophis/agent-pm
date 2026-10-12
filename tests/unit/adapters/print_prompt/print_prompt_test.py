@@ -8,7 +8,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.delegate.event.reply import marks, outcome_block
+from agent_pm.delegate.composer import resolve
+from agent_pm.delegate.event.outcome import read as read_outcome
+from agent_pm.delegate.event.reply import OUTCOME, PROGRESS, marks, outcome_block
 from agent_pm.session.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
@@ -55,7 +57,7 @@ class Run(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.workdir = os.path.join(tmp.name, "work")
-        self.spec = Spec(workdir=self.workdir)
+        self.spec = Spec(workdir=self.workdir, reply_tags=(PROGRESS, OUTCOME))
         self.session = PrintPromptAdapter({}).in_process()
 
     def ran(self, prompt=PROMPT) -> list:
@@ -83,6 +85,20 @@ class Run(Case):
             self.session.check(PROMPT, self.spec, True)
         self.assertEqual(str(caught.exception), "print_prompt has no session to resume")
 
+    def test_check_refuses_a_spec_without_the_reply_protocol(self):
+        with self.assertRaises(ConfigError) as caught:
+            self.session.check(PROMPT, Spec(workdir=self.workdir), False)
+        self.assertEqual(
+            str(caught.exception),
+            "print_prompt needs the caller's reply protocol (Spec.reply_tags)",
+        )
+
+    def test_the_replies_use_the_tags_the_spec_names(self):
+        self.spec = Spec(workdir=self.workdir, reply_tags=("p-x", "o-x"))
+        found = self.ran()
+        self.assertEqual(found[0], Reply("[p-x:start] the composed prompt is handed to the caller"))
+        self.assertTrue(found[1].text.startswith("```o-x\n"), found[1].text)
+
     def test_replies_the_start_mark_then_the_outcome_block_naming_the_new_file(self):
         found = self.ran()
         (name,) = os.listdir(os.path.join(self.workdir, "tmp"))
@@ -91,7 +107,8 @@ class Run(Case):
         block = "```agent-pm-outcome\n" + json.dumps(data | {"deliverable_file": f"tmp/{name}"})
         block += "\n```"
         self.assertEqual(found, [Reply(START), Reply(block), TurnEnd(block, 0)])
-        self.assertEqual(PrintPromptInProcess.START, START)
+        outcome = read_outcome(outcome_block(found[2].reply), resolve("dummy-tester"), self.workdir)
+        self.assertEqual((outcome.status, outcome.deliverable), ("done", PROMPT))
         self.assertEqual(
             [m for reply in found[:2] for m in marks(reply.text)],
             [("start", "the composed prompt is handed to the caller")],

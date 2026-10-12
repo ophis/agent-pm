@@ -162,8 +162,8 @@ class SpecTest(Refusals):
             (spec.access, spec.tier, spec.effort, spec.sid), (Access(), None, None, None)
         )
         self.assertEqual(
-            (spec.flags, spec.env, spec.name, spec.protect),
-            ((), {}, None, ()),
+            (spec.flags, spec.env, spec.name, spec.protect, spec.reply_tags),
+            ((), {}, None, (), None),
         )
 
     def plain(self, **fields):
@@ -249,6 +249,24 @@ class SpecTest(Refusals):
                 self.refused(
                     lambda: Spec(workdir="/w", protect=bad),
                     "protect must be a tuple of printable absolute paths",
+                )
+
+    def test_reply_tags_are_none_or_a_progress_and_an_outcome_tag(self):
+        self.assertEqual(Spec(workdir="/w", reply_tags=("p-1", "o_2")).reply_tags, ("p-1", "o_2"))
+        for bad in (
+            ["p", "o"],
+            ("p",),
+            ("p", "o", "x"),
+            ("p", ""),
+            ("p", "o b"),
+            ("p:", "o"),
+            ("p", 1),
+            "po",
+        ):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda: Spec(workdir="/w", reply_tags=bad),
+                    "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+",
                 )
 
     def test_keyword_only_and_frozen(self):

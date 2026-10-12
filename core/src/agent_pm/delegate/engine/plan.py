@@ -12,6 +12,7 @@ import agent_pm.config
 from agent_pm.config import CONFIG, LOCAL
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
+from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_config
 from agent_pm.utils.paths import under
@@ -161,7 +162,13 @@ def plan(
     )
     flags, env = policy(runtime)
     spec = api.Spec(
-        workdir=workdir, access=access, tier=run.tier, effort=run.effort, flags=flags, env=env
+        workdir=workdir,
+        access=access,
+        tier=run.tier,
+        effort=run.effort,
+        flags=flags,
+        env=env,
+        reply_tags=(PROGRESS, OUTCOME),
     )
     _check_team_dirs(team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
     params = RunParams(

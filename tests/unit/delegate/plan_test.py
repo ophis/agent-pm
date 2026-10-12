@@ -20,6 +20,7 @@ from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.plan import place
+from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
@@ -92,6 +93,12 @@ class Base(Case):
         with self.assertRaises(ConfigError) as cm:
             self.planned(*args, **kw)
         return str(cm.exception)
+
+
+class ReplyTags(Base):
+    def test_the_spec_carries_the_delegates_reply_protocol(self):
+        got, _ = self.planned()
+        self.assertEqual(got.spec.reply_tags, (PROGRESS, OUTCOME))
 
 
 class Configures(Base):

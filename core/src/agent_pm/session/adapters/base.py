@@ -17,6 +17,7 @@ from types import MappingProxyType
 from agent_pm.utils.paths import printable_abs
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+TAG = re.compile(r"[A-Za-z0-9_-]+")
 TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
@@ -77,6 +78,9 @@ class Spec:
     env: Mapping[str, str] = field(default_factory=dict)
     name: str | None = None
     protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
+    reply_tags: tuple[str, str] | None = (
+        None  # the caller's (progress, outcome) tags (print_prompt only)
+    )
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -102,6 +106,14 @@ class Spec:
             raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
             raise ConfigError("protect must be a tuple of printable absolute paths")
+        if self.reply_tags is not None and not (
+            isinstance(self.reply_tags, tuple)
+            and len(self.reply_tags) == 2
+            and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
+        ):
+            raise ConfigError(
+                "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
+            )
 
 
 @dataclass(frozen=True)

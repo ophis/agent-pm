@@ -2,7 +2,7 @@
 A repo guard walks only TREES under the repo root.
 
 layer_imports(core)   imports go one way (README.md › Layout), a layer imports no package module outside LAYERS, SESSION
-                      and SHARED, a session layer no delegate module but UPWARD, none imports TOOLS, ORCH or a BARE
+                      and SHARED, a session layer no delegate module, none imports TOOLS, ORCH or a BARE
                       name, nested, relative or import_module'd
 delegate_session(core) delegate/ imports SESSION only by an __all__ name
 layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
@@ -10,7 +10,7 @@ layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (p
 core_standalone(core) no file names LINEAR
 runtime_names(core)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
-session_only(core)    session/ imports only stdlib, session and utils (UPWARD aside), names none of SESSION_WORDS
+session_only(core)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
 adapters_key(core)    no str constant "adapters" outside config.py
 syntax_311(repo)      every .py parses as Python 3.11
 pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
@@ -72,8 +72,6 @@ ALLOWED = {
     (OUTSIDE, SESSION_TYPES),
 }
 SHARED = ("utils", "config", "delegate.event")
-# until TASK-366 (356-5) deletes print_prompt
-UPWARD = {("session.adapters.print_prompt.in_process", "delegate.event")}
 TOOLS = "delegate.team.tools"
 ORCH = "linear_orchestrator"
 UNITS = (*LAYERS, *SHARED, TOOLS)
@@ -92,7 +90,14 @@ BARE = (
     "repo",
     ORCH,
 )
-SESSION_WORDS = ("config_file", "tomllib", "agent_pm.config")
+SESSION_WORDS = (
+    "config_file",
+    "tomllib",
+    "agent_pm.config",
+    "agent-pm-progress",
+    "agent-pm-outcome",
+    "team/",
+)
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
@@ -162,11 +167,7 @@ def layer_imports(core: str) -> list[str]:
             elif (
                 unit in (TOOLS, ORCH)
                 or (layer != OUTSIDE and inner and unit not in (*LAYERS, SESSION, *SHARED))
-                or (
-                    _within(layer, "session")
-                    and _within(unit, "delegate")
-                    and (name, unit) not in UPWARD
-                )
+                or (_within(layer, "session") and _within(unit, "delegate"))
                 or (
                     unit in (*LAYERS, SESSION)
                     and unit != layer
@@ -278,7 +279,6 @@ def session_only(core: str) -> list[str]:
                 for m, inner in imports
                 if m.split(".")[0] not in sys.stdlib_module_names
                 and not (_within(inner, SESSION) or _within(inner, "utils"))
-                and (name, _unit(inner)) not in UPWARD
             )
     for rel, text in _files(core, ".py"):
         if rel.startswith(f"src/{_top(core)}/{SESSION}/"):

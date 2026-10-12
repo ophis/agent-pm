@@ -357,6 +357,7 @@ class LayerImports(Sample):
                 f"{PKG}/delegate/composer/teams.py: delegate.composer imports agent_pm.delegate.engine.plan",
                 f"{PKG}/delegate/engine/plan.py: delegate imports agent_pm.manager.roster",
                 f"{PKG}/delegate/event/reply.py: outside the layers imports agent_pm.delegate.composer.RunConfig",
+                f"{PKG}/session/adapters/print_prompt/in_process.py: session.adapters imports agent_pm.delegate.event.reply",
                 f"{PKG}/session/adapters/x.py: session.adapters imports agent_pm.delegate.event.PROGRESS",
             ],
         )
@@ -612,25 +613,32 @@ class SessionOnly(Sample):
             ],
         )
 
-    def test_upward_is_the_one_exception(self):
-        root = self.tree(
-            {
-                f"{PKG}/session/adapters/print_prompt/in_process.py": "from agent_pm.delegate.event.reply import OUTCOME\n"
-            }
+    def test_print_prompt_has_no_exception(self):
+        path = f"{PKG}/session/adapters/print_prompt/in_process.py"
+        root = self.tree({path: "from agent_pm.delegate.event.reply import OUTCOME\n"})
+        self.assertEqual(
+            guards.session_only(root), [f"{path}: session imports agent_pm.delegate.event.reply"]
         )
-        self.assertEqual(guards.session_only(root), [])
 
-    def test_no_session_source_names_a_config_reader(self):
+    def test_no_session_source_names_a_config_reader_the_reply_protocol_or_the_team(self):
         root = self.tree(
             {
                 f"{PKG}/session/x.py": "from agent_pm.utils.config_file import read_config\n",
                 f"{PKG}/session/y.py": "# tomllib\n",
-                f"{PKG}/utils/z.py": "import tomllib\n",
+                f"{PKG}/session/z.py": 'P = "[agent-pm-progress:start]"\nO = "```agent-pm-outcome"\n'
+                'T = "team/roles"\n',
+                f"{PKG}/utils/z.py": 'import tomllib\nP = "agent-pm-progress"\n',
             }
         )
         self.assertEqual(
             guards.session_only(root),
-            [f"{PKG}/session/x.py: names config_file", f"{PKG}/session/y.py: names tomllib"],
+            [
+                f"{PKG}/session/x.py: names config_file",
+                f"{PKG}/session/y.py: names tomllib",
+                f"{PKG}/session/z.py: names agent-pm-outcome",
+                f"{PKG}/session/z.py: names agent-pm-progress",
+                f"{PKG}/session/z.py: names team/",
+            ],
         )
 
 
