@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from agent_pm.role import composer
 from agent_pm.role.composer import RunConfig, RunParams, Team
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.paths import under
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`

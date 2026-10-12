@@ -15,7 +15,7 @@ from agent_pm.role.delegate.outcome import SAVES_DELIVERABLE, InvalidOutcome, Ou
 from agent_pm.role.delegate.outcome import read as read_outcome
 from agent_pm.role.delegate.plan import ConfigError, Plan, plan
 from agent_pm.role.delegate.reply import marks, outcome_block
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.files import save
 from agent_pm.utils.text import printable
 

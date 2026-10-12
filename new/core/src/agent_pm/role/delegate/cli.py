@@ -23,7 +23,7 @@ from agent_pm.role import composer
 from agent_pm.role.composer import RunParams, Team
 from agent_pm.role.delegate import Begun, ConfigError, Plan, detach, plan, run
 from agent_pm.role.delegate.runner import printable
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.args import Once
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")

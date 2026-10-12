@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from agent_pm.role.delegate.plan import ConfigError, Plan
-from agent_pm.session.driver import api
+from agent_pm.session import api
 from agent_pm.utils.files import append_line
 from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.text import printable
