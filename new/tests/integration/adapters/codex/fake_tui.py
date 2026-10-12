@@ -52,6 +52,7 @@ def started(mode, args):
         {
             "mode": mode,
             "pid": os.getpid(),
+            "parent_pid": os.getppid(),
             "cwd": os.getcwd(),
             "argv": args,
             "env": {
@@ -60,6 +61,7 @@ def started(mode, args):
                     *fake_codex.MARKERS,
                     *fake_codex.DEFAULTS,
                     "CODEX_HOME",
+                    "HOME",
                     "PWD",
                     "TMPDIR",
                     "FAKE_ADDITION",
@@ -161,7 +163,9 @@ def app_server(args):
     case = scene.get("catalog_case")
     if case == "exit":
         return 1
-    if case == "silent":
+    if case == "silent_tree":
+        subprocess.Popen([sys.executable, "-I", __file__, "stalled-child", "2"])
+    if case in ("silent", "silent_tree"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         time.sleep(30)
         return 0
@@ -283,6 +287,7 @@ def interactive(args):
                     "payload": payload,
                     "key": row["key"],
                     "pid": os.getpid(),
+                    "parent_pid": os.getppid(),
                     "cwd": os.getcwd(),
                     "exit": result.returncode,
                     "stdout": result.stdout,
@@ -345,6 +350,15 @@ def interactive(args):
 
 
 def main(args):
+    if args[:1] == ["stalled-child"]:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        log({"descendant": os.getpid()})
+        if int(args[1]) > 1:
+            subprocess.Popen(
+                [sys.executable, "-I", __file__, "stalled-child", str(int(args[1]) - 1)]
+            )
+        time.sleep(30)
+        return 0
     if args[:1] == ["exec"]:
         return fake_codex.main()
     return app_server(args[1:]) if args[:1] == ["app-server"] else interactive(args)

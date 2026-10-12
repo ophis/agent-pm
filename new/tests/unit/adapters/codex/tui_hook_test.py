@@ -7,7 +7,7 @@ import os
 import time
 from unittest import mock
 
-from adapters.codex import tui_hook
+from adapters.codex import sessions, tui_hook
 
 
 class HookTest(Base):
@@ -56,6 +56,7 @@ class HookTest(Base):
                 [
                     str(self.work),
                     self.spec.sid,
+                    sessions.store_root(),
                     json.dumps(["/protected/python", "hook.py"]),
                     "Stop",
                 ]
@@ -98,5 +99,44 @@ class HookTest(Base):
         ):
             self.assertFalse(
                 tui_hook.bind("Interrupt", self.payload(), str(self.work), self.spec.sid)
+            )
+        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
+
+    def test_explicit_caller_store_survives_configured_runtime_home(self):
+        self.prepare()
+        store = sessions.store_root()
+        runtime_home = self.root / "runtime-home"
+        runtime_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
+            self.assertTrue(
+                tui_hook.bind("Stop", self.payload(), str(self.work), self.spec.sid, root=store)
+            )
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+        self.assertFalse((runtime_home / ".agent-pm").exists())
+
+    def test_explicit_store_keeps_symlink_mode_and_implicit_root_guards(self):
+        self.prepare()
+        store = self.record().parent
+        alias = self.root / "alias"
+        alias.symlink_to(store, target_is_directory=True)
+        for path in (str(alias), "relative", str(store)):
+            with self.subTest(path=path):
+                if path == str(store):
+                    store.chmod(0o755)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertFalse(
+                        tui_hook.bind(
+                            "Stop", self.payload(), str(self.work), self.spec.sid, root=path
+                        )
+                    )
+                store.chmod(0o700)
+        with (
+            mock.patch.dict(os.environ, {"TMPDIR": str(store.parent)}),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertFalse(
+                tui_hook.bind(
+                    "Stop", self.payload(), str(self.work), self.spec.sid, root=str(store)
+                )
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)

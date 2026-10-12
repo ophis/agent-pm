@@ -619,6 +619,33 @@ class TuiIntegrationTest(Live):
         )
         self.assertEqual(Stream(self, self.start()).until(LimitHit)[-1], LimitHit())
 
+    def test_quoted_assistant_limit_screen_does_not_emit_limit_hit(self):
+        screen = "Codex > gpt-test\n• You have asked me to quote this error.\n• You've hit your usage limit. is a quoted example\n› "
+        self.scene([[{"kind": "screen", "text": screen}, "quoted reply"]])
+        stream = Stream(self, self.start())
+        self.assertEqual(
+            stream.until(TurnEnd),
+            [SessionBound(self.bound().native_id), Activity(), Activity(), TurnEnd("quoted reply")],
+        )
+        stream.quiet()
+
+    def test_configured_home_keeps_caller_store_for_stop_binding_and_resume(self):
+        runtime_home = self.root / "runtime-home"
+        runtime_home.mkdir()
+        self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
+        registry.configure(self.config)
+        self.scene([["configured home"]])
+        first = self.start()
+        self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("configured home"))
+        native = self.bound().native_id
+        first.stop()
+        second = self.start(resume=self.sid)
+        self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("configured home"))
+        self.assertEqual(self.bound().native_id, native)
+        self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
+        self.assertFalse((runtime_home / ".agent-pm").exists())
+        self.assertTrue(all(call["env"]["HOME"] == str(runtime_home) for call in self.calls()))
+
 
 class HookTrustIntegrationTest(Live):
     def test_interleaved_catalog_notifications_exact_hashes_and_cleanup(self):
@@ -823,3 +850,53 @@ class HookTrustIntegrationTest(Live):
         (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))
         self.assertEqual(self.calls(), [])
+
+    def test_stop_and_sigterm_during_preflight_kill_probe_and_owned_descendants(self):
+        def cleanup(pid):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        def running(pid):
+            result = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+            )
+            return bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
+
+        for index, action in enumerate(("stop", "term")):
+            with self.subTest(action=action):
+                before = len(self.calls("app-server"))
+                descendants_before = len([r for r in self.logged() if "descendant" in r])
+                self.scene(catalog_case="silent_tree")
+                handle = self.start(f"interrupted{index}", sid=f"interrupted-{index}")
+                probe = live_tmux.wait(
+                    lambda: self.calls("app-server")[before:] or None, WAIT, what="silent preflight"
+                )[0]
+                self.addCleanup(cleanup, probe["pid"])
+                descendants = live_tmux.wait(
+                    lambda: (
+                        [r["descendant"] for r in self.logged() if "descendant" in r][
+                            descendants_before:
+                        ]
+                        if len([r for r in self.logged() if "descendant" in r])
+                        >= descendants_before + 2
+                        else None
+                    ),
+                    WAIT,
+                    what="owned descendants",
+                )
+                if action == "stop":
+                    handle.stop()
+                else:
+                    os.kill(probe["parent_pid"], signal.SIGTERM)
+                live_tmux.wait(
+                    lambda: (
+                        not self.pid_exists(probe["pid"])
+                        and all(not running(pid) for pid in descendants)
+                    ),
+                    4,
+                    what="interrupted preflight cleanup",
+                )
+                self.assertEqual(len(self.calls("app-server")), before + 1)
+                self.assertEqual(self.calls(), [])

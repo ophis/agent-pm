@@ -85,6 +85,7 @@ class StartTest(Base):
         with (
             mock.patch("select.select", return_value=([], [], [])),
             mock.patch("os.killpg") as kill,
+            mock.patch("time.monotonic", side_effect=[0, 0, 0, 6]),
         ):
             tui_start.close(proc)
         kill.assert_called_once_with(123, tui_start.signal.SIGKILL)
@@ -201,3 +202,61 @@ class StartTest(Base):
                 with self.assertRaises(tui_start.StartError):
                     tui_start.main([data])
         proc.assert_not_called()
+
+    def test_signal_during_spawn_cleans_owned_process_without_retry_or_exec(self):
+        run = self.adapter.tui()
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = run.launch(
+                "prompt", self.spec, False, (sys.executable, "-I", "/protected/hook.py")
+            )
+        for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
+            with self.subTest(signum=signum):
+                proc = mock.Mock(pid=123)
+                proc.stdout.fileno.return_value = 42
+                proc.wait.return_value = 0
+                original = tui_start.signal.getsignal(signum)
+
+                def spawn(*args, **kwargs):
+                    tui_start.signal.raise_signal(signum)
+                    return proc
+
+                with (
+                    mock.patch("subprocess.Popen", side_effect=spawn) as popen,
+                    mock.patch("os.killpg") as kill,
+                    mock.patch("os.execve") as execute,
+                    self.assertRaises(tui_start._Terminated),
+                ):
+                    tui_start.main([launch.argv[-1]])
+                self.assertEqual(popen.call_count, 1)
+                kill.assert_called_with(123, tui_start.signal.SIGKILL)
+                proc.wait.assert_called()
+                proc.stdout.close.assert_called_once()
+                execute.assert_not_called()
+                self.assertEqual(tui_start.signal.getsignal(signum), original)
+
+    def test_normal_probe_exit_kills_remaining_owned_group(self):
+        proc = mock.Mock(pid=123)
+        proc.stdout.fileno.return_value = 42
+        proc.wait.return_value = 0
+        with (
+            mock.patch("select.select", return_value=([], [], [])),
+            mock.patch("os.killpg") as kill,
+        ):
+            tui_start.close(proc)
+        kill.assert_called_once_with(123, tui_start.signal.SIGKILL)
+        proc.wait.assert_called()
+
+    def test_wrapper_checks_effective_tmpdir_before_spawning(self):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = self.adapter.tui().launch(
+                "hi", self.spec, False, (sys.executable, "-I", "/protected/hook.py")
+            )
+        with (
+            mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
+            mock.patch("subprocess.Popen") as proc,
+            mock.patch("os.execve") as execute,
+            self.assertRaisesRegex(tui_start.sessions.RecoveryError, "rewrite|writable"),
+        ):
+            tui_start.main([launch.argv[-1]])
+        proc.assert_not_called()
+        execute.assert_not_called()

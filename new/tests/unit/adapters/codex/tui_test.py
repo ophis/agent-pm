@@ -18,7 +18,7 @@ from adapters.base import (
     SessionBound,
     TurnEnd,
 )
-from adapters.codex import CodexAdapter
+from adapters.codex import CodexAdapter, tui
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
@@ -157,12 +157,12 @@ class TuiTest(Base):
         ):
             with self.subTest(prefix=prefix):
                 self.assertEqual(
-                    run.limit("• " + prefix + " Try again at Jan 2nd, 2027 3:04 AM.\n› "),
+                    run.limit("■ " + prefix + " Try again at Jan 2nd, 2027 3:04 AM.\n› "),
                     LimitHit(stamp),
                 )
-        self.assertEqual(run.limit("You’ve hit your usage limit. Try again later."), LimitHit())
+        self.assertEqual(run.limit("■ You’ve hit your usage limit. Try again later."), LimitHit())
         self.assertEqual(
-            run.limit("You've hit your usage limit. Try again at Jan 2th, 2027 3:04 AM."),
+            run.limit("■ You've hit your usage limit. Try again at Jan 2th, 2027 3:04 AM."),
             LimitHit(),
         )
         self.assertIsNone(run.limit("assistant: You've hit your usage limit. is a quoted example"))
@@ -208,3 +208,39 @@ class TuiTest(Base):
         )
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
+
+    def test_assistant_bullets_and_quoted_limit_text_are_not_native_errors(self):
+        run = self.adapter.tui()
+        for screen in (
+            "Codex > gpt-test • You have asked me to quote this error. • You've hit your usage limit. is a quoted example › ",
+            "• You've hit your usage limit. is a quoted example\n› ",
+            "You've hit your usage limit. is a quoted example",
+            "! You've hit your usage limit. is a quoted example",
+            "✖ You've hit your usage limit. is a quoted example",
+        ):
+            with self.subTest(screen=screen):
+                self.assertIsNone(run.limit(screen))
+
+    def test_configured_tmpdir_protects_dependencies_before_fresh_or_resume_launch(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        adapter_root = os.path.dirname(os.path.dirname(os.path.dirname(tui.__file__)))
+        for resume in (False, True):
+            for index, tmpdir in enumerate(
+                ("/protected", "/driver-only", adapter_root, sys.prefix)
+            ):
+                with self.subTest(resume=resume, tmpdir=tmpdir):
+                    config = {**self.common.config, "env": {"TMPDIR": tmpdir}}
+                    adapter = CodexAdapter(config)
+                    spec = (
+                        self.spec if resume else dataclasses.replace(self.spec, sid=f"env-{index}")
+                    )
+                    with mock.patch("shutil.which", return_value="/protected/codex"):
+                        with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
+                            adapter.tui().launch(
+                                "hi", spec, resume, (sys.executable, "-I", "/driver-only/hook.py")
+                            )
+                    if not resume:
+                        self.assertIsNone(self.common.load(str(self.work), spec.sid))
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)

@@ -52,6 +52,10 @@ class CodexTuiRun(Tui):
         snapshot = self.state.snapshot
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
+        unset = common.interactive_unset()
+        effective_env = {key: value for key, value in os.environ.items() if key not in unset}
+        effective_env.update(env)
+        store = sessions.store_root()
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
             raise ConfigError("codex not found on PATH")
@@ -64,11 +68,11 @@ class CodexTuiRun(Tui):
             sys.base_prefix,
             sys.executable,
             exe,
-            sessions.store_root(),
+            store,
             *(word for word in hook if os.path.isabs(word)),
         ]
         try:
-            sessions.protect(self.state, dependencies)
+            sessions.protect(self.state, dependencies, effective_env)
         except sessions.RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
         if not resume:
@@ -81,6 +85,7 @@ class CodexTuiRun(Tui):
                     os.path.join(DIRECTORY, "tui_hook.py"),
                     self.state.workdir,
                     self.state.sid,
+                    store,
                     json.dumps(list(hook), ensure_ascii=False),
                     event,
                 )
@@ -115,6 +120,7 @@ class CodexTuiRun(Tui):
             "hook_flags": hook_flags,
             "workdir": self.state.workdir,
             "sid": self.state.sid,
+            "store": store,
         }
         return Launch(
             (
@@ -124,7 +130,7 @@ class CodexTuiRun(Tui):
                 json.dumps(data, ensure_ascii=False),
             ),
             env=env,
-            unset=common.interactive_unset(),
+            unset=unset,
             cwd=snapshot["cwd"],
             resume=common.resume_command(self.state) if resume else "",
         )
@@ -175,7 +181,7 @@ class CodexTuiRun(Tui):
     def limit(self, screen):
         screen = screen.replace("’", "'")
         pattern = (
-            r"(?m)(?:^[ \t]*(?:[■•✖!][ \t]*)?|(?<=[ \t])[■•✖!][ \t]*)"
+            r"(?m)(?:^[ \t]*|(?<=[ \t]))■[ \t]*"
             r"(?=You've hit your usage|Quota exceeded|Your workspace is out|You hit your spend cap)"
         )
         for match in re.finditer(pattern, screen):

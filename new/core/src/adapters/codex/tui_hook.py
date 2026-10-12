@@ -35,7 +35,7 @@ def payload(stream):
     return value if isinstance(value, dict) else {}
 
 
-def bind(label, value, workdir, sid):
+def bind(label, value, workdir, sid, *, root=None):
     if (
         label not in LABELS
         or value.get("hook_event_name", label) != label
@@ -47,13 +47,13 @@ def bind(label, value, workdir, sid):
     ):
         return False
     try:
-        state = sessions.load_session(workdir, sid)
+        state = sessions.load_session(workdir, sid, root=root)
         if state is None:
             raise sessions.RecoveryError("missing Codex recovery state")
         if os.path.realpath(value["cwd"]) != state.snapshot["cwd"]:
             return False
         sessions.bind_session(
-            workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5
+            workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5, root=root
         )
         return True
     except (sessions.RecoveryError, OSError, ValueError) as exc:
@@ -73,10 +73,10 @@ def forward(hook, label, value):
 
 def main(argv):
     value = payload(sys.stdin.buffer)
-    if len(argv) != 4:
-        print("codex hook: expected WORKDIR SID HOOK_JSON LABEL", file=sys.stderr)
+    if len(argv) != 5:
+        print("codex hook: expected WORKDIR SID STORE HOOK_JSON LABEL", file=sys.stderr)
         return
-    workdir, sid, encoded, label = argv
+    workdir, sid, root, encoded, label = argv
     try:
         hook = json.loads(encoded)
     except (ValueError, RecursionError):
@@ -88,7 +88,7 @@ def main(argv):
         or not os.path.isabs(hook[0])
     ):
         return
-    if bind(label, value, workdir, sid):
+    if bind(label, value, workdir, sid, root=root):
         forward(hook, label, value)
 
 

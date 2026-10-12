@@ -41,10 +41,50 @@ class _Exited(Exception):
     pass
 
 
+class _Terminated(BaseException):
+    def __init__(self, signum):
+        self.signum = signum
+
+
+class _Termination:
+    def __init__(self):
+        self.signum = 0
+        self.previous = {}
+
+    def __enter__(self):
+        for signum in (signal.SIGHUP, signal.SIGTERM):
+            self.previous[signum] = signal.signal(signum, self.receive)
+        return self
+
+    def __exit__(self, *args):
+        for signum, handler in self.previous.items():
+            signal.signal(signum, handler)
+
+    def receive(self, signum, frame):
+        # Popen must return an owned process before interruption can unwind.
+        self.signum = self.signum or signum
+
+    def check(self):
+        if self.signum:
+            raise _Terminated(self.signum)
+
+    def before_exec(self):
+        for signum in self.previous:
+            signal.signal(signum, signal.SIG_DFL)
+        self.check()
+
+
 def hook_trust(
-    exe: str, args: list[str], cwd: str, env: dict[str, str], commands: dict[str, str]
+    exe: str,
+    args: list[str],
+    cwd: str,
+    env: dict[str, str],
+    commands: dict[str, str],
+    *,
+    root=None,
+    termination=None,
 ) -> str:
-    root = sessions.store_directory(create=False)
+    root = sessions.store_directory(create=False, root=root)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
     lock = os.path.join(
@@ -64,6 +104,8 @@ def hook_trust(
             raise StartError("codex hooks/list: unsafe startup lock")
         deadline = time.monotonic() + LOCK_WAIT
         while True:
+            if termination is not None:
+                termination.check()
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
@@ -75,10 +117,12 @@ def hook_trust(
                     ) from None
                 time.sleep(POLL)
         try:
-            result = hooks_list(exe, args, cwd, env)
+            result = hooks_list(exe, args, cwd, env, termination=termination)
         except _Exited:
             time.sleep(RETRY)
-            result = hooks_list(exe, args, cwd, env)
+            if termination is not None:
+                termination.check()
+            result = hooks_list(exe, args, cwd, env, termination=termination)
     except _Exited as e:
         raise StartError(f"codex hooks/list: app-server exited {e} before answering") from None
     finally:
@@ -86,22 +130,27 @@ def hook_trust(
     return trusted(result, cwd, commands)
 
 
-def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str]):
-    try:
-        proc = subprocess.Popen(
-            [exe, "app-server", *args],
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError as e:
-        raise StartError(f"codex hooks/list: {exe}: {e.strerror}") from e
-    lines = Lines(proc.stdout.fileno(), time.monotonic() + ANSWER_WAIT)
+def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, termination=None):
+    proc = None
     exited = False
     try:
+        if termination is not None:
+            termination.check()
+        try:
+            proc = subprocess.Popen(
+                [exe, "app-server", *args],
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            raise StartError(f"codex hooks/list: {exe}: {e.strerror}") from e
+        if termination is not None:
+            termination.check()
+        lines = Lines(proc.stdout.fileno(), time.monotonic() + ANSWER_WAIT, termination)
         send(
             proc,
             {
@@ -121,7 +170,10 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str]):
         exited = True
         raise
     finally:
-        close(proc)
+        if proc is not None:
+            close(proc) if termination is None else close(proc, termination)
+        if termination is not None:
+            termination.check()
         if exited:
             raise _Exited(proc.returncode)
 
@@ -135,16 +187,19 @@ def send(proc, message: dict) -> None:
 
 
 class Lines:
-    def __init__(self, fd: int, deadline: float):
+    def __init__(self, fd: int, deadline: float, termination=None):
         self.fd, self.deadline, self.buf, self.seen = fd, deadline, bytearray(), 0
+        self.termination = termination
 
     def __next__(self) -> bytes:
         while (end := self.buf.find(b"\n", self.seen)) < 0:
+            if self.termination is not None:
+                self.termination.check()
             self.seen = len(self.buf)
             left = self.deadline - time.monotonic()
             if left <= 0:
                 raise StartError(f"codex hooks/list: no answer in {ANSWER_WAIT} s")
-            if not select.select([self.fd], [], [], left)[0]:
+            if not select.select([self.fd], [], [], min(left, POLL))[0]:
                 continue
             chunk = os.read(self.fd, BLOCK)
             if not chunk:
@@ -180,7 +235,7 @@ def answer(lines: Lines, ident: int, method: str):
         )
 
 
-def close(proc) -> None:
+def close(proc, termination=None) -> None:
     deadline = time.monotonic() + EXIT_WAIT
     try:
         proc.stdin.close()
@@ -188,17 +243,28 @@ def close(proc) -> None:
         pass
     fd = proc.stdout.fileno()
     try:
-        while (left := deadline - time.monotonic()) > 0 and select.select([fd], [], [], left)[0]:
-            if not os.read(fd, BLOCK):
+        while (left := deadline - time.monotonic()) > 0:
+            if termination is not None and termination.signum:
                 break
-        proc.wait(timeout=max(0.0, deadline - time.monotonic()))
-    except subprocess.TimeoutExpired:
+            if select.select([fd], [], [], min(left, POLL))[0]:
+                if not os.read(fd, BLOCK):
+                    break
+            elif proc.poll() is not None:
+                break
+        while (left := deadline - time.monotonic()) > 0:
+            if termination is not None and termination.signum:
+                break
+            try:
+                proc.wait(timeout=min(left, POLL))
+                break
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         proc.wait()
-    finally:
         proc.stdout.close()
 
 
@@ -270,6 +336,11 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
 
 
 def main(argv):
+    with _Termination() as termination:
+        return _start(argv, termination)
+
+
+def _start(argv, termination):
     if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
         raise StartError("Codex tui launch: expected bounded launch data")
     try:
@@ -283,6 +354,7 @@ def main(argv):
         "hook_flags",
         "workdir",
         "sid",
+        "store",
     }:
         raise StartError("Codex tui launch: invalid launch fields")
     for key in ("argv", "hook", "hook_flags"):
@@ -301,10 +373,12 @@ def main(argv):
         or any(not isinstance(word, str) or not word for word in commands.values())
     ):
         raise StartError("Codex tui launch: invalid hook commands")
-    state = sessions.load_session(data["workdir"], data["sid"])
+    sessions.absolute_path(data["store"], "store")
+    state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     directory = os.path.dirname(os.path.abspath(__file__))
+    env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
     sessions.protect(
         state,
         [
@@ -313,23 +387,35 @@ def main(argv):
             sys.base_prefix,
             sys.executable,
             data["argv"][0],
-            sessions.store_root(),
+            data["store"],
             *(word for word in data["hook"] if os.path.isabs(word)),
         ],
+        env,
     )
     cwd = state.snapshot["cwd"]
-    env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
-    trusted_state = hook_trust(data["argv"][0], data["hook_flags"], cwd, env, commands)
+    termination.check()
+    trusted_state = hook_trust(
+        data["argv"][0],
+        data["hook_flags"],
+        cwd,
+        env,
+        commands,
+        root=data["store"],
+        termination=termination,
+    )
     command = data["argv"].copy()
     index = command.index("--") if "--" in command else len(command)
     command[index:index] = ["-c", trusted_state]
     os.chdir(cwd)
+    termination.before_exec()
     os.execve(command[0], command, env)
 
 
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
+    except _Terminated as exc:
+        sys.exit(128 + exc.signum)
     except (StartError, sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         sys.exit(1)

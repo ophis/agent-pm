@@ -277,8 +277,10 @@ def store_root() -> str:
     )
 
 
-def store_directory(*, create: bool) -> str | None:
-    root = store_root()
+def store_directory(*, create: bool, root: str | None = None) -> str | None:
+    if root is not None and absolute_path(root, "store") != root:
+        raise RecoveryError("invalid Codex recovery store: expected a canonical path")
+    root = store_root() if root is None else root
     parent = os.path.dirname(root)
     base = os.path.dirname(parent)
     check_writable_roots(root, implicit_writable_roots())
@@ -453,9 +455,9 @@ def save_session(state: SessionState) -> SessionState:
     return state
 
 
-def load_session(workdir: str, sid: str) -> SessionState | None:
+def load_session(workdir: str, sid: str, *, root: str | None = None) -> SessionState | None:
     workdir, sid = session_identity(workdir, sid)
-    root = store_directory(create=False)
+    root = store_directory(create=False, root=root)
     if root is None:
         return None
     state = read_state(_path(root, workdir, sid), workdir, sid)
@@ -465,16 +467,21 @@ def load_session(workdir: str, sid: str) -> SessionState | None:
 
 
 def bind_session(
-    workdir: str, sid: str, identifier: str, timeout: float | None = None
+    workdir: str,
+    sid: str,
+    identifier: str,
+    timeout: float | None = None,
+    *,
+    root: str | None = None,
 ) -> SessionState:
     workdir, sid = session_identity(workdir, sid)
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
-    root = store_directory(create=False)
+    root = store_directory(create=False, root=root)
     if root is None:
         raise RecoveryError(f"missing recovery state for run ID {sid!r}")
     with _locked(root, timeout):
-        existing = load_session(workdir, sid)
+        existing = load_session(workdir, sid, root=root)
         if existing is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
         validated = _state(
@@ -499,8 +506,8 @@ def bind_session(
         return validated
 
 
-def protect(state, dependencies):
-    roots = [*state.writable_roots, *implicit_writable_roots()]
+def protect(state, dependencies, environment=None):
+    roots = [*state.writable_roots, *implicit_writable_roots(environment)]
     for root in roots:
         root = os.path.realpath(root)
         for dependency in dependencies:
