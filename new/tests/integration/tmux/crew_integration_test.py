@@ -490,11 +490,11 @@ class CodexLifecycleTest(Live):
         self.shown("w1")
         (call,) = self.codex_calls("w1")
         argv = call["argv"]
-        self.assertEqual(argv[:5], ["--no-daemon", "-C", self.cwd, "-c", NOTIFY])
+        self.assertEqual(argv[:7], ["--no-daemon", "-C", self.cwd, "-c", NOTIFY, "-m", "gpt-test"])
         self.assertEqual(
-            [w.partition("=")[0] for w in argv[6:17:2]], [f"hooks.{e}" for e in CODEX_HOOKS]
+            [w.partition("=")[0] for w in argv[8:19:2]], [f"hooks.{e}" for e in CODEX_HOOKS]
         )
-        self.assertEqual(argv[17:20] + argv[21:], ["-m", "gpt-test", "-c", "--", "hi"])
+        self.assertEqual(argv[19:20] + argv[21:], ["-c", "--", "hi"])
         self.assertTrue(argv[20].startswith("hooks.state="), argv[20])
         self.assertNotIn("-s", argv)
         self.assertEqual(call["env"]["CODEX_HOME"], self.codex_home)
