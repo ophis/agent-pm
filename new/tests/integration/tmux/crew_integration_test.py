@@ -372,15 +372,13 @@ class ClaudeLifecycleTest(Live):
         self.shown("w1")
         (call,) = self.calls("w1")
         argv = call["argv"]
-        settings_at = argv.index("--settings") + 1
         self.assertEqual(
-            argv[:settings_at] + argv[settings_at + 1 :],
+            argv[:7] + argv[8:],
             [
                 "--session-id",
                 sid,
                 "--name",
                 "w1",
-                "--strict-mcp-config",
                 "--setting-sources",
                 "user,project,local",
                 "--settings",
@@ -388,11 +386,8 @@ class ClaudeLifecycleTest(Live):
                 "hi",
             ],
         )
-        settings = json.loads(argv[settings_at])
-        self.assertEqual(set(settings), {"enabledPlugins", "hooks"})
-        self.assertEqual(set(settings["hooks"]), CLAUDE_HOOKS)
-        self.assertFalse(settings["enabledPlugins"]["agent-pm@agent-pm"])
-        self.assertNotIn("--permission-mode", argv)
+        self.assertEqual(set(json.loads(argv[7])), {"hooks"})
+        self.assertEqual(set(json.loads(argv[7])["hooks"]), CLAUDE_HOOKS)
         self.assertEqual(call["cwd"], self.cwd)
         self.assertEqual(
             self.record(sid),
@@ -497,6 +492,8 @@ class CodexLifecycleTest(Live):
         self.assertEqual(argv[19:20] + argv[21:], ["-c", "--", "hi"])
         self.assertTrue(argv[20].startswith("hooks.state="), argv[20])
         self.assertNotIn("-s", argv)
+        policy = ("approval_policy", "approvals_reviewer", "sandbox_workspace_write")
+        self.assertFalse([w for w in argv if w.startswith(policy)], argv)
         self.assertEqual(call["env"]["CODEX_HOME"], self.codex_home)
         self.assertEqual(
             {k: self.record(sid)[k] for k in ("runtime", "flags", "env")},

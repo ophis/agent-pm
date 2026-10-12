@@ -8,7 +8,6 @@ from unittest import mock
 
 from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.driver.selection import select
 
 from new.tests.case import NEW, Case
 from new.tests.selection import configured
@@ -49,7 +48,6 @@ class Base(Case):
         )
         self.common = self.adapter.common
         self.spec = Spec(
-            _select=lambda native, resume: select(native, resume, self.adapter.selection),
             workdir=str(self.work),
             sid="caller-id",
             tier=1,

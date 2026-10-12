@@ -61,7 +61,7 @@ class ClaudeTui(Tui):
         }
         tail = ("--", prompt) if prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, resume, {**common.PLUGINS, **settings}, tail=(*flags, *tail))
+        return common.launch(spec, resume, settings, tail=(*flags, *tail))
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")

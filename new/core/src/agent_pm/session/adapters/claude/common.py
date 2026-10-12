@@ -150,8 +150,6 @@ class ClaudeCommon:
     )
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
-    # This core's own plugin (<plugin>@<marketplace>): a session loads the user's plugins, never it.
-    PLUGINS = {"enabledPlugins": {"agent-pm@agent-pm": False}}
     NOTE = (
         "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
         "on a permission prompt."
@@ -170,7 +168,7 @@ class ClaudeCommon:
         "--strict-mcp-config",
     )
 
-    def __init__(self, config: Mapping, *, selector=None):
+    def __init__(self, config: Mapping, *, selector):
         self.selector = selector
         for key, ok, what in CHECKS:
             if key in config and not ok(config[key]):
@@ -181,8 +179,7 @@ class ClaudeCommon:
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
-        self.config_env = dict(config.get("env", {}))
-        self._env = {**self.ENV, **self.config_env}
+        self._env = dict(config.get("env", {}))
 
     def model(self, tier: int | None) -> str | None:
         if tier is None:
@@ -216,17 +213,14 @@ class ClaudeCommon:
         self,
         cwd: str,
         sid: str,
-        workdir: str | None = None,
+        dirs: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> str:
-        q = shlex.quote
-        assign = "".join(f"{name}={q(value)} " for name, value in env.items())
-        if self.selector is None:
-            raise ConfigError("session selector is not configured by Driver")
-        command = f"cd {q(cwd)} && {assign}" + shlex.join(("claude", *self.selector(sid, True)))
-        if workdir is not None and os.path.realpath(workdir) != os.path.realpath(cwd):
-            command += f" --add-dir {q(workdir)}"
-        return command
+        """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
+        assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
+        added = (arg for d in dirs for arg in ("--add-dir", d))
+        argv = ("claude", *self.selector(sid, True), *added)
+        return f"cd {shlex.quote(cwd)} && {assign}{shlex.join(argv)}"
 
     @staticmethod
     def uuid(sid) -> str:
@@ -238,12 +232,14 @@ class ClaudeCommon:
         self,
         spec: Spec,
         resume: bool,
-        settings: Mapping,
+        settings: Mapping | None,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
+        env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments."""
+        """Build a Claude command with configured settings, access grants and output arguments; `env` under the
+        config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in spec.flags would drop."""
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -254,36 +250,36 @@ class ClaudeCommon:
             *_read_rules(access.reads),
             *self.allow,
         )
+        strict = "--strict-mcp-config" in _before_end(spec.flags)
         argv = (
             "claude",
             *head,
-            *spec._select(sid, resume),
+            *self.selector(sid, resume),
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *(("--name", spec.name) if spec.name is not None else ()),
             *self.flags,
             "--setting-sources",
             "user,project,local" if access.project else "user",
-            *(("--mcp-config", mcp) if access.project and os.path.isfile(mcp) else ()),
+            *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
             *output,
-            "--settings",
-            json.dumps(settings),
+            *(("--settings", json.dumps(settings)) if settings is not None else ()),
             *(arg for d in access.dirs for arg in ("--add-dir", d)),
             *(("--allowedTools", *allow) if allow else ()),
             *tail,
         )
         return Launch(
             argv,
-            env={**self.env(), **access.env, **spec.env},
+            env={**env, **self.env(), **access.env, **spec.env},
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
-            resume=self.resume(cwd, sid, spec.workdir, {**access.env, **spec.env}),
+            resume=self.resume(cwd, sid, access.dirs, {**access.env, **spec.env}),
         )
 
     merged = staticmethod(_merged)
 
     def probe(self) -> Launch:
-        return Launch(self.PROBE, env=self.env(), unset=self.UNSET)
+        return Launch(self.PROBE, env={**self.ENV, **self.env()}, unset=self.UNSET)
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:

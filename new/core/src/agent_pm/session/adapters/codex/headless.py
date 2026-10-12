@@ -30,7 +30,7 @@ class CodexHeadless(Headless):
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]
         if resume:
-            argv.extend(spec._select(self.state.native_id, True))
+            argv.extend(self.adapter.select_session(self.state.native_id, True))
         _, literal = split_flags(snapshot["flags"])
         argv.extend((*literal, prompt) if literal else ("--", prompt))
         return Launch(
@@ -39,7 +39,6 @@ class CodexHeadless(Headless):
             unset=self.adapter.common.UNSET,
             cwd=snapshot["cwd"],
             project=snapshot["project"],
-            replay_env=resume,
             transcript=self.adapter.common.transcript(self.state) if resume else "",
             resume=self.adapter.common.resume_command(self.state) if resume else "",
         )

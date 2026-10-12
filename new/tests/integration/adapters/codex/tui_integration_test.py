@@ -30,7 +30,6 @@ from agent_pm.session.adapters.base import (
 )
 from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.driver import api, records, registry
-from agent_pm.session.driver.selection import select
 
 from new.tests import live_tmux
 from new.tests.case import NEW, PY, ROOT, Case, child_env
@@ -149,7 +148,6 @@ class Live(Case):
                 "-c",
                 'approvals_reviewer="auto_review"',
             ),
-            _select=lambda native, resume: select(native, resume, ((), ("resume",))),
             workdir=str(self.work),
             tier=1,
             effort="low",
@@ -610,7 +608,21 @@ class TuiIntegrationTest(Live):
         self.assertFalse((self.work / "run.jsonl").exists())
 
     def test_parent_markers_and_injected_defaults_are_removed_fresh_resumed_and_nested(self):
-        inherited = {key: "inherited" for key in (*fake_codex.MARKERS, *fake_codex.DEFAULTS)}
+        inherited = {**dict.fromkeys(fake_codex.MARKERS, "inherited"), **fake_codex.DEFAULTS}
+        self.assert_nested_environment(inherited, dict.fromkeys(inherited))
+
+    def test_external_environment_is_inherited_fresh_resumed_and_nested(self):
+        markers = dict.fromkeys(fake_codex.MARKERS, "inherited")
+        external = {
+            **dict.fromkeys(fake_codex.DEFAULTS, "less"),
+            "NO_COLOR": "0",
+            "CODEX_CI": "operator",
+        }
+        self.assert_nested_environment(
+            {**markers, **external}, {**dict.fromkeys(markers), **external}
+        )
+
+    def assert_nested_environment(self, inherited, expected):
         with mock.patch.dict(os.environ, inherited):
             first = self.start()
             self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
@@ -621,7 +633,7 @@ class TuiIntegrationTest(Live):
                 nested = self.start("z1", sid="nested", events=str(self.root / "nested.events"))
                 self.assertEqual(Stream(self, nested).until(TurnEnd)[-1], TurnEnd("first"))
         for call in self.calls():
-            self.assertTrue(all(call["env"][key] is None for key in inherited), call["env"])
+            self.assertEqual({key: call["env"][key] for key in inherited}, expected)
             self.assertEqual(call["env"]["CODEX_HOME"], str(self.codex_home))
         self.assertNotEqual(self.bound().native_id, self.bound("nested").native_id)
         screen = self.server.tmux("capture-pane", "-p", "-e", "-t", "=z1:").stdout

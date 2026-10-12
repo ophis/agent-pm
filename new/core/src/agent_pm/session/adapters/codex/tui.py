@@ -40,7 +40,7 @@ class CodexTui(Tui):
         refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.interactive_unset(snapshot)
+        unset = common.UNSET
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
         store = sessions.store_root()
@@ -94,7 +94,7 @@ class CodexTui(Tui):
         _, literal = sessions.split_flags(saved_flags)
         argv = [
             exe,
-            *spec._select(self.native, resume),
+            *self.adapter.select_session(self.native, resume),
             "--no-daemon",
             "-C",
             snapshot["cwd"],
@@ -130,7 +130,6 @@ class CodexTui(Tui):
             unset=unset,
             cwd=snapshot["cwd"],
             project=snapshot["project"],
-            replay_env=resume,
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )

@@ -25,7 +25,6 @@ from agent_pm.session.adapters.base import (
 )
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.driver import api, records, registry
-from agent_pm.session.driver.selection import select
 
 from new.tests.case import NEW, Case
 from new.tests.integration.adapters.codex import fake_codex
@@ -76,7 +75,6 @@ class HeadlessIntegrationTest(Case):
                 "-c",
                 'approvals_reviewer="auto_review"',
             ),
-            _select=lambda native, resume: select(native, resume, ((), ("resume",))),
             workdir=str(self.work),
             tier=1,
             effort="low",

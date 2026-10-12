@@ -1,9 +1,11 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
-Launch whose env (last) and resume carry a role run's Access.env, and the runtime's output into the frozen event
-set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped
-at its next yield; it changes no global state (cwd, environ, signals), applying spec.access.cwd itself, not its env.
-Access.dirs are granted write, Access.reads only read. Spec.flags/env are caller-supplied for every Mode. Times are epoch seconds. Starts no process."""
+Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and the runtime's output
+into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a
+Driver thread, stopped at its next yield; it changes no global state (cwd, environ, signals), applying
+spec.access.cwd itself, not its env. Access.dirs are granted write, Access.reads only read. Spec.flags/env are
+caller-supplied for every Mode. select_session is the Driver's selector (registry); unset, it refuses. Times are
+epoch seconds. Starts no process."""
 
 import json
 import re
@@ -73,9 +75,6 @@ class Spec:
     sid: str | None = None
     flags: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
-    _select: Callable[[str, bool], tuple[str, ...]] = field(
-        default=lambda native, resume: (), repr=False, compare=False
-    )
     name: str | None = None
     protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
 
@@ -115,11 +114,8 @@ class Launch:
     resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
     project: bool | None = None
-    replay_env: bool = False
 
     def __post_init__(self):
-        if type(self.replay_env) is not bool:
-            raise ConfigError("launch: replay_env must be a bool")
         if self.project is not None and not isinstance(self.project, bool):
             raise ConfigError("launch: project must be a bool or None")
         env = self.env

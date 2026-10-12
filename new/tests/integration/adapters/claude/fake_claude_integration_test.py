@@ -651,19 +651,14 @@ class ClaudeTuiLaunch(Case):
         tui = configured(
             ClaudeAdapter,
             {
-                "flags": ["--permission-mode", "auto", "--strict-mcp-config"],
                 "allow": ["Read"],
                 "tiers": {"1": "m"},
                 "efforts": {"high": "h"},
             },
         ).tui()
-        from agent_pm.session.driver.selection import select
-
         spec = Spec(
-            _select=lambda native, resume: select(
-                native, resume, ClaudeAdapter.selection, uuid=True
-            ),
             workdir=self.proj,
+            flags=("--permission-mode", "auto", "--strict-mcp-config"),
             sid=SID,
             tier=1,
             effort="high",

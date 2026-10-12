@@ -111,7 +111,7 @@ LAUNCHED: list[api.Spec] = []
 
 class InnerAdapter(fake_adapter.FakeAdapter):
     """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its spec in LAUNCHED,
-    unsets LAUNCH_DROP and sets LAUNCH_SET."""
+    unsets LAUNCH_DROP and sets spec.env, then LAUNCH_SET."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -125,7 +125,8 @@ class InnerTui(fake_adapter.FakeTui):
     def launch(self, prompt, spec, resume, hook):
         LAUNCHED.append(spec)
         launch = super().launch(prompt, spec, resume, hook)
-        return dataclasses.replace(launch, env={"LAUNCH_SET": "1"}, unset=("LAUNCH_DROP",))
+        env = {**spec.env, "LAUNCH_SET": "1"}
+        return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
 
 class OtherAdapter(fake_adapter.FakeAdapter):
@@ -135,7 +136,7 @@ class OtherAdapter(fake_adapter.FakeAdapter):
 
 
 class EnvAdapter(ProbeAdapter):
-    """The probe adapter whose session launches carry spec.access.env, as claude's and codex's do."""
+    """The probe adapter whose session launches carry spec.access.env and spec.env, as claude's and codex's do."""
 
     def headless(self):
         return EnvRun(self)
@@ -147,12 +148,14 @@ class EnvAdapter(ProbeAdapter):
 class EnvRun(fake_adapter.FakeHeadless):
     def launch(self, prompt, spec, resume):
         LAUNCHED.append(spec)
-        return dataclasses.replace(super().launch(prompt, spec, resume), env=spec.access.env)
+        launch = super().launch(prompt, spec, resume)
+        return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 class EnvTui(fake_adapter.FakeTui):
     def launch(self, prompt, spec, resume, hook):
-        return dataclasses.replace(super().launch(prompt, spec, resume, hook), env=spec.access.env)
+        launch = super().launch(prompt, spec, resume, hook)
+        return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 def package(name, cls) -> types.ModuleType:
@@ -1423,6 +1426,21 @@ class EnvironmentTest(TuiBase):
         self.environ(OTHER_SESSION="1", PAGER="cat", NO_COLOR="1", OTHER_MODE="on")
         self.assertEqual(self.env("w3"), {"PAGER": "cat", "NO_COLOR": "1", "LAUNCH_SET": "1"})
         self.assertEqual(self.env("w4", env={"OTHER_MODE": "on"}), both)
+
+    def test_codex_injected_defaults_drop_only_inside_codex_at_their_injected_value(self):
+        self.configure(tables={"codex": {"implementation": "adapters.codex:CodexAdapter"}})
+        inside = {"CODEX_THREAD_ID": "t"}
+        for environ, dropped in (
+            ({"CLAUDECODE": "1", "NO_COLOR": "1", "PAGER": "cat"}, set()),
+            ({**inside, "NO_COLOR": "0", "PAGER": "less", "CODEX_CI": "x"}, set(inside)),
+            (
+                {**inside, "NO_COLOR": "1", "PAGER": "cat", "GIT_PAGER": "cat", "CODEX_CI": "1"},
+                {*inside, "NO_COLOR", "PAGER", "GIT_PAGER", "CODEX_CI"},
+            ),
+        ):
+            with self.subTest(environ=environ):
+                self.environ(**environ)
+                self.assertEqual(set(environ) & api._identity_drop(), dropped)
 
     def test_session_env_keys_need_no_adapter_allowlist(self):
         self.environ(KEEP="k")

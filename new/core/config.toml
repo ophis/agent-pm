@@ -146,7 +146,6 @@ effort = "low"
 #                            starting a run whose tier or effort has no entry here is a config error
 [adapters.claude]
 implementation = "adapters.claude:ClaudeAdapter"
-flags = ["--strict-mcp-config"]
 # allow = ["<rule>"]
 
 [adapters.claude.tiers]
@@ -186,9 +185,16 @@ max = "max"
 [adapters.print_prompt]
 implementation = "adapters.print_prompt:PrintPromptAdapter"
 
-# Role-run policy is supplied by Delegate; session workers receive no policy defaults.
+# [policy.<runtime>]  a role run's flags and env, the Delegate's (new/README.md › Runtime policy); in claude's
+#                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load
 [policy.claude]
-flags = ["--permission-mode", "auto"]
+flags = [
+  "--permission-mode",
+  "auto",
+  "--strict-mcp-config",
+  "--settings",
+  '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
+]
 
 [policy.codex]
 flags = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']

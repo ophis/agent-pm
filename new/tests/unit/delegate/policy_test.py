@@ -6,7 +6,6 @@ from agent_pm.role.delegate.plan import ConfigError, policy
 from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.driver.selection import select
 
 from new.tests.case import NEW
 from new.tests.selection import configured
@@ -76,16 +75,8 @@ class PolicyTest(Base):
                 )
             else:
                 adapter = configured(ClaudeAdapter, {})
-                spec = Spec(
-                    workdir=str(self.work),
-                    sid=NATIVE,
-                    flags=flags,
-                    env=env,
-                    _select=lambda native, resume: select(
-                        native, resume, adapter.selection, uuid=True
-                    ),
-                )
-                expected = ("--permission-mode", "auto")
+                spec = Spec(workdir=str(self.work), sid=NATIVE, flags=flags, env=env)
+                expected = ("--permission-mode", "auto", "--strict-mcp-config")
             launch = adapter.headless().launch("hi", spec, False)
             start = launch.argv.index(expected[0])
             self.assertEqual(launch.argv[start : start + len(expected)], expected)

@@ -6,7 +6,6 @@ writable_dirs() the dirs a runtime grants itself write to under a Spec. attach()
 tui session by name; detach() runs a command in a tmux session of its own."""
 
 import contextlib
-import functools
 import logging
 import os
 import re
@@ -49,7 +48,6 @@ from agent_pm.session.driver.errors import DriverError
 from agent_pm.session.driver.modes import headless, in_process, tui
 from agent_pm.session.driver.records import session
 from agent_pm.session.driver.selection import check as check_selection
-from agent_pm.session.driver.selection import select
 from agent_pm.utils.paths import printable_abs
 
 __all__ = [
@@ -269,11 +267,9 @@ class Handle:
         return usage(self.runtime)
 
 
-def _child_env(
-    launch: Launch, cwd: str, drop: Collection[str] = (), extra: Mapping[str, str] | None = None
-) -> dict[str, str]:
+def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
-    return {**env, **(extra or {}), **launch.env, "PWD": cwd}
+    return {**env, **launch.env, "PWD": cwd}
 
 
 def _identity_drop() -> frozenset[str]:
@@ -320,8 +316,7 @@ def start(
     sid = resume or sid or str(uuid.uuid4())
     steps = kind(run, runtime, sid, name, events)
     check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
-    selector = functools.partial(select, syntax=adapter.selection, uuid=adapter.selection_uuid)
-    spec = steps.specced(replace(spec, sid=sid, _select=selector))
+    spec = steps.specced(replace(spec, sid=sid))
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
     info = steps.info(prompt, spec, resume is not None)
@@ -367,7 +362,6 @@ class _LaunchSteps:
 
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
         self.command = launch = self.launch(prompt, spec, resumed)
-        self.extra = {} if launch.replay_env else spec.env
         if not launch.argv:
             raise ConfigError(f"runtime {self.runtime!r} gave no command")
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
@@ -383,7 +377,10 @@ class _LaunchSteps:
 
 class _HeadlessSteps(_LaunchSteps):
     name = None
-    specced = staticmethod(_no_tui_fields)
+
+    def specced(self, spec: Spec) -> Spec:
+        self.drop = _identity_drop()
+        return _no_tui_fields(spec)
 
     @staticmethod
     def run_of(adapter: Adapter) -> Headless | None:
@@ -404,11 +401,7 @@ class _HeadlessSteps(_LaunchSteps):
     def begin(self, host: headless.HeadlessMode) -> None:
         launch = self.command
         try:
-            host.begin(
-                launch.argv,
-                cwd=self.cwd,
-                env=_child_env(launch, self.cwd, _identity_drop(), self.extra),
-            )
+            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd, self.drop))
         except (OSError, ValueError) as e:
             raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
 
@@ -456,7 +449,7 @@ class _TuiSteps(_LaunchSteps):
         host.begin(
             launch.argv,
             cwd=self.cwd,
-            env=_child_env(launch, self.cwd, self.drop, self.extra),
+            env=_child_env(launch, self.cwd, self.drop),
             status_line=self.settings.status_line,
         )
 

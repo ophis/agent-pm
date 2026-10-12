@@ -96,9 +96,8 @@ def validate_snapshot(value: dict) -> dict:
     if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
         raise RecoveryError("invalid Codex recovery snapshot flags")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
-    for key in ("project",):
-        if type(value[key]) is not bool:
-            raise RecoveryError(f"invalid Codex recovery snapshot {key}")
+    if type(value["project"]) is not bool:
+        raise RecoveryError("invalid Codex recovery snapshot project")
     for key in ("dirs", "commands"):
         if not isinstance(value[key], list):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")

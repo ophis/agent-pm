@@ -243,7 +243,7 @@ class CodexCommon:
         "GH_PAGER": "cat",
     }
 
-    def __init__(self, config, *, selector=None):
+    def __init__(self, config, *, selector):
         self.selector = selector
         self.config = dict(config)
         for name, keys in (("tiers", TIERS), ("efforts", EFFORTS)):
@@ -381,13 +381,6 @@ class CodexCommon:
             "CODEX_HOME": snapshot["codex_home"],
         }
 
-    def interactive_unset(self, snapshot: dict | None = None) -> tuple[str, ...]:
-        env = self.config.get("env", {}) if snapshot is None else snapshot["env"]
-        return (
-            *self.UNSET,
-            *(key for key in self.DEFAULTS if key not in env),
-        )
-
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account_probe.py")
         return Launch(
@@ -411,8 +404,6 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
-        if self.selector is None:
-            raise ConfigError("session selector is not configured by Driver")
         selection = self.selector(state.native_id, True)
         _, literal = split_flags(snapshot["flags"])
         command = shlex.join(

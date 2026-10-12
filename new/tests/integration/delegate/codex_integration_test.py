@@ -139,6 +139,27 @@ class Codex(Integration):
         )
         self.assertIn("# Input\n\nHello.", call["prompt"])
 
+    def test_the_default_policy_reaches_the_argv_as_before_its_move(self):
+        res = self.drive(said(block(DONE)))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        (call,) = self.calls()
+        self.assertEqual(
+            call["argv"][:9],
+            [
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                "-s",
+                "danger-full-access",
+                "-c",
+                'approval_policy="on-request"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ],
+        )
+        self.assertNotIn("-s", call["argv"][9:])
+        self.assertFalse([w for w in call["argv"] if w.startswith("sandbox_workspace_write.")])
+
     def test_two_runs_resume_the_same_native_session_and_keep_previous_progress(self):
         first = self.drive(said(mark("start", "first turn"), block(DONE)))
         self.assertEqual(first.returncode, 0, first.stderr)
