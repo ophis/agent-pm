@@ -27,7 +27,7 @@ The new core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and
 | `~/.agent-pm/tui/<name>/` | tui session `<name>`'s dir: `session.json` (its state, which `driver.api.attach` reads), `hooks.jsonl` (its hook records); `driver.api.close` removes it. `~/.agent-pm/tui/<name>.lock` serializes a name's starts, closes and stops |
 | `~/.agent-pm/workers/<sid>/` | crew worker `<sid>`'s dir, its `Spec.workdir`: `worker.json` (0600), its record for `agent_pm.crew restart`, keeps the worker's flags and env in plain text |
 
-Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; `agent_pm_orchestrator` → `delegate`, `composer` (`config.py` only), `driver.api`, and no `agent_pm` module imports it; any module → `utils/`, which imports only the standard library and other `utils/` modules; `agent_tools/` imports only the standard library and `utils/`, and nothing imports it. `tests/guards.py` (`layer_imports`, `pure_utils`, `orchestrator_imports`) enforces it, with the other rules in its docstring.
+Imports go one way: delegate → composer or driver, driver → adapters, a module outside the layers → driver; outside `driver/`, only `driver.api`; a layer never imports a module outside the layers but `utils/`; `agent_pm_orchestrator` → `delegate`, `composer` (`config.py` only), `driver.api`, and no `agent_pm` module imports it; any module → `utils/`, which imports only the standard library and other `utils/` modules; `agent_tools/` imports only the standard library and `utils/`, and nothing imports it. `tests/guards.py` (`layer_imports`, `pure_utils`, `orchestrator_imports`) enforces it, with the other rules in its docstring.
 
 ## Codex sandbox
 

@@ -1,7 +1,7 @@
 """The new tree's rules: each guard takes a root and returns its sorted violations; string constants include docstrings.
 
-layer_imports(core)   imports go one way (new/README.md), none imports agent_tools, ORCH or a BARE name, nested,
-                      relative or import_module'd
+layer_imports(core)   imports go one way (new/README.md), a layer imports no package module outside LAYERS but
+                      utils, none imports agent_tools, ORCH or a BARE name, nested, relative or import_module'd
 runtime_names(core)   no runtime name (RUNTIME) outside src/agent_pm/adapters/ but a .toml's comments and Adapter lines
 old_core(new)         no `core` import, no string constant naming OLD
 adapters_key(core)    no string constant "adapters" outside src/agent_pm/driver/
@@ -82,10 +82,16 @@ def layer_imports(core: str) -> list[str]:
             first = (inner or module).split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
-            elif first in (TOOLS, ORCH) or (
-                first in LAYERS
-                and first != layer
-                and ((layer, first) not in ALLOWED or first == "driver" and inner != "driver.api")
+            elif (
+                first in (TOOLS, ORCH)
+                or (layer != OUTSIDE and inner and first not in (*LAYERS, "utils"))
+                or (
+                    first in LAYERS
+                    and first != layer
+                    and (
+                        (layer, first) not in ALLOWED or first == "driver" and inner != "driver.api"
+                    )
+                )
             ):
                 found.add(f"{rel}: {layer} imports {module}")
     return sorted(found)
