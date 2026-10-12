@@ -1,3 +1,5 @@
+"""Codex sandbox policy, protected recovery paths and writable-root guards."""
+
 from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 import dataclasses

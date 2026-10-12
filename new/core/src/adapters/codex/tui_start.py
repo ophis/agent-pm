@@ -14,15 +14,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sessions
+from hook_schema import HOOKS
 
-HOOKS = (
-    ("SessionStart", "sessionStart"),
-    ("UserPromptSubmit", "userPromptSubmit"),
-    ("PostToolUse", "postToolUse"),
-    ("PermissionRequest", "permissionRequest"),
-    ("Stop", "stop"),
-    ("Interrupt", "interrupt"),
-)
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 LOCK_WAIT = 30
 ANSWER_WAIT = 20
@@ -287,7 +280,7 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
         )
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
     trusted = []
-    for event, name in HOOKS:
+    for event, name, _ in HOOKS:
         command = commands[event]
         rows = [h for h in ours if h.get("eventName") == name]
         if len(rows) != 1:
@@ -369,7 +362,7 @@ def _start(argv, termination):
     commands = data["commands"]
     if (
         not isinstance(commands, dict)
-        or set(commands) != {event for event, name in HOOKS}
+        or set(commands) != {event for event, name, _ in HOOKS}
         or any(not isinstance(word, str) or not word for word in commands.values())
     ):
         raise StartError("Codex tui launch: invalid hook commands")

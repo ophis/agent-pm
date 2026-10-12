@@ -1,3 +1,5 @@
+"""Codex headless launches, native events and usage limits."""
+
 from new.tests.unit.adapters.codex.support import NATIVE, Base
 
 import json

@@ -1,11 +1,4 @@
-"""What every Claude Code Mode shares: ClaudeCommon validates [adapters.claude] (an error names the key, never its
-value) and gives a tier's model, an effort's value, a command's env and UNSET (a parent session's identity keys, which
-a child must not inherit), a session's transcript and resume command, Claude's sid rule (a lowercase UUID: Claude takes
-the sid as its own session id), the usage probe and its reading, and a session's SessionStatus.
-
-launch is a Mode's claude command: Claude's session id bound to the sid, the spec's tier and effort, each access dir
-(--add-dir) and command (--allowedTools Bash(<command>), then the config's allow), and the project and local setting
-sources only for a project run."""
+"""Claude Code configuration, launch metadata, usage and session inspection shared by both Modes."""
 
 import json
 import math
@@ -177,7 +170,7 @@ class ClaudeCommon:
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
     ) -> Launch:
-        """claude, `head`, the shared args (the module's docstring) with `output` right before --settings, `tail`."""
+        """Build a Claude command with configured settings, access grants and output arguments."""
         sid = self.uuid(spec.sid)
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access

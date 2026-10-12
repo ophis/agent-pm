@@ -1,8 +1,4 @@
-"""Claude Code's tui Mode, interactive `claude`: ClaudeTui. launch: ClaudeCommon's, with a command hook per label in
---settings (Notification's on the types waiting on the user) and the prompt after "--" unless empty. reply:
-last_assistant_message, else the last assistant message's text in transcript_path's last 4 MiB. limit: Claude's
-usage-limit message, reset at the `resets <when>` after it (WHEN), the next such time when undated, next year's
-when year-less and over a day past, local time without a known zone."""
+"""Claude Code interactive launches and hooks, transcript replies and native usage limits."""
 
 import json
 import re

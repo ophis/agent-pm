@@ -1,3 +1,5 @@
+"""Codex interactive Driver sessions and hook trust with private tmux and fake runtimes."""
+
 from new.tests import NEW, SRC, live_tmux
 from new.tests.integration.adapters.codex import fake_codex, fake_tui
 

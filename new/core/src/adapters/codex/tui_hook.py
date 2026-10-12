@@ -7,15 +7,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sessions
+from hook_schema import HOOKS
 
-LABELS = {
-    "SessionStart",
-    "UserPromptSubmit",
-    "PostToolUse",
-    "PermissionRequest",
-    "Stop",
-    "Interrupt",
-}
+LABELS = {label for label, _, _ in HOOKS}
 PAYLOAD_MAX = 64 << 20
 BLOCK = 1 << 16
 

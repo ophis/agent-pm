@@ -1,3 +1,5 @@
+"""Codex shared configuration, recovery metadata and inspection behavior."""
+
 from new.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 import dataclasses

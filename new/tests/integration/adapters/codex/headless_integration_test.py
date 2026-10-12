@@ -1,3 +1,5 @@
+"""Codex headless Driver sessions and recovery through fake native processes."""
+
 from new.tests import NEW
 from new.tests.integration.adapters.codex import fake_codex
 

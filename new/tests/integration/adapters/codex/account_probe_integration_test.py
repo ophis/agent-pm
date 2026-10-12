@@ -1,3 +1,5 @@
+"""Codex isolated account queries through a fake native app-server."""
+
 from new.tests import NEW
 from new.tests.integration.adapters.codex import fake_app_server
 

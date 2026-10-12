@@ -1,4 +1,4 @@
-"""The Adapter interface: one runtime's abstract factory, built from its [adapters.<name>] table minus `implementation`.
+"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
 Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
 Launch, and the runtime's output into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError
 refuses), then runs the session on a Driver thread, stopped at its next yield; it changes no global state (cwd,
@@ -215,7 +215,7 @@ class Adapter(ABC):
         return None
 
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
-        """Resolve available metadata without changing session identity."""
+        """Refresh metadata; preserve identity."""
         return info
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:

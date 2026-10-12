@@ -5,32 +5,17 @@ import shlex
 import shutil
 import sys
 
-from adapters.base import ACTIVITY, BLOCKED, TURN_END, ConfigError, Launch, LimitHit, Tui
+from adapters.base import ConfigError, Launch, LimitHit, Tui
 
 from . import sessions
-from .common import flags, native_id
-from .headless import LIMIT_PREFIXES, reset_at
+from .common import LIMIT_PREFIXES, flags, native_id, reset_at
+from .hook_schema import HOOKS
 
-HOOKS = (
-    ("SessionStart", "sessionStart"),
-    ("UserPromptSubmit", "userPromptSubmit"),
-    ("PostToolUse", "postToolUse"),
-    ("PermissionRequest", "permissionRequest"),
-    ("Stop", "stop"),
-    ("Interrupt", "interrupt"),
-)
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
-class CodexTuiRun(Tui):
-    hooks = {
-        "SessionStart": ACTIVITY,
-        "UserPromptSubmit": ACTIVITY,
-        "PostToolUse": ACTIVITY,
-        "PermissionRequest": BLOCKED,
-        "Stop": TURN_END,
-        "Interrupt": TURN_END,
-    }
+class CodexTui(Tui):
+    hooks = {label: kind for label, _, kind in HOOKS}
     dialogs = (
         "Trust this folder?",
         "Config, hooks, and exec policies from untrusted folders stay disabled.",
