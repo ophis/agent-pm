@@ -55,6 +55,7 @@ class RealTree(Case):
             (guards.modes_import_api, CORE),
             (guards.tmux_calls, CORE),
             (guards.syntax_39, CORE),
+            (guards.import_hygiene, NEW),
         ):
             with self.subTest(guard.__name__):
                 self.assertEqual(guard(root), [])
@@ -412,6 +413,83 @@ class Syntax311(Sample):
         found = guards.syntax_311(root)
         self.assertEqual(len(found), 1, found)
         self.assertTrue(found[0].startswith("x.py: "), found)
+
+
+class ImportHygiene(Sample):
+    def test_any_sys_path_mutation(self):
+        root = self.tree(
+            {
+                "a.py": "import sys\nsys.path.insert(0, 'x')\ndef f():\n    sys.path.append('x')\n",
+                "b.py": "import sys\nsys.path = []\nsys.path[0] = 'x'\nsys.path += ['x']\n"
+                "del sys.path[0]\n",
+                "c.py": "import sys as s\nfrom sys import path as p\nfrom unittest import mock\n"
+                "s.path.extend([])\np.remove('x')\np[:0] = ['x']\np += ['x']\n"
+                "mock.patch('sys.path', [])\n@mock.patch.object(s, 'path', [])\ndef g(): pass\n",
+                "d.py": "import sys\nfrom sys import path\nfrom unittest import mock\n"
+                "x = [sys.path[0], sys.path.index('x'), list(sys.path), sys.path.copy()]\n"
+                "path = []\nmock.patch('os.path.join')\nmock.patch.object(sys, 'argv', [])\n",
+            }
+        )
+        self.assertEqual(
+            guards.import_hygiene(root),
+            [f"{at}: sys.path mutation" for at in ("a.py:2", "a.py:4")]
+            + [f"b.py:{n}: sys.path mutation" for n in range(2, 6)]
+            + [f"c.py:{n}: sys.path mutation" for n in range(4, 10)],
+        )
+
+    def test_a_module_level_environment_write(self):
+        root = self.tree(
+            {
+                "a.py": "import os\nos.environ['A'] = '1'\nos.environ.update(A='1')\n"
+                "del os.environ['A']\nos.environ |= {}\nos.putenv('A', '1')\n",
+                "b.py": "import os as o\nfrom os import environ, putenv\nfrom unittest import mock\n"
+                "class C:\n    environ.setdefault('A', '1')\nif True:\n    putenv('A', '1')\n"
+                "mock.patch.dict(environ, {'A': '1'}).start()\no.environ.pop('A')\n",
+                "c.py": "import os\nfrom unittest import mock\nA = os.environ.get('A', os.environ['B'])\n"
+                "def f():\n    os.environ['A'] = '1'\n    os.putenv('A', '1')\n"
+                "g = lambda: os.environ.clear()\n@mock.patch.dict(os.environ, {'A': '1'})\n"
+                "class D:\n    @mock.patch.dict(os.environ, {'A': '1'})\n    def h(self): pass\n",
+            }
+        )
+        self.assertEqual(
+            guards.import_hygiene(root),
+            [f"a.py:{n}: module-level environment write" for n in range(2, 7)]
+            + [f"b.py:{n}: module-level environment write" for n in (5, 7, 8, 9)],
+        )
+
+    def test_e402_i001_and_isort_comments(self):
+        root = self.tree(
+            {
+                "a.py": "import x  # noqa: E402\nimport y  # noqa: F401,E402\nimport z  # NOQA:I001\n"
+                "# isort: skip_file\n# ruff: noqa: E402\n",
+                "b.py": "S = '# noqa: E402'\nimport w  # noqa: F401\n# ruff: noqa: E501\n# E402 isort\n",
+            }
+        )
+        self.assertEqual(
+            guards.import_hygiene(root),
+            [
+                "a.py:1: comment # noqa: E402",
+                "a.py:2: comment # noqa: F401,E402",
+                "a.py:3: comment # NOQA:I001",
+                "a.py:4: comment # isort: skip_file",
+                "a.py:5: comment # ruff: noqa: E402",
+            ],
+        )
+
+    def test_the_import_root_holds_only_the_package(self):
+        src = os.path.join("core", "src")
+        names = (
+            "agent_pm/__init__.py",
+            "__pycache__/x.pyc",
+            "repo.py",
+            "other/__init__.py",
+            "README",
+        )
+        root = self.tree({f"{src}/{name}": "" for name in names})
+        self.assertEqual(
+            guards.import_hygiene(root),
+            [f"{src}/{entry}: not agent_pm" for entry in ("README", "other", "repo.py")],
+        )
 
 
 if __name__ == "__main__":
