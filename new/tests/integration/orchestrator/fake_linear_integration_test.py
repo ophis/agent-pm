@@ -1,9 +1,9 @@
 """fake_linear.py, the orchestrator's Linear fake: its op table and seeding, then its answers over HTTP through
-linear_gql (the AGENT_PM_LINEAR seam): projection, isMe, failures, the promote and write-back ops, comments by client
-id (FR-54, FR-55)."""
+linear_gql (the AGENT_PM_LINEAR seam): projection, isMe, failures, the router's board reads, the promote, prune and
+write-back ops, comments by client id (FR-54, FR-55)."""
 
 from new.tests.integration.orchestrator import fake_linear
-from new.tests.unit.orchestrator.board_ids import STATES, TEAM
+from new.tests.unit.orchestrator.board_ids import STATES, TASK_GROUP, TEAM
 
 import functools
 import os
@@ -19,12 +19,15 @@ from unittest import mock
 import issues
 import linear
 import promote
+import prune
+import router
 import sessions
 import writeback
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"
 PROJECT = {"id": "121166b1-191a-4461-bec4-42f1c2dc0ddd", "name": "Widgets"}
+LABEL = "00000000-0000-4000-8000-000000000031"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 PR = "https://github.com/acme/widgets/pull/1"
 VIEWER = "query { viewer { id } }"
@@ -35,10 +38,16 @@ class Table(unittest.TestCase):
     def test_every_query_constant_has_an_op(self):
         want = {
             f"{m.__name__}.{k}": v
-            for m in (linear, issues, sessions, writeback, promote)
+            for m in (linear, router, issues, sessions, writeback, promote, prune)
             for k, v in vars(m).items()
             if k[:2] in ("Q_", "M_") and isinstance(v, str)
         }
+        want.update(
+            {
+                "router.issues": router.q_issues(),
+                "router.issues+relations": router.q_issues(router.RELATIONS),
+            }
+        )
         self.assertEqual(fake_linear.texts(), want)
 
     def test_two_names_for_one_text_are_refused(self):
@@ -393,6 +402,33 @@ class Served(unittest.TestCase):
             self.fake.requests, [fake_linear.Request(None, HARNESS_EMAIL, {}, "error")] * 4
         )
 
+    def test_finished_issues_page(self):
+        finished = [
+            self.fake.issue(
+                f"Finished {n}", state=("done", "canceled")[n % 2], assignee=self.engineer
+            )["identifier"]
+            for n in range(51)
+        ]
+        archived = self.fake.issue("Archived", state="done", assignee=self.engineer)["identifier"]
+        linear.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
+        self.fake.issue("Someone else's", state="done", assignee=self.human)
+        pages, cursor = [], None
+        while True:
+            page = self.gql(
+                prune.Q_FINISHED,
+                t=TEAM,
+                s=[STATES["done"], STATES["canceled"]],
+                a=[self.engineer],
+                c=cursor,
+            )["issues"]
+            pages.append([n["identifier"] for n in page["nodes"]])
+            if not page["pageInfo"]["hasNextPage"]:
+                break
+            cursor = page["pageInfo"]["endCursor"]
+        self.assertEqual([len(p) for p in pages], [50, 1])
+        self.assertEqual(sum(pages, []), finished)
+        self.assertTrue(self.fake.find(archived)["archived"])
+
     def test_issue_create_takes_the_next_number_and_refuses_a_used_id(self):
         self.fake.issue("Older", identifier="TASK-3")
         new = {
@@ -436,6 +472,60 @@ class Served(unittest.TestCase):
         self.assertEqual([r.result for r in self.fake.requests], ["ok", "ok", "error"])
         self.assertIsNone(self.fake.find("TASK-9"))
 
+    def test_the_board_reads(self):
+        done = "2026-10-08T07:00:00.000Z"
+        self.fake.label_group(TASK_GROUP, "Tasks", {LABEL: "build"})
+        blocker = self.fake.issue("Blocker", state="in_progress")
+        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT, labels=[LABEL])
+        self.fake.issue("No project", assignee=self.engineer)
+        self.fake.issue("Someone else's", assignee=self.human, project=PROJECT)
+        linear.call(
+            self.gql,
+            promote.M_RELATE,
+            "issueRelationCreate",
+            **{"in": {"type": "blocks", "issueId": blocker["id"], "relatedIssueId": ready["id"]}},
+        )
+        cfg = SimpleNamespace(
+            team=TEAM, states=STATES, task_label_group=TASK_GROUP, task_labels={"build": LABEL}
+        )
+        self.assertEqual(linear.team(self.gql, cfg).states, STATES)
+        linear.task_group(self.gql, cfg)
+        self.assertEqual(linear.user_id(self.gql, "me@x.com"), self.human)
+        flt = {
+            "team": {"id": {"eq": TEAM}},
+            "project": {"null": False},
+            "assignee": {"id": {"in": [self.engineer]}},
+            "state": {"id": {"eq": STATES["todo"]}},
+        }
+        nodes = self.gql(router.q_issues(router.RELATIONS), f=flt)["issues"]["nodes"]
+        self.assertEqual([n["identifier"] for n in nodes], [ready["identifier"]])
+        self.assertEqual(router.blockers(nodes[0]), [blocker["identifier"]])
+        self.assertNotIn(
+            "inverseRelations", self.gql(router.q_issues(), f=flt)["issues"]["nodes"][0]
+        )
+        self.assertEqual(
+            self.gql(router.Q_RECHECK, i=ready["id"])["issue"],
+            {
+                "state": {"id": STATES["todo"]},
+                "assignee": {"id": self.engineer, "email": ENGINEER_EMAIL},
+                "project": PROJECT,
+                "labels": {"nodes": [{"id": LABEL, "name": "build", "parent": {"id": TASK_GROUP}}]},
+            },
+        )
+        self.fake.move(blocker["id"], "done", actor=self.harness, at=done)
+        self.assertEqual(router.blockers(self.gql(router.Q_RELATIONS, i=ready["id"])["issue"]), [])
+        self.assertEqual(
+            self.gql(router.Q_HISTORY, i=blocker["id"])["issue"]["history"]["nodes"],
+            [
+                {
+                    "createdAt": done,
+                    "actorId": self.harness,
+                    "fromStateId": STATES["in_progress"],
+                    "toStateId": STATES["done"],
+                }
+            ],
+        )
+
     def test_the_team_lists_backlog_beside_the_config_states(self):
         query = linear.Q_TEAM.replace(
             "states(first: 100) { nodes { id } }", "states(first: 100) { nodes { id name type } }"
@@ -457,6 +547,33 @@ class Served(unittest.TestCase):
         self.assertEqual(len(nodes), 7)
         cfg = SimpleNamespace(team=TEAM, states=STATES)
         self.assertEqual(linear.team(self.gql, cfg).states, STATES)
+
+    def test_a_backlog_issue_is_not_in_a_todo_list(self):
+        later = self.fake.issue("Later", state="backlog", assignee=self.engineer, project=PROJECT)
+        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT)
+
+        def listed(state):
+            flt = {
+                "team": {"id": {"eq": TEAM}},
+                "project": {"null": False},
+                "assignee": {"id": {"in": [self.engineer]}},
+                "state": {"id": {"eq": state}},
+            }
+            return [n["identifier"] for n in self.gql(router.q_issues(), f=flt)["issues"]["nodes"]]
+
+        backlog = fake_linear.BACKLOG
+        self.assertEqual(listed(STATES["todo"]), [ready["identifier"]])
+        self.assertEqual(listed(backlog), [later["identifier"]])
+        self.assertIsNone(linear.move(self.gql, later["id"], STATES["todo"], backlog))
+        self.assertEqual(listed(STATES["todo"]), [later["identifier"], ready["identifier"]])
+        self.assertIsNone(linear.move(self.gql, ready["id"], backlog, STATES["todo"]))
+        self.assertEqual(
+            (listed(STATES["todo"]), listed(backlog)),
+            ([later["identifier"]], [ready["identifier"]]),
+        )
+        self.assertEqual(
+            self.gql(linear.Q_ISSUE_STATE, i=ready["id"]), {"issue": {"state": {"id": backlog}}}
+        )
 
     def test_issue_create_takes_the_backlog_state(self):
         new = {
@@ -529,8 +646,8 @@ class Served(unittest.TestCase):
             ([{"url": PR, "title": "PR"}], ["Me@X.com"], False),
         )
 
-    def test_the_promote_reads(self):
-        created, handed, said = (f"2026-10-0{d}T07:00:00.000Z" for d in (5, 6, 7))
+    def test_the_promote_and_prune_reads(self):
+        created, handed, said, done = (f"2026-10-0{d}T07:00:00.000Z" for d in (5, 6, 7, 8))
         src = self.fake.issue(
             "Research",
             identifier="TASK-9",
@@ -593,6 +710,13 @@ class Served(unittest.TestCase):
                 "relations": {"nodes": []},
                 "inverseRelations": {"nodes": [{"issue": {"id": self.fake.find("TASK-7")["id"]}}]},
             },
+        )
+        self.fake.move("TASK-9", "done", actor=self.harness, at=done)
+        finished = self.gql(prune.Q_ISSUE, i="TASK-9")["issue"]
+        self.assertEqual(finished["state"], {"id": STATES["done"]})
+        self.assertEqual(
+            linear.last_move(finished["history"]["nodes"], {STATES["done"]}),
+            linear.parse_time(done),
         )
 
 

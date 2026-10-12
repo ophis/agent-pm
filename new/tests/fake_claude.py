@@ -16,6 +16,8 @@ Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
   exit        the exit code
   hang        print: true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
   log         a file each start appends {"pid", "argv", "cwd"} to
+  gate        a file: a run with --session-id or --resume (never the usage probe) waits after its log line until the
+              file exists, then runs its steps; orphaned or HANG_CAP s without it, exit 1
 """
 
 import argparse
@@ -42,6 +44,7 @@ DEFAULTS = {
     "exit": 0,
     "hang": False,
     "log": None,
+    "gate": None,
 }
 LIMIT = "You've hit your usage limit."
 
@@ -99,6 +102,7 @@ CHECKS = {
     "exit": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "hang": lambda v: isinstance(v, bool),
     "log": lambda v: v is None or isinstance(v, str),
+    "gate": lambda v: v is None or isinstance(v, str),
 }
 
 
@@ -197,6 +201,15 @@ def run_hooks(hooks, event: str, payload: dict, field: str) -> None:
                     )
                 except (OSError, subprocess.SubprocessError) as e:
                     print(f"fake_claude.py: {event} hook: {e}", file=sys.stderr, flush=True)
+
+
+def waited(done, parent: int) -> bool:
+    until = time.monotonic() + HANG_CAP
+    while not done():
+        if os.getppid() != parent or time.monotonic() > until:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 class Stranded(Exception):
@@ -299,6 +312,14 @@ def main(argv: list[str]) -> int:
     transcript = os.path.join(config, "projects", project, f"{sid}.jsonl")
     if a.resume and not os.path.isfile(transcript):
         sys.exit(f"No conversation found with session ID: {sid}")
+    gate = s["gate"]
+    if (
+        gate is not None
+        and (a.session_id or a.resume)
+        and not waited(lambda: os.path.exists(gate), parent)
+    ):
+        print(f"fake_claude.py: gate {gate}: never created", file=sys.stderr, flush=True)
+        return 1
     os.makedirs(os.path.dirname(transcript), exist_ok=True)
     last = ""
 
@@ -363,9 +384,7 @@ def main(argv: list[str]) -> int:
             last = LIMIT
             assistant([{"type": "text", "text": LIMIT}], error="rate_limit")
     if s["hang"]:
-        until = time.monotonic() + HANG_CAP
-        while os.getppid() == parent and time.monotonic() < until:
-            time.sleep(0.1)
+        waited(lambda: False, parent)
         return 1
     ok = s["exit"] == 0
     say(

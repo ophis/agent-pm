@@ -1,6 +1,6 @@
 """new/tests/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
-file or output; print mode's stream-json lines, write and resume steps; interactive mode's turns, hooks and steps over a
-pipe, in a private tmux server's pane and under ClaudeTui's launch."""
+file or output; print mode's stream-json lines, write and resume steps; a session's gate; interactive mode's turns,
+hooks and steps over a pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 
 from new.tests import fake_claude, hermetic, live_tmux
 
@@ -166,6 +166,7 @@ class BadScenario(Case):
             {"exit": True},
             {"hang": 1},
             {"log": 5},
+            {"gate": 5},
         ]
         for scenario in rows:
             with self.subTest(scenario=scenario):
@@ -335,6 +336,34 @@ class Interactive(Case):
         parent.kill()
         parent.wait()
         live_tmux.wait(lambda: gone(line["pid"]), what="the orphaned fake to end")
+
+
+class Gate(Case):
+    def test_a_session_waits_for_its_gate_after_its_log_line(self):
+        gate = os.path.join(self.root, "gate")
+        self.scene(steps=["Gated."], gate=gate)
+        for n, (args, users) in enumerate(((ARGS, []), (RESUME, ["hi"])), start=1):
+            with self.subTest(args[2]):
+                proc = self.popen(*args)
+                live_tmux.wait(lambda n=n: len(self.logged()) == n, what=f"the fake's log line {n}")
+                time.sleep(0.5)
+                self.assertIsNone(proc.poll())
+                self.assertEqual(self.users() if self.transcripts() else [], users)
+                with open(gate, "w"):
+                    pass
+                out, err = proc.communicate(timeout=30)
+                self.assertEqual(proc.returncode, 0, err)
+                self.assertEqual(json.loads(out.splitlines()[-1])["result"], "Gated.")
+                self.assertEqual(self.users(), [*users, "hi"])
+                os.remove(gate)
+
+    def test_the_usage_probe_never_waits(self):
+        gate = os.path.join(self.root, "gate")
+        self.scene(steps=["OK"], gate=gate)
+        self.assertEqual(
+            self.result(self.run_fake(*ClaudeAdapter({}).usage_probe().argv[1:])), "OK"
+        )
+        self.assertFalse(os.path.exists(gate))
 
 
 class Hooks(Case):
