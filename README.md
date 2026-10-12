@@ -51,6 +51,7 @@ flowchart TB
   end
   EN --> R
   EN --> D
+  LD --> PP
   W -->|"start · show · sessions"| DR
   RU <==>|"delegate.run · events, outcome"| D
   OR -->|"session chores"| DR
