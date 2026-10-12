@@ -25,28 +25,30 @@ jobs:
       - name: Comment budget
         run: python3 .github/comment_budget.py
 
-  unittest:
-    name: Unit tests (Python 3.11)
+  ruff:
+    name: Ruff (Python 3.11)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Check out
         uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python 3.11
-        id: python
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Check tmux shard inventory
-        run: python3 .github/tmux_shards.py --check
-      - name: Unit tests
-        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
+      - name: Install Ruff
+        id: ruff
+        run: pip install ruff==0.16.9
+      - name: Ruff check
+        run: ruff check --output-format=github
+      - name: Ruff format
+        if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
+        run: ruff format --check
 
-  integration-core:
-    name: Core integration (Python 3.11)
+  new-unit:
+    name: New core unit tests (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -54,46 +56,19 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0   # real_test compares the root core/team/ with main
       - name: Set up Python 3.11
-        id: python
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Install tmux
+      - name: New core unit tests
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Core integration tests
-        run: python3 -m unittest discover -v -s tests/integration/core -t . -p "*_test.py"
+          python3 -m unittest $(find new/tests/unit -name '*_test.py' -not -path '*/orchestrator/*' | sed 's#/#.#g; s#\.py$##')
 
-  integration-orchestrator:
-    name: Orchestrator integration (Python 3.11)
+  new-integration:
+    name: New core integration (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Orchestrator integration tests
-        run: python3 -m unittest discover -v -s tests/integration/orchestrator -t . -p "*_test.py"
-
-  integration-tmux:
-    name: Tmux integration (${{ matrix.shard }}, Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ["A", "B", "C", "D"]
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -107,5 +82,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
-      - name: Tmux skill integration tests
-        run: python3 .github/tmux_shards.py '${{ matrix.shard }}'
+      - name: New core integration tests
+        run: |
+          python3 -m unittest -v $(find new/tests/integration -name '*_test.py' -not -path '*/orchestrator/*' | sed 's#/#.#g; s#\.py$##')
+
+  new-orchestrator-unit:
+    name: New orchestrator unit tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: New orchestrator unit tests
+        run: python3 -m unittest discover -s new/tests/unit/orchestrator -t . -p "*_test.py"
+
+  new-orchestrator-integration:
+    name: New orchestrator integration (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+      - name: New orchestrator integration tests
+        run: python3 -m unittest discover -v -s new/tests/integration/orchestrator -t . -p "*_test.py"
