@@ -1,7 +1,7 @@
 """DelegateContract, FR-47's Delegate contract (FR-13 to FR-16): a subclass also inherits Case and defines
-delegate_cls, ROLE (a role it runs), DISPLAYABLE (its sessions can display), make(workdir, **kw) (a Delegate built
-with these constructor arguments, role among them), end(record) (its sessions gone, no outcome) and finish(record)
-(its sessions gone, a valid outcome). Each case uses only the Delegate ABC and these hooks."""
+delegate_cls, ROLE (a role it runs), DISPLAYABLE (its sessions can display), make(workdir, **kw) (a Delegate of kw's
+role, else ROLE, and a Spec for workdir with kw's other fields), end(record) (its sessions gone, no outcome) and
+finish(record) (its sessions gone, a valid outcome). Each case uses only the Delegate ABC and these hooks."""
 
 import inspect
 import os
@@ -15,8 +15,7 @@ NO_ROLE = "no-such-role"
 OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r1")}
 
 
-def params(cls: type) -> list[tuple]:
-    return [(p.name, p.kind) for p in inspect.signature(cls.__init__).parameters.values()]
+KEYWORD = {"driver", "session_cls", "composer", "display", "host", "harness_host", "callback"}
 
 
 class DelegateContract:
@@ -44,14 +43,15 @@ class DelegateContract:
         self.addCleanup(self.delegate_cls.attach(workdir).close)
         return record, workdir
 
-    def test_its_constructor_takes_the_abcs_arguments_each_keyword_optional(self):
-        self.assertEqual(params(self.delegate_cls), params(Delegate))
-        keywords = [
-            p
-            for p in inspect.signature(self.delegate_cls.__init__).parameters.values()
-            if p.kind is p.KEYWORD_ONLY
-        ]
+    def test_its_constructor_takes_role_spec_and_optional_keywords(self):
+        found = list(inspect.signature(self.delegate_cls.__init__).parameters.values())[1:]
+        self.assertEqual(
+            [p.name for p in found if p.kind is p.POSITIONAL_OR_KEYWORD], ["role", "spec"]
+        )
+        keywords = [p for p in found if p.kind is p.KEYWORD_ONLY]
+        self.assertEqual({p.name for p in keywords}, KEYWORD)
         self.assertEqual([p.name for p in keywords if p.default is p.empty], [])
+        self.assertEqual(len(found), 2 + len(KEYWORD))
 
     def test_an_unknown_role_is_refused_with_config_error_writing_nothing(self):
         workdir = self.workdir()

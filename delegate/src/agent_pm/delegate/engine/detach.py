@@ -32,17 +32,17 @@ def detach(
     p: Plan,
     *,
     events: str,
-    repo: str | None = None,
     split: str | None = None,
     split_from: str | None = None,
 ) -> Detached:
     """The events file must be one you own (created if missing); a tui run's pane opener from api.layout, None when
     the caller has no pane and split_from is None. api.DriverError from api.detach propagates."""
-    if p.mode not in MODES:
-        raise ConfigError(f"--detach: mode must be headless or tui, got {p.mode!r}")
-    if p.mode != "tui" and (split is not None or split_from is not None):
+    mode = p.spec.mode
+    if mode not in MODES:
+        raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
+    if mode != "tui" and (split is not None or split_from is not None):
         raise ConfigError("split and split_from: tui mode only")
-    tui, driver = names(p.run.role, p.sid, p.mode)
+    tui, driver = names(p.run.role, p.spec.sid, mode)
     events = os.path.abspath(events)
     try:
         append_line(events, "", own=True)
@@ -61,16 +61,16 @@ def detach(
         "driver": driver,
         "role": p.run.role,
         "input": p.params.input,
-        "out": p.out,
+        "out": p.spec.out,
         "workdir": p.params.workdir,
-        "runtime": p.runtime,
-        "mode": p.mode,
-        "sid": p.sid,
+        "runtime": p.spec.runtime,
+        "mode": mode,
+        "sid": p.spec.sid,
         "events": events,
     }
     optional = {
         "task": p.run.task,
-        "repo": repo,
+        "repo": p.spec.repo,
         "split": split,
         "split-from": split_from,
         "opener": opener,
@@ -83,7 +83,7 @@ def detach(
         "agent_pm.delegate.cli",
         *(f"--{k}={v}" for k, v in given.items()),
         *(f"--{k}={v}" for k, v in optional.items() if v),
-        *(["--resume"] if p.resume else []),
+        *(["--resume"] if p.spec.resume else []),
     ]
     try:
         api.detach(

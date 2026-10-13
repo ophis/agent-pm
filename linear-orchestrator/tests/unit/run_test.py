@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm import delegate
-from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
+from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
 from agent_pm.linear_orchestrator.engine import config, run
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import api
@@ -81,21 +81,21 @@ class FakeRun:
         self.order, self.result, self.steps, self.error = order, result, steps, error
         self.begun, self.calls, self.dirs = begun, [], []
 
-    def __call__(self, run, task, input, workdir, **kw):
+    def __call__(self, run, spec, *, on_event):
         self.order.append("run")
-        self.calls.append(((run, task, input, workdir), kw))
-        self.dirs.append(os.path.isdir(workdir))
+        self.calls.append((run, spec))
+        self.dirs.append(os.path.isdir(spec.workdir))
         if self.error:
             raise self.error
         if self.begun:
-            kw["on_event"](Begun(kw["sid"]))
+            on_event(Begun(spec.sid))
         for step in self.steps:
             if callable(step):
                 step()
             else:
-                kw["on_event"](step)
+                on_event(step)
         if self.result.outcome is not None:
-            kw["on_event"](Finished(self.result))
+            on_event(Finished(self.result))
         return self.result
 
 
@@ -149,8 +149,8 @@ class Case(Base):
         self.delegate.result, self.delegate.steps = result, steps
 
     def call(self):
-        ((args, kw),) = self.delegate.calls
-        return args, {k: v for k, v in kw.items() if k != "on_event"}
+        (found,) = self.delegate.calls
+        return found
 
     def nothing_ran(self):
         self.assertEqual((self.gql.calls, self.delegate.calls), ([], []))
@@ -193,19 +193,18 @@ class Inner(Case):
                 REPAIR,
             ],
         )
-        args, kw = self.call()
-        self.assertEqual(args, (config.load().roles["engineer"].run, None, "Do it.\n", self.rd))
         self.assertEqual(
-            kw,
-            dict(
-                runtime=RUNTIME,
-                mode="headless",
-                sid=SID,
-                resume=None,
-                name=None,
-                events=None,
-                out=os.path.join(self.rd, "out.md"),
-                cwd=self.rd,
+            self.call(),
+            (
+                config.load().roles["engineer"].run,
+                Spec(
+                    "Do it.\n",
+                    self.rd,
+                    runtime=RUNTIME,
+                    sid=SID,
+                    out=os.path.join(self.rd, "out.md"),
+                    cwd=self.rd,
+                ),
             ),
         )
         self.assertEqual(self.delegate.dirs, [True])
@@ -281,19 +280,19 @@ class Inner(Case):
 
     def test_a_task_reaches_the_delegate(self):
         self.assertEqual(self.main(task="light-build"), 0)
-        self.assertEqual(self.call()[0][1], "light-build")
+        self.assertEqual(self.call()[1].task, "light-build")
 
     def test_a_researcher_run_has_the_brake(self):
         self.assertEqual(self.main(assignee=RESEARCHER, target=None), 0)
-        (researcher, *_), _ = self.call()
+        researcher, _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
         self.assertEqual(researcher.gate, GATE)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_resume(self):
         self.assertEqual(self.main(mode="resume"), 0)
-        _, kw = self.call()
-        self.assertEqual((kw["sid"], kw["resume"]), (SID, SID))
+        _, spec = self.call()
+        self.assertEqual((spec.sid, spec.resume), (SID, True))
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=resume sid={SID}")
 
     def test_a_failed_session_comment_is_a_registry_error(self):
@@ -449,9 +448,9 @@ class Tui(Case):
         self.done()
         extra = ("--tui", "--split=below", "--split-from=dev", "--opener=w0t0p0:ABC")
         self.assertEqual(self.main(*extra, "--events=/x/ev.log"), 0)
-        _, kw = self.call()
+        _, spec = self.call()
         self.assertEqual(
-            (kw["mode"], kw["name"], kw["events"], kw["sid"]), ("tui", TUI, "/x/ev.log", SID)
+            (spec.mode, spec.name, spec.events, spec.sid), ("tui", TUI, "/x/ev.log", SID)
         )
         self.assertEqual(
             [o for o in self.order if o[0] == "show"],

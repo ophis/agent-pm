@@ -1,8 +1,5 @@
-"""The delegate's paths, their only home: CONFIG, delegate/config.toml (read through
-agent_pm.utils.config_file.read_project("delegate"), ~/.agent-pm/local.toml on top); DELEGATE, the delegate project
-dir; IMPORT_ROOTS, the projects' src/ (agent_pm.utils.paths.import_roots); PYTHONPATH, them joined: a child's.
-harness_host(config, hosts): a read delegate config's [delegates] harness_host, None unset, checked against the host
-names `hosts` (Session.parse_hosts' tables); else ValueError."""
+"""The delegate's paths, their only home: CONFIG (read by read_project("delegate")), DELEGATE, IMPORT_ROOTS and
+PYTHONPATH (them joined: a child's). harness_host: [delegates] harness_host, None unset, else one of `hosts`."""
 
 import os
 from collections.abc import Collection, Mapping

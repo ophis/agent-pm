@@ -1,5 +1,6 @@
-"""delegate/engine/base.py: the Delegate ABC, its constructor convention and delegate/__init__.py's new exports."""
+"""delegate/engine/base.py: the Delegate ABC, no constructor, the Spec and delegate/__init__.py's new exports."""
 
+import dataclasses
 import inspect
 import unittest
 
@@ -9,27 +10,22 @@ from agent_pm.session import Host, Session
 
 from delegate.tests.case import Case
 
-POSITIONAL = ["role", "task", "input", "workdir"]
-KEYWORD = {
-    "runtime": None,
+SPEC = {
+    "input": None,
+    "workdir": None,
+    "task": None,
     "mode": "headless",
-    "driver": None,
+    "runtime": None,
     "sid": None,
+    "resume": False,
     "name": None,
+    "events": None,
+    "out": None,
     "repo": None,
     "cwd": None,
     "team": None,
-    "out": None,
-    "events": None,
-    "callback": None,
-    "display": None,
-    "host": None,
-    "harness_host": None,
-    "session_cls": None,
-    "composer": None,
 }
 ABSTRACT = {
-    "__init__",
     "attach",
     "usage",
     "roles",
@@ -51,7 +47,7 @@ CLASS_METHODS = {"attach", "usage", "roles", "resolve", "trusted_dirs"}
 
 class Exports(Case):
     def test_all_holds_the_new_names_each_bound(self):
-        for name in ("Delegate", "RunConfig", "DelegateEvent"):
+        for name in ("Delegate", "Spec", "RunConfig", "DelegateEvent"):
             with self.subTest(name=name):
                 self.assertIn(name, delegate.__all__)
         self.assertEqual([n for n in delegate.__all__ if not hasattr(delegate, n)], [])
@@ -78,11 +74,19 @@ class Abstract(Case):
             with self.subTest(name=name):
                 self.assertIsInstance(inspect.getattr_static(Delegate, name), classmethod)
 
-    def test_the_constructor_convention(self):
-        params = list(inspect.signature(Delegate.__init__).parameters.values())[1:]
-        self.assertEqual([p.name for p in params if p.kind is p.POSITIONAL_OR_KEYWORD], POSITIONAL)
-        self.assertEqual({p.name: p.default for p in params if p.kind is p.KEYWORD_ONLY}, KEYWORD)
-        self.assertEqual(len(params), len(POSITIONAL) + len(KEYWORD))
+    def test_no_constructor_is_declared(self):
+        self.assertNotIn("__init__", vars(Delegate))
+
+
+class SpecTest(Case):
+    def test_a_frozen_spec_its_fields_and_defaults(self):
+        found = {
+            f.name: None if f.default is dataclasses.MISSING else f.default
+            for f in dataclasses.fields(delegate.Spec)
+        }
+        self.assertEqual(found, SPEC)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            delegate.Spec("x", "/w").sid = "s"
 
 
 if __name__ == "__main__":

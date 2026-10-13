@@ -30,6 +30,7 @@ from agent_pm.delegate import (
     Limit,
     Progress,
     Result,
+    Spec,
     composer,
     run,
 )
@@ -191,7 +192,7 @@ class Base(Case):
         }
         try:
             with redirect_stderr(err):
-                return run(config, "echo", kw.pop("input"), self.work, on_event=on, **kw)
+                return run(config, Spec(kw.pop("input"), self.work, task="echo", **kw), on_event=on)
         finally:
             self.err = err.getvalue()
 
@@ -535,7 +536,8 @@ class Start(Base):
         seen = []
         r = self.go(
             said(block({**DONE, "deliverable": "# Draft\n"})),
-            resume=SID,
+            sid=SID,
+            resume=True,
             on_event=lambda e: seen.append(self.read(self.out)) if isinstance(e, Begun) else None,
         )
         self.assertEqual(
@@ -659,7 +661,7 @@ class Start(Base):
         for steps, kw in (
             ([said(START, block(DONE))], {}),
             ([said(block(NEEDS))], {}),
-            ([said(block(DONE))], {"resume": SID}),
+            ([said(block(DONE))], {"sid": SID, "resume": True}),
             ([said("bye")], {}),
         ):
             with self.subTest(steps=steps, **kw):
@@ -872,7 +874,7 @@ class TuiPolicy(Base):
         for kw, want, name in (
             ({}, ({"resume": None, "events": None}, None), NAME),
             (
-                {"resume": SID, "name": "mine", "events": events},
+                {"sid": SID, "resume": True, "name": "mine", "events": events},
                 ({"resume": SID, "events": events}, "mine"),
                 "mine",
             ),

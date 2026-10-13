@@ -15,7 +15,7 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, composer, plan
+from agent_pm.delegate import ConfigError, Spec, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
@@ -86,7 +86,7 @@ class Base(Case):
         run = run or replace(composer.resolve(role, team=team), **(keys or {}))
         err = io.StringIO()
         with redirect_stderr(err):
-            got = plan(run, task, kw.pop("input"), workdir, team=team, **kw)
+            got = plan(run, Spec(kw.pop("input"), workdir, task=task, team=team, **kw))
         return got, err.getvalue()
 
     def refused(self, *args, **kw) -> str:
@@ -98,7 +98,7 @@ class Base(Case):
 class ReplyTags(Base):
     def test_the_spec_carries_the_delegates_reply_protocol(self):
         got, _ = self.planned()
-        self.assertEqual(got.spec.reply_tags, (PROGRESS, OUTCOME))
+        self.assertEqual(got.session.reply_tags, (PROGRESS, OUTCOME))
 
 
 class Configures(Base):
@@ -106,7 +106,7 @@ class Configures(Base):
         registry.reset()
         with mock.patch.object(Session, "configure") as configure:
             got, _ = self.planned()
-        self.assertEqual(got.runtime, "fake")
+        self.assertEqual(got.spec.runtime, "fake")
         configure.assert_not_called()
         with self.assertRaisesRegex(api.ConfigError, "not configured"):
             registry.configured()
@@ -249,7 +249,7 @@ class Cwd(Base):
                 self.assertIn(f"\n- `<Workdir>`: `{self.work}`\n", got.prompt)
                 self.assertTrue(got.prompt.endswith("\n# Input\n\nwork/input.md\n"))
                 self.assertEqual(
-                    (got.spec.workdir, got.params.workdir, got.out),
+                    (got.session.workdir, got.params.workdir, got.spec.out),
                     (self.work, self.work, self.out),
                 )
 
@@ -266,7 +266,7 @@ class Refusals(Base):
             ({"events": "e"}, "events: tui mode only"),
             ({"mode": "in_process", "name": "n"}, "name: tui mode only"),
             ({"mode": "in_process", "events": "e"}, "events: tui mode only"),
-            ({"sid": "a", "resume": "b"}, "sid 'a' differs from resume 'b'"),
+            ({"resume": True}, "resume: needs a sid"),
             ({"run": nobody}, "unknown role 'nope'"),
             ({"task": "nope"}, f"task 'nope' is not one of researcher's tasks ({tasks})"),
         ):
@@ -298,7 +298,7 @@ class Planned(Base):
             with self.subTest(keys=keys):
                 got, _ = self.planned(keys=keys)
                 self.assertEqual(
-                    got.spec.access,
+                    got.session.access,
                     api.Access(
                         dirs=(),
                         commands=commands,
@@ -311,7 +311,7 @@ class Planned(Base):
 
     def test_the_cwd_unset_is_the_callers_and_the_workdir_an_added_dir(self):
         got, err = self.planned(keys=self.KEYS, cwd=None)
-        access = got.spec.access
+        access = got.session.access
         self.assertEqual(
             (access.cwd, access.project, access.dirs, access.reads),
             (os.getcwd(), False, (self.work,), (TASKS, composer.TEAM)),
@@ -319,63 +319,69 @@ class Planned(Base):
         self.assertEqual(err, notice(os.getcwd()))
 
     def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_workdir(self):
-        spec = self.planned(keys={"tier": 4, "effort": "low"})[0].spec
+        spec = self.planned(keys={"tier": 4, "effort": "low"})[0].session
         self.assertEqual(
             (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", None)
         )
 
     def test_a_new_run_gets_a_new_uuid4_sid_unless_given_one_and_a_resume_its_own(self):
         first, second = self.planned()[0], self.planned()[0]
-        self.assertEqual((uuid.UUID(first.sid).version, first.resume), (4, False))
-        self.assertNotEqual(first.sid, second.sid)
-        for kw, resume in (
-            ({"sid": SID}, False),
-            ({"resume": SID}, True),
-            ({"sid": SID, "resume": SID}, True),
-        ):
+        self.assertEqual((uuid.UUID(first.spec.sid).version, first.spec.resume), (4, False))
+        self.assertNotEqual(first.spec.sid, second.spec.sid)
+        for kw, resume in (({"sid": SID}, False), ({"sid": SID, "resume": True}, True)):
             with self.subTest(kw=kw):
                 got = self.planned(**kw)[0]
-                self.assertEqual((got.sid, got.resume, got.params.resume), (SID, resume, resume))
+                self.assertEqual(
+                    (got.spec.sid, got.spec.resume, got.params.resume), (SID, resume, resume)
+                )
 
     def test_a_resumes_prompt_starts_with_the_resume_text(self):
-        new, resumed = self.planned()[0].prompt, self.planned(resume=SID)[0].prompt
+        new, resumed = self.planned()[0].prompt, self.planned(sid=SID, resume=True)[0].prompt
         self.assertFalse(new.startswith(RESUME))
         self.assertEqual(resumed, RESUME + new)
 
     def test_out_is_absolute_and_without_it_the_prompt_names_the_default_deliverable(self):
         got = self.planned()[0]
-        self.assertEqual(got.out, self.out)
+        self.assertEqual(got.spec.out, self.out)
         self.assertIn("`<Workdir>/out.md`", got.prompt)
         got = self.planned(out=None)[0]
-        self.assertIsNone(got.out)
+        self.assertIsNone(got.spec.out)
         self.assertIn("`<Workdir>/tmp/deliverable.md`", got.prompt)
         self.assertEqual(got.params.deliverable, os.path.join(self.work, "tmp", "deliverable.md"))
 
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
         self.assertEqual(
-            (got.runtime, got.mode, got.run.task), ("fake", "headless", "light-research")
+            (got.spec.runtime, got.spec.mode, got.run.task), ("fake", "headless", "light-research")
         )
-        self.assertEqual((got.name, got.events), (None, None))
+        self.assertEqual((got.spec.name, got.spec.events), (None, None))
         self.assertEqual(
             got.params, RunParams(input="Research X.", out=self.out, workdir=self.work)
         )
         self.assertEqual(self.planned(task=None)[0].run.task, "")
 
+    def test_without_a_runtime_the_runs_own(self):
+        got = self.planned(runtime=None)[0]
+        self.assertEqual(got.spec.runtime, got.run.runtime)
+
     def test_in_process_is_planned_as_headless(self):
         got = self.planned(mode="in_process", sid=SID)[0]
-        self.assertEqual(got.mode, "in_process")
-        self.assertEqual(replace(got, mode="headless"), self.planned(sid=SID)[0])
+        self.assertEqual(got.spec.mode, "in_process")
+        self.assertEqual(
+            replace(got, spec=replace(got.spec, mode="headless")), self.planned(sid=SID)[0]
+        )
 
     def test_tui_takes_name_and_events_unchecked_for_the_driver_to_check(self):
         for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "rel\n")):
             with self.subTest(name=name, events=events):
                 got = self.planned(mode="tui", name=name, events=events)[0]
-                self.assertEqual((got.mode, got.name, got.events), ("tui", name, events))
+                self.assertEqual(
+                    (got.spec.mode, got.spec.name, got.spec.events), ("tui", name, events)
+                )
                 self.assertFalse(os.path.exists(self.work))
 
     def test_plan_creates_and_writes_nothing(self):
-        for kw in ({}, {"resume": SID}, {"out": None}):
+        for kw in ({}, {"sid": SID, "resume": True}, {"out": None}):
             with self.subTest(kw=kw):
                 self.planned(**kw)
                 self.assertFalse(os.path.exists(self.work))
@@ -409,7 +415,7 @@ class ConfiguredTeamDirs(Base):
     def test_a_read_dir_overlapping_one_is_read_unadded(self):
         for read in (self.tmp, os.path.join(self.team, "tasks")):
             with self.subTest(read=read):
-                access = self.planned(keys={"read": [read]})[0].spec.access
+                access = self.planned(keys={"read": [read]})[0].session.access
                 self.assertEqual((access.dirs, access.reads), ((), (TASKS, read)))
 
     def test_one_overlapping_codex_home_is_refused(self):
@@ -423,8 +429,8 @@ class ConfiguredTeamDirs(Base):
 
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
         with mock.patch.object(api, "writable_dirs", return_value=()) as asked:
-            got = self.planned(resume=SID)[0]
-            asked.assert_called_once_with("fake", got.spec, SID)
+            got = self.planned(sid=SID, resume=True)[0]
+            asked.assert_called_once_with("fake", got.session, SID)
             asked.reset_mock()
             self.local("")
             self.planned(runtime="codex")
@@ -481,7 +487,7 @@ class CustomTeam(Base):
                 mock.patch.dict(os.environ, {"CODEX_HOME": home}),
             ):
                 got, _ = self.planned(role, task, team=self.found, runtime=runtime, **kw)
-                self.assertEqual((got.spec.access.dirs, got.spec.access.reads), ((), reads))
+                self.assertEqual((got.session.access.dirs, got.session.access.reads), ((), reads))
         return got
 
     def test_the_roles_own_tasks_dir_is_a_read_dir_never_added(self):
@@ -559,13 +565,13 @@ class Policy(Base):
         for runtime, want in self.SHIPPED.items():
             with self.subTest(runtime=runtime):
                 got, _ = self.planned(runtime=runtime)
-                self.assertEqual((got.spec.flags, dict(got.spec.env)), want)
+                self.assertEqual((got.session.flags, dict(got.session.env)), want)
 
     def test_a_local_policy_replaces_the_shipped_one(self):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
         got, _ = self.planned(runtime="codex")
         self.assertEqual(
-            (got.spec.flags, dict(got.spec.env)), (("-s", "workspace-write"), {"K": "v"})
+            (got.session.flags, dict(got.session.env)), (("-s", "workspace-write"), {"K": "v"})
         )
 
     def test_an_invalid_policy_is_a_config_error_before_any_launch(self):

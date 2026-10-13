@@ -1,7 +1,6 @@
-"""One role's run to its Result: the Driver session's events handled as they come; an invalid outcome gets one fix
-of the same session, a usage limit ends the run; the deliverable is saved to `out`. Records go to <workdir>/run.jsonl;
-`result` and `end` however the run ends. A Mode's policy (POLICIES) starts the session, sends the fix and answers each
-turn end and IdleTimeout: go on (None), END the attempt or GiveUp."""
+"""One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit ends the run, the
+deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy (POLICIES) starts the session, sends
+the fix and answers each turn end and IdleTimeout: go on (None), END or GiveUp."""
 
 import os
 import sys
@@ -10,7 +9,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.delegate.composer import OUTCOME, RunConfig, Team
+from agent_pm.delegate.composer import OUTCOME, RunConfig
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -20,6 +19,7 @@ from agent_pm.delegate.engine.types import (
     Plan,
     Progress,
     Result,
+    Spec,
 )
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.event.outcome import read as read_outcome
@@ -54,18 +54,22 @@ class Headless:
         self.note = note
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> api.Handle:
+        s = p.spec
         return api.start(
-            p.runtime,
-            p.mode,
+            s.runtime,
+            s.mode,
             p.prompt,
-            replace(p.spec, sid=p.sid, name=name),
-            resume=p.sid if p.resume else None,
+            replace(p.session, sid=s.sid, name=name),
+            resume=s.sid if s.resume else None,
             idle_timeout=IDLE_TIMEOUT,
             events=events,
         )
 
     def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
-        return api.start(p.runtime, p.mode, text, p.spec, resume=p.sid, idle_timeout=IDLE_TIMEOUT)
+        s = p.spec
+        return api.start(
+            s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT
+        )
 
     def turn_end(self, handle: api.Handle, reply: str, pending: int) -> str | GiveUp | None:
         return None
@@ -86,7 +90,7 @@ class Tui(Headless):
         self.nudged, self.count = False, 0
 
     def start(self, p: Plan) -> api.Handle:
-        handle = super().start(p, p.name, p.events)
+        handle = super().start(p, p.spec.name, p.spec.events)
         _say(f"delegate: tui session {handle.name}: {api.attach_command(handle.name)}")
         return handle
 
@@ -126,42 +130,10 @@ def _say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
-def run(
-    run: RunConfig,
-    task: str | None,
-    input: str,
-    workdir: str,
-    *,
-    runtime: str,
-    mode: str,
-    sid: str | None = None,
-    resume: str | None = None,
-    name: str | None = None,
-    events: str | None = None,
-    on_event: Callable[[Event], None] | None = None,
-    out: str | None = None,
-    repo: str | None = None,
-    cwd: str | None = None,
-    team: Team | None = None,
-) -> Result:
+def run(run: RunConfig, spec: Spec, *, on_event: Callable[[Event], None] | None = None) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
     the session and propagates."""
-    p = plan(
-        run,
-        task,
-        input,
-        workdir,
-        runtime=runtime,
-        mode=mode,
-        sid=sid,
-        resume=resume,
-        name=name,
-        events=events,
-        out=out,
-        repo=repo,
-        cwd=cwd,
-        team=team,
-    )
+    p = plan(run, spec)
     attempts = _Attempts(p, on_event or (lambda event: None))
     try:
         result = attempts.result()
@@ -192,7 +164,7 @@ def _resets(at: float | None) -> str:
 
 class _Attempts:
     def __init__(self, p: Plan, on_event: Callable[[Event], None]):
-        self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.mode](self.note)
+        self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.spec.mode](self.note)
         self.channel = api.records.path(p.spec.workdir)
         self.seen: set[str] = set()
         self.refused = False  # the Driver refused the start: nothing to close
@@ -202,7 +174,7 @@ class _Attempts:
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
-        for kind, fields in (("result", result), ("end", {"sid": self.plan.sid, "rc": rc})):
+        for kind, fields in (("result", result), ("end", {"sid": self.plan.spec.sid, "rc": rc})):
             try:
                 self.note(kind, **fields)
             except OSError as e:
@@ -218,14 +190,14 @@ class _Attempts:
         except api.DriverError as e:
             self.drop_stale_out()
             self.note("input", text=p.params.input)
-            return Result(1, None, f"{p.mode}: {e}")
+            return Result(1, None, f"{p.spec.mode}: {e}")
         try:
             stale = self.drop_stale_out()
             self.note("input", text=p.params.input)
             if stale:
                 self.stop(handle)
                 return Result(1, None, stale)
-            self.on_event(Begun(p.sid))
+            self.on_event(Begun(p.spec.sid))
             fixed = False
             while True:
                 rc, last, limit = self.attempt(handle)
@@ -253,22 +225,22 @@ class _Attempts:
             raise
 
     def stop(self, handle: api.Handle) -> bool:
-        """A DriverError is printed, never the run's result or exception; False then, the session maybe running."""
+        """A DriverError is printed, not raised; False then, the session maybe running."""
         try:
             handle.stop()
         except api.DriverError as e:
-            _say(f"delegate: {self.plan.mode}: {e}")
+            _say(f"delegate: {self.plan.spec.mode}: {e}")
             return False
         return True
 
     def drop_stale_out(self) -> str:
         """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
-        p = self.plan
+        s = self.plan.spec
         if (
-            p.out and not p.resume and not os.path.isdir(p.out)
+            s.out and not s.resume and not os.path.isdir(s.out)
         ):  # a resume keeps its session's draft
             try:
-                Path(p.out).unlink(missing_ok=True)
+                Path(s.out).unlink(missing_ok=True)
             except OSError as e:
                 return f"cannot remove the stale out: {e}"
         return ""
@@ -324,21 +296,21 @@ class _Attempts:
         return text
 
     def finish(self, outcome: Outcome, rc: int) -> Result:
-        p, kind = self.plan, self.plan.run.output["type"]
-        if outcome.deliverable and p.out:
+        s, kind = self.plan.spec, self.plan.run.output["type"]
+        if outcome.deliverable and s.out:
             if not api.records.holds(
-                p.out, outcome.deliverable
+                s.out, outcome.deliverable
             ):  # else the agent run wrote it there
                 try:
-                    save(p.out, outcome.deliverable)
+                    save(s.out, outcome.deliverable)
                 except OSError as e:
                     if kind in SAVES_DELIVERABLE:
                         raise
-                    _say(f"delegate: cannot save the deliverable to {p.out}: {e}")
+                    _say(f"delegate: cannot save the deliverable to {s.out}: {e}")
                     self.note("save_error", error=str(e))
             if kind == "local":
-                outcome = replace(outcome, url=p.out)
-        if not p.resume and outcome.status != "needs_input" and "start" not in self.seen:
+                outcome = replace(outcome, url=s.out)
+        if not s.resume and outcome.status != "needs_input" and "start" not in self.seen:
             print("delegate: missing progress mark: start", file=sys.stderr, flush=True)
             self.note("missing", name="start")
         result = Result(rc, outcome, f"the client exited {rc}" if rc else "")

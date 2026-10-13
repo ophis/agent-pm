@@ -8,40 +8,14 @@ from collections.abc import Callable, Mapping, Sequence
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.types import Begun, Finished, Progress, Result
 from agent_pm.delegate.event.outcome import Outcome
-from agent_pm.session import Host, Session, Usage, api
-from agent_pm.utils.record import Display, Record, Status
+from agent_pm.session import Usage, api
+from agent_pm.utils.record import Record, Status
 
 
 class Delegate(ABC):
-    """Implementations take this constructor (refusal: ConfigError, nothing written). run, detach run it;
-    attach(record or workdir) views a started one. show, attach_command: displayable sessions only, else
-    NotDisplayable."""
-
-    @abstractmethod
-    def __init__(
-        self,
-        role: str,
-        task: str | None,
-        input: str,
-        workdir: str,
-        *,
-        runtime: str | None = None,
-        mode: str = "headless",
-        driver=None,
-        sid: str | None = None,
-        name: str | None = None,
-        repo: str | None = None,
-        cwd: str | None = None,
-        team=None,
-        out: str | None = None,
-        events: str | None = None,
-        callback: Sequence[str] | None = None,
-        display: Display = None,
-        host: str | None = None,
-        harness_host: str | Host | None = None,
-        session_cls: type[Session] | None = None,
-        composer=None,
-    ) -> None: ...
+    """An implementation's constructor: (role, Spec, *, optional dependencies and placement), refusing with
+    ConfigError, writing nothing. run, detach run it; attach(record or workdir) views a started one. show,
+    attach_command: displayable sessions only, else NotDisplayable."""
 
     @classmethod
     @abstractmethod

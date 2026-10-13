@@ -1,5 +1,5 @@
-"""One run's plan: its cwd, Spec, sid and prompt, every check before anything starts, writing nothing; the caller
-configured the session. A refusal is ConfigError, a Composer or Driver one keeping its message."""
+"""One run's plan: its cwd, session Spec, sid and prompt, every check before anything starts, writing nothing; the caller
+configured the session. A refusal is ConfigError, a Driver one keeping its message."""
 
 import functools
 import os
@@ -9,7 +9,7 @@ from dataclasses import replace
 
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
-from agent_pm.delegate.engine.types import ConfigError, Plan
+from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import api
 from agent_pm.utils.config_file import read_project
@@ -40,7 +40,7 @@ def _own(f):
     def wrapped(*args, **kw):
         try:
             return f(*args, **kw)
-        except (composer.ConfigError, api.ConfigError) as e:
+        except api.ConfigError as e:
             raise ConfigError(str(e)) from None
 
     return wrapped
@@ -77,50 +77,42 @@ def place(
 
 
 @_own
-def plan(
-    run: RunConfig,
-    task: str | None,
-    input: str,
-    workdir: str,
-    *,
-    runtime: str,
-    mode: str,
-    sid: str | None = None,
-    resume: str | None = None,
-    name: str | None = None,
-    events: str | None = None,
-    out: str | None = None,
-    repo: str | None = None,
-    cwd: str | None = None,
-    team: Team | None = None,
-) -> Plan:
-    """`team` None: the built-in team, the configured team dirs checked for overlap only."""
-    if mode not in api.MODES:
-        raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {mode!r}")
-    if mode != "tui" and name is not None:
+def plan(run: RunConfig, spec: Spec) -> Plan:
+    """With the built-in team the configured team dirs are checked for overlap only."""
+    if spec.mode not in api.MODES:
+        raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {spec.mode!r}")
+    if spec.mode != "tui" and spec.name is not None:
         raise ConfigError("name: tui mode only")
-    if mode != "tui" and events is not None:
+    if spec.mode != "tui" and spec.events is not None:
         raise ConfigError("events: tui mode only")
-    if sid is not None and resume is not None and sid != resume:
-        raise ConfigError(f"sid {sid!r:.80} differs from resume {resume!r:.80}")
-    guarded: tuple[str, ...] = ()
+    if spec.resume and spec.sid is None:
+        raise ConfigError("resume: needs a sid")
+    team, guarded = spec.team, ()
     if team is None:
         team = composer.team()
         try:
             guarded = composer.team_dirs()
-        except (composer.ConfigError, OSError, ValueError):
+        except (ConfigError, OSError, ValueError):
             pass
     tasks = composer.index(run.role, team)
-    if task:
-        if task not in tasks:
+    if spec.task:
+        if spec.task not in tasks:
             raise ConfigError(
-                f"task {task!r} is not one of {run.role}'s tasks ({', '.join(tasks)})"
+                f"task {spec.task!r} is not one of {run.role}'s tasks ({', '.join(tasks)})"
             )
-        run = replace(run, task=task)
-    sid = resume if resume is not None else sid if sid is not None else str(uuid.uuid4())
-    workdir, out = os.path.abspath(workdir), os.path.abspath(out) if out else None
-    here, project = place(run, workdir, resume_sid=resume, cwd=cwd)
-    intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=repo, team=team)
+        run = replace(run, task=spec.task)
+    workdir = os.path.abspath(spec.workdir)
+    spec = replace(
+        spec,
+        workdir=workdir,
+        out=os.path.abspath(spec.out) if spec.out else None,
+        runtime=spec.runtime or run.runtime,
+        sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
+        team=team,
+    )
+    resume = spec.sid if spec.resume else None
+    here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
+    intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo, team=team)
     access = api.Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),
@@ -129,8 +121,8 @@ def plan(
         reads=intent.reads,
         env=intent.env,
     )
-    flags, env = policy(runtime)
-    spec = api.Spec(
+    flags, env = policy(spec.runtime)
+    session = api.Spec(
         workdir=workdir,
         access=access,
         tier=run.tier,
@@ -139,26 +131,16 @@ def plan(
         env=env,
         reply_tags=(PROGRESS, OUTCOME),
     )
-    _check_team_dirs(team, guarded, intent.writes, runtime=runtime, spec=spec, resume=resume)
+    _check_team_dirs(
+        team, guarded, intent.writes, runtime=spec.runtime, spec=session, resume=resume
+    )
     params = RunParams(
-        input=input,
-        out=out or os.path.join(workdir, DELIVERABLE),
+        input=spec.input,
+        out=spec.out or os.path.join(workdir, DELIVERABLE),
         workdir=workdir,
-        resume=resume is not None,
+        resume=spec.resume,
     )
-    return Plan(
-        runtime,
-        mode,
-        sid,
-        resume is not None,
-        composer.render(run, params, team=team),
-        spec,
-        run,
-        params,
-        out,
-        name,
-        events,
-    )
+    return Plan(spec, session, composer.render(run, params, team=team), run, params)
 
 
 def _check_team_dirs(

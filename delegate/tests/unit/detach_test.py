@@ -90,7 +90,7 @@ class Detach(Base):
             self.assertEqual(f.read(), b"")
 
     def test_tui_passes_each_option_given_and_the_layouts_opener(self):
-        got = self.detached(self.plan("tui"), repo="-r", split="right", split_from="mgr")
+        got = self.detached(self.plan("tui", repo="-r"), split="right", split_from="mgr")
         self.assertEqual(got, detach.Detached(DRIVER, TUI, "mgr"))
         self.layout.assert_called_once_with("right", "mgr")
         self.assertEqual(
@@ -101,7 +101,7 @@ class Detach(Base):
 
     def test_task_only_when_set_resume_only_on_a_resume(self):
         self.detached(self.plan(task=None))
-        self.detached(self.plan(resume=SID))
+        self.detached(self.plan(resume=True))
         self.assertEqual(
             [c.args[1] for c in self.started.call_args_list],
             [self.argv("headless", task=None), self.argv("headless", "--resume")],
@@ -131,7 +131,7 @@ class Detach(Base):
             (self.plan(), {"split": "right"}, TUI_ONLY),
             (self.plan(), {"split_from": "mgr"}, TUI_ONLY),
         ):
-            with self.subTest(mode=p.mode, kw=kw):
+            with self.subTest(mode=p.spec.mode, kw=kw):
                 self.assertEqual(self.refusal(p, **kw), want)
         self.layout.assert_not_called()
         self.assertFalse(os.path.exists(self.events))

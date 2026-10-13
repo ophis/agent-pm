@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Begun, Finished, Limit, Progress, composer, run
+from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session import Session
 from agent_pm.utils.config_file import read_project
@@ -65,14 +65,15 @@ class Base(Case):
         with redirect_stderr(io.StringIO()):
             return run(
                 composer.resolve("dummy-tester"),
-                "echo",
-                "Hello.",
-                self.work,
-                runtime="claude",
-                mode="headless",
-                sid=SID,
-                out=self.out,
-                cwd=self.work,
+                Spec(
+                    "Hello.",
+                    self.work,
+                    task="echo",
+                    runtime="claude",
+                    sid=SID,
+                    out=self.out,
+                    cwd=self.work,
+                ),
                 on_event=self.events.append,
             )
 

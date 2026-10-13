@@ -13,12 +13,14 @@ from agent_pm.delegate.engine.types import (
     Plan,
     Progress,
     Result,
+    Spec,
 )
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.outcome import STATUSES, InvalidOutcome, Outcome
 
 __all__ = [
     "ConfigError",
+    "Spec",
     "Plan",
     "plan",
     "run",

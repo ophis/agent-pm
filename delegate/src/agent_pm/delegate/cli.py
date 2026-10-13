@@ -20,7 +20,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import replace
 
-from agent_pm.delegate import Begun, ConfigError, Plan, composer, plan, run
+from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import printable
@@ -97,25 +97,28 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
         config = composer.resolve(a.role, a.task, team=team)
         _configure()
         text = sys.stdin.read() if a.input == "-" and a.driver is None else a.input
-        given = (config, a.task, text, a.workdir)
-        kw = {
-            "runtime": a.runtime or config.runtime,
-            "mode": a.mode,
-            "sid": a.sid,
-            "resume": a.sid if a.resume else None,
-            "events": a.events if a.mode == "tui" else None,
-            "out": None if a.out == "-" else a.out,
-            "repo": a.repo,
-            "team": team,
-        }
+        spec = Spec(
+            text,
+            a.workdir,
+            task=a.task,
+            mode=a.mode,
+            runtime=a.runtime,
+            sid=a.sid,
+            resume=a.resume,
+            events=a.events if a.mode == "tui" else None,
+            out=None if a.out == "-" else a.out,
+            repo=a.repo,
+            team=team,
+        )
         if a.detach:
-            return _detach(a, plan(*given, **kw)), None
+            return _detach(a, plan(config, spec)), None
         if a.dry_run:
-            print(json.dumps(_shown(plan(*given, **kw)), ensure_ascii=False, indent=1))
+            print(json.dumps(_shown(plan(config, spec)), ensure_ascii=False, indent=1))
             return 0, None
         tui = detach.names(config.role, a.sid, a.mode)[0] if a.driver else None
-        result = run(*given, name=tui, on_event=functools.partial(_begun, a, tui), **kw)
-    except (ConfigError, composer.ConfigError) as e:
+        spec = replace(spec, name=tui)
+        result = run(config, spec, on_event=functools.partial(_begun, a, tui))
+    except ConfigError as e:
         _say(f"delegate: {e}")
         return 2, None
     if result.outcome is None:
@@ -150,23 +153,17 @@ def _check_detach(a: argparse.Namespace) -> None:
 
 
 def _detach(a: argparse.Namespace, p: Plan) -> int:
-    tui, driver = detach.names(p.run.role, p.sid, p.mode)
+    tui, driver = detach.names(p.run.role, p.spec.sid, p.spec.mode)
     if a.dry_run:
         shown = {**_shown(p), "driver": driver, "tui": tui, "events": os.path.abspath(a.events)}
         print(json.dumps(shown, ensure_ascii=False, indent=1))
         return 0
     try:
-        d = detach.detach(
-            replace(p, name=tui),
-            events=a.events,
-            repo=a.repo,
-            split=a.split,
-            split_from=a.split_from,
-        )
+        d = detach.detach(p, events=a.events, split=a.split, split_from=a.split_from)
     except api.DriverError as e:
         _say(f"delegate: {e}")
         return 3
-    _say(f"delegate: session {p.sid}")
+    _say(f"delegate: session {p.spec.sid}")
     _say(f"delegate: driver session {d.driver}: {api.attach_command(d.driver)}")
     if d.tui is not None:
         _say(f"delegate: tui session {d.tui}: {api.attach_command(d.tui)}")
@@ -201,19 +198,19 @@ def _list_extra(argv: Sequence[str]) -> str | None:
 
 
 def _shown(p: Plan) -> dict:
-    access = p.spec.access
+    access, s = p.session.access, p.spec
     return {
-        "runtime": p.runtime,
-        "mode": p.mode,
-        "sid": p.sid,
-        "resume": p.resume,
+        "runtime": s.runtime,
+        "mode": s.mode,
+        "sid": s.sid,
+        "resume": s.resume,
         "cwd": access.cwd,
         "project": access.project,
         "dirs": access.dirs,
         "reads": access.reads,
         "commands": access.commands,
-        "tier": p.spec.tier,
-        "effort": p.spec.effort,
+        "tier": p.session.tier,
+        "effort": p.session.effort,
         "prompt": p.prompt,
     }
 

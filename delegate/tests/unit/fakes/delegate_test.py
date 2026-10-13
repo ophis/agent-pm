@@ -2,6 +2,8 @@
 
 import unittest
 
+from agent_pm.delegate import Spec
+
 from delegate.tests.case import Case
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -13,9 +15,8 @@ class FakeDelegateContract(DelegateContract, Case):
     DISPLAYABLE = False
 
     def make(self, workdir, **kw):
-        return FakeDelegate(
-            **{"role": self.ROLE, "task": None, "input": "hello", "workdir": workdir, **kw}
-        )
+        role = kw.pop("role", self.ROLE)
+        return FakeDelegate(role, Spec("hello", workdir, **kw))
 
     def end(self, record):
         FakeDelegate.end(record.workdir)

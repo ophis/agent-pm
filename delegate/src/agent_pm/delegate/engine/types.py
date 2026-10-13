@@ -2,35 +2,47 @@
 
 from dataclasses import dataclass
 
-from agent_pm.delegate.composer import RunConfig, RunParams
+from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.outcome import Outcome
-from agent_pm.session import api
+from agent_pm.session import Spec as SessionSpec
+
+__all__ = ["ConfigError", "Spec", "Plan", "Limit", "Result", "Begun", "Progress", "Finished"]
 
 
-class ConfigError(Exception):
-    pass
+@dataclass(frozen=True)
+class Spec:
+    """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None: nothing is saved;
+    `team` None: the built-in one. name and events: tui only."""
+
+    input: str
+    workdir: str
+    task: str | None = None
+    mode: str = "headless"
+    runtime: str | None = None
+    sid: str | None = None
+    resume: bool = False
+    name: str | None = None
+    events: str | None = None
+    out: str | None = None
+    repo: str | None = None
+    cwd: str | None = None
+    team: Team | None = None
 
 
 @dataclass(frozen=True)
 class Plan:
-    """`out` None: nothing is saved."""
+    """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's Spec."""
 
-    runtime: str
-    mode: str
-    sid: str
-    resume: bool
+    spec: Spec
+    session: SessionSpec
     prompt: str
-    spec: api.Spec
     run: RunConfig
     params: RunParams
-    out: str | None
-    name: str | None
-    events: str | None
 
 
 @dataclass(frozen=True)
 class Limit:
-    """resets_at: epoch seconds, None when not given."""
+    """resets_at: epoch seconds or None."""
 
     resets_at: float | None
 

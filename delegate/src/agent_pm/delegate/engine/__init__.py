@@ -1,1 +1,1 @@
-"""The Delegate class (base.py) and how it runs: plan.py, runner.py, detach.py."""
+"""The Delegate ABC (base.py) and how it runs."""

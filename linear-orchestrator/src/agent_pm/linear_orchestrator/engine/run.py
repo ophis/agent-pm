@@ -97,21 +97,20 @@ def inner(a, cfg, *, gql, run=delegate.run):
     rc, result = 1, None
     try:
         os.makedirs(rd, exist_ok=True)
-        result = run(
-            cfg.roles[role].run,
-            a.task,
+        spec = delegate.Spec(
             a.input,
             rd,
-            runtime=a.runtime,
+            task=a.task,
             mode="tui" if a.tui else "headless",
+            runtime=a.runtime,
             sid=a.sid,
-            resume=a.sid if a.mode == "resume" else None,
+            resume=a.mode == "resume",
             name=name,
             events=a.events,
             out=os.path.join(rd, "out.md"),
             cwd=rd,
-            on_event=on_event,
         )
+        result = run(cfg.roles[role].run, spec, on_event=on_event)
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):

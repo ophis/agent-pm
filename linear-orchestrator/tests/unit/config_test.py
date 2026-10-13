@@ -674,7 +674,7 @@ class OtherRoot(ConfigFile, Case):
         write(local, "[hosts.tmux]\nstatus_line = true\n")
         pm = config.load(self.root, path=path, local=local, core=self.core_path).roles["pm"]
         work = os.path.join(self.dir, "work")
-        delegate.plan(pm.run, None, "x", work, runtime="claude", mode="headless", cwd=work)
+        delegate.plan(pm.run, delegate.Spec("x", work, runtime="claude", cwd=work))
         self.assertTrue(registry.tui().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
@@ -867,14 +867,14 @@ class TeamDirsIgnored(ConfigFile, Case):
         pm = self.load(PIPELINE).roles["pm"]
         return pm, delegate.plan(
             pm.run,
-            None,
-            "x",
-            self.work,
-            runtime="claude",
-            mode="headless",
-            sid=SID,
-            out=os.path.join(self.work, "out.md"),
-            cwd=self.work,
+            delegate.Spec(
+                "x",
+                self.work,
+                runtime="claude",
+                sid=SID,
+                out=os.path.join(self.work, "out.md"),
+                cwd=self.work,
+            ),
         )
 
     def test_team_dirs_change_no_orchestrator_run(self):

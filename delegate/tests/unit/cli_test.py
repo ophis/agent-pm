@@ -508,7 +508,7 @@ class Deliverable(Base):
         with mock.patch.object(cli, "plan", wraps=cli.plan) as planned:
             code, out, err = self.runs("--dry-run", out="-")
         self.assertEqual(code, 0, err)
-        self.assertIsNone(planned.call_args.kwargs["out"])
+        self.assertIsNone(planned.call_args.args[1].out)
         self.assertIn("`<Workdir>/tmp/deliverable.md`", json.loads(out)["prompt"])
         self.assertFalse(os.path.exists(self.work))
 
@@ -836,8 +836,8 @@ class DriverForm(Base):
                 code, out, err = self.drives()
                 self.assertEqual((code, out), (want, ""), err)
                 self.assert_outcome(status)
-                kw = run.call_args.kwargs
-                self.assertEqual((kw["sid"], kw["name"], kw["events"]), (SID, None, None))
+                spec = run.call_args.args[1]
+                self.assertEqual((spec.sid, spec.name, spec.events), (SID, None, None))
 
     def test_an_exception_writes_error_and_propagates(self):
         with self.ran(effect=RuntimeError("boom")), self.assertRaisesRegex(RuntimeError, "boom"):
@@ -880,7 +880,7 @@ class DriverForm(Base):
     def test_input_dash_is_the_literal_text_stdin_unread(self):
         with self.ran() as run:
             code, _, err = self.drives(input="-", stdin="SECRET")
-        self.assertEqual((code, run.call_args.args[2]), (0, "-"), err)
+        self.assertEqual((code, run.call_args.args[1].input), (0, "-"), err)
 
     def test_begun_shows_the_tui_beside_its_opener_its_errors_printed_the_run_going_on(self):
         command = "tmux attach -t '=x'"

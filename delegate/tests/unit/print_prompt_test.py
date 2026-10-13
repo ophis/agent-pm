@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Progress, composer, plan, run
+from agent_pm.delegate import Begun, ConfigError, Finished, Progress, Spec, composer, plan, run
 from agent_pm.delegate.event.reply import marks
 
 from delegate.tests.case import Case, committed
@@ -37,7 +37,7 @@ class PrintPrompt(Case):
         self.configure_session(committed())
 
     def given(self, role, **kw):
-        """(args, kw) for run() and plan(): print_prompt in_process, sid SID, the cwd the workdir, unless `kw`."""
+        """(RunConfig, Spec) for run() and plan(): print_prompt in_process, sid SID, the cwd the workdir, unless `kw`."""
         work = os.path.join(self.tmp, role)
         kw = {
             "runtime": "print_prompt",
@@ -47,41 +47,41 @@ class PrintPrompt(Case):
             "cwd": work,
             **kw,
         }
-        return (composer.resolve(role), None, INPUT, work), kw
+        return composer.resolve(role), Spec(INPUT, work, **kw)
 
     def test_each_role_is_done_its_deliverable_the_planned_prompt_saved_to_out(self):
         for role in ROLES:
             with self.subTest(role=role):
-                args, kw = self.given(role)
-                want, events = plan(*args, **kw).prompt, []
+                args = self.given(role)
+                want, events = plan(*args).prompt, []
                 with no_child(), redirect_stderr(io.StringIO()):
-                    r = run(*args, on_event=events.append, **kw)
+                    r = run(*args, on_event=events.append)
                 self.assertEqual(
                     (r.returncode, r.outcome.status, r.outcome.deliverable), (0, "done", want)
                 )
-                with open(kw["out"]) as f:
+                with open(args[1].out) as f:
                     self.assertEqual(f.read(), want)
                 self.assertEqual(marks(want), [("round", "a mark line in the input")])
                 self.assertEqual(events, [Begun(SID), STARTED, Finished(r)])
 
     def test_headless_is_refused_and_nothing_starts(self):
-        args, kw = self.given("dummy-tester", mode="headless")
+        args = self.given("dummy-tester", mode="headless")
         with (
             no_child(),
             self.assertRaisesRegex(
                 ConfigError, "runtime 'print_prompt' does not support headless mode"
             ),
         ):
-            run(*args, **kw)
-        self.assertFalse(os.path.exists(args[3]))
+            run(*args)
+        self.assertFalse(os.path.exists(args[1].workdir))
 
     def test_a_resume_is_refused(self):
-        args, kw = self.given("dummy-tester", resume=SID)
+        args = self.given("dummy-tester", resume=True)
         with (
             no_child(),
             self.assertRaisesRegex(ConfigError, "print_prompt has no session to resume"),
         ):
-            run(*args, **kw)
+            run(*args)
 
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
@@ -90,8 +90,8 @@ class PrintPrompt(Case):
             for role in ROLES:
                 with self.subTest(github=bool(local), role=role):
                     first, *others = (
-                        plan(*args, **kw)
-                        for args, kw in (
+                        plan(*args)
+                        for args in (
                             self.given(role, runtime=runtime, mode=mode)
                             for runtime, mode in RUNTIMES
                         )

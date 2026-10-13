@@ -13,7 +13,7 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Progress, composer, run
+from agent_pm.delegate import Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
@@ -94,15 +94,17 @@ class TuiRun(tui_live.Live):
                 ended.append(
                     run(
                         config,
-                        "echo",
-                        "Hello.",
-                        self.workdir,
-                        runtime="claude",
-                        mode="tui",
-                        sid=SID,
-                        events=self.events,
-                        out=self.out,
-                        cwd=self.workdir,
+                        Spec(
+                            "Hello.",
+                            self.workdir,
+                            task="echo",
+                            mode="tui",
+                            runtime="claude",
+                            sid=SID,
+                            events=self.events,
+                            out=self.out,
+                            cwd=self.workdir,
+                        ),
                         on_event=on,
                     )
                 )

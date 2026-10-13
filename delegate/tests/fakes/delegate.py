@@ -49,31 +49,21 @@ class FakeDelegate(Delegate):
     def __init__(
         self,
         role,
-        task,
-        input,
-        workdir,
+        spec,
         *,
-        runtime=None,
-        mode="headless",
         driver=None,
-        sid=None,
-        name=None,
-        repo=None,
-        cwd=None,
-        team=None,
-        out=None,
-        events=None,
-        callback=None,
+        session_cls=None,
+        composer=None,
         display=None,
         host=None,
         harness_host=None,
-        session_cls=None,
-        composer=None,
+        callback=None,
     ) -> None:
         self._known(role)
-        sid = sid or str(uuid.uuid4())
-        self.workdir, self.input = os.path.abspath(workdir), input
-        state = {"role": role, "sid": sid, "name": name or f"{role}-{sid[:8]}", "display": display}
+        sid = spec.sid or str(uuid.uuid4())
+        self.workdir, self.input = os.path.abspath(spec.workdir), spec.input
+        name = spec.name or f"{role}-{sid[:8]}"
+        state = {"role": role, "sid": sid, "name": name, "display": display}
         _save(self.workdir, {**state, "outer": {}, "alive": False, "outcome": None, "starts": 0})
 
     @classmethod
