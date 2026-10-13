@@ -43,7 +43,7 @@ jobs:
         run: lint-imports --no-cache
       - name: Vulture
         if: ${{ !cancelled() }}
-        run: vulture manager/src linear-orchestrator/src delegate/src session/src utils/src
+        run: vulture manager/src linear-orchestrator/src delegate/src session/src utils/src .github/vulture_whitelist.py
       - name: Pylint
         if: ${{ !cancelled() }}
         run: pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
