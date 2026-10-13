@@ -1,6 +1,7 @@
 """Tmux tile application behavior at standard-library boundaries."""
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import grids, tmux_host
+from agent_pm.session.hosts.tmux import layout as tmux_layout
 
 from session.tests.unit.tmux.fixtures import TileFixture
 from session.tests.unit.tmux.support import (
@@ -77,7 +78,7 @@ class TileApplicationTest(TileFixture):
         # gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
         fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
-        want = tmux_host._render_layout(grid([slot("%2"), slot("%1")]))
+        want = tmux_layout._render_layout(grid([slot("%2"), slot("%1")]))
         self.assertEqual(
             fake.calls[4:],
             self.applied(
@@ -117,7 +118,7 @@ class TileApplicationTest(TileFixture):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
         # --if-panes-changed tile skips a drag
         panes = ["%0", "%9", "%10"]
-        layout = tmux_host._render_layout(grid([slot("%9"), slot("%10")]))
+        layout = tmux_layout._render_layout(grid([slot("%9"), slot("%10")]))
         record = ["tmux", "set-option", "-w", "-t", "@3", "@grid-panes", "%0 %9 %10"]
         for recorded in (
             "",
@@ -230,7 +231,7 @@ class TileApplicationTest(TileFixture):
                         ]
                     ),
                 )
-                after = [leaf.pane for leaf in tmux_host._leaves(tmux_host._parse_layout(want))]
+                after = [leaf.pane for leaf in tmux_layout._leaves(tmux_layout._parse_layout(want))]
                 fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
@@ -243,7 +244,7 @@ class TileApplicationTest(TileFixture):
                 "0",
                 (
                     [("%2", "%4"), ("%3", "%4")],
-                    tmux_host._parse_layout(tmux_host._render_layout(grid(4))),
+                    tmux_layout._parse_layout(tmux_layout._render_layout(grid(4))),
                     "1 x 2",
                     "%0 %1 %2 %3 %4",
                 ),
@@ -254,7 +255,7 @@ class TileApplicationTest(TileFixture):
         ):
             with self.subTest(layout=layout, zoomed=zoomed):
                 fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
-                self.assertEqual(tmux_host._grid_pass("@3", None, False, fake), want)
+                self.assertEqual(grids._grid_pass("@3", None, fake, if_panes_changed=False), want)
                 self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
@@ -270,7 +271,7 @@ class TileApplicationTest(TileFixture):
                     "select-layout",
                     "-t",
                     "@3",
-                    tmux_host._render_layout(grid([slot("%2"), slot("%3")])),
+                    tmux_layout._render_layout(grid([slot("%2"), slot("%3")])),
                 ]
             ),
         )
@@ -416,10 +417,10 @@ class TileApplicationTest(TileFixture):
         ]
         panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
         fake = self.tile(
-            tmux_host._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
+            tmux_layout._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
         )
         cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
-        self.assertEqual(fake.calls[4][-1], tmux_host._render_layout(grid(cells, 6)))
+        self.assertEqual(fake.calls[4][-1], tmux_layout._render_layout(grid(cells, 6)))
 
     def test_per_column_argument_else_the_window_option_else_the_default(self):
         panes = ["%0", "%1", "%2", "%3", "%4"]
@@ -437,8 +438,8 @@ class TileApplicationTest(TileFixture):
             ("x", {}, None),
         ):
             with self.subTest(n=n, **kw):
-                fake = self.tile(tmux_host._render_layout(grid(4)), panes, rows, n=n, **kw)
-                want = tmux_host._render_layout(grid(4, per_column)) if per_column else None
+                fake = self.tile(tmux_layout._render_layout(grid(4)), panes, rows, n=n, **kw)
+                want = tmux_layout._render_layout(grid(4, per_column)) if per_column else None
                 self.assertEqual(
                     fake.calls[4:],
                     self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [],

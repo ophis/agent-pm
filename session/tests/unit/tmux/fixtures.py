@@ -49,7 +49,11 @@ class StartFixture(Case):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
             tmux_host.start(
-                session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep, **kw
+                session,
+                tmux_host.Command(argv=list(argv), cwd=self.cwd, env=env),
+                options=tmux_host.StartOptions(**kw),
+                proc=fake,
+                sleep=self.sleep,
             )
 
 
@@ -57,7 +61,12 @@ class PaneFixture(Case):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return tmux_host.show("s", proc=fake, **kw)
+            return tmux_host.show(
+                "s",
+                kw.pop("template", None),
+                options=tmux_host.PaneOptions(**kw),
+                services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
+            )
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""

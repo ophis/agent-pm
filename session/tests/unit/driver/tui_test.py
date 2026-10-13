@@ -44,7 +44,7 @@ class TuiStartTest(TuiBase):
                     name=f"w{resumed}",
                     **({"resume": SID} if resumed else {"sid": SID}),
                 )
-                argv = self.host.start.call_args.args[1]
+                argv = self.host.start.call_args.args[1].argv
                 self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
 
     def test_effective_project_override_reaches_info_record_and_tui_state(self):
@@ -88,19 +88,18 @@ class TuiStartTest(TuiBase):
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
-            call.args[1][-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))]
+            call.args[1].argv[-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))]
         )
+        self.assertEqual(call.args[1].cwd, self.workdir)
         self.assertEqual(
-            {**call.kwargs, "env": None},
+            call.kwargs,
             {
-                "cwd": self.workdir,
-                "env": None,
-                "events": self.events,
-                "status_line": False,
-                "tags": {"@sid": SID, "@runtime": "fake"},
+                "options": tmux_host.StartOptions(
+                    events=self.events, status_line=False, tags={"@sid": SID, "@runtime": "fake"}
+                )
             },
         )
-        self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
+        self.assertEqual(call.args[1].env["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
             {
@@ -199,7 +198,7 @@ class TuiStartTest(TuiBase):
     def test_the_status_line_is_the_tui_settings(self):
         self.configure(tui=True, settings={"status_line": True})
         self.tui(name="w1")
-        self.assertIs(self.host.start.call_args.kwargs["status_line"], True)
+        self.assertIs(self.host.start.call_args.kwargs["options"].status_line, True)
 
     def test_a_bad_tui_setting_is_refused_before_anything(self):
         self.configure(tui=True, settings={"status_line": "yes"})
@@ -231,7 +230,7 @@ class EnvironmentTest(TuiBase):
 
     def env(self, name, **fields) -> dict[str, str]:
         self.tui(runtime="inner", name=name, spec=self.spec(**fields))
-        env = dict(self.host.start.call_args.kwargs["env"])
+        env = dict(self.host.start.call_args.args[1].env)
         self.assertEqual((env.pop("HOME"), env.pop("PWD")), (os.environ["HOME"], self.workdir))
         return env
 
@@ -320,7 +319,7 @@ class SessionEnvTest(TuiBase):
     def test_a_tui_session_gets_it(self):
         self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
         (call,) = self.host.start.call_args_list
-        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], PYTHONPATH)
+        self.assertEqual(call.args[1].env["PYTHONPATH"], PYTHONPATH)
 
 
 class AttachTest(TuiBase):

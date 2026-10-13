@@ -8,7 +8,8 @@ import unittest
 import unittest.mock
 from contextlib import redirect_stderr
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import tmux_host, validation
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.case import Case
 from session.tests.unit.tmux.support import (
@@ -87,14 +88,12 @@ class GridOpenTest(Case):
     def show(self, fake, env=INSIDE, retile="all", **kw):
         """show s; retile all unless given, the mode whose hooks opened() asserts by default."""
         self.stderr = io.StringIO()
+        script = kw.pop("script", SCRIPT)
         with environ(**env), which(), redirect_stderr(self.stderr):
             return tmux_host.show(
                 "s",
-                proc=fake,
-                retile=retile,
-                tile_window=self.tile,
-                script=kw.pop("script", SCRIPT),
-                **kw,
+                options=tmux_host.PaneOptions(retile=retile, **kw),
+                services=tmux_host.PaneServices(proc=fake, tile_window=self.tile, script=script),
             )
 
     def split(self, flag, pane, window="@1"):
@@ -415,7 +414,11 @@ class GridOpenTest(Case):
                 fake = self.fake({"%3": self.NEW})
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, retile=bad),
-                    lambda *, bad=bad, fake=fake: tmux_host.open_pane("s", retile=bad, proc=fake),
+                    lambda *, bad=bad, fake=fake: tmux_host.open_pane(
+                        "s",
+                        options=tmux_host.PaneOptions(retile=bad),
+                        services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
+                    ),
                 ):
                     with self.assertRaisesRegex(
                         tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
@@ -447,7 +450,9 @@ class GridOpenTest(Case):
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, per_column=bad),
                     lambda *, bad=bad, fake=fake: tmux_host.open_pane(
-                        "s", per_column=bad, proc=fake
+                        "s",
+                        options=tmux_host.PaneOptions(per_column=bad),
+                        services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -461,11 +466,11 @@ class RetileTest(Case):
     def test_modes(self):
         self.assertEqual(tmux_host.RETILES, ("all", "open-close", "off"))
         self.assertEqual(tmux_host.RETILE, "open-close")
-        self.assertEqual(tmux_host.RETILE_HOOKS, MODE_HOOKS)
-        self.assertEqual(tmux_host.GRID_PANES_SET, "@grid-panes")
+        self.assertEqual(tmux_model.RETILE_HOOKS, MODE_HOOKS)
+        self.assertEqual(tmux_model.GRID_PANES_SET, "@grid-panes")
         for retile in (None, *tmux_host.RETILES):
             with self.subTest(retile=retile):
-                self.assertIsNone(tmux_host._retile(retile))
+                self.assertIsNone(validation._retile(retile))
         for bad in ("x", True, 1, "", "ALL"):
             with (
                 self.subTest(retile=bad),
@@ -473,4 +478,4 @@ class RetileTest(Case):
                     tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
                 ),
             ):
-                tmux_host._retile(bad)
+                validation._retile(bad)

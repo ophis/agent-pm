@@ -10,6 +10,7 @@ import unittest
 import unittest.mock
 
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.unit.tmux.fixtures import StartFixture
 from session.tests.unit.tmux.support import (
@@ -79,7 +80,7 @@ class StartTest(StartFixture):
             "HOME": "/h",
             "CHILD_SESSION": "1",
             "PWD": "/elsewhere",
-            **{k: "x" for k in tmux_host.TERMINAL_KEYS},
+            **{k: "x" for k in tmux_model.TERMINAL_KEYS},
         }
         for argv in (("tool", "-x", "a b"), ("tool", "--settings", "s.json")):
             with self.subTest(argv=argv):
@@ -108,7 +109,7 @@ class StartTest(StartFixture):
 
     def test_terminal_keys(self):
         self.assertEqual(
-            set(tmux_host.TERMINAL_KEYS),
+            set(tmux_model.TERMINAL_KEYS),
             {
                 "TMUX",
                 "TMUX_PANE",
@@ -326,7 +327,7 @@ class StartTest(StartFixture):
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
                 self.assertIs(fake.dir_at_kill, False)
                 self.assertAlmostEqual(
-                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
                 )
                 self.assertEqual(os.listdir(self.temp), [])
                 self.assertEqual(self.stderr.getvalue(), "")
@@ -372,7 +373,7 @@ class StartTest(StartFixture):
 
     def test_a_handover_at_its_last_poll_still_gets_the_whole_exec_wait(self):
         fake, slept = Tmux(hand_over=False), []
-        last = round(tmux_host.HANDOVER_TIMEOUT / tmux_host.POLL)
+        last = round(tmux_model.HANDOVER_TIMEOUT / tmux_model.POLL)
 
         def sleep(seconds):
             slept.append(seconds)
@@ -408,7 +409,7 @@ class StartTest(StartFixture):
         os.close(fake.writer)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertAlmostEqual(
-            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
         )
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -440,9 +441,7 @@ class StartTest(StartFixture):
                     lambda *, fake=fake, name=name: tmux_host.status(name, proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.detach(
                         name,
-                        ["tool"],
-                        cwd=self.cwd,
-                        env={"PATH": self.bin},
+                        tmux_host.Command(argv=["tool"], cwd=self.cwd, env={"PATH": self.bin}),
                         proc=fake,
                         sleep=self.sleep,
                     ),

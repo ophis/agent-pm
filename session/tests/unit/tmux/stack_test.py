@@ -72,7 +72,12 @@ class StackTest(Case):
     def show(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tmux_host.show("s", proc=fake, **kw)
+            return tmux_host.show(
+                "s",
+                kw.pop("template", None),
+                options=tmux_host.PaneOptions(**kw),
+                services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
+            )
 
     def row(self, number, name, pane, opener="cmd"):
         return f"${number}", name, opener, pane, SOCK

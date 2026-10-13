@@ -122,11 +122,13 @@ class ShowTest(TuiBase):
                 mock.call.status("w1"),
                 mock.call.open_pane(
                     "w1",
-                    split="below",
-                    split_from="m1",
-                    opener="w0t0p0:AB-12",
-                    per_column=2,
-                    retile="off",
+                    options=tmux_host.PaneOptions(
+                        split="below",
+                        split_from="m1",
+                        opener="w0t0p0:AB-12",
+                        per_column=2,
+                        retile="off",
+                    ),
                 ),
             ],
         )
@@ -143,7 +145,10 @@ class ShowTest(TuiBase):
             logs.output, [f"WARNING:driver:show w1: {NO_PANE}; watch it with tmux attach -t '=w1'"]
         )
         self.host.open_pane.assert_called_once_with(
-            "w1", split=None, split_from=None, opener=None, per_column=None, retile=None
+            "w1",
+            options=tmux_host.PaneOptions(
+                split=None, split_from=None, opener=None, per_column=None, retile=None
+            ),
         )
 
     def test_an_absent_session_is_a_driver_error(self):
@@ -232,12 +237,14 @@ class DetachTest(TuiBase):
             self.host.mock_calls,
             [
                 mock.call.detach(
-                    "d1", ["tool", "a b"], cwd=self.dir, env=env, block=api.SIGNALS, opener="mgr"
+                    "d1",
+                    tmux_host.Command(argv=["tool", "a b"], cwd=self.dir, env=env),
+                    options=tmux_host.DetachOptions(block=api.SIGNALS, opener="mgr"),
                 )
             ],
         )
         self.driver.detach("d2", ("tool",), self.dir, env)
-        self.assertEqual(self.host.detach.call_args.kwargs["opener"], None)
+        self.assertEqual(self.host.detach.call_args.kwargs["options"].opener, None)
 
     def test_a_bad_name_argv_cwd_or_opener_is_refused_before_tmux(self):
         self.name_refused(lambda name: self.driver.detach(name, ["tool"], self.dir, {}))

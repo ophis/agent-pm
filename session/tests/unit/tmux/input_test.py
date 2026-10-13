@@ -161,7 +161,12 @@ class ShowTest(Case):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return tmux_host.show(session, template, proc=fake, **kw)
+            return tmux_host.show(
+                session,
+                template,
+                services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
+                **kw,
+            )
 
     def test_attach_line_then_the_template(self):
         fake = Tmux()

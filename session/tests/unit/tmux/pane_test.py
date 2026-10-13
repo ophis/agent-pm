@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.unit.tmux.fixtures import PaneFixture
 from session.tests.unit.tmux.support import (
@@ -256,7 +257,7 @@ class PanePlacementTest(PaneFixture):
                 self.assertNotIn("set-option", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = tmux_host.APPLESCRIPT
+        script = tmux_model.APPLESCRIPT
         self.assertNotIn(TMUX, script)
         for part in (
             "on run argv",

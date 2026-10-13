@@ -12,7 +12,8 @@ import unittest
 import unittest.mock
 from contextlib import redirect_stderr, suppress
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import grids, tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.unit.tmux.fixtures import TileFixture
 from session.tests.unit.tmux.support import (
@@ -51,7 +52,7 @@ class TileCoordinationTest(TileFixture):
 
         slept = clock(self, poll)
         tmux_host.tile("@3", proc=fake)
-        self.assertEqual(slept, [tmux_host.TILE_POLL] * 3)
+        self.assertEqual(slept, [tmux_model.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
         self.assertEqual(
             fake.calls,
@@ -65,14 +66,14 @@ class TileCoordinationTest(TileFixture):
         )
 
     def test_an_explicit_tile_gives_up_after_tile_wait(self):
-        self.assertEqual((tmux_host.TILE_POLL, tmux_host.TILE_WAIT), (0.05, 5))
+        self.assertEqual((tmux_model.TILE_POLL, tmux_model.TILE_WAIT), (0.05, 5))
         hold(self, self.lock)
         slept = clock(self)
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(tmux_host.TuiError, "^grid @3: busy$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
-        self.assertEqual(set(slept), {tmux_host.TILE_POLL})
+        self.assertEqual(set(slept), {tmux_model.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)  # float steps: one poll more
 
     def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
@@ -86,7 +87,15 @@ class TileCoordinationTest(TileFixture):
         with (
             unittest.mock.patch.object(sys, "executable", PY),
         ):
-            self.assertRegex(tmux_host._grid_up("@3", "%0", 3, "all", fake, script=SCRIPT), want)
+            self.assertRegex(
+                grids._grid_up(
+                    "@3",
+                    "%0",
+                    tmux_host.GridSettings(per_column=3, retile="all"),
+                    tmux_host.PaneServices(proc=fake, script=SCRIPT),
+                ),
+                want,
+            )
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
         self.assertFalse(os.path.lexists(self.sock + "-target"))
 
@@ -143,7 +152,7 @@ class TileCoordinationTest(TileFixture):
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
-        self.assertEqual((tmux_host.TILE_LIMIT, tmux_host.TILE_WINDOW), (50, 10))
+        self.assertEqual((tmux_model.TILE_LIMIT, tmux_model.TILE_WINDOW), (50, 10))
         line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
         recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
@@ -179,7 +188,12 @@ class TileCoordinationTest(TileFixture):
             contextlib.nullcontext(unittest.mock.Mock()) as tile,
         ):
             self.assertIsNone(
-                tmux_host._grid_up("@3", "%0", 3, "off", fake, script=SCRIPT, tile_window=tile)
+                grids._grid_up(
+                    "@3",
+                    "%0",
+                    tmux_host.GridSettings(per_column=3, retile="off"),
+                    tmux_host.PaneServices(proc=fake, script=SCRIPT, tile_window=tile),
+                )
             )
         self.assertEqual(fake.calls, [grid_set("@3", "%0", retile="off")])
         tile.assert_not_called()
@@ -206,7 +220,7 @@ class TileCoordinationTest(TileFixture):
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with tmux_host._grid_lock(self.sock, "@3", False) as held:
+        with grids._grid_lock(self.sock, "@3", wait=False) as held:
             self.assertTrue(held)
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))

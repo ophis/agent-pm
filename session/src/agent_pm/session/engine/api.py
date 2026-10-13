@@ -42,6 +42,7 @@ from agent_pm.session.engine.types import (
     sid_error,
 )
 from agent_pm.session.hosts.tables import NAME
+from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.errors.types import TuiError
 from agent_pm.session.modes.tui import types as tui
 from agent_pm.utils import STATE, printable_abs
@@ -237,11 +238,13 @@ class Driver:
             raise DriverError.no_tmux_session(name)
         why = self.host.open_pane(
             name,
-            split=split,
-            split_from=split_from,
-            opener=opener,
-            per_column=settings.per_column,
-            retile=settings.retile,
+            options=tmux_host.PaneOptions(
+                split=split,
+                split_from=split_from,
+                opener=opener,
+                per_column=settings.per_column,
+                retile=settings.retile,
+            ),
         )
         if why is None:
             return None
@@ -372,6 +375,10 @@ class Driver:
             raise ConfigError.cwd_directory(cwd)
         _placement(None, None, opener)
         try:
-            self.host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
+            self.host.detach(
+                name,
+                tmux_host.Command(argv=list(argv), cwd=cwd, env=dict(env)),
+                options=tmux_host.DetachOptions(block=SIGNALS, opener=opener),
+            )
         except TuiError as e:
             raise DriverError.detach(name, e) from e

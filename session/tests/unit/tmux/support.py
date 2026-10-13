@@ -12,7 +12,9 @@ import unittest
 import unittest.mock
 from contextlib import contextmanager
 
+from agent_pm.session.hosts.tmux import layout as tmux_layout
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
@@ -286,7 +288,7 @@ def which(tmux=TMUX):
 
 
 def osa(split, kind, session, *anchors):
-    return ["osascript", "-e", tmux_host.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+    return ["osascript", "-e", tmux_model.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
 def decorations(session, events=None, status="off"):
@@ -453,25 +455,24 @@ def slot(pane, *children):
 
 
 def body(cell):
-    return tmux_host._render_layout(cell).split(",", 1)[1]
+    return tmux_layout._render_layout(cell).split(",", 1)[1]
 
 
 def dump(text):
     """A layout body as #{window_layout} prints it, with its checksum."""
-    return f"{tmux_host._checksum(text)},{text}"
+    return f"{tmux_layout._checksum(text)},{text}"
 
 
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
         cells = [slot(f"%{i}") for i in range(1, cells + 1)]
-    return tmux_host._grid_layout(
+    return tmux_layout._grid_layout(
         cells,
-        width=width,
-        height=height,
-        manager="%0",
-        manager_width=manager_width,
-        per_column=per_column,
+        "%0",
+        geometry=tmux_host.GridGeometry(
+            width=width, height=height, manager_width=manager_width, per_column=per_column
+        ),
     )
 
 

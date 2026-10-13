@@ -42,7 +42,13 @@ class PaneAnchorTest(PaneFixture):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = Tmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(tmux_host.open_pane("s", split="below", proc=fake))
+            self.assertIsNone(
+                tmux_host.open_pane(
+                    "s",
+                    options=tmux_host.PaneOptions(split="below"),
+                    services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__),
+                )
+            )
         self.assertEqual(
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
         )

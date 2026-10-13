@@ -1,6 +1,6 @@
 """Tmux grid tree behavior at standard-library boundaries."""
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import layout as tmux_layout
 
 from session.tests.case import Case
 from session.tests.unit.tmux.support import (
@@ -18,8 +18,8 @@ class GridTreeTest(Case):
         if layout is None:
             layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
         else:
-            layout = tmux_host._parse_layout(layout)
-        return tmux_host._grid_tree("%0", panes, [self.MGR, *rows], layout)
+            layout = tmux_layout._parse_layout(layout)
+        return tmux_layout._grid_tree("%0", panes, [self.MGR, *rows], layout)
 
     def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = [
@@ -221,7 +221,7 @@ class GridTreeTest(Case):
         ]
         orphans = slot(None, slot("%3"), slot("%4"))
         for layout in (
-            tmux_host._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+            tmux_layout._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
             "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
             "39x11,121,13,4],39x23,121,25,5]}}",
         ):
@@ -235,7 +235,7 @@ class GridTreeTest(Case):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved
         # first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
-        layout = tmux_host._render_layout(grid([slot("%1"), *groups], 1))
+        layout = tmux_layout._render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [
@@ -261,6 +261,6 @@ class GridTreeTest(Case):
                 layout = grid([slot(p) for p in panes[1:]], per_column)
                 rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
                 self.assertEqual(
-                    self.tree(rows, panes, tmux_host._render_layout(layout)),
+                    self.tree(rows, panes, tmux_layout._render_layout(layout)),
                     [slot(p) for p in panes[1:]],
                 )

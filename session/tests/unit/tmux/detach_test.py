@@ -14,6 +14,7 @@ import unittest.mock
 from contextlib import suppress
 
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.case import Case
 from session.tests.unit.tmux.fixtures import StartFixture
@@ -31,7 +32,11 @@ class DetachTest(StartFixture):
     def detach(self, fake, session="d", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         tmux_host.detach(
-            session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep, **kw
+            session,
+            tmux_host.Command(argv=list(argv), cwd=self.cwd, env=env),
+            options=tmux_host.DetachOptions(**kw),
+            proc=fake,
+            sleep=self.sleep,
         )
 
     def test_new_session_runs_the_wrapper_and_returns_once_argv_execd(self):
@@ -66,7 +71,7 @@ class DetachTest(StartFixture):
             "HOME": "/h",
             "CHILD_SESSION": "1",
             "PWD": "/elsewhere",
-            **{k: "x" for k in tmux_host.TERMINAL_KEYS},
+            **{k: "x" for k in tmux_model.TERMINAL_KEYS},
         }
         for block, want in (((), []), ((signal.SIGHUP, signal.SIGTERM, signal.SIGINT), SIGNALS)):
             with self.subTest(block=block):
@@ -165,7 +170,7 @@ class DetachTest(StartFixture):
                 self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
                 self.assertIs(fake.dir_at_kill, False)
                 self.assertAlmostEqual(
-                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
                 )
                 self.assertEqual(os.listdir(self.temp), [])
 
@@ -187,7 +192,7 @@ class DetachTest(StartFixture):
         os.close(fake.writer)
         self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
         self.assertAlmostEqual(
-            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
         )
         self.assertEqual(os.listdir(self.temp), [])
 

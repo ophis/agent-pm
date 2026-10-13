@@ -4,7 +4,9 @@ import io
 import itertools
 from contextlib import redirect_stderr
 
+from agent_pm.session.hosts.tmux import layout as tmux_layout
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.case import Case
 from session.tests.unit.tmux.support import (
@@ -33,10 +35,10 @@ class GridLayoutTest(Case):
 
     def tiles(self, cell):
         """Each container's children tile it exactly, one-cell borders between them."""
-        if cell.kind == tmux_host.LEAF:
+        if cell.kind == tmux_model.LEAF:
             return
         self.assertGreaterEqual(len(cell.children), 2)
-        across = cell.kind == tmux_host.LEFT_RIGHT
+        across = cell.kind == tmux_model.LEFT_RIGHT
         at = cell.x if across else cell.y
         for child in cell.children:
             if across:
@@ -53,18 +55,19 @@ class GridLayoutTest(Case):
         """
         self.tiles(root)
         self.assertEqual(
-            (root.kind, root.w, root.h, root.x, root.y), (tmux_host.LEFT_RIGHT, width, height, 0, 0)
+            (root.kind, root.w, root.h, root.x, root.y),
+            (tmux_model.LEFT_RIGHT, width, height, 0, 0),
         )
         manager, area = root.children
         self.assertEqual((manager.pane, manager.h), ("%0", height))
         c = -(-n // per_column)
         if c > 1:
-            self.assertEqual(area.kind, tmux_host.LEFT_RIGHT)
+            self.assertEqual(area.kind, tmux_model.LEFT_RIGHT)
         columns = list(area.children) if c > 1 else [area]
         self.assertEqual(len(columns), c)
         self.assertLessEqual(max(col.w for col in columns) - min(col.w for col in columns), 1)
         for j, column in enumerate(columns):
-            cells = list(column.children) if column.kind == tmux_host.TOP_BOTTOM else [column]
+            cells = list(column.children) if column.kind == tmux_model.TOP_BOTTOM else [column]
             self.assertEqual(
                 [cell.pane for cell in cells],
                 [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))],
@@ -182,7 +185,7 @@ class GridLayoutTest(Case):
             [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")]
         )
         self.assertEqual(
-            [leaf.pane for leaf in tmux_host._leaves(root)],
+            [leaf.pane for leaf in tmux_layout._leaves(root)],
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
 
@@ -192,7 +195,7 @@ class SwapsTest(Case):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
             with self.subTest(want=want):
-                swaps = tmux_host._swaps(have, list(want))
+                swaps = tmux_layout._swaps(have, list(want))
                 order = list(have)
                 for source, target in swaps:
                     i, j = order.index(source), order.index(target)
@@ -211,10 +214,10 @@ class LayoutStringTest(Case):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
-            self.assertEqual(tmux_host._checksum(text), csum)
+            self.assertEqual(tmux_layout._checksum(text), csum)
 
     def test_parse(self):
-        Cell, lr, tb = tmux_host.Cell, tmux_host.LEFT_RIGHT, tmux_host.TOP_BOTTOM
+        Cell, lr, tb = tmux_host.Cell, tmux_model.LEFT_RIGHT, tmux_model.TOP_BOTTOM
         want = Cell(
             160,
             48,
@@ -233,12 +236,12 @@ class LayoutStringTest(Case):
                 ),
             ),
         )
-        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL), want)
-        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
 
     def test_round_trip(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            self.assertEqual(tmux_host._render_layout(tmux_host._parse_layout(sample)), sample)
+            self.assertEqual(tmux_layout._render_layout(tmux_layout._parse_layout(sample)), sample)
 
     def test_malformed(self):
         text = MAIN_VERTICAL.split(",", 1)[1]
@@ -259,7 +262,7 @@ class LayoutStringTest(Case):
             "160x48,0,0,1\n",
         ):
             with self.subTest(bad=bad):
-                self.assertIsNone(tmux_host._parse_layout(bad))
+                self.assertIsNone(tmux_layout._parse_layout(bad))
 
 
 class ContainerTest(Case):
@@ -303,7 +306,9 @@ class ContainerTest(Case):
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tmux_host.show("s", proc=fake)
+            return tmux_host.show(
+                "s", services=tmux_host.PaneServices(proc=fake, script=tmux_host.__file__)
+            )
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])

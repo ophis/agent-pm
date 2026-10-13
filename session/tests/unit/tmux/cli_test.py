@@ -49,7 +49,9 @@ class CliTest(Case):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
                 start.assert_called_once_with(
-                    session, command, cwd=os.getcwd(), env=dict(os.environ), events=events
+                    session,
+                    tmux_host.Command(argv=command, cwd=os.getcwd(), env=dict(os.environ)),
+                    options=tmux_host.StartOptions(events=events),
                 )
 
     def test_start_usage_errors(self):
@@ -117,13 +119,17 @@ class CliTest(Case):
         )
         status.assert_called_once_with("s")
         show.assert_called_once_with(
-            "s", "x", split="below", split_from="b", per_column=3, retile="open-close"
+            "s",
+            "x",
+            options=tmux_host.PaneOptions(
+                split="below", split_from="b", per_column=3, retile="open-close"
+            ),
         )
         self.main("show", "s")
         self.assertEqual(
             show.call_args,
             unittest.mock.call(
-                "s", None, split=None, split_from=None, per_column=3, retile="open-close"
+                "s", None, options=tmux_host.PaneOptions(per_column=3, retile="open-close")
             ),
         )
 
@@ -134,7 +140,7 @@ class CliTest(Case):
         for value, n in (("1", 1), ("2", 2), ("9999", 9999), ("0003", 3)):
             with self.subTest(value=value):
                 self.assertEqual(self.main("show", "--per-column", value, "s")[0], 0)
-                self.assertEqual(show.call_args.kwargs["per_column"], n)
+                self.assertEqual(show.call_args.kwargs["options"].per_column, n)
         show.reset_mock()
         for value in ("0", "10000", "00000", "-1", "x", "", "2.0", "\u00b2", " 2"):
             with self.subTest(value=value):
@@ -151,7 +157,7 @@ class CliTest(Case):
         for mode in ("all", "open-close", "off"):
             with self.subTest(mode=mode):
                 self.assertEqual(self.main("show", "--grid-retile", mode, "s")[0], 0)
-                self.assertEqual(show.call_args.kwargs["retile"], mode)
+                self.assertEqual(show.call_args.kwargs["options"].retile, mode)
         show.reset_mock()
         for value in ("x", "", "ALL", "open_close", " off"):
             with self.subTest(value=value):

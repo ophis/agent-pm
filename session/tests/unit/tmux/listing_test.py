@@ -3,6 +3,7 @@
 import re
 
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.model import types as tmux_model
 
 from session.tests.case import Case
 from session.tests.unit.tmux.support import (
@@ -74,7 +75,7 @@ class ListingTest(Case):
         )
         self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES, captured("w1")])
         self.assertEqual(fake.kwargs, [TMUX_KW] * 4)
-        self.assertEqual(tmux_host.LAST_LINES, 2000)
+        self.assertEqual(tmux_model.LAST_LINES, 2000)
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(

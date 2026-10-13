@@ -215,12 +215,12 @@ class TuiMode:
         try:
             self.host.start(
                 self.name,
-                list(argv),
-                cwd=cwd,
-                env=dict(env),
-                events=self.events,
-                status_line=status_line,
-                tags={"@sid": self.sid, "@runtime": self.runtime},
+                tmux_host.Command(argv=list(argv), cwd=cwd, env=dict(env)),
+                options=tmux_host.StartOptions(
+                    events=self.events,
+                    status_line=status_line,
+                    tags={"@sid": self.sid, "@runtime": self.runtime},
+                ),
             )
         except TuiError as e:
             self._unmake()
