@@ -2,7 +2,6 @@
 
 import io
 import os
-import sys
 import tempfile
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -11,6 +10,7 @@ from agent_pm.delegate import ConfigError, Spec, composer, plan
 
 from delegate.tests.case import Case, committed
 from session.tests import fake_adapter
+from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -26,8 +26,9 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
-        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+        }
         self.local("")
 
     def local(self, text):

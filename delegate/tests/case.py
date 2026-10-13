@@ -55,7 +55,9 @@ class Case(unittest.TestCase):
             return super().run(result)
 
     def configure_session(self, adapters, tmux=None) -> None:
-        self.driver = FakeDriver(Driver(**settings(adapters, tmux)))
+        self.driver = FakeDriver(
+            Driver(**settings(adapters, tmux), **getattr(self, "driver_dependencies", {}))
+        )
 
 
 def _foreign(modules=None) -> str | None:

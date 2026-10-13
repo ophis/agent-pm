@@ -7,7 +7,6 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 from contextlib import redirect_stderr
@@ -50,6 +49,7 @@ from delegate.tests.unit.runs import (
     turn,
 )
 from session.tests import fake_adapter
+from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -95,8 +95,9 @@ class Base(Case):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
         )
-        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
-        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+        }
         self.configure_session(
             {
                 "fake": {

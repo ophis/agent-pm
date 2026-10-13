@@ -5,7 +5,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import types
 import uuid
@@ -23,6 +22,7 @@ from delegate.tests.case import PY, Case, child_env, committed
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, limit, no_child, said, turn
 from session.tests import fake_adapter
+from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -107,8 +107,9 @@ class Base(Case):
         self.out = os.path.join(self.work, "out.md")
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
-        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
-        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+        }
         self.configure_session(
             {
                 "fake": {
@@ -688,8 +689,11 @@ class InProcess(Base):
         super().setUp()
         refusing = types.ModuleType("agent_pm.session.adapters.refusing")
         refusing.RefusingAdapter = RefusingAdapter
-        sys.modules[refusing.__name__] = refusing
-        self.addCleanup(sys.modules.pop, refusing.__name__, None)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader(
+                {"agent_pm.session.adapters.fake": fake_adapter, refusing.__name__: refusing}
+            )
+        }
         classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
         self.configure_session(
             {
