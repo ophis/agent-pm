@@ -488,14 +488,19 @@ class UnitTestModules(Sample):
         )
         self.assertEqual(guards.unit_test_modules(root), [])
 
-    def test_helper_suite_matches_a_sibling_helper(self):
+    def test_sibling_helper_does_not_replace_the_project_test_helper_path(self):
         root = self.tree(
             {
                 "delegate/tests/unit/composer/support_test.py": "",
                 "delegate/tests/unit/composer/support.py": "",
             }
         )
-        self.assertEqual(guards.unit_test_modules(root), [])
+        self.assertEqual(
+            guards.unit_test_modules(root),
+            [
+                "delegate/tests/unit/composer/support_test.py: missing source module delegate/src/agent_pm/delegate/composer/support.py"
+            ],
+        )
 
     def test_layer_package_suite_matches_its_public_init(self):
         root = self.tree(

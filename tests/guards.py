@@ -802,7 +802,6 @@ def unit_test_modules(repo: str) -> list[str]:
                     os.path.isfile(home + ".py")
                     or any(files for _, _, files in os.walk(home))
                     or os.path.isfile(helper)
-                    or os.path.isfile(os.path.join(top, stem + ".py"))
                     or (
                         not relative
                         and stem == layer

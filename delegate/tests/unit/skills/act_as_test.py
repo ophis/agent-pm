@@ -11,7 +11,7 @@ import subprocess
 from agent_pm.delegate import cli, composer
 
 from delegate.tests.case import Case
-from delegate.tests.unit.skills.act_as import argv, command, head, prefix, text
+from delegate.tests.skills.act_as import argv, command, head, prefix, text
 
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
