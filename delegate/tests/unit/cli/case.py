@@ -1,0 +1,167 @@
+"""Shared fixtures for cli behavior."""
+
+import io
+import json
+import os
+import sys
+import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
+
+from agent_pm.delegate import Outcome, Result, cli
+from agent_pm.session import ConfigError
+
+from delegate.tests.case import Case
+from delegate.tests.replies import block
+from delegate.tests.unit.runs import DONE, START, said
+from session.tests import fake_adapter
+
+SID = "11111111-2222-3333-4444-555555555555"
+
+
+KEYS = {
+    "runtime",
+    "mode",
+    "sid",
+    "resume",
+    "cwd",
+    "project",
+    "dirs",
+    "reads",
+    "commands",
+    "tier",
+    "effort",
+    "prompt",
+}
+
+
+TUI = "dummy-tester-11111111"
+
+
+DRIVER = f"{TUI}-drive"
+
+
+SPLIT = "--split and --split-from need --detach --mode tui"
+
+
+DONE_RESULT = Result(0, Outcome("done", "t", "s"))
+
+
+HEADS = [
+    "researcher  local  built-in",
+    "pm  local  built-in",
+    "engineer  pull-request  built-in",
+    "dummy-tester  local  built-in",
+]
+
+
+class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
+    def in_process(self):
+        return RefusingRun(self)
+
+
+class RefusingRun(fake_adapter.FakeInProcess):
+    def check(self, _request, /):
+        raise ConfigError("refused by check")
+
+
+class FakeApplication:
+    def __init__(self, case):
+        self.case = case
+
+    @property
+    def driver(self):
+        return self.case.driver
+
+    def plan(self, config, spec):
+        return cli.Application(self.driver).plan(config, spec)
+
+    def run(self, config, spec, *, on_event):
+        return cli.Application(self.driver).run(config, spec, on_event=on_event)
+
+
+class Base(Case):
+    """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work`
+    (not made).
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = os.path.realpath(tmp.name)
+        self.work, self.scenario, self.log = (
+            os.path.join(self.tmp, n) for n in ("work", "scenario.json", "fake.log")
+        )
+        self.out = os.path.join(self.work, "out.md")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp)
+        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
+        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
+        self.configure_session(
+            {
+                "fake": {
+                    "implementation": "adapters.fake:FakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+            }
+        )
+        self.application = FakeApplication(self)
+        self.steps(said(START, block(DONE)))
+
+    def steps(self, *steps):
+        with open(self.scenario, "w") as f:
+            json.dump(list(steps), f)
+
+    def local(self, text):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
+            f.write(text)
+
+    def cli(self, *argv, stdin=""):
+        """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(out),
+            redirect_stderr(err),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+        ):
+            try:
+                code = cli.main(list(argv), application=self.application)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue(), err.getvalue()
+
+    def runs(
+        self,
+        *extra,
+        role="dummy-tester",
+        task="echo",
+        input="Hello.",
+        runtime="fake",
+        stdin="",
+        out=None,
+    ):
+        return self.cli(
+            "--role",
+            role,
+            *(("--task", task) if task else ()),
+            "--input",
+            input,
+            "--out",
+            out or self.out,
+            "--workdir",
+            self.work,
+            *(("--runtime", runtime) if runtime else ()),
+            *extra,
+            stdin=stdin,
+        )
+
+    def launches(self) -> list[dict]:
+        if not os.path.exists(self.log):
+            return []
+        with open(self.log) as f:
+            return [json.loads(line) for line in f]
+
+    def records(self) -> list[dict]:
+        with open(os.path.join(self.work, "run.jsonl")) as f:
+            return [json.loads(line) for line in f]
