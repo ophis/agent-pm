@@ -5,6 +5,7 @@ the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLA
 temp dirs.
 """
 
+import contextlib
 import json
 import os
 import shlex
@@ -12,10 +13,10 @@ import signal
 import stat
 import subprocess
 import tempfile
-import threading
 import time
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import StartOptions
@@ -65,19 +66,18 @@ PROBE = [
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
-CALLER = """import json, signal, sys, time
-from agent_pm.session.engine import api
-from agent_pm.session import Driver, Spec
-signal.signal(signal.SIGINT, signal.default_int_handler)
-driver = Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
-handle = driver.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
-try:
-    for event in handle.events():
-        print(type(event).__name__, flush=True)
-except KeyboardInterrupt:
-    print("KeyboardInterrupt", flush=True)
-    time.sleep(60)
-"""
+CALLER = (
+    "import json, signal, sys, time\nfrom agent_pm.session.engine import "
+    "api\nfrom agent_pm.session import Driver, Spec\n"
+    "signal.signal(signal.SIGINT, signal.default_int_handler)\ndriver = "
+    'Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": '
+    '{"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, '
+    'default_host="tmux")\nhandle = driver.start("claude", "headless", '
+    '"hello", Spec(workdir=sys.argv[2]))\ntry:\n    for event in '
+    "handle.events():\n        print(type(event).__name__, flush=True)\n"
+    'except KeyboardInterrupt:\n    print("KeyboardInterrupt", flush=True)'
+    "\n    time.sleep(60)\n"
+)
 
 
 def running(pid: int) -> bool:
@@ -90,10 +90,8 @@ def running(pid: int) -> bool:
 
 def kill(pid: int) -> None:
     """SIGKILL to a test's stray process, if it still runs."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 class Base(Case):
@@ -131,28 +129,27 @@ class Base(Case):
         self.addCleanup(handle.stop)
         return handle
 
-    def drain(self, handle, on=lambda event: None) -> list:
+    def drain(self, handle, on=lambda _event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
         the handle, instead of hanging past WAIT.
         """
-        found, errors = [], []
+        self.addCleanup(handle.stop)
+        found = []
 
-        def run():
-            try:
-                for event in handle.events():
-                    found.append(event)
-                    on(event)
-            except BaseException as e:
-                errors.append(e)
+        def consume():
+            for event in handle.events():
+                found.append(event)
+                on(event)
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
-        if thread.is_alive():
+        executor = ThreadPoolExecutor(max_workers=1)
+        result = executor.submit(consume)
+        try:
+            result.result(timeout=WAIT)
+        except TimeoutError:
             handle.stop()
             self.fail(f"events() did not end within {WAIT}s, got {found}")
-        if errors:
-            raise errors[0]
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         return found
 
     def logged(self) -> list[dict]:

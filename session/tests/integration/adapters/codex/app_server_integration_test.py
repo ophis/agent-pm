@@ -1,4 +1,4 @@
-"""The Codex app-server client run by path as the account probe, through a fake native app-server."""
+"""Codex account probes run the app-server client by path against a fake native server."""
 
 import json
 import os

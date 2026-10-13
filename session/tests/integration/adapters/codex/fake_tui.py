@@ -14,13 +14,30 @@ import uuid
 from pathlib import Path
 
 
+class SiblingError(ImportError):
+    def __init__(self, key, found, path):
+        super().__init__(f"{key} is {found}, not {path}")
+
+
+class OverrideError(ValueError):
+    def __init__(self, value):
+        super().__init__("expected key=value")
+        self.value = value
+
+
+class StepError(ValueError):
+    def __init__(self, step):
+        super().__init__("unknown interactive step")
+        self.step = step
+
+
 def _sibling(name):
     key = "_agent_pm_" + name
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py")
     if key in sys.modules:
         found = getattr(sys.modules[key], "__file__", None)
         if found != path:
-            raise ImportError(f"{key} is {found}, not {path}")
+            raise SiblingError(key, found, path)
         return sys.modules[key]
     spec = importlib.util.spec_from_file_location(key, path)
     module = sys.modules[key] = importlib.util.module_from_spec(spec)
@@ -91,7 +108,7 @@ def configure(overrides):
     for value in overrides:
         key, separator, raw = value.partition("=")
         if not separator:
-            raise ValueError("expected key=value")
+            raise OverrideError(value)
         try:
             parsed = tomllib.loads("value=" + raw)["value"]
         except tomllib.TOMLDecodeError:
@@ -171,6 +188,26 @@ def parser():
     return result
 
 
+def catalog_rows(config, scene):
+    case = scene.get("catalog_case")
+    rows = catalog(config, scene.get("user_hook"))
+    if case == "off":
+        rows = []
+    elif case == "disabled":
+        rows[0]["enabled"] = False
+    elif case == "foreign":
+        rows.append({"source": "sessionFlags", "eventName": "foreign"})
+    elif case == "missing":
+        rows.pop()
+    elif case == "duplicate":
+        rows.append(rows[0])
+    elif case == "command":
+        rows[0]["command"] = "foreign command"
+    elif case == "hash":
+        rows[0]["currentHash"] = "invalid hash"
+    return rows
+
+
 def app_server(args):
     scene = scenario()
     config = configure(parser().parse_args(args).c)
@@ -203,21 +240,7 @@ def app_server(args):
             emit({"id": ident, "error": {"message": "not initialized or unknown method"}})
         else:
             time.sleep(scene.get("catalog_delay", 0))
-            rows = catalog(config, scene.get("user_hook"))
-            if case == "off":
-                rows = []
-            elif case == "disabled":
-                rows[0]["enabled"] = False
-            elif case == "foreign":
-                rows.append({"source": "sessionFlags", "eventName": "foreign"})
-            elif case == "missing":
-                rows.pop()
-            elif case == "duplicate":
-                rows.append(rows[0])
-            elif case == "command":
-                rows[0]["command"] = "foreign command"
-            elif case == "hash":
-                rows[0]["currentHash"] = "invalid hash"
+            rows = catalog_rows(config, scene)
             log({"catalog": rows})
             emit(
                 {
@@ -241,8 +264,7 @@ def app_server(args):
     return 0
 
 
-def interactive(args):
-    scene = scenario()
+def interactive_arguments(args):
     resumed = None
     if args[:1] == ["resume"]:
         if len(args) < 2 or args[1].startswith("-"):
@@ -256,35 +278,28 @@ def interactive(args):
     options.add_argument("--add-dir", action="append", default=[])
     options.add_argument("prompt", nargs="?")
     parsed = options.parse_args(args)
-    os.chdir(parsed.C)
-    started("tui", [*(["resume", resumed] if resumed else []), *args])
-    rows = catalog(configure(parsed.c), scene.get("user_hook"))
-    if any(
-        row["enabled"] and not row["isManaged"] and row["trustStatus"] != "trusted" for row in rows
-    ):
-        print("Hooks need review", flush=True)
-        for _ in sys.stdin:
-            pass
-        return 1
-    native = scene.get("thread_id", resumed or str(uuid.uuid4()))
-    path = fake_codex.session_path(native)
-    if resumed and not path.is_file():
-        print("no session " + resumed, file=sys.stderr, flush=True)
-        return 1
-    initial = "resume" if resumed else "startup"
-    color = os.environ.get("NO_COLOR", "0") == "0"
+    return resumed, parsed, args
 
-    def fire(label, extra=None):
+
+class InteractiveSession:
+    def __init__(self, scene, resumed, parsed, rows):
+        self.scene, self.parsed, self.rows = scene, parsed, rows
+        self.native = scene.get("thread_id", resumed or str(uuid.uuid4()))
+        self.path = fake_codex.session_path(self.native)
+        self.initial = "resume" if resumed else "startup"
+        self.color = os.environ.get("NO_COLOR", "0") == "0"
+
+    def fire(self, label, extra=None):
         payload = {
-            "session_id": native,
+            "session_id": self.native,
             "cwd": os.getcwd(),
-            "transcript_path": str(path),
+            "transcript_path": str(self.path),
             "hook_event_name": label,
-            "model": parsed.m or "fake-model",
+            "model": self.parsed.m or "fake-model",
             "permission_mode": "default",
             **(extra or {}),
         }
-        for row in rows:
+        for row in self.rows:
             if row["eventName"] != label[0].lower() + label[1:] or not row["enabled"]:
                 continue
             result = subprocess.run(
@@ -310,58 +325,87 @@ def interactive(args):
                 }
             )
 
-    def turn(text, steps):
-        nonlocal initial
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_text(
-                json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": os.getcwd()}})
+    def step(self, step, ident):
+        if step["kind"] == "permission":
+            self.fire(
+                "PermissionRequest",
+                {
+                    "turn_id": ident,
+                    "tool_name": step.get("tool_name", "Bash"),
+                    "tool_input": {"command": "true"},
+                },
+            )
+        elif step["kind"] == "tool":
+            self.fire("PostToolUse", {"turn_id": ident, "tool_name": step.get("tool_name", "Bash")})
+        elif step["kind"] == "hook":
+            self.fire(step["label"], step.get("payload"))
+        elif step["kind"] == "interrupt":
+            self.fire("Interrupt", {"turn_id": ident})
+            return True
+        elif step["kind"] == "screen":
+            print("\x1b[2J\x1b[H" + step["text"], flush=True)
+        elif step["kind"] == "pause":
+            while not Path(step["file"]).exists():
+                time.sleep(0.02)
+        else:
+            raise StepError(step)
+        return False
+
+    def turn(self, text, steps):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.write_text(
+                json.dumps(
+                    {"type": "session_meta", "payload": {"id": self.native, "cwd": os.getcwd()}}
+                )
                 + "\n"
             )
-        with path.open("a") as stream:
+        with self.path.open("a") as stream:
             stream.write(json.dumps({"type": "user", "text": text}) + "\n")
-        if initial:
-            fire("SessionStart", {"source": initial})
-            initial = None
-        ident, last = str(uuid.uuid4()), None
-        fire("UserPromptSubmit", {"prompt": text, "turn_id": ident})
+        if self.initial:
+            self.fire("SessionStart", {"source": self.initial})
+            self.initial = None
+        ident, last = (str(uuid.uuid4()), None)
+        self.fire("UserPromptSubmit", {"prompt": text, "turn_id": ident})
         for step in steps:
             if isinstance(step, str):
                 last = step
-                print("\x1b[36m" + step + "\x1b[0m" if color else step, flush=True)
-            elif step["kind"] == "permission":
-                fire(
-                    "PermissionRequest",
-                    {
-                        "turn_id": ident,
-                        "tool_name": step.get("tool_name", "Bash"),
-                        "tool_input": {"command": "true"},
-                    },
-                )
-            elif step["kind"] == "tool":
-                fire("PostToolUse", {"turn_id": ident, "tool_name": step.get("tool_name", "Bash")})
-            elif step["kind"] == "hook":
-                fire(step["label"], step.get("payload"))
-            elif step["kind"] == "interrupt":
-                fire("Interrupt", {"turn_id": ident})
+                print("\x1b[36m" + step + "\x1b[0m" if self.color else step, flush=True)
+            elif self.step(step, ident):
                 return
-            elif step["kind"] == "screen":
-                print("\x1b[2J\x1b[H" + step["text"], flush=True)
-            elif step["kind"] == "pause":
-                while not Path(step["file"]).exists():
-                    time.sleep(0.02)
-            else:
-                raise ValueError("unknown interactive step")
-        fire("Stop", {"turn_id": ident, "stop_hook_active": False, "last_assistant_message": last})
+        self.fire(
+            "Stop", {"turn_id": ident, "stop_hook_active": False, "last_assistant_message": last}
+        )
 
-    turns, index = scene.get("tui_turns", [[]]), 0
-    if parsed.prompt is not None:
-        turn(parsed.prompt, turns[index] if index < len(turns) else [])
-        index += 1
-    for line in sys.stdin:
-        turn(line.rstrip("\n"), turns[index] if index < len(turns) else [])
-        index += 1
-    return 0
+    def run(self):
+        turns, index = self.scene.get("tui_turns", [[]]), 0
+        if self.parsed.prompt is not None:
+            self.turn(self.parsed.prompt, turns[index] if index < len(turns) else [])
+            index += 1
+        for line in sys.stdin:
+            self.turn(line.rstrip("\n"), turns[index] if index < len(turns) else [])
+            index += 1
+        return 0
+
+
+def interactive(args):
+    scene = scenario()
+    resumed, parsed, args = interactive_arguments(args)
+    os.chdir(parsed.C)
+    started("tui", [*(["resume", resumed] if resumed else []), *args])
+    rows = catalog(configure(parsed.c), scene.get("user_hook"))
+    if any(
+        row["enabled"] and not row["isManaged"] and row["trustStatus"] != "trusted" for row in rows
+    ):
+        print("Hooks need review", flush=True)
+        for _ in sys.stdin:
+            pass
+        return 1
+    session = InteractiveSession(scene, resumed, parsed, rows)
+    if resumed and not session.path.is_file():
+        print("no session " + resumed, file=sys.stderr, flush=True)
+        return 1
+    return session.run()
 
 
 def main(args):
