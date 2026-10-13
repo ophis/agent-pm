@@ -11,6 +11,12 @@ GUARD = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
 LOCK = re.compile(r"(?:cannot|could not) lock|\.lock\b", re.I)
 
 
+class GitError(RuntimeError):
+    def __init__(self, args, result):
+        shown = " ".join(a if len(a) <= 40 else a[:37] + "..." for a in args)
+        super().__init__(f"git {shown[:200]}: {err_text(result)}")
+
+
 def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
     for i in range(5):
         res = run(["git", *pre, "-C", wt, *args], timeout)
@@ -19,8 +25,7 @@ def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, 
         if i == 4 or not LOCK.search(res.stderr or ""):
             break
         time.sleep(0.5 * 2**i)
-    shown = " ".join(a if len(a) <= 40 else a[:37] + "..." for a in args)
-    raise RuntimeError(f"git {shown[:200]}: {err_text(res)}")
+    raise GitError(args, res)
 
 
 def common_dir(wt: str) -> str | None:

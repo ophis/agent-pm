@@ -22,6 +22,26 @@ LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manag
 UNCONFIGURED = ("utils", "manager")  # no own file
 
 
+class ConfigFileError(ValueError):
+    @classmethod
+    def shared_key(cls, project, key):
+        return cls(f"{project}/config.toml: {key} is also a same-level project's")
+
+    @classmethod
+    def unknown_key(cls, local, key):
+        return cls(f"{local}: unknown key {key!r}: no project's config.toml has it")
+
+    @classmethod
+    def unknown_project(cls, name):
+        projects = ", ".join(p for level in LEVELS for p in level)
+        return cls(f"project {name!r}: want one of {projects}")
+
+
+class MissingConfig(FileNotFoundError):
+    def __init__(self, path):
+        super().__init__(f"{path}: missing")
+
+
 def merge(base: dict, over: dict) -> dict:
     out = dict(base)
     for k, v in over.items():
@@ -45,7 +65,7 @@ def read_project(
     if (path or name not in UNCONFIGURED) and (
         os.path.isdir(own_file) or not os.path.exists(own_file)
     ):
-        raise FileNotFoundError(f"{own_file}: missing")
+        raise MissingConfig(own_file)
     configs = _configs(root, name, path)
     known = (
         {**configs, name: merge(_load(os.path.join(root, name, "config.toml")), configs[name])}
@@ -57,14 +77,12 @@ def read_project(
         layer = {}
         for project in level:
             if clash := sorted(set(layer) & set(configs[project])):
-                raise ValueError(
-                    f"{project}/config.toml: {clash[0]} is also a same-level project's"
-                )
+                raise ConfigFileError.shared_key(project, clash[0])
             layer.update(configs[project])
         out = merge(out, layer)
     found = _load(os.path.expanduser(local))
     if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
-        raise ValueError(f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it")
+        raise ConfigFileError.unknown_key(local, unknown[0])
     if own:
         return merge(configs[name], _owned(found, known, lambda owners: name in owners))
     return merge(out, _owned(found, known, lambda owners: min(map(_rank, owners)) <= rank))
@@ -80,9 +98,7 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    raise ValueError(
-        f"project {name!r}: want one of {', '.join(p for level in LEVELS for p in level)}"
-    )
+    raise ConfigFileError.unknown_project(name)
 
 
 def _configs(root: str, name: str, path: str | None) -> dict[str, dict]:

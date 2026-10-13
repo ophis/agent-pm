@@ -1,6 +1,7 @@
 """The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and
 the projects' import roots."""
 
+import contextlib
 import os
 import subprocess
 import tempfile
@@ -9,22 +10,32 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4)
 STATE = "~/.agent-pm"
 
 
+class PathError(ValueError):
+    def __init__(self, label, path):
+        super().__init__(f"{label}: {path!r:.80} is not an absolute or expandable ~ path")
+
+
+class PathTypeError(TypeError, ValueError):
+    def __init__(self, label):
+        super().__init__(f"{label}: want a list of local paths")
+
+
 def real_dirs(paths, label: str) -> frozenset[str]:
     if not isinstance(paths, list):
-        raise ValueError(f"{label}: want a list of local paths")
+        raise PathTypeError(label)
     for p in paths:
         if (
             not isinstance(p, str)
             or not p.startswith(("/", "~"))
             or os.path.expanduser(p).startswith("~")
         ):
-            raise ValueError(f"{label}: {p!r:.80} is not an absolute or expandable ~ path")
+            raise PathError(label, p)
     return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
 
 
 def temp_dirs() -> tuple[str, ...]:
     dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
-    try:
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
         dirs.append(
             subprocess.run(
                 ["getconf", "DARWIN_USER_TEMP_DIR"],
@@ -34,8 +45,6 @@ def temp_dirs() -> tuple[str, ...]:
                 stdin=subprocess.DEVNULL,
             ).stdout.strip()
         )
-    except (OSError, subprocess.SubprocessError):
-        pass
     return tuple(dict.fromkeys(os.path.realpath(d) for d in dirs if d))
 
 

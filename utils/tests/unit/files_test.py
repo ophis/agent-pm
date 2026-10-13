@@ -35,7 +35,7 @@ class Base(Case):
         def run():
             try:
                 out["value"] = call()
-            except BaseException as e:
+            except (OSError, TypeError, ValueError) as e:
                 out["error"] = e
 
         thread = threading.Thread(target=run, daemon=True)

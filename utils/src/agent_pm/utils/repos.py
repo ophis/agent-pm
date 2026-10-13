@@ -11,13 +11,31 @@ NAME = r"[A-Za-z0-9._][A-Za-z0-9._-]{0,99}"
 HOST = r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?"
 SPEC = re.compile(rf"(?:https://)?(?:({HOST})/)?({OWNER})/({NAME}?)(?:\.git)?/?")
 URL = re.compile(
-    r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?"
+    r"(?:(https?|ssh)://(?:[^@/\s]+@)?|[^@/:\s]+@)([^/:\s]+)(?::(\d{1,5}))?"
+    r"[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?"
 )
 SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
 class Invalid(Exception):
-    pass
+    @classmethod
+    def reference(cls, spec):
+        return cls(
+            f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or "
+            "https://host/owner/name"
+        )
+
+    @classmethod
+    def clone(cls, path):
+        return cls(f"{path} is not a git clone")
+
+    @classmethod
+    def origin(cls, path):
+        return cls(f"{path}: no origin URL naming host/owner/name")
+
+    @classmethod
+    def checkout(cls, slug):
+        return cls(f"unsafe checkout name {slug[:80]!r}")
 
 
 @dataclass(frozen=True)
@@ -34,9 +52,7 @@ class Repo:
             or m.group(3) in (".", "..")
             or (m.group(1) is None and spec.strip().startswith("https://"))
         ):
-            raise Invalid(
-                f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name"
-            )
+            raise Invalid.reference(spec)
         return cls((m.group(1) or "github.com").lower(), m.group(2), m.group(3))
 
     @property
@@ -68,18 +84,18 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
     clone = os.path.realpath(os.path.expanduser(spec))
     dotgit = os.path.join(clone, ".git")
     if os.path.islink(dotgit) or not os.path.isdir(dotgit):
-        raise Invalid(f"{clone} is not a git clone")
+        raise Invalid.clone(clone)
     res = run(["git", "-C", clone, "remote", "get-url", "origin"], SHORT)
     slug = url_slug(res.stdout) if res.returncode == 0 else None
     if slug is None:
-        raise Invalid(f"{clone}: no origin URL naming host/owner/name")
+        raise Invalid.origin(clone)
     return Repo.parse(slug), clone
 
 
 def check_slug(slug: str | None, branch: str = "") -> str:
     slug = branch.replace("/", "-") if slug is None else slug
     if not SLUG.fullmatch(slug):
-        raise Invalid(f"unsafe checkout name {slug[:80]!r}")
+        raise Invalid.checkout(slug)
     return slug
 
 
