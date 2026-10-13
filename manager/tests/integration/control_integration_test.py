@@ -1,8 +1,10 @@
 """Crew control permissions and lock boundaries through executable fake commands."""
 
+import fcntl
 import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 from agent_pm.manager.engine.crew import Crew
 from agent_pm.manager.engine.roster import Roster
@@ -57,3 +59,30 @@ class Control(Case):
             with self.assertRaises(Held):
                 other.stop_all()
             self.assert_unchanged_and_alive(entries, ledger)
+
+    def test_status_and_show_execute_outside_roster_lock(self):
+        for record in self.records:
+            ctl.set_session(self.ctl_dir, record.name, displayable=True)
+        seen = []
+        with self.listed():
+            actual_run = subprocess.run
+
+            def checked(argv, **options):
+                if argv[0] == self.command and argv[1] in {"status", "show"}:
+                    fd = os.open(Path(self.directory, "roster.lock"), os.O_RDWR)
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        seen.append(argv[1])
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
+                return actual_run(argv, **options)
+
+            with mock.patch.object(subprocess, "run", side_effect=checked):
+                output = Crew(self.roster).attach()
+        self.assertEqual(seen, ["status", "show"])
+        calls = [call for call in ctl.calls(self.ctl_dir) if call["argv"][0] in {"status", "show"}]
+        self.assertEqual([call["argv"][0] for call in calls], ["status", "show"])
+        self.assertTrue(all(call["names"] == ["first", "second"] for call in calls))
+        self.assertIn("first", output)
+        self.assertIn("second", output)
