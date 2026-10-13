@@ -39,79 +39,127 @@ EXIT_WAIT = 5
 PROBE_MAX = 1 << 20
 
 
-def call(
-    exe: str,
-    args: list[str],
-    method: str,
-    params: dict | None = None,
-    *,
-    env: dict[str, str],
-    wait: float,
-    limit: int,
-    cwd: str | None = None,
-    termination: Termination | None = None,
-    exit_wait: float = EXIT_WAIT,
-):
-    """`exe app-server *args` in its own process group: initialize, then `method`'s result within
-    `wait` s and `limit` buffered bytes; else Error, or Exited (its returncode) if it ends first.
-    Its group is killed before returning.
-    """
-    proc = None
-    exited = False
-    try:
-        if termination is not None:
-            termination.check()
+class AppServer:
+    """Own one app-server process and close its group after a single initialized request."""
+
+    def __init__(
+        self,
+        exe: str,
+        args: list[str],
+        *,
+        env: dict[str, str],
+        wait: float,
+        limit: int,
+        cwd: str | None = None,
+        termination: Termination | None = None,
+        exit_wait: float = EXIT_WAIT,
+    ):
+        self.exe, self.args, self.env, self.cwd = exe, args, env, cwd
+        self.wait, self.limit = wait, limit
+        self.termination, self.exit_wait = termination, exit_wait
+
+    def call(self, method: str, params: dict | None = None):
+        """Initialize and return `method` within the byte/time bounds, then reap the process."""
+        started = exited = False
         try:
-            proc = subprocess.Popen(
-                [exe, "app-server", *args],
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
+            if self.termination is not None:
+                self.termination.check()
+            try:
+                self._proc = subprocess.Popen(
+                    [self.exe, "app-server", *self.args],
+                    cwd=self.cwd,
+                    env=self.env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as e:
+                raise Error(f"{self.exe}: {e.strerror}") from e
+            started = True
+            assert self._proc.stdin is not None and self._proc.stdout is not None
+            self._stdin, self._stdout = self._proc.stdin, self._proc.stdout
+            if self.termination is not None:
+                self.termination.check()
+            self._lines = Lines(
+                self._stdout.fileno(), self.wait, self.limit, termination=self.termination
             )
-        except OSError as e:
-            raise Error(f"{exe}: {e.strerror}") from e
-        if termination is not None:
-            termination.check()
-        assert proc.stdout is not None
-        lines = Lines(proc.stdout.fileno(), wait, limit, termination=termination)
-        send(
-            proc,
-            {
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {"name": "agent-pm", "version": "0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            },
-        )
-        answer(lines, 1, "initialize")
-        send(proc, {"method": "initialized"})
-        send(
-            proc, {"id": 2, "method": method, **({"params": params} if params is not None else {})}
-        )
-        return answer(lines, 2, method)
-    except Exited:
-        exited = True
-        raise
-    finally:
-        if proc is not None:
-            close(proc, termination, exit_wait)
-        if termination is not None:
-            termination.check()
-        if exited and proc is not None:
-            raise Exited(proc.returncode)
+            self._send(
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {"name": "agent-pm", "version": "0"},
+                        "capabilities": {"experimentalApi": True},
+                    },
+                }
+            )
+            self._answer(1, "initialize")
+            self._send({"method": "initialized"})
+            self._send(
+                {"id": 2, "method": method, **({"params": params} if params is not None else {})}
+            )
+            return self._answer(2, method)
+        except Exited:
+            exited = True
+            raise
+        finally:
+            if started:
+                self._close()
+            if self.termination is not None:
+                self.termination.check()
+            if exited and started:
+                raise Exited(self._proc.returncode)
 
+    def _send(self, message: dict) -> None:
+        try:
+            self._stdin.write(json.dumps(message).encode() + b"\n")
+            self._stdin.flush()
+        except BrokenPipeError:
+            raise Exited from None
 
-def send(proc, message: dict) -> None:
-    try:
-        proc.stdin.write(json.dumps(message).encode() + b"\n")
-        proc.stdin.flush()
-    except BrokenPipeError:
-        raise Exited from None
+    def _answer(self, ident: int, method: str):
+        while True:
+            try:
+                message = json.loads(next(self._lines))
+            except (ValueError, RecursionError):
+                continue
+            if (
+                not isinstance(message, dict)
+                or "method" in message
+                or type(message.get("id")) is not int
+                or message["id"] != ident
+            ):
+                continue
+            if "result" in message:
+                return message["result"]
+            error = message.get("error")
+            detail = error.get("message") if isinstance(error, dict) else error
+            raise Error(f"{method} failed: {detail}")
+
+    def _close(self) -> None:
+        deadline = time.monotonic() + self.exit_wait
+        with contextlib.suppress(OSError):
+            self._stdin.close()
+        fd = self._stdout.fileno()
+        try:
+            for interval in _polls(deadline, self.termination):
+                if select.select([fd], [], [], interval)[0]:
+                    if not os.read(fd, BLOCK):
+                        break
+                elif self._proc.poll() is not None:
+                    break
+            for interval in _polls(deadline, self.termination):
+                try:
+                    self._proc.wait(timeout=interval)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._proc.pid, signal.SIGKILL)
+            self._proc.wait()
+            self._stdout.close()
 
 
 class Lines:
@@ -141,26 +189,6 @@ class Lines:
         return line
 
 
-def answer(lines, ident: int, method: str):
-    while True:
-        try:
-            message = json.loads(next(lines))
-        except (ValueError, RecursionError):
-            continue
-        if (
-            not isinstance(message, dict)
-            or "method" in message
-            or type(message.get("id")) is not int
-            or message["id"] != ident
-        ):
-            continue
-        if "result" in message:
-            return message["result"]
-        error = message.get("error")
-        detail = error.get("message") if isinstance(error, dict) else error
-        raise Error(f"{method} failed: {detail}")
-
-
 def _polls(deadline: float, termination):
     while (left := deadline - time.monotonic()) > 0:
         if termination is not None and termination.signum:
@@ -168,44 +196,18 @@ def _polls(deadline: float, termination):
         yield min(left, POLL)
 
 
-def close(proc, termination=None, wait: float = EXIT_WAIT) -> None:
-    deadline = time.monotonic() + wait
-    with contextlib.suppress(OSError):
-        proc.stdin.close()
-    fd = proc.stdout.fileno()
-    try:
-        for interval in _polls(deadline, termination):
-            if select.select([fd], [], [], interval)[0]:
-                if not os.read(fd, BLOCK):
-                    break
-            elif proc.poll() is not None:
-                break
-        for interval in _polls(deadline, termination):
-            try:
-                proc.wait(timeout=interval)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-        proc.stdout.close()
-
-
 def probe(env: dict, timeout: float = 10) -> dict | None:
     if type(timeout) not in (int, float) or not 0 < timeout <= 10:
         return None
     try:
-        result = call(
+        result = AppServer(
             "codex",
             [],
-            "account/rateLimits/read",
             env=env,
             wait=timeout,
             limit=PROBE_MAX,
             exit_wait=POLL,
-        )
+        ).call("account/rateLimits/read")
     except (Error, Exited, OSError, ValueError):
         return None
     return result if isinstance(result, dict) else None
