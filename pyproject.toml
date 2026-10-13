@@ -35,6 +35,26 @@ type = "layers"
 layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
 
 [[tool.importlinter.contracts]]
+name = "Manager communicates with layers only through commands"
+type = "forbidden"
+source_modules = ["agent_pm.manager"]
+forbidden_modules = ["agent_pm.session", "agent_pm.delegate", "agent_pm.linear_orchestrator"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Manager units own commands, bookkeeping and events"
+type = "units"
+container = "agent_pm.manager"
+units = ["agent_pm.manager.engine.crew", "agent_pm.manager.engine.roster", "agent_pm.manager.engine.events", "agent_pm.manager.engine.types"]
+dependencies = [
+    "agent_pm.manager.engine.crew -> agent_pm.manager.engine.roster agent_pm.manager.engine.types agent_pm.utils",
+    "agent_pm.manager.engine.roster -> agent_pm.manager.engine.events agent_pm.manager.engine.types agent_pm.utils",
+    "agent_pm.manager.engine.events -> agent_pm.manager.engine.types agent_pm.utils",
+    "agent_pm.manager.engine.types -> agent_pm.utils",
+    "outside -> agent_pm.manager.engine.crew agent_pm.manager.engine.types agent_pm.utils",
+]
+
+[[tool.importlinter.contracts]]
 name = "manager uses lower public packages"
 type = "forbidden"
 source_modules = ["agent_pm.manager", "manager.tests"]

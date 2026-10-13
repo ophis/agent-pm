@@ -504,6 +504,89 @@ def session_names(repo: str) -> list[str]:
     )
 
 
+def manager_commands(repo: str) -> list[str]:
+    found = []
+    rel = "manager/src/agent_pm/manager/engine/crew.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    allowed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Tuple | ast.List):
+            values = [v.value if isinstance(v, ast.Constant) else None for v in node.elts]
+            if values == [SESSION_COMMAND, "ls", "--here", "--records"]:
+                allowed.add(id(node.elts[0]))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(COMMAND)
+            and id(node) not in allowed
+        ):
+            found.append(f"{rel}:{node.lineno}: hardcoded layer command {node.value}")
+    return sorted(found)
+
+
+def manager_display(repo: str) -> list[str]:
+    found = set()
+    base = "manager/src/agent_pm/manager/"
+    forbidden = re.compile(
+        r"(?<![a-zA-Z0-9_])(?:pane|opener|split_from)(?![a-zA-Z0-9_])|--split|@record"
+    )
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        tree = ast.parse(text, rel)
+        for node in ast.walk(tree):
+            value = (
+                node.id
+                if isinstance(node, ast.Name)
+                else node.attr
+                if isinstance(node, ast.Attribute)
+                else node.arg
+                if isinstance(node, ast.arg)
+                else node.value
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                else ""
+            )
+            if forbidden.search(value):
+                found.add(f"{base}{rel}:{node.lineno}: interprets display {value!r}")
+    return sorted(found)
+
+
+def manager_exports(repo: str) -> list[str]:
+    base = "manager/src/agent_pm/manager/__init__.py"
+    path = os.path.join(repo, base)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), base)
+    exports = next(
+        (
+            n.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+        ),
+        None,
+    )
+    if exports is None:
+        return [f"{base}: missing __all__"]
+    modules = _source_modules(repo, ("manager", "utils"))
+    functions = {
+        f"{rel.removesuffix('.py').replace('/', '.').removesuffix('.__init__')}.{n.name}"
+        for project in ("manager", "utils")
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py")
+        for n in ast.parse(text).body
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    return sorted(
+        f"{base}:{exports.lineno}: exports function {name}"
+        for name in ast.literal_eval(exports)
+        if _resolve_boundary(f"agent_pm.manager.{name}", modules) in functions
+    )
+
+
 def literal_imports(repo: str) -> list[str]:
     """Literal dynamic imports obey the same contracts as normal imports."""
     config = os.path.join(repo, "pyproject.toml")

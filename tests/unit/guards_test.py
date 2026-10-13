@@ -1694,3 +1694,43 @@ class StatusLogFormat(Sample):
                 f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
             ],
         )
+
+
+class ManagerBoundaries(Sample):
+    def test_only_orphan_listing_is_hardcoded(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        root = self.tree(
+            {
+                base: 'LS = ("agent-pm-session", "ls", "--here", "--records")\nBAD = ["agent-pm-session", "status"]\n'
+            }
+        )
+        self.assertEqual(
+            guards.manager_commands(root), [f"{base}:2: hardcoded layer command agent-pm-session"]
+        )
+
+    def test_display_is_opaque(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        root = self.tree({base: 'def f(pane): return "@opener"\n'})
+        self.assertEqual(len(guards.manager_display(root)), 2)
+        clean = self.tree({base: 'def f(display): return display.split(":")\n'})
+        self.assertEqual(guards.manager_display(clean), [])
+
+    def test_exports_require_all_and_reject_reexported_functions(self):
+        base = "manager/src/agent_pm/manager/"
+        root = self.tree(
+            {
+                base
+                + "__init__.py": 'from agent_pm.manager.engine.crew import f\n__all__ = ["f"]\n',
+                base + "engine/crew.py": "def f(): pass\n",
+            }
+        )
+        self.assertEqual(guards.manager_exports(root), [f"{base}__init__.py:2: exports function f"])
+        missing = self.tree({base + "__init__.py": ""})
+        self.assertEqual(guards.manager_exports(missing), [f"{base}__init__.py: missing __all__"])
+        clean = self.tree(
+            {
+                base + "__init__.py": 'class Crew: pass\n__all__ = ["Crew"]\n',
+                "utils/src/agent_pm/utils/__init__.py": 'def f(): pass\n__all__ = ["f"]\n',
+            }
+        )
+        self.assertEqual(guards.manager_exports(clean), [])
