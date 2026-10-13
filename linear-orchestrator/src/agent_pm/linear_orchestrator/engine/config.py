@@ -9,15 +9,17 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
 import agent_pm.utils as utils
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine.types import STATES, Config, ConfigError, Docs, Role, Task
+from agent_pm.linear_orchestrator.engine.types import STATES, ConfigError, Task
 from agent_pm.linear_orchestrator.linear import linear
+from agent_pm.session import Driver
 from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
-
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
@@ -70,6 +72,56 @@ TASKS = {
 # Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the
 # github destination's `<Workdir>/publish`.
 CLONES = ("src", "publish")
+
+
+@dataclass(frozen=True)
+class Role:
+    account: str
+    key: str
+    tasks: tuple[str, ...]
+    max_runs: int
+    next: str | None
+    require_instructions: bool
+    run: delegate.RunConfig
+
+
+@dataclass(frozen=True)
+class Docs:
+    repo: str
+    branch: str
+    dirs: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class Config:
+    team: str
+    states: Mapping[str, str]
+    human_members: tuple[str, ...]
+    harness_key: str
+    task_label_group: str
+    task_labels: Mapping[str, str]
+    roles: Mapping[str, Role]
+    project_repos: Mapping[str, str]
+    local_clones: Mapping[str, str]
+    work_dir: str
+    docs: Docs
+    stages: Mapping[str, int]
+    driver: Driver
+
+    @property
+    def runs_dir(self) -> str:
+        return os.path.join(self.work_dir, "work")
+
+    @property
+    def logs_dir(self) -> str:
+        return os.path.join(self.work_dir, "logs")
+
+    @property
+    def runs_log(self) -> str:
+        return os.path.join(self.logs_dir, "runs.jsonl")
+
+    def run_dir(self, issue: str) -> str:
+        return os.path.join(self.runs_dir, issue)
 
 
 def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
