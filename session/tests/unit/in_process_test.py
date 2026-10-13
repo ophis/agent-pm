@@ -2,6 +2,8 @@
 and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
 """
 
+import io
+import logging
 import signal
 import threading
 import time
@@ -150,6 +152,20 @@ class Raises(Base):
         self.assertEqual(self.drain()[-1], Stderr("KeyboardInterrupt"))
         self.assertEqual(self.mode.returncode(WAIT), 1)
 
+    def test_failure_stream_is_single_and_silent_when_logging_is_disabled(self):
+        def script(*_):
+            raise KeyboardInterrupt
+
+        self.addCleanup(logging.disable, logging.root.manager.disable)
+        for level in (logging.NOTSET, logging.CRITICAL):
+            with self.subTest(level=level), mock.patch("sys.stderr", new=io.StringIO()) as console:
+                logging.disable(level)
+                self.begin(script)
+                found = self.drain()
+                self.assertEqual(found.count(Stderr("KeyboardInterrupt")), 1)
+                self.assertEqual(self.mode.returncode(WAIT), 1)
+                self.assertEqual(console.getvalue(), "")
+
 
 class Stop(Base):
     def test_while_live_drains_what_came_ends_at_once_minus_sigkill_and_closes_the_run_at_its_next_yield(
@@ -197,6 +213,31 @@ class Stop(Base):
         self.addCleanup(mode.stop)
         self.assertEqual(self.drain(), [Reply("a")])
         self.assertEqual(mode.returncode(WAIT), 0)
+
+    def test_disabled_logging_keeps_stop_bounded_and_suppresses_late_failure(self):
+        release, reached = threading.Event(), threading.Event()
+        workers = []
+        self.addCleanup(release.set)
+        self.addCleanup(logging.disable, logging.root.manager.disable)
+        logging.disable(logging.CRITICAL)
+
+        def script(*_):
+            workers.append(threading.current_thread())
+            reached.set()
+            release.wait(WAIT)
+            raise KeyboardInterrupt
+
+        self.begin(script)
+        self.assertTrue(reached.wait(WAIT))
+        began = time.monotonic()
+        self.mode.stop()
+        self.assertLess(time.monotonic() - began, 1)
+        self.assertEqual(self.drain(), [])
+        self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
+        release.set()
+        workers[0].join(WAIT)
+        self.assertFalse(workers[0].is_alive())
+        self.assertEqual(self.mode.poll(SHORT), ([], False))
 
 
 class Begin(Base):

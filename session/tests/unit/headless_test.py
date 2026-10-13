@@ -2,7 +2,9 @@
 waits, send and screen refused, and probe(), over real Python children.
 """
 
+import io
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -203,6 +205,26 @@ class Streams(Base):
         with self.assertRaisesRegex(RuntimeError, "boom"):
             while time.monotonic() < deadline:
                 self.mode.poll(0.1)
+
+    def test_parser_failure_stays_single_and_original_when_logging_is_disabled(self):
+        error = KeyboardInterrupt("parser interrupted")
+
+        class ErrorRun(StubRun):
+            def parse(self, _record):
+                raise error
+
+        self.addCleanup(logging.disable, logging.root.manager.disable)
+        for level in (logging.NOTSET, logging.CRITICAL):
+            with self.subTest(level=level), mock.patch("sys.stderr", new=io.StringIO()) as console:
+                logging.disable(level)
+                self.mode = HeadlessMode(ErrorRun())
+                self.begin("print('{}')")
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    self.drain()
+                self.assertIs(caught.exception, error)
+                self.mode.poll(0)
+                self.mode.stop()
+                self.assertEqual(console.getvalue(), "")
 
 
 class Stop(Base):

@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import DriverError, Event, Stderr
+from agent_pm.session.modes.reporting.types import FailureReport
 
 STOP_WAIT = 5
 
@@ -94,7 +95,8 @@ class HeadlessMode:
                 for event in events:
                     self.items.put(event)
         except BaseException as e:
-            self.items.put(e)
+            with FailureReport("session.headless", e, self.items.put) as logger:
+                logger.exception("Headless output failed")
         else:
             eof.set()
             self.items.put(None)
