@@ -14,6 +14,19 @@ from manager.tests.case import REPO, Case
 from utils.tests.fakes import ctl
 
 
+def _without_manager_identity():
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "AGENT_PM_MANAGER",
+            "AGENT_PM_HOLDER_ID",
+            "AGENT_PM_HOLDER_GENERATION",
+        }
+    }
+
+
 class Commands(Case):
     def setUp(self):
         self.command = self.setup_ctl()
@@ -70,6 +83,73 @@ class Commands(Case):
         ):
             with self.subTest(args=args):
                 self.assertEqual(self.invoke(*args).returncode, 2)
+
+    def test_invalid_manager_names_from_flag_and_environment_write_nowhere(self):
+        env = _without_manager_identity()
+        outside = Path(self.home, "outside")
+        before = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
+        invalid = (
+            ".",
+            "..",
+            "../outside",
+            "../../outside",
+            str(outside),
+            "a/b",
+            "a\\b",
+            "name space",
+            "name\n",
+        )
+        with mock.patch.dict(os.environ, env, clear=True):
+            for source in ("flag", "environment"):
+                for name in invalid:
+                    with self.subTest(source=source, name=name):
+                        if source == "flag":
+                            result = self.invoke("attach", f"--manager={name}")
+                        else:
+                            with mock.patch.dict(os.environ, {"AGENT_PM_MANAGER": name}):
+                                result = self.invoke("attach")
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertIn("manager name", result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        after = {
+                            str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")
+                        }
+                        self.assertEqual(after, before)
+                        self.assertFalse(Path(self.agent_pm, "managers").exists())
+                        self.assertFalse(outside.exists())
+
+    def test_missing_manager_argument_and_environment_exit_two_without_writes(self):
+        env = _without_manager_identity()
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = self.invoke("attach")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("--manager NAME", result.stderr)
+        self.assertIn("AGENT_PM_MANAGER", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(Path(self.agent_pm, "managers").exists())
+
+    def test_valid_manager_names_work_from_flag_and_environment(self):
+        env = _without_manager_identity()
+        names = ("a", "A_9-z", "_leading", "9", "-dash", "trailing-")
+        with mock.patch.dict(os.environ, env, clear=True):
+            for source in ("flag", "environment"):
+                for name in names:
+                    with self.subTest(source=source, name=name):
+                        alias = f"sample-{source}"
+                        command = ("--", self.command, "start", f"{source}-{name}")
+                        if source == "flag":
+                            result = self.invoke("run", alias, f"--manager={name}", *command)
+                        else:
+                            with mock.patch.dict(os.environ, {"AGENT_PM_MANAGER": name}):
+                                result = self.invoke("run", alias, *command)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        path = Path(self.agent_pm, "managers", name, "roster.json")
+                        self.assertTrue(path.is_file())
+                        record = Record.parse(result.stdout)
+                        self.assertEqual(
+                            json.loads(path.read_text())["entries"][alias]["record"],
+                            json.loads(record.to_line()),
+                        )
 
     def test_run_status_resume_and_stop_with_executable_fake(self):
         self.succeeded("attach", "--manager", "mgr")
