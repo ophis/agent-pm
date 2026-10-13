@@ -12,7 +12,6 @@ import traceback
 
 from agent_pm.session.adapters.base import InProcess
 from agent_pm.session.engine.types import DriverError, Event, SessionRequest, Stderr
-from agent_pm.session.modes.tui_hook import FailureReport
 
 END = object()
 
@@ -40,8 +39,11 @@ class InProcessMode:
                     self.items.put(item)
             code = 0
         except BaseException as e:
-            with FailureReport("session.in_process", e, self._failure) as logger:
-                logger.exception("In-process execution failed")
+            lines = "".join(traceback.format_exception(e)).rstrip().split("\n")
+            with self.lock:
+                if not self.stopped:
+                    for line in lines:
+                        self.items.put(Stderr(line.rstrip()))
         finally:
             if self.stopped:
                 with contextlib.suppress(BaseException):
@@ -51,13 +53,6 @@ class InProcessMode:
                     self.code = code
                     self.items.put(END)
                 self.over.set()
-
-    def _failure(self, error: BaseException) -> None:
-        lines = "".join(traceback.format_exception(error)).rstrip().split("\n")
-        with self.lock:
-            if not self.stopped:
-                for line in lines:
-                    self.items.put(Stderr(line.rstrip()))
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
         try:

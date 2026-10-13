@@ -196,6 +196,19 @@ runpy.run_path(path, run_name="__main__")
         self.assertError(res.stderr.decode(), "Error")
         self.assertNothingWritten()
 
+    def test_adapter_error_is_one_stderr_line_without_a_record_or_mark(self):
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
+            )
+        self.state["adapter_hook"] = callback
+        write_state(self.dir, self.state)
+        self.assertEqual(
+            self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
+        )
+        self.assertNothingWritten()
+
 
 class PayloadTest(HookBase):
     def test_strs_over_4096_chars_are_cut_unless_the_word_is_done(self):

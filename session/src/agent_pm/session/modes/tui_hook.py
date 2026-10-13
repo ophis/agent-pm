@@ -10,48 +10,12 @@ import re
 import runpy
 import stat
 import sys
-from collections.abc import Callable
 from datetime import datetime
-from logging import ERROR, Handler, Logger, LogRecord
 from types import SimpleNamespace
 
 
 class HookError(Exception):
     """One stderr line; the hook stops."""
-
-
-class EventHandler(Handler):
-    def __init__(self, deliver: Callable[[BaseException], None]):
-        super().__init__()
-        self.deliver = deliver
-
-    def emit(self, record: LogRecord) -> None:
-        if record.exc_info and record.exc_info[1] is not None:
-            self.deliver(record.exc_info[1])
-
-
-class FailureReport:
-    def __init__(self, name: str, error: BaseException, receive: Callable[[BaseException], None]):
-        self.error, self.receive, self.delivered = error, receive, False
-        self.logger = Logger(name, ERROR)
-        self.logger.propagate = False
-        self.handler = EventHandler(self._deliver)
-
-    def _deliver(self, error: BaseException) -> None:
-        self.receive(error)
-        self.delivered = True
-
-    def __enter__(self) -> Logger:
-        self.logger.addHandler(self.handler)
-        return self.logger
-
-    def __exit__(self, kind, _value, _traceback) -> None:
-        try:
-            if kind is None and not self.delivered:
-                self.receive(self.error)
-        finally:
-            self.logger.removeHandler(self.handler)
-            self.handler.close()
 
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
@@ -253,14 +217,9 @@ def say(text: str) -> None:
         print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
 
 
-def report_error(error: BaseException) -> None:
-    say(str(error) if isinstance(error, HookError) else f"{type(error).__name__}: {error}")
-
-
 if __name__ == "__main__":
     try:
         main(sys.argv[1:], sys.stdin.buffer)
     except Exception as e:
-        with FailureReport("session.tui_hook", e, report_error) as logger:
-            logger.exception("Hook execution failed")
+        say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
     sys.exit(0)

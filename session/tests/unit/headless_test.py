@@ -139,7 +139,6 @@ class Base(Case):
             try:
                 out["value"] = call()
             except BaseException as e:
-                logging.exception("Test worker failed")
                 out["error"] = e
 
         thread = threading.Thread(target=run, daemon=True)
