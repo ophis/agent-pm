@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from dataclasses import fields
 
 from agent_pm.delegate import ConfigError, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
@@ -31,18 +32,20 @@ class Drivers(Case):
             resume=True,
             name="mine",
             events=os.path.join(self.home, "events"),
-            idle_timeout=30,
             flags=("--caller-flag",),
             env={"CALLER": "kept"},
         )
-        session = driver.start(spec, host="other", display="opaque")
-        self.assertIsInstance(session, Session)
-        self.assertEqual(session_cls.started, [(spec, "other", "opaque")])
-        self.assertIs(session_cls.started[0][0], spec)
-        self.assertEqual(
-            (session.runtime, session.mode, session.sid, session.name),
-            ("fake", "headless", spec.sid, "mine"),
-        )
+        self.assertNotIn("idle_timeout", {field.name for field in fields(spec)})
+        for timeout in (None, 30):
+            with self.subTest(idle_timeout=timeout):
+                session = driver.start(spec, host="other", display="opaque", idle_timeout=timeout)
+                self.assertIsInstance(session, Session)
+                self.assertEqual(session_cls.started[-1], (spec, "other", "opaque", timeout))
+                self.assertIs(session_cls.started[-1][0], spec)
+                self.assertEqual(
+                    (session.runtime, session.mode, session.sid, session.name),
+                    ("fake", "headless", spec.sid, "mine"),
+                )
 
     def test_instruction_start_saves_exact_utf8_bytes_without_process_or_thread(self):
         out = os.path.join(self.home, "work", "prompt.md")
@@ -66,6 +69,21 @@ class Drivers(Case):
         with self.assertRaisesRegex(ConfigError, "instruction cannot detach"):
             driver.detach()
         self.assertFalse(os.path.exists(os.path.dirname(out)))
+
+    def test_instruction_rejects_session_controls_before_any_write(self):
+        out = os.path.join(self.home, "work", "prompt.md")
+        driver = InstructionDriver(out)
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="the prompt")
+        for keywords, message in (
+            ({"host": "other"}, "instruction has no host or display"),
+            ({"display": "opaque"}, "instruction has no host or display"),
+            ({"idle_timeout": 30}, "instruction has no idle timeout"),
+        ):
+            with self.subTest(keywords=keywords), no_child():
+                with self.assertRaises(ConfigError) as caught:
+                    driver.start(spec, **keywords)
+                self.assertEqual(str(caught.exception), message)
+                self.assertFalse(os.path.exists(os.path.dirname(out)))
 
     def test_instruction_run_bypasses_attempts_replies_and_callbacks(self):
         work = os.path.join(self.home, "work")
