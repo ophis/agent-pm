@@ -1769,3 +1769,27 @@ class ManagerBoundaries(Sample):
                 guards.manager_exports(self.tree({base: source})),
                 [f"{base}:1: __all__ must be a literal sequence of names"],
             )
+
+    def test_crew_never_reads_an_inherited_sid(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        for source in (
+            'import os\nx = os.getenv("AGENT_PM_SID")\n',
+            'import os\nx = os.environ.get("AGENT_PM_SID")\n',
+            'import os\nx = os.environ["AGENT_PM_SID"]\n',
+        ):
+            self.assertEqual(
+                guards.manager_sid(self.tree({base: source})),
+                [f"{base}:2: reads inherited AGENT_PM_SID"],
+            )
+        self.assertEqual(guards.manager_sid(self.tree({base: 'env = {"AGENT_PM_SID": sid}\n'})), [])
+
+    def test_roster_has_no_session_liveness_callback(self):
+        base = "manager/src/agent_pm/manager/engine/roster.py"
+        self.assertEqual(
+            guards.manager_lease(
+                self.tree(
+                    {base: 'class Roster:\n    def probe(self): return self._alive("manager")\n'}
+                )
+            ),
+            [f"{base}:2: lease liveness callback"],
+        )

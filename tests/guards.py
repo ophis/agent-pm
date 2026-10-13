@@ -529,6 +529,46 @@ def manager_commands(repo: str) -> list[str]:
     return sorted(found)
 
 
+def manager_sid(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/crew.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    found = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get", "getenv"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "AGENT_PM_SID"
+        ) or (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == "AGENT_PM_SID"
+        ):
+            found.append(f"{rel}:{node.lineno}: reads inherited AGENT_PM_SID")
+    return sorted(found)
+
+
+def manager_lease(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/roster.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    return sorted(
+        f"{rel}:{node.lineno}: lease liveness callback"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "_alive"
+    )
+
+
 def manager_display(repo: str) -> list[str]:
     found = set()
     base = "manager/src/agent_pm/manager/"
