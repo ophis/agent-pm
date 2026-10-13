@@ -52,7 +52,17 @@ from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils import STATE, load_class, printable_abs, sid_error
 
-__all__ = ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"]
+__all__ = [
+    "Driver",
+    "Handle",
+    "MODES",
+    "SIGNALS",
+    "holds",
+    "note",
+    "session_record",
+    "sessions",
+    "close",
+]
 MODES = ("headless", "tui", "in_process")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5
@@ -499,15 +509,38 @@ def note(workdir: str, kind: str, **fields) -> None:
     records.note(records.path(workdir), kind, **fields)
 
 
+def sessions(match: str | None = None, *, host=tmux_host) -> list[SessionRow]:
+    """Names re.fullmatching `match`, by name; DriverError when tmux's state is unknown."""
+    if match is not None and not isinstance(match, str):
+        raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
+    try:
+        pattern = None if match is None else re.compile(match)
+    except re.error as e:
+        raise ConfigError(f"match {match!r:.80}: {e}") from None
+    found = host.listing(pattern)
+    if found is None:
+        raise DriverError("tmux sessions unknown: tmux failed")
+    try:
+        own = host.own_session() if found else None
+    except TuiError as e:
+        raise DriverError(f"tmux sessions unknown: {e}") from None
+    return [_row(f, own) for f in found]
+
+
+def close(name: str, *, host=tmux_host) -> None:
+    """Kills tui session `name` (absent is fine), then removes its session dir."""
+    tui.close(_name(name), host=host)
+
+
 class Driver:
-    """A caller owns configuration; omitted settings support host operations without runtimes."""
+    """A caller owns the configuration for every session it starts or attaches."""
 
     def __init__(
         self,
         *,
-        adapters: Mapping | None = None,
-        hosts: Mapping | None = None,
-        default_host: str = tmux_host.HOST,
+        adapters: Mapping,
+        hosts: Mapping,
+        default_host: str,
         host=tmux_host,
         probe=headless.probe,
         clock: Callable[[], float] | None = None,
@@ -515,10 +548,8 @@ class Driver:
     ):
         self.host, self.probe, self.clock = host, probe, clock
         self.registry = registry.Registry(
-            adapters={} if adapters is None else adapters,
-            hosts={tmux_host.HOST: {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
-            if hosts is None
-            else hosts,
+            adapters=adapters,
+            hosts=hosts,
             default_host=default_host,
             class_loader=class_loader,
         )
@@ -726,27 +757,10 @@ class Driver:
             raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
 
     def sessions(self, match: str | None = None) -> list[SessionRow]:
-        """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is
-        unknown.
-        """
-        if match is not None and not isinstance(match, str):
-            raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
-        try:
-            pattern = None if match is None else re.compile(match)
-        except re.error as e:
-            raise ConfigError(f"match {match!r:.80}: {e}") from None
-        found = self.host.listing(pattern)
-        if found is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
-        try:
-            own = self.host.own_session() if found else None
-        except TuiError as e:
-            raise DriverError(f"tmux sessions unknown: {e}") from None
-        return [_row(f, own) for f in found]
+        return sessions(match, host=self.host)
 
     def close(self, name: str) -> None:
-        """Kills tui session `name` (absent is fine), then removes its session dir."""
-        tui.close(_name(name), host=self.host)
+        close(name, host=self.host)
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
         """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found;

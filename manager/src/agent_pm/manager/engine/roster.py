@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from typing import Literal, NoReturn, overload
 
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import DriverError
+from agent_pm.session import DriverError, close, sessions
 from agent_pm.utils import LOCAL, STATE, read_project
 
 ROOT = f"{STATE}/managers"
@@ -89,7 +89,8 @@ def directory(manager: None = None, *, driver) -> str | None: ...
 def directory(manager: str | None = None, *, driver) -> str | None:
     if manager is None:
         try:
-            manager = next((row.name for row in driver.sessions() if row.own), None)
+            rows = sessions() if driver is None else driver.sessions()
+            manager = next((row.name for row in rows if row.own), None)
         except DriverError as e:
             raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
@@ -438,7 +439,9 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
 
 def _live(session: str, *, driver) -> bool:
     try:
-        return bool(driver.sessions(re.escape(session)))
+        return bool(
+            sessions(re.escape(session)) if driver is None else driver.sessions(re.escape(session))
+        )
     except DriverError:
         return False
 
@@ -550,7 +553,10 @@ def stop(r: dict, name: str, *, driver) -> str:
         if session is None:
             continue
         with contextlib.suppress(DriverError):
-            driver.close(session)
+            if driver is None:
+                close(session)
+            else:
+                driver.close(session)
         if _live(session, driver=driver):
             raise RosterError(f"{key}: session {session} still live after tmux kill-session")
     remove(r, key)

@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import TypeGuard
 
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
@@ -45,6 +45,8 @@ from agent_pm.session import (
     Handle,
     IdleTimeout,
     SessionRow,
+    close,
+    sessions,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import printable_abs, read_project, save
@@ -105,7 +107,7 @@ def _check(name: str) -> None:
 
 def _rows(match: str | None = None, *, driver) -> list[SessionRow]:
     with _driver():
-        return driver.sessions(match)
+        return sessions(match) if driver is None else driver.sessions(match)
 
 
 def _row(name: str, *, driver) -> SessionRow | None:
@@ -427,15 +429,10 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         time.sleep(0.5)
 
 
-def content(event: str, *, driver, configure: Callable[[], Driver]) -> str:
-    name, kind = event.split(" ")[1:3]
-    if kind not in ("done", "blocked", "dead"):
-        return ""
-    attached_driver = None
+def content(name: str, kind: str, *, driver) -> str:
     if kind == "done":
-        attached_driver = configure()
         try:
-            text = attached_driver.attach(name).reply
+            text = driver.attach(name).reply
         except (ConfigError, DriverError):
             text = None
         if text is not None:
@@ -445,10 +442,8 @@ def content(event: str, *, driver, configure: Callable[[], Driver]) -> str:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
-    if attached_driver is None:
-        attached_driver = configure()
     with _driver():
-        return attached_driver.attach(name).screen(PANE_LINES)
+        return driver.attach(name).screen(PANE_LINES)
 
 
 def _status(cwd: str) -> str | None:
@@ -745,7 +740,10 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver) -> tuple[list[st
         verb = "stopped"
         for name in chosen:
             with contextlib.suppress(DriverError):
-                driver.close(name)
+                if driver is None:
+                    close(name)
+                else:
+                    driver.close(name)
         after = _live(driver=driver)
         left = [n for n in chosen if n in after]
         gone = set(chosen) - set(left)
@@ -828,7 +826,6 @@ def _configure() -> Driver:
 
 
 def main(argv=None, *, driver=None, event_source=None) -> int:
-    configure = _configure if driver is None else lambda driver=driver: driver
     _drop_import_root()
     argv = sys.argv[1:] if argv is None else list(argv)
     flags = []
@@ -900,8 +897,8 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
     if a.cmd == "attach" and (a.after is None) != (a.gen is None):
         ap.error("--after and --gen go together")
     try:
-        if driver is None:
-            driver = _configure() if a.cmd in STARTS else Driver()
+        if a.cmd in STARTS and driver is None:
+            driver = _configure()
         if a.cmd == "start":
             directory = _directory(a.manager, driver=driver)
             parent = _caller(driver=driver)
@@ -945,7 +942,12 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
             line, event = read_event(events, after)
             print(f"{line} {event}")
             try:
-                text = content(event, driver=driver, configure=configure)
+                text = ""
+                name, kind = event.split(" ")[1:3]
+                if kind in ("done", "blocked", "dead"):
+                    if driver is None:
+                        driver = _configure()
+                    text = content(name, kind, driver=driver)
             except WorkersError as e:
                 text = f"workers: {e}"  # stdout: background readers watch only it
             if text:

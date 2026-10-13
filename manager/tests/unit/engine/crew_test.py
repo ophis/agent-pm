@@ -1486,17 +1486,12 @@ class NextEventContentTest(CrewCase):
 
     def test_done_reply_and_screen_share_one_configured_driver(self):
         self.api.rows["w1"] = self.live(None)
-        calls = []
-
-        def configured():
-            calls.append(self.api)
-            return self.api
-
         self.assertEqual(
-            crew.content("10:00:01 w1 done", driver=self.api, configure=configured),
+            crew.content("w1", "done", driver=self.api),
             "\n".join(self.PANE),
         )
-        self.assertEqual(calls, [self.api])
+        self.assertEqual(self.api.ran("attach"), ["w1", "w1"])
+        self.assertEqual(self.api.ran("screen"), [("w1", crew.PANE_LINES)])
 
     def test_empty_reply_prints_nothing_more(self):
         got = self.run_event("10:00:01 w1 done", self.live(""))

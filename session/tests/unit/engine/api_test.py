@@ -2084,7 +2084,18 @@ class ExportsTest(Case):
 
     def test_constants(self):
         self.assertEqual(
-            api.__all__, ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"]
+            api.__all__,
+            [
+                "Driver",
+                "Handle",
+                "MODES",
+                "SIGNALS",
+                "holds",
+                "note",
+                "session_record",
+                "sessions",
+                "close",
+            ],
         )
         self.assertEqual(
             (api.MODES, api.STATES, api.POLL),
