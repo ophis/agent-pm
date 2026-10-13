@@ -353,6 +353,21 @@ class RunExecution(Case):
         self.assertIn("RuntimeError: failed run", records[0]["traceback"])
         self.assertEqual(self.gql.calls, [*created(ended("interrupted", 1, seq=1)), REPAIR])
 
+    def test_system_exit_preserves_its_integer_code_in_the_log_and_session_comment(self):
+        for code, expected in ((7, 7), (0, 0), ("stopped", 1), (None, 1)):
+            with self.subTest(code=code):
+                self.gql, self.delegate = Gql(), FakeRun(self.order, error=SystemExit(code))
+                n = len(logged(self.logs))
+                self.assertEqual(self.main(), 0)
+                records = logged(self.logs)[n:]
+                end = next(record for record in records if record["kind"] == "end")
+                self.assertEqual(end["exit"], expected)
+                errors = [record for record in records if record["kind"] == "run-error"]
+                self.assertEqual(len(errors), 1)
+                self.assertIn("SystemExit", errors[0]["traceback"])
+                status = "done" if expected == 0 else "interrupted"
+                self.assertEqual(self.gql.calls, [*created(ended(status, expected, seq=1)), REPAIR])
+
     def test_run_error(self):
         cases = [
             (

@@ -152,6 +152,8 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     except Stopped as e:
         rc = e.code
     except (Exception, SystemExit) as e:  # noqa: BLE001  # Finish reporting a failed run.
+        if isinstance(e, SystemExit) and isinstance(e.code, int):
+            rc = e.code
         log(
             "run",
             "run-error",
