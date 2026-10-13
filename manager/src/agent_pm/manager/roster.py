@@ -1,16 +1,17 @@
 """roster.json, the roster in a manager's directory ~/.agent-pm/managers/<name>/, beside its
-`events` file; its format: TOP, FIELDS, _CHECKS. An entry is written by the script that starts
-the subordinate, at start, replacing one of the same name (record): crew.py start (a worker,
-under its name), the old core's drive.detach for drive.py --detach (a role) and router.py --tui
-(a pipeline), keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one
-with its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of
-the last `events` line handled (0: none); gen: the generation of `events`, + 1 per rotation
-(rotate): a line number means something only with its gen. Sessions are reached only through
-agent_pm.session (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
-default_runtime: `runtime` as read_project("manager") reads it (delegate/config.toml's,
-config.local.toml on top), which recovery gives a worker entry without --client. A worker entry
-runs crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming
-a crew.py or workers.py script, or the module agent_pm.crew, to that form."""
+`events` file; its format: TOP, FIELDS, _CHECKS. An entry is written by the script that starts the
+subordinate, at start, replacing one of the same name (record): crew.py start (a worker, under its
+name), the old core's drive.detach for drive.py --detach (a role) and router.py --tui (a pipeline),
+keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one with its sessions
+(stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line
+handled (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means
+something only with its gen. Sessions are reached only through agent_pm.session (sessions, close).
+worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/; default_runtime: `runtime` as
+read_project("manager") reads it (delegate/config.toml's, config.local.toml on top), which recovery
+gives a worker entry without --client. A worker entry runs crew as a module (CREW_MODULE; its
+PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py script, or the
+module agent_pm.crew, to that form.
+"""
 
 import contextlib
 import datetime
@@ -39,7 +40,8 @@ KINDS = ("worker", "role", "pipeline")
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
 SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
-# crew.py's old name and module, so an entry an older version wrote still validates (recovery runs CREW_MODULE)
+# crew.py's old name and module, so an entry an older version wrote still validates (recovery runs
+# CREW_MODULE)
 LEGACY = "workers.py"
 LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
 CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
@@ -112,7 +114,8 @@ def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
         os.makedirs(home, mode=0o700, exist_ok=True)
     except OSError as e:
         raise RosterError(f"{what} {home}: {e.strerror}") from e
-    # one level at a time, 0700 whatever the umask, each checked: nothing is created through a bad level
+    # one level at a time, 0700 whatever the umask, each checked: nothing is created through a bad
+    # level
     for path in levels:
         try:
             try:
@@ -394,7 +397,8 @@ def _write(directory: str, path: str, text: str) -> None:
 
 @contextlib.contextmanager
 def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
-    # not reentrant: never call locked() or put() inside a block (a second flock waits for the first)
+    # not reentrant: never call locked() or put() inside a block (a second flock waits for the
+    # first)
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
         raise _not_attached(directory)
@@ -448,7 +452,8 @@ def take(r: dict, directory: str, own: str | None, *, driver=None) -> None:
 
 
 def check(r: dict, directory: str, own: str | None, *, driver=None) -> None:
-    # the lease holds only for this block: a take-over can follow, so a later write must not assume it
+    # the lease holds only for this block: a take-over can follow, so a later write must not assume
+    # it
     if not _holds(r, directory, own, driver=driver) and own is not None:
         raise _not_attached(directory)
 
@@ -607,7 +612,8 @@ def following(path: str, n: int) -> bytes:
 
 
 def due(r: dict, directory: str) -> bool:
-    # a rotation then drops at least EVENTS_MAX // 2: never one for unhandled lines alone, nor per handled event
+    # a rotation then drops at least EVENTS_MAX // 2: never one for unhandled lines alone, nor per
+    # handled event
     path = events(directory, create=False)
     try:
         size = os.lstat(path).st_size
@@ -677,7 +683,8 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
     except OSError as e:
         raise RosterError(f"{path}: {e.strerror}") from e
     cursor = r["cursor"]
-    # never raises after the rename: cursor and gen still change, so the new file is never numbered by the old
+    # never raises after the rename: cursor and gen still change, so the new file is never numbered
+    # by the old
     try:
         _refill(path, old, cursor, sleep or time.sleep)
     except RosterError as e:

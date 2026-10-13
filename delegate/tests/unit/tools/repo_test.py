@@ -1,6 +1,7 @@
 """delegate/src/agent_pm/delegate/team/tools/repo.py, loaded by file path as agent runs run it,
-ported from the old core's tests (its tmux display helpers dropped; its config, path, shell, git
-and repo spec helpers' cases: unit/utils/)."""
+ported from the old core's tests (its tmux display helpers dropped; its config, path, shell, git and
+repo spec helpers' cases: unit/utils/).
+"""
 
 import importlib.util
 import io
@@ -35,8 +36,9 @@ def fail(stderr):
 
 
 class Fake:
-    """A `run` that answers by argv prefix (a list answers in turn) and records every call; `gh
-    repo clone` makes the checkout's .git."""
+    """A `run` that answers by argv prefix (a list answers in turn) and records every call; `gh repo
+    clone` makes the checkout's .git.
+    """
 
     def __init__(self, answers):
         self.answers, self.calls, self.timeouts = answers, [], []
@@ -327,7 +329,8 @@ class Worktree(Base):
 
     def test_the_checkout_is_named_by_owner_and_name_else_by_the_branch(self):
         """One --dir: each row's checkout lands beside the earlier ones (the same name under two
-        owners included)."""
+        owners included).
+        """
         for spec, branch, argv, path in (
             ("a/n", "TASK-1-x", [], "a/n-TASK-1-x"),
             ("b/n", "TASK-1-x", [], "b/n-TASK-1-x"),
@@ -889,7 +892,8 @@ class LocalSafety(Clone):
 
     def test_only_a_listed_clones_worktree_gets_symlinks_and_the_clone_keeps_its_config(self):
         """trusted_dirs lists clones by real path, in the config or its local file; listing another
-        clone of the same origin trusts no other."""
+        clone of the same origin trusts no other.
+        """
         link = self.link_commit()
         other, alias = os.path.join(self.tmp, "clone2"), os.path.join(self.tmp, "alias")
         git("clone", "-q", self.bare, other)
@@ -929,7 +933,8 @@ class LocalSafety(Clone):
 
     def test_an_existing_worktree_must_have_the_listed_setting(self):
         """Made by git (unset), unlisted (false) or listed (true): run with the other setting,
-        refused and unchanged."""
+        refused and unchanged.
+        """
         self.file_commit()
         listed = self.listing(self.clone)
         for made, run_config, found, gives in (
@@ -1025,7 +1030,8 @@ class Status(Base):
 
     def status(self, *answers, argv=(), config=None, local=None):
         """(exit code, the output or stderr, run) of status on a checkout of o/n; `answers` after
-        the gh login's."""
+        the gh login's.
+        """
         run = Fake([self.existing(), LOGIN, *answers])
         code, out, err = self.main(
             ["status", "o/n", "--branch", "TASK-1-x", "--dir", self.dir, *argv], run, config, local

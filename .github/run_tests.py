@@ -1,7 +1,9 @@
-"""CI test runner: `run_tests.py <title> <start dir>` runs the *_test.py under <start dir>, top level the
-cwd, in a -X faulthandler child. Each failure or error prints a GitHub ::error annotation titled with the
-test id and a row in $GITHUB_STEP_SUMMARY; the parent annotates a crash (a nonzero exit the results do
-not explain) with the last test started and the stderr tail. integration_jobs.py runs jobs through it."""
+"""CI test runner: `run_tests.py <title> <start dir>` runs the *_test.py under <start dir>, top
+level the cwd, in a -X faulthandler child. Each failure or error prints a GitHub ::error annotation
+titled with the test id and a row in $GITHUB_STEP_SUMMARY; the parent annotates a crash (a nonzero
+exit the results do not explain) with the last test started and the stderr tail. integration_jobs.py
+runs jobs through it.
+"""
 
 import collections
 import os

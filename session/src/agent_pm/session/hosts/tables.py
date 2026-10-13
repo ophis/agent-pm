@@ -1,6 +1,7 @@
 """parse(table): an already-read [hosts] table as Hosts(default, tables), the [hosts] parser's only
 home (callers: Session.parse_hosts); else ValueError. An implementation is checked only for the
-module.path:Class form, never imported."""
+module.path:Class form, never imported.
+"""
 
 import re
 from collections.abc import Mapping

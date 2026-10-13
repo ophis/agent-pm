@@ -1,6 +1,7 @@
-"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback
-HTTP: each exact query text is an op (OPS; BUILT: the router's issue lists, built by
-router.q_issues), its answer projected to the query's selection."""
+"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback HTTP:
+each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its
+answer projected to the query's selection.
+"""
 
 import functools
 import hashlib
@@ -667,8 +668,7 @@ class FakeLinear:
 
 
 # _teams, _handoff, _child and _finished hard-code their query's filter and page size: a changed
-# filter in the text
-# still dispatches here, so change the handler with it.
+# filter in the text still dispatches here, so change the handler with it.
 OPS = {
     "linear.M_COMMENT": FakeLinear._comment_create,
     "linear.M_COMMENT_ID": FakeLinear._comment_create_id,

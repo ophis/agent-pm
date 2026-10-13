@@ -1,4 +1,3 @@
-
 from orchestrator_test_helpers.unit import board_ids
 from orchestrator_test_helpers.unit.writeback.base_fixtures import Base
 from orchestrator_test_helpers.unit.writeback.data import SRC_UUID, STATES

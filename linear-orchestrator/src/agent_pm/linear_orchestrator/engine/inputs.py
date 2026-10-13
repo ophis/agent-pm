@@ -1,5 +1,6 @@
-"""An agent run's input: the docs an issue links, read with gh (gather), laid out by its role's
-task kind (render)."""
+"""An agent run's input: the docs an issue links, read with gh (gather), laid out by its role's task
+kind (render).
+"""
 
 import fnmatch
 import json

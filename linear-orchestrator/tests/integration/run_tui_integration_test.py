@@ -1,7 +1,8 @@
 """run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server
-(live_tmux) whose manager session a client shows, fake_claude interactive as runtime `claude`:
-FR-43 closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows beside the
---split-from session, or in the --opener's grid; the run writes back and leaves its TUI open."""
+(live_tmux) whose manager session a client shows, fake_claude interactive as runtime `claude`: FR-43
+closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows beside the
+--split-from session, or in the --opener's grid; the run writes back and leaves its TUI open.
+"""
 
 import functools
 import unittest

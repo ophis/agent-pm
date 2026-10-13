@@ -1,6 +1,7 @@
-"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments
-and moves, each step once per session id (the ledger; comment steps by client id, found again
-on resume); bounce, the router's repo-check report."""
+"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and
+moves, each step once per session id (the ledger; comment steps by client id, found again on
+resume); bounce, the router's repo-check report.
+"""
 
 import fcntl
 import functools
@@ -44,8 +45,7 @@ FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
 # Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain
-# open forever; regular-file
-# reads ignore it.
+# open forever; regular-file reads ignore it.
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
@@ -208,9 +208,8 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: Outcome) -> bool:
-    # never raises: a signal LinearError stops the steps and returns False, so run.py still
-    # posts the session comment's
-    # end
+    # never raises: a signal LinearError stops the steps and returns False, so run.py still posts
+    # the session comment's end
     try:
         return _finish(ctx, outcome)
     except (Exception, Stopped) as e:

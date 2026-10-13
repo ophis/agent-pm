@@ -2,16 +2,16 @@
 (reference_errors).
 
 Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the
-guide's default text) and {{language}} (unset → each line holding it is dropped); a destination
-gets {{deliverable}}, <Workdir>/<its path in the workdir>. Every other run value is a PARAMETERS
-name, its value given once in # Parameters. The run reports in its replies (RETURN): PROGRESS
-mark lines and one OUTCOME block, which the Delegate parses.
+guide's default text) and {{language}} (unset → each line holding it is dropped); a destination gets
+{{deliverable}}, <Workdir>/<its path in the workdir>. Every other run value is a PARAMETERS name,
+its value given once in # Parameters. The run reports in its replies (RETURN): PROGRESS mark lines
+and one OUTCOME block, which the Delegate parses.
 
-References: a link's target is `#a`, `a` an anchor of the prompt (link text `A › B`: a path
-there), or a `<scheme>://` URL; a task or method file's code span may be followed by ` › ` and a
-path in that file. Any other `›`, or a section title in parentheses, outside fences, code spans
-and links is an error. Only a run using a team dir file is checked; the error names the custom
-file to blame."""
+References: a link's target is `#a`, `a` an anchor of the prompt (link text `A › B`: a path there),
+or a `<scheme>://` URL; a task or method file's code span may be followed by ` › ` and a path in
+that file. Any other `›`, or a section title in parentheses, outside fences, code spans and links is
+an error. Only a run using a team dir file is checked; the error names the custom file to blame.
+"""
 
 import os
 import re

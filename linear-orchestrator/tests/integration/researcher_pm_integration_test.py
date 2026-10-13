@@ -1,7 +1,8 @@
 """The researcher to pm flow over router.py --issue, run.py in its detached Driver session and
-promote.py: a research issue becomes a PM issue; a task label picks the task; a blocked issue
-waits for its blocker; an answer starts a new session; a failed run is not promoted; four
-failed runs cap the issue."""
+promote.py: a research issue becomes a PM issue; a task label picks the task; a blocked issue waits
+for its blocker; an answer starts a new session; a failed run is not promoted; four failed runs cap
+the issue.
+"""
 
 import unittest
 

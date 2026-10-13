@@ -1,5 +1,6 @@
 """The Team: the roles, tasks and templates a run can name, from the team root and the team dirs;
-each role's task index; the checks that keep a team dir out of reach of the agent run."""
+each role's task index; the checks that keep a team dir out of reach of the agent run.
+"""
 
 import os
 import re

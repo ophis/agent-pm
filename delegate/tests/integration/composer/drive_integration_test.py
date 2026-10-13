@@ -1,5 +1,6 @@
 """A headless session's prompt and access intent, composed in a child process (child.Case) as its
-caller would for a new run and a resume."""
+caller would for a new run and a resume.
+"""
 
 import os
 import unittest

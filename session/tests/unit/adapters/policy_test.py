@@ -1,5 +1,6 @@
 """A caller's policy (Spec.flags and env) reaches each runtime's launch; the adapters name no
-policy."""
+policy.
+"""
 
 import dataclasses
 from pathlib import Path

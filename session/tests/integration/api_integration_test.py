@@ -1,6 +1,6 @@
 """session.engine.api over fake runtimes: events, idle timeouts, exits, stop, process groups,
-inherited pipes, launch environment, limits and resume. Custom adapters: in-process module
-tables."""
+inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
+"""
 
 import dataclasses
 import io
@@ -127,7 +127,8 @@ class Base(Case):
 
     def configure(self, **extra):
         """Tables fake and launching, each with this test's scenario and log; `extra` keys go into
-        launching's."""
+        launching's.
+        """
         tables = {
             name: {
                 "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
@@ -148,7 +149,8 @@ class Base(Case):
 
     def drain(self, handle, on=lambda event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
-        the handle, instead of hanging past WAIT."""
+        the handle, instead of hanging past WAIT.
+        """
         found, errors = [], []
 
         def run():

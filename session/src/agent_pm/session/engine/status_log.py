@@ -1,7 +1,8 @@
 """SessionStatusLog, an events file's writer and the status log line's only home (tests/guards.py
-status_log_format): one line per event, `<HH:MM:SS> <name> <word>[ <field>…]`. Each write
-reopens the file by path, so a rotation never loses a line; a Host's hook command builds its
-clock from CLOCK."""
+status_log_format): one line per event, `<HH:MM:SS> <name> <word>[ <field>…]`. Each write reopens
+the file by path, so a rotation never loses a line; a Host's hook command builds its clock from
+CLOCK.
+"""
 
 import time
 

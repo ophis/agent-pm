@@ -1,6 +1,7 @@
 """A new runtime is a config value to the Composer: a local `runtime` and its [adapters.<name>]
 table, with no package for it, resolve, compose and list the catalog in a child process
-(child.Case); no runtime text in the prompt."""
+(child.Case); no runtime text in the prompt.
+"""
 
 import os
 import unittest

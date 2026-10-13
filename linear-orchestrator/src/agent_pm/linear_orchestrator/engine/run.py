@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One agent run of an issue's role through delegate.run: its events write back to Linear (the
 session comment as the harness account, progress and outcome as the role's), its usage limit to
-Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0."""
+Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0.
+"""
 
 import argparse
 import functools

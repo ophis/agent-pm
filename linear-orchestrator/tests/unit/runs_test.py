@@ -1,5 +1,6 @@
-"""orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim),
-plus runtime, limit rows (FR-60) and runtime_of."""
+"""orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim), plus
+runtime, limit rows (FR-60) and runtime_of.
+"""
 
 import json
 import os

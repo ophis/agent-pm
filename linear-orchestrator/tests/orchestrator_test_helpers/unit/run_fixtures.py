@@ -1,5 +1,6 @@
-"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear
-fake recording each call's identity, and the orchestrator log's readers."""
+"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear fake
+recording each call's identity, and the orchestrator log's readers.
+"""
 
 import json
 import os
@@ -118,8 +119,9 @@ FIELDS = {
 
 
 class Gql:
-    """Linear: calls recorded as (name, service, vars); comments kept by client id, the issue as its UUID; `issue`: the
-    issue read's node; `fail(name, vars)` returns an exception to raise."""
+    """Linear: calls recorded as (name, service, vars); comments kept by client id, the issue as its
+    UUID; `issue`: the issue read's node; `fail(name, vars)` returns an exception to raise.
+    """
 
     def __init__(self, fail=lambda _name, _v: None, issue=None):
         self.fail, self.issue, self.calls, self.timeouts, self.comments = fail, issue, [], [], {}

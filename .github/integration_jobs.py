@@ -1,7 +1,9 @@
-"""CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each project's): JOBS
-entries, from the repo root, are directories ending in /, files, or <file>::<Class>. Exact classes outrank
-the longest matching path. --check rejects loader errors, unmatched classes/tests, empty jobs, duplicate
-tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests through run_tests.py."""
+"""CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each
+project's): JOBS entries, from the repo root, are directories ending in /, files, or
+<file>::<Class>. Exact classes outrank the longest matching path. --check rejects loader errors,
+unmatched classes/tests, empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job>
+runs that job's tests through run_tests.py.
+"""
 
 import json
 import re

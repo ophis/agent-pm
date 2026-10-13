@@ -1,6 +1,7 @@
 """HostContract, FR-47's Host contract: a subclass also inherits Case and defines make_host() ->
-Host. Each case runs short Python programs written against the Host ABC only, polling files
-under self.home for events and output."""
+Host. Each case runs short Python programs written against the Host ABC only, polling files under
+self.home for events and output.
+"""
 
 import json
 import os
@@ -68,7 +69,8 @@ def gone(pid: int) -> bool:
 
 class HostContract:
     """TASK-365 (356-4) adds FR-47's cannot-display case (Session.displayable, NotDisplayable) with
-    HostedSession."""
+    HostedSession.
+    """
 
     def make_host(self) -> Host:
         raise NotImplementedError

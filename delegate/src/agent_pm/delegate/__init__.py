@@ -1,5 +1,6 @@
 """The Delegate: runs one role as an agent session, its prompt and access from the Composer, its
-session from the Driver, read from its replies' progress marks and outcome block."""
+session from the Driver, read from its replies' progress marks and outcome block.
+"""
 
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
 from agent_pm.delegate.composer import RunConfig, trusted_dirs

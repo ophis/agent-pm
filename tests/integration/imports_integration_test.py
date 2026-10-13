@@ -1,6 +1,7 @@
-"""Every module of agent_pm (the five import roots) and tests imported alone in a fresh child, an empty temp dir its
-HOME and cwd, with only the import roots of its layer and the lower ones (PATHS; tests: all of them): it exits 0,
-leaving the dir empty and sys.path unchanged."""
+"""Every module of agent_pm (the five import roots) and tests imported alone in a fresh child, an
+empty temp dir its HOME and cwd, with only the import roots of its layer and the lower ones (PATHS;
+tests: all of them): it exits 0, leaving the dir empty and sys.path unchanged.
+"""
 
 import os
 import subprocess

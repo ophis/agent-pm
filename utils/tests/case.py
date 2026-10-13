@@ -1,5 +1,4 @@
-"""Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign
-check."""
+"""Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign check."""
 
 import os
 import sys
@@ -17,8 +16,9 @@ RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 
 
 class Case(unittest.TestCase):
-    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm)."""
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm).
+    """
 
     def run(self, result=None):
         if foreign := _foreign():

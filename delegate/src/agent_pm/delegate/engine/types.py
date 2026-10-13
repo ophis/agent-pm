@@ -23,7 +23,8 @@ __all__ = [
 @dataclass(frozen=True)
 class Spec:
     """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None:
-    nothing is saved; `team` None: the built-in one. name and events: tui only."""
+    nothing is saved; `team` None: the built-in one. name and events: tui only.
+    """
 
     input: str
     workdir: str
@@ -43,7 +44,8 @@ class Spec:
 @dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's
-    Spec."""
+    Spec.
+    """
 
     spec: Spec
     session: SessionSpec

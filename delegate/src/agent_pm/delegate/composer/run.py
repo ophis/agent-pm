@@ -1,7 +1,8 @@
 """A role's run config (resolve: the core config, then the caller's overlays), one run's params and
-its runtime-neutral access intent (access), whose env is the session env its commands and gate
-need. An overlay can widen read, write, commands and gate, so a caller passes only
-operator-controlled config as one."""
+its runtime-neutral access intent (access), whose env is the session env its commands and gate need.
+An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
+config as one.
+"""
 
 import os
 from collections.abc import Callable, Mapping, Sequence

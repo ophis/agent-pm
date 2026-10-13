@@ -1,6 +1,7 @@
 """The delegate's paths, their only home: CONFIG (read by read_project("delegate")), DELEGATE,
 IMPORT_ROOTS and PYTHONPATH (them joined: a child's); its keys' parsers, raising ValueError:
-harness_host (None unset, else one of `hosts`), policy, trusted_dirs."""
+harness_host (None unset, else one of `hosts`), policy, trusted_dirs.
+"""
 
 import os
 from collections.abc import Collection, Mapping

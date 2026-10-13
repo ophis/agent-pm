@@ -6,7 +6,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Spec:
     """One worker for crew.start: `resume` the session id it resumes; `client` None: the caller's
-    runtime, else the config's; `overrides` KEY=VALUE env entries; `note` its roster note."""
+    runtime, else the config's; `overrides` KEY=VALUE env entries; `note` its roster note.
+    """
 
     name: str
     cwd: str

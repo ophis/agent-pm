@@ -1,10 +1,10 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`. Its
-Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec
-into a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only
-owner), and the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError
-refuses), then runs the session on a Driver thread, stopped at its next yield, changing no
-global state (cwd, environ, signals): it applies spec.access.cwd, not its env. Starts no
-process."""
+Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
+a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
+the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
+the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
+signals): it applies spec.access.cwd, not its env. Starts no process.
+"""
 
 import json
 from abc import ABC, abstractmethod
@@ -114,7 +114,8 @@ class Tui(ABC):
     @abstractmethod
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
-        payload on stdin."""
+        payload on stdin.
+        """
 
     def hook_state(self) -> dict:
         return {}

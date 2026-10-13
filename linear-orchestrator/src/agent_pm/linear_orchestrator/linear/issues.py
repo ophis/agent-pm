@@ -1,5 +1,6 @@
 """Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar:
-handoff, parse_handoff and head."""
+handoff, parse_handoff and head.
+"""
 
 import re
 from dataclasses import dataclass
@@ -107,10 +108,9 @@ def _lines(description):
 
 
 def _starts(lines):
-    # Only Instructions carry unquoted user text, which may hold header lines: Source is the
-    # first one (unless it
-    # comes after Instructions' first), Instructions the first after it, Comments the last
-    # after Instructions.
+    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
+    # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
+    # last after Instructions.
     source, instructions, comments = SECTIONS
 
     def find(header, after, last=False):

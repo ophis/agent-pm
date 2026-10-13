@@ -1,7 +1,8 @@
 """delegate/src/agent_pm/delegate/engine/config.py: its paths; harness_host(), a read delegate
 config's [delegates] harness_host checked against Session.parse_hosts' names (their cases:
 session/host_tables_test.py); policy()'s shape (plan's Policy cases: through plan) and
-trusted_dirs()."""
+trusted_dirs().
+"""
 
 import os
 import tomllib

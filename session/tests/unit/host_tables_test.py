@@ -1,5 +1,6 @@
 """session/hosts/tables.py: parse(), an already-read [hosts] table's default and [hosts.<name>]
-tables, as Session.parse_hosts gives it."""
+tables, as Session.parse_hosts gives it.
+"""
 
 import tomllib
 import unittest

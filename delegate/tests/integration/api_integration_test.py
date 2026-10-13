@@ -1,6 +1,7 @@
-"""delegate.run in process over session/tests/integration/adapters/claude/fake_claude.py (on PATH
-as `claude`, the session config's Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback
-order over a real process (FR-17), the fix resume (FR-21), a usage limit (FR-58)."""
+"""delegate.run in process over session/tests/integration/adapters/claude/fake_claude.py (on PATH as
+`claude`, the session config's Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback order
+over a real process (FR-17), the fix resume (FR-21), a usage limit (FR-58).
+"""
 
 import io
 import json

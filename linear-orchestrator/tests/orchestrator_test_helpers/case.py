@@ -1,5 +1,6 @@
 """Case, every linear-orchestrator test's base; child helpers (PY, child_env, ORCH_ROOT); this
-tree's import roots (REPO, SRC, ROOTS, PYTHONPATH)."""
+tree's import roots (REPO, SRC, ROOTS, PYTHONPATH).
+"""
 
 import os
 import sys
@@ -21,8 +22,9 @@ ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 
 
 class Case(unittest.TestCase):
-    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm)."""
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm).
+    """
 
     def run(self, result=None):
         if foreign := _foreign():

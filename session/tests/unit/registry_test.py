@@ -1,8 +1,9 @@
 """adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the
-hosts' tables and the default host), settings() from a read session config, the tui settings
-from [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the
-import system only for the test's span; the registry itself is never patched. Each test
-constructs fresh settings."""
+hosts' tables and the default host), settings() from a read session config, the tui settings from
+[hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the import
+system only for the test's span; the registry itself is never patched. Each test constructs fresh
+settings.
+"""
 
 import importlib
 import importlib.abc
@@ -71,13 +72,13 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 class Base(Case):
     def configure(self, text, tmux=None):
-        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through
-        Driver."""
+        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through Driver."""
         self.driver = Driver(**settings(tomllib.loads(text).get("adapters", {}), tmux))
 
     def register(self, **modules):
-        """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of
-        the test."""
+        """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of the
+        test.
+        """
         for name, m in modules.items():
             self.enterContext(module_slot(f"agent_pm.session.adapters.{name}", m))
 

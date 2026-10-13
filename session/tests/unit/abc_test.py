@@ -1,5 +1,6 @@
 """session/__init__.py's interfaces: the exported names, which are abstract, NotDisplayable, the
-bare Session's class methods and a Host's defaults."""
+bare Session's class methods and a Host's defaults.
+"""
 
 import inspect
 import unittest

@@ -1,5 +1,6 @@
 """Case, every delegate test's base; the committed [adapters] (committed); child helpers (PY,
-child_env); this tree's import roots (REPO, SRC, ROOTS, PYTHONPATH)."""
+child_env); this tree's import roots (REPO, SRC, ROOTS, PYTHONPATH).
+"""
 
 import os
 import sys
@@ -23,14 +24,16 @@ PY = (sys.executable, "-P", "-s")
 
 def committed(local: str = os.devnull) -> dict:
     """The session config's [adapters], `local` merged (default none), even under
-    Case.configure_session."""
+    Case.configure_session.
+    """
     return read_project("session", local=local)["adapters"]
 
 
 class Case(unittest.TestCase):
     """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
     a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session
-    settings."""
+    settings.
+    """
 
     def run(self, result=None):
         if foreign := _foreign():

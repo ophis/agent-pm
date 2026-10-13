@@ -19,19 +19,24 @@ CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 
 NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 
+
 def record(driver, started_at=T1):
     return sessions.base(
         sid=SID, workdir=WORKDIR, runtime=RUNTIME, started_at=started_at, driver=driver
     )
 
+
 def text(line):
     return f"Run {SID} · {line}\n\n```\n{CMD}\n```"
+
 
 def comment(id, body, mine=True, issue=ISSUE_ID):
     return {"id": id, "body": body, "mine": mine, "issue": issue}
 
+
 def start(gql, rec, timeout=sessions.LIMIT):
     return sessions.post(ISSUE, rec, gql=gql, timeout=timeout)
+
 
 def end(gql, rec, rc, ended_at=T2):
     return sessions.post(ISSUE, rec, rc, gql=gql, ended_at=ended_at)

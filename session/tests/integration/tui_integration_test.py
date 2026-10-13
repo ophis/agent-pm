@@ -1,9 +1,10 @@
 """session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
-os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with
-no pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked
-pause, attach from another process, stop, a runtime's own exit, close, sessions while tmux's
-state is unknown, an old Handle once its name is another session's, two starts of one name at
-once, and a start while another process closes the name."""
+os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
+pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
+attach from another process, stop, a runtime's own exit, close, sessions while tmux's state is
+unknown, an old Handle once its name is another session's, two starts of one name at once, and a
+start while another process closes the name.
+"""
 
 import itertools
 import json
@@ -33,7 +34,8 @@ from session.tests import fake_adapter, live_tmux
 from session.tests.case import PY, child_env
 from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, Stream
 
-# Another process: attaches by name, sends text, prints [sid, state, reply, its first event but IdleTimeout, reply].
+# Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
+# IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
 fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
@@ -164,8 +166,8 @@ class SameNameTest(Live):
 
     def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
         """`name` started again showing DIALOG, with an events file of its own: old's events end,
-        never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked
-        line."""
+        never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked line.
+        """
         mine = os.path.join(self.dir, "events-new")
         new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
         live_tmux.wait(

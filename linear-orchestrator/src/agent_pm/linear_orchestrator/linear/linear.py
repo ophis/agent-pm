@@ -1,6 +1,7 @@
 """Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log
 (log, into LOGS_DIR once an entry's main sets it), comments by client id and the checks of the
-config's Linear ids."""
+config's Linear ids.
+"""
 
 import datetime as dt
 import hashlib

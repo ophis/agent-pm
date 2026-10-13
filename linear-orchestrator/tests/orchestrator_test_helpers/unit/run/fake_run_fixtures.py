@@ -5,8 +5,10 @@ from orchestrator_test_helpers.unit.run.data import NO_OUTCOME
 
 
 class FakeRun:
-    """delegate.run: records its call, raises `error`, else sends Begun (unless `begun` is False), then each step (an
-    event, or a callable it calls), then Finished when the result has an outcome, and returns the result."""
+    """delegate.run: records its call, raises `error`, else sends Begun (unless `begun` is False),
+    then each step (an event, or a callable it calls), then Finished when the result has an outcome,
+    and returns the result.
+    """
 
     def __init__(self, order, result=NO_OUTCOME, steps=(), error=None, begun=True):
         self.order, self.result, self.steps, self.error = order, result, steps, error

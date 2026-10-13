@@ -1,7 +1,8 @@
-"""The Delegate CLI as a subprocess run by step 3's command of delegate/skills/act-as/SKILL.md,
-over the real config with a HOME of the test's own: per built-in role, out (or stdout, --out -)
-holds the --dry-run prompt; headless and a resume exit 2. The engineer prompt's team tool
-commands run behind step 4's prefix, and fail bare."""
+"""The Delegate CLI as a subprocess run by step 3's command of delegate/skills/act-as/SKILL.md, over
+the real config with a HOME of the test's own: per built-in role, out (or stdout, --out -) holds the
+--dry-run prompt; headless and a resume exit 2. The engineer prompt's team tool commands run behind
+step 4's prefix, and fail bare.
+"""
 
 import json
 import os
@@ -26,7 +27,8 @@ REPO = "python3 -P <team>/tools/repo.py"
 
 class PrintPrompt(Case):
     """The cwd `proj`; per role, workdir ~/.agent-pm/adhoc/<date>-<role>-compare-a-b (not made),
-    --sid SID."""
+    --sid SID.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

@@ -1,6 +1,7 @@
 """agent_pm/session/adapters/print_prompt/: PrintPromptAdapter's factory and keys;
-PrintPromptInProcess's check, its run's replies and the prompt file it writes, with every
-process spawn patched to fail."""
+PrintPromptInProcess's check, its run's replies and the prompt file it writes, with every process
+spawn patched to fail.
+"""
 
 import contextlib
 import json
@@ -65,7 +66,8 @@ class Run(Case):
 
     def ran(self, prompt=PROMPT) -> list:
         """The run's events, each of SPAWNS failing meanwhile and never called; cwd and environ
-        unchanged."""
+        unchanged.
+        """
         cwd, environ = os.getcwd(), dict(os.environ)
         with contextlib.ExitStack() as stack:
             spawns = [

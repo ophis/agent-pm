@@ -1,8 +1,9 @@
-"""The adapter registry: caller-owned settings (the [adapters.<name>] tables, the hosts' tables,
-the default host), owned by a Registry instance. adapter(name) builds the class
-[adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or
-any failure: ConfigError. settings(config): Driver's keyword arguments from a read session
-config ([hosts] through tables.parse); else ValueError."""
+"""The adapter registry: caller-owned settings (the [adapters.<name>] tables, the hosts' tables, the
+default host), owned by a Registry instance. adapter(name) builds the class
+[adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or any
+failure: ConfigError. settings(config): Driver's keyword arguments from a read session config
+([hosts] through tables.parse); else ValueError.
+"""
 
 import copy
 import re

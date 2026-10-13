@@ -55,7 +55,9 @@ class Checks:
         )
 
     def run_inner(self, test, set_up=None) -> unittest.TestResult:
-        """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given), never super()."""
+        """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given),
+        never super().
+        """
 
         class Inner(self.case.Case):
             def setUp(inner):

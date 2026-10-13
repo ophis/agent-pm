@@ -1,7 +1,8 @@
 """On the real team root (composer.TEAM) and delegate/config.toml: every built-in role × task
 composes with no reference error, the neutral Return and Parameters, the FR-31 destinations, the
 package API, the schema left as on main, and the shipped text's rules (ported from the old
-composer's RealCore, Tickets and GenericNames tests, less the client-specific ones)."""
+composer's RealCore, Tickets and GenericNames tests, less the client-specific ones).
+"""
 
 import functools
 import glob
@@ -94,7 +95,8 @@ DROPPED = [
     "anchor",
 ]
 TICKET = re.compile(r"TASK-\d+")  # an internal ticket id
-# The format examples the team's text may hold: path in the team root → its examples, each allowed once.
+# The format examples the team's text may hold: path in the team root → its examples, each allowed
+# once.
 TICKET_EXAMPLES = {"principles.md": ["(e.g. `TASK-142`)"]}
 WORDS = (
     "router.py",
@@ -169,15 +171,15 @@ def generic_names(text):
 
 def expanded(prompt):
     """`prompt` with each # Parameters name written as its value, as the rule says a run writes a
-    command."""
+    command.
+    """
     for name, value in parameters(prompt).items():
         prompt = prompt.replace(name, value.strip("`"))
     return prompt
 
 
 def words(prompt):
-    """`prompt` with this checkout's path, the machine's and not the team's text, written as
-    <root>."""
+    """`prompt` with this checkout's path, the machine's and not the team's text, written as <root>."""
     return prompt.replace(REPO, "<root>")
 
 
@@ -190,8 +192,9 @@ def parameter_names(role, task=None, **changes):
 
 
 def team_texts():
-    """{path relative to the team root: text} of each .md file of the real team root (its tools/
-    are code)."""
+    """{path relative to the team root: text} of each .md file of the real team root (its tools/ are
+    code).
+    """
     out = {}
     for path in glob.glob(os.path.join(composer.TEAM, "**", "*.md"), recursive=True):
         with open(path) as f:
@@ -227,7 +230,8 @@ class Acceptance(Case):
                 prompt = words(composed(role, task)[0])
                 self.assertIn("agent-pm-outcome", prompt)
                 self.assertNotIn("report.py", prompt)
-                # The report command was a code span opening with `report`; guide.md says how to report progress.
+                # The report command was a code span opening with `report`; guide.md says how to
+                # report progress.
                 self.assertNotRegex(prompt, r"`report[` ]|(?<!how to )report progress")
                 self.assertIn(f"\n{RETURN}\n# Input\n", prompt)
                 block = re.search(r"^# Parameters\n(.*?)(?=^# )", prompt, re.M | re.S)[1]

@@ -1,5 +1,6 @@
 """modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
-and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads."""
+and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
+"""
 
 import signal
 import threading
@@ -49,7 +50,8 @@ class Base(Case):
 
     def held(self):
         """A script yielding Reply("one"), Stderr("two"), then Reply("late") once released; the
-        Events reached, release and closed (its finally ran). Released at cleanup."""
+        Events reached, release and closed (its finally ran). Released at cleanup.
+        """
         reached, release, closed = threading.Event(), threading.Event(), threading.Event()
         self.addCleanup(release.set)
 

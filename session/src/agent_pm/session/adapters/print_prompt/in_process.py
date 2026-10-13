@@ -1,7 +1,8 @@
 """PrintPromptInProcess: refuses resume (no session to continue) and a Spec without the caller's
 reply protocol (Spec.reply_tags). Its run writes the prompt byte-exact (UTF-8) to a new
-<workdir>/tmp/prompt-*.md, then replies a start mark and a done outcome block naming that file
-as deliverable_file, in those tags."""
+<workdir>/tmp/prompt-*.md, then replies a start mark and a done outcome block naming that file as
+deliverable_file, in those tags.
+"""
 
 import json
 import os

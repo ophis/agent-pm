@@ -1,7 +1,8 @@
 """A detached run: the Delegate CLI's driver form (--driver) for a Plan, started through
 Driver.detach() in its Driver session `<role>-<sid8>-drive` (a tui run's agent session:
-`<role>-<sid8>`). Every check first: a refusal is ConfigError, nothing started. When the driver
-form ends, outcome() appends its one outcome line to the events file."""
+`<role>-<sid8>`). Every check first: a refusal is ConfigError, nothing started. When the driver form
+ends, outcome() appends its one outcome line to the events file.
+"""
 
 import os
 import sys
@@ -37,8 +38,9 @@ def detach(
     split_from: str | None = None,
 ) -> Detached:
     """The events file must be one you own (created if missing); a tui run's pane opener from
-    layout, None when the caller has no pane and split_from is None. DriverError from
-    detach_session propagates."""
+    layout, None when the caller has no pane and split_from is None. DriverError from detach_session
+    propagates.
+    """
     mode = p.spec.mode
     if mode not in MODES:
         raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
@@ -102,7 +104,8 @@ def detach(
 
 def outcome(events: str, driver: str, status: str | None) -> None:
     """Appends `HH:MM:SS <driver> outcome <status>`, None as `error`; an OSError is printed, never
-    raised."""
+    raised.
+    """
     try:
         SessionStatusLog(events).write(driver, "outcome", status or "error")
     except OSError as e:

@@ -1,7 +1,8 @@
 """promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its
-client id), related, the source Done; a failed move or a Linear outage is retried without a
-second child; the tick's prune closes a finished issue's TUI session on a private tmux server,
-deletes its checkouts and archives it."""
+client id), related, the source Done; a failed move or a Linear outage is retried without a second
+child; the tick's prune closes a finished issue's TUI session on a private tmux server, deletes its
+checkouts and archives it.
+"""
 
 import os
 import subprocess

@@ -1,5 +1,6 @@
 """session/config.toml's committed [adapters] tables: each builds its Adapter through the session
-registry."""
+registry.
+"""
 
 import os
 import tempfile

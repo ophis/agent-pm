@@ -1,8 +1,9 @@
 """session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
-table given to Driver construction, runs
-session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through
-Driver.start, Driver.usage and Driver.session_status; one case runs the Driver in a caller
-process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are temp dirs."""
+table given to Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py
+(on PATH as `claude`) through Driver.start, Driver.usage and Driver.session_status; one case runs
+the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are
+temp dirs.
+"""
 
 import json
 import os
@@ -60,8 +61,9 @@ PROBE = [
     "user",
     "--strict-mcp-config",
 ]
-# A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
-# (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
+# A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a
+# KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
+# parent.
 CALLER = """import json, signal, sys, time
 from agent_pm.session.engine import api
 from agent_pm.session import Driver, Spec
@@ -128,7 +130,8 @@ class Base(Case):
 
     def drain(self, handle, on=lambda event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
-        the handle, instead of hanging past WAIT."""
+        the handle, instead of hanging past WAIT.
+        """
         found, errors = [], []
 
         def run():
@@ -363,7 +366,8 @@ class RunTest(Base):
 class InterruptTest(Base):
     def until(self, caller: subprocess.Popen, check, what: str) -> None:
         """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s
-        pass."""
+        pass.
+        """
         deadline = time.monotonic() + WAIT
         while not check():
             if caller.poll() is not None or time.monotonic() > deadline:
@@ -390,7 +394,8 @@ class InterruptTest(Base):
         self.until(caller, lambda: "Reply" in self.printed(), "printed the Reply")
         (entry,) = self.logged()
         self.addCleanup(kill, entry["pid"])
-        # SIGINT must land while events() waits, not in the loop body, where it would only close the iterator.
+        # SIGINT must land while events() waits, not in the loop body, where it would only close the
+        # iterator.
         time.sleep(SETTLE)
         caller.send_signal(signal.SIGINT)
         self.until(

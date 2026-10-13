@@ -1,5 +1,6 @@
 """orchestrator issues.py, ported from the old issues_test, plus head: a description's part before
-its comments."""
+its comments.
+"""
 
 import unittest
 

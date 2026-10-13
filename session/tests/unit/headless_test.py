@@ -1,5 +1,6 @@
-"""modes/headless.py: a Headless's command on pipes, its state, its process group's kill,
-bounded waits, send and screen refused, and probe(), over real Python children."""
+"""modes/headless.py: a Headless's command on pipes, its state, its process group's kill, bounded
+waits, send and screen refused, and probe(), over real Python children.
+"""
 
 import json
 import os
@@ -31,7 +32,8 @@ def python(code: str) -> tuple[str, ...]:
 
 def spawning(then: str = "") -> str:
     """Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as
-    {"text"}, then runs `then`."""
+    {"text"}, then runs `then`.
+    """
     return (
         "import json, subprocess, sys, time\n"
         f"grandchild = subprocess.Popen([sys.executable, '-I', '-c', {SLEEPER!r}])\n"

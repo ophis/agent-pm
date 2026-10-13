@@ -1,7 +1,8 @@
-"""FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own
-process group, state in one dir per session under settings["root"] (default
-~/.agent-pm/fake-host): meta.json, env.json, pid, rc, output, and a terminal's FIFO input. Every
-call reads that state, so any process sees the sessions another started."""
+"""FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own process
+group, state in one dir per session under settings["root"] (default ~/.agent-pm/fake-host):
+meta.json, env.json, pid, rc, output, and a terminal's FIFO input. Every call reads that state, so
+any process sees the sessions another started.
+"""
 
 import contextlib
 import json
@@ -71,8 +72,9 @@ class FakeProcess(HostProcess):
         return True
 
     def kill(self) -> None:
-        """The whole process group, whatever its leader's state (a child the program left is in
-        it), once: its pid may be reused after."""
+        """The whole process group, whatever its leader's state (a child the program left is in it),
+        once: its pid may be reused after.
+        """
         if (pid := self._pid()) is not None and _read(self.folder, "killed") is None:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)

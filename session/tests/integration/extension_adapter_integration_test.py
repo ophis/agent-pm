@@ -1,9 +1,10 @@
 """A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>]
 table: a temp copy of session and utils, the fake adapter's package copied in as session's
-adapters/fake/ and its table appended to the copy's session/config.toml, nothing else changed,
-runs a headless session through session.engine.api.start in a child Python whose PYTHONPATH is
-only the copy's src/ dirs. A table without its package, or a package without its table, fails
-there before anything starts."""
+adapters/fake/ and its table appended to the copy's session/config.toml, nothing else changed, runs
+a headless session through session.engine.api.start in a child Python whose PYTHONPATH is only the
+copy's src/ dirs. A table without its package, or a package without its table, fails there before
+anything starts.
+"""
 
 import json
 import os
@@ -18,8 +19,8 @@ from session.tests.case import PY, REPO, Case, child_env
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
 PROJECTS = ("session", "utils")
-# The child: configures the session from the copy's session config, starts runtime argv[2] headless in workdir argv[1]
-# and prints its events; a ConfigError exits 1, its text on stderr.
+# The child: configures the session from the copy's session config, starts runtime argv[2] headless
+# in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
 from agent_pm.session import Driver, ConfigError, Spec
 from agent_pm.session.engine import api
@@ -91,7 +92,8 @@ class ExtensionAdapterIntegration(Case):
 
     def refused(self, runtime: str, error: str) -> None:
         """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or
-        process."""
+        process.
+        """
         child = self.child(runtime)
         self.assertEqual((child.returncode, child.stdout), (1, ""), child.stderr)
         self.assertIn(f"ConfigError: {error}", child.stderr)

@@ -7,8 +7,9 @@ from orchestrator_test_helpers.unit.router.outer_base_fixtures import OuterBase
 
 
 class Outer(OuterBase):
-    """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input and starts run.py in
-    a detached Driver session."""
+    """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input
+    and starts run.py in a detached Driver session.
+    """
 
     def local_clone(self):
         path = os.path.realpath(os.path.join(self.tmp, "clone"))

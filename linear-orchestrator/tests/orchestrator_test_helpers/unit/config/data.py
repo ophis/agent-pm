@@ -53,11 +53,13 @@ CORE = delegate.CONFIG
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
+
 def missing(keys):
     return (
         f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's "
         "`# local:` lines)"
     )
+
 
 def old_key(key):
     return (
@@ -65,9 +67,11 @@ def old_key(key):
         "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
     )
 
+
 def write(path, text):
     with open(path, "w") as f:
         f.write(text)
+
 
 ROLES = {
     "researcher": (
@@ -87,8 +91,10 @@ ROLES = {
     ),
 }
 
+
 def fields(roles):
     return {r: (x.account, x.key, x.tasks, x.max_runs, x.next) for r, x in roles.items()}
+
 
 CORE_TOML = """tier = 2
 effort = "high"
@@ -126,10 +132,12 @@ STEPS = (
     "## Resume\n\nRedo step 2.\n"
 )
 
+
 def git(*args):
     subprocess.run(
         ["git", *GUARD, *args], check=True, capture_output=True, stdin=subprocess.DEVNULL
     )
+
 
 IMPORT_ALONE = """import json, os, sys
 opened = []

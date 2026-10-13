@@ -1,9 +1,10 @@
 """session.engine.api.show and close on a private tmux server (session/tests/live_tmux.py), placing
-sessions as hosts/tmux/tmux_host.py lays them out: the grid (columns, name order, sub-sessions,
-an unshown session reopened), its settling and re-tiling modes, and a split outside it; ported
-from main's crew integration tests. Sessions are tmux_host.start's, shown from a session's pane
-(os.environ that pane's env) or from outside tmux; the iTerm2 path fails the test. Also start's
-dead line for a command ending at once."""
+sessions as hosts/tmux/tmux_host.py lays them out: the grid (columns, name order, sub-sessions, an
+unshown session reopened), its settling and re-tiling modes, and a split outside it; ported from
+main's crew integration tests. Sessions are tmux_host.start's, shown from a session's pane
+(os.environ that pane's env) or from outside tmux; the iTerm2 path fails the test. Also start's dead
+line for a command ending at once.
+"""
 
 import contextlib
 import functools
@@ -147,7 +148,8 @@ class GridTest(Live):
 
     def test_columns_retile(self):
         self.per_column(2)
-        # tmux's split leaves the split pane the wider half (100 of 200); tile keeps the manager's width
+        # tmux's split leaves the split pane the wider half (100 of 200); tile keeps the manager's
+        # width
         width = self.server.size[0] // 2
         self.started("w1")
         self.grid([["w1"]], width)
@@ -433,8 +435,8 @@ class RetileTest(Live):
         for name in ("w1", "w2", "w3"):
             self.started(name)
         self.grid([["w1", "w2", "w3"]], width)
-        # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the window's pane-exited
-        # hook, so window-layout-changed (a new pane set) re-tiles
+        # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the
+        # window's pane-exited hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
         self.driver.close("w2")
         self.grid([["w1", "w3"]], width)

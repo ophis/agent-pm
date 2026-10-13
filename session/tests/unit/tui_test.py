@@ -1,7 +1,8 @@
 """modes/tui.py over tmux_host autospecced (no tmux runs) on a fake clock (time.monotonic and
 time.sleep patched), with a temp HOME: the session dir and session.json, the name's lock,
-read_state, begin, the hook records' tail, the pane scan, returncode, state, send, screen, close
-and stop, the binding to its pane, and attach."""
+read_state, begin, the hook records' tail, the pane scan, returncode, state, send, screen, close and
+stop, the binding to its pane, and attach.
+"""
 
 import errno
 import fcntl
@@ -50,8 +51,9 @@ def record(label: str, **payload) -> dict:
 
 
 def fake_host() -> mock.Mock:
-    """tmux_host autospecced, its constants, TuiError and attach_command real: status None
-    (absent), read "", option None, pane %1."""
+    """tmux_host autospecced, its constants, TuiError and attach_command real: status None (absent),
+    read "", option None, pane %1.
+    """
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "PAUSE", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -65,7 +67,8 @@ def fake_host() -> mock.Mock:
 
 class Clock:
     """time.monotonic and time.sleep's stand-in: sleep moves `now`, then runs each action due by
-    then; every sleep is logged in `log`."""
+    then; every sleep is logged in `log`.
+    """
 
     def __init__(self, log: list):
         self.now, self.log, self.actions = 0.0, log, []
@@ -79,7 +82,8 @@ class Clock:
 
 class ScanTui(fake_adapter.FakeTui):
     """The fake Tui with two dialogs and a usage-limit message `LIMIT <epoch>`; activity is the
-    payload's tool, the blocked reason its why; each screen limit() sees is kept."""
+    payload's tool, the blocked reason its why; each screen limit() sees is kept.
+    """
 
     dialogs = ("Trust  this\nfolder?", "Sign in")
 
@@ -135,7 +139,8 @@ class Base(Case):
 
     def started(self) -> tui.TuiMode:
         """A TuiMode prepared (the session absent), begun on pane %1, the host's calls cleared, its
-        status RUNNING."""
+        status RUNNING.
+        """
         self.host.status.return_value, self.host.pane.return_value = None, "%1"
         mode = self.prepare()
         mode.begin(("/bin/run",), cwd=self.tmp, env={})
@@ -1061,12 +1066,14 @@ class BoundTest(Base):
 
 class SwapTest(Base):
     """A new session takes the name right after the Mode's pane check: every later call targets its
-    pane (%1), so none reaches the new pane (%2)."""
+    pane (%1), so none reaches the new pane (%2).
+    """
 
     def swapped(self, screen: str = "") -> list:
         """After started(): the next pane(NAME) answers %1, then %2 holds the name and %1 is gone
-        (absent to status and option, a TuiError to the rest). Returns (call, pane) for each
-        call that reached a pane."""
+        (absent to status and option, a TuiError to the rest). Returns (call, pane) for each call
+        that reached a pane.
+        """
         holder, reached = ["%1"], []
 
         def at(target):
@@ -1144,7 +1151,8 @@ class AttachTest(Base):
 
     def attach(self, *lines) -> tui.TuiMode:
         """TuiMode.attach on a prepared session dir whose hooks.jsonl has lines, the host's calls
-        cleared first."""
+        cleared first.
+        """
         self.prepare()
         self.append(*lines)
         self.host.reset_mock()

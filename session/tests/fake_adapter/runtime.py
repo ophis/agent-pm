@@ -1,11 +1,11 @@
-"""The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT
-[HOOK...].
+"""The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...].
 
-Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then runs the
-scenario, a JSON list of steps (or {"steps": [...], "resume": [...]}: resume's run on --resume):
-{"out": obj} prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep":
-s}, {"exit": n}, {"hook": label, "payload": obj} runs HOOK + [label] with obj on stdin, {"read":
-true} reads a stdin line; then exits 0."""
+Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then runs the scenario,
+a JSON list of steps (or {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj}
+prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n},
+{"hook": label, "payload": obj} runs HOOK + [label] with obj on stdin, {"read": true} reads a stdin
+line; then exits 0.
+"""
 
 import argparse
 import json

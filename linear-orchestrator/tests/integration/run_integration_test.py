@@ -1,7 +1,8 @@
 """run.py as a subprocess over the Delegate, headless: fake_claude as runtime `claude`, FakeLinear
-over HTTP, the local files in the test's HOME. Done runs write back as writeback_test pins
-them, plus the session comment by its session id; a run with no outcome; a usage limit (FR-59)
-and its resume; a resume after a lost ledger write (FR-54)."""
+over HTTP, the local files in the test's HOME. Done runs write back as writeback_test pins them,
+plus the session comment by its session id; a run with no outcome; a usage limit (FR-59) and its
+resume; a resume after a lost ledger write (FR-54).
+"""
 
 import os
 import re
@@ -94,7 +95,9 @@ class Run(Flow):
         return [(r.op, r.account, r.variables, r.result) for r in self.requests()[since:]]
 
     def session(self, *lines, since=0):
-        """The session comment's bodies written since, each `Run <SID> · <line>` and the resume command."""
+        """The session comment's bodies written since, each `Run <SID> · <line>` and the resume
+        command.
+        """
         bodies = []
         for _, _, v, _ in self.wrote(since):
             if v.get("c") == SESSION and "b" in v and v["b"] not in bodies[-1:]:
@@ -106,8 +109,9 @@ class Run(Flow):
         return bodies
 
     def framed(self, *calls, end=DONE, created=True, since=0):
-        """A run's Linear calls: the session comment's first write (created: not found, then created by its id),
-        `calls` as the role's account, the session comment's end and repair."""
+        """A run's Linear calls: the session comment's first write (created: not found, then created
+        by its id), `calls` as the role's account, the session comment's end and repair.
+        """
         running, ended = self.session(RUNNING, end, since=since)
         update = ("sessions.M_UPDATE", HARNESS_EMAIL, {"c": SESSION, "b": running})
         create = ("linear.M_COMMENT_ID", HARNESS_EMAIL, {"c": SESSION, "i": ID, "b": running})

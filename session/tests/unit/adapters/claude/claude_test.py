@@ -1,7 +1,8 @@
 """adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch with session flags, hook payloads and
-usage-limit screen; ClaudeAdapter's hooks and writable dirs. HOME and
-CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
+usage-limit screen; ClaudeAdapter's hooks and writable dirs. HOME and CLAUDE_CONFIG_DIR are temp
+dirs; nothing starts a process.
+"""
 
 import json
 import os

@@ -31,11 +31,14 @@ RUNNING = f"running · #1 · {NOW}"
 
 REPAIR = ("find", HARNESS, {"c": SESSION})
 
+
 def text(line):
     return f"Run {SID} · {line}\n\n```\n{CMD}\n```"
 
+
 def ended(status, rc, seq=2):
     return f"{status} · #{seq} · {NOW} → {NOW} · exit {rc}"
+
 
 def created(line):
     return [
@@ -43,8 +46,10 @@ def created(line):
         ("comment", HARNESS, {"c": SESSION, "i": ID, "b": text(line)}),
     ]
 
+
 def updated(line):
     return [("update", HARNESS, {"c": SESSION, "b": text(line)})]
+
 
 def cid(step):
     return linear.client_id(SID, step)

@@ -1,7 +1,8 @@
 """The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two
-daemon threads pump its events and Stderr lines into one queue, and the session ends at both
-pipes' EOF. stop() kills the whole group, so a grandchild holding the pipes dies too; every wait
-is bounded. probe() runs a short command for its stdout."""
+daemon threads pump its events and Stderr lines into one queue, and the session ends at both pipes'
+EOF. stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is
+bounded. probe() runs a short command for its stdout.
+"""
 
 import os
 import queue
@@ -17,7 +18,8 @@ STOP_WAIT = 5
 
 
 def kill_group(proc: subprocess.Popen, ended: bool = False, *, wait: float = STOP_WAIT) -> None:
-    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so signal nothing.
+    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so
+    # signal nothing.
     if not (ended and proc.returncode is not None):
         try:
             os.killpg(proc.pid, signal.SIGKILL)

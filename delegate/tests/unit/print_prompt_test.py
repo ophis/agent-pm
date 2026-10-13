@@ -1,7 +1,8 @@
 """Runtime print_prompt through the Delegate's API, a driver built from the real config: per
-built-in role a done run whose deliverable is the planned prompt, saved to out, no child
-process; headless and resume refused; each role's destination and prompt the same under claude,
-codex and print_prompt."""
+built-in role a done run whose deliverable is the planned prompt, saved to out, no child process;
+headless and resume refused; each role's destination and prompt the same under claude, codex and
+print_prompt.
+"""
 
 import io
 import os
@@ -39,7 +40,8 @@ class PrintPrompt(Case):
 
     def given(self, role, **kw):
         """(RunConfig, Spec) for run() and plan(): print_prompt in_process, sid SID, the cwd the
-        workdir, unless `kw`."""
+        workdir, unless `kw`.
+        """
         work = os.path.join(self.tmp, role)
         kw = {
             "runtime": "print_prompt",

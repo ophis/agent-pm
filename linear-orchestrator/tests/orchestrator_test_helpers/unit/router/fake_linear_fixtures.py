@@ -1,4 +1,3 @@
-
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_test_helpers.unit.board_ids import TEAM, team_node
@@ -116,4 +115,3 @@ def two():
             issue("TASK-2", "Todo", "pm", priority=2, project=PD),
         ]
     )
-

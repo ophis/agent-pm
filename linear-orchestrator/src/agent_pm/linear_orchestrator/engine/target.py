@@ -1,5 +1,6 @@
-"""An issue's target repo: its description's Repo: line or its project's mapping, checked on
-GitHub (check), and the local clone its checkout may use (with_clone)."""
+"""An issue's target repo: its description's Repo: line or its project's mapping, checked on GitHub
+(check), and the local clone its checkout may use (with_clone).
+"""
 
 import json
 import os
@@ -106,13 +107,13 @@ def checkout(ident, owner, name, *, work) -> str:
 
 
 def _branches(ident, o, n, run, work, roles):
-    # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent
-    # run could have changed
+    # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run
+    # could have changed
     path = checkout(ident, o, n, work=work)
     git = os.path.join(path, ".git")
     if os.path.isdir(git) and not os.path.islink(git):
-        # The agent run can write this clone's config; these keep it from running code as
-        # the harness.
+        # The agent run can write this clone's config; these keep it from running code as the
+        # harness.
         res = run(
             [
                 "git",
@@ -192,8 +193,7 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
 
 def with_clone(t, ident, clones, *, work, writable=None, run=sh_run) -> Target:
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
-    # `writable` and with the
-    # right origin
+    # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)
     git, full = os.path.join(path, ".git"), f"{t.owner}/{t.name}"
     if os.path.isdir(git) and not os.path.islink(git):

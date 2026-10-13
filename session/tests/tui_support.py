@@ -103,7 +103,8 @@ class Live(Case):
 
     def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events
-        unless given."""
+        unless given.
+        """
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
         handle = self.driver.start(
@@ -118,7 +119,8 @@ class Live(Case):
 
     def lines(self, *want: str, events: str | None = None) -> None:
         """Waits until the events file's (self.events unless given) lines, times dropped, are
-        `want`; pokes the server meanwhile."""
+        `want`; pokes the server meanwhile.
+        """
 
         def check():
             self.poke()
@@ -131,6 +133,6 @@ class Live(Case):
         live_tmux.wait(check, what=f"events lines {want}")
 
     def poke(self):
-        # tmux on Linux (CI: 3.4) can leave a dead pane's process unreaped, so its status unset and no pane-died,
-        # until another child of the server exits: a no-op job is one.
+        # tmux on Linux (CI: 3.4) can leave a dead pane's process unreaped, so its status unset and
+        # no pane-died, until another child of the server exits: a no-op job is one.
         self.server.tmux("run-shell", "-b", "true")

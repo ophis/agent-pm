@@ -1,8 +1,9 @@
 """The Linear orchestrator's config: load() reads its own keys once (linear-
 orchestrator/config.toml with the keys of ~/.agent-pm/config.local.toml it owns: TOP_KEYS, and
-ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and the delegate's,
-constructs a caller-owned Driver and returns a frozen Config with a resolved RunConfig per
-role, or raises ConfigError; plus TUI names and shared helpers."""
+ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and the delegate's, constructs
+a caller-owned Driver and returns a frozen Config with a resolved RunConfig per role, or raises
+ConfigError; plus TUI names and shared helpers.
+"""
 
 import os
 import re
@@ -90,8 +91,7 @@ TASKS = {
 }
 
 # Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the
-# github destination's
-# `<Workdir>/publish`.
+# github destination's `<Workdir>/publish`.
 CLONES = ("src", "publish")
 
 
@@ -190,7 +190,9 @@ def tui_issue(name):
 
 
 def path():
-    """The PATH run, promote and their tools get, read at call: AGENT_PM_PATH (if set) before the default dirs."""
+    """The PATH run, promote and their tools get, read at call: AGENT_PM_PATH (if set) before the
+    default dirs.
+    """
     default = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
     front = os.environ.get("AGENT_PM_PATH")
     return f"{front}:{default}" if front else default

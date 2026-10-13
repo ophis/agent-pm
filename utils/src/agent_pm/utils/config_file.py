@@ -2,14 +2,15 @@
 <root>/<name>/config.toml, merged in LEVELS order (a higher level's key wins), with LOCAL, this
 machine's one local file, on top of all.
 
-Merge rules (merge): tables merge key by key, the higher layer's value wins, any other value (a
-list too) replaces the lower one's whole; a layer cannot drop a key a lower one sets.
+Merge rules (merge): tables merge key by key, the higher layer's value wins, any other value (a list
+too) replaces the lower one's whole; a layer cannot drop a key a lower one sets.
 
 Ownership of a local key: a top-level key in one project's config.toml is that project's. A
-top-level table in several (roles) is resolved by the full dotted key, among the projects with
-that table: those whose config.toml has the key, else the same table, depth and last key
-(roles.<new role>.account), else a suffix of the key (roles.<role>.cwd: cwd), else all of them;
-a local top-level key no project has is a ValueError."""
+top-level table in several (roles) is resolved by the full dotted key, among the projects with that
+table: those whose config.toml has the key, else the same table, depth and last key (roles.<new
+role>.account), else a suffix of the key (roles.<role>.cwd: cwd), else all of them; a local
+top-level key no project has is a ValueError.
+"""
 
 import os
 import tomllib
@@ -58,8 +59,9 @@ def read_project(
     name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
     """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`:
-    `name`'s file and the local keys it owns. `path` stands in for `name`'s config.toml.
-    Missing: `path` or an own file is an OSError."""
+    `name`'s file and the local keys it owns. `path` stands in for `name`'s config.toml. Missing:
+    `path` or an own file is an OSError.
+    """
     rank = _rank(name)
     own_file = path or os.path.join(root, name, "config.toml")
     if (path or name not in UNCONFIGURED) and (
@@ -90,7 +92,8 @@ def read_project(
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
     """The dotted `keys` (a `*` segment: each subtable) missing from `cfg` or still "" there:
-    required, unset."""
+    required, unset.
+    """
     return [k for key in keys for k, v in _values(cfg, key.split("."), []) if v in (None, "")]
 
 

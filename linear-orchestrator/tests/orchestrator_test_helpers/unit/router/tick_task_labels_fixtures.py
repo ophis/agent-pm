@@ -1,4 +1,3 @@
-
 from orchestrator_test_helpers.unit.router.data import CONFIG, HUMANS, TASK_LABELS
 from orchestrator_test_helpers.unit.router.tick_base_fixtures import TickBase
 

@@ -1,7 +1,8 @@
 """session.engine.api.detach on a private tmux server (session/tests/live_tmux.py), os.environ that
-server's env: a child that reports its blocked signals, unblocks them and runs until told to
-end; its session live then absent, its @opener, a taken name, a cwd it cannot enter, a script
-whose interpreter is missing, an env execve refuses."""
+server's env: a child that reports its blocked signals, unblocks them and runs until told to end;
+its session live then absent, its @opener, a taken name, a cwd it cannot enter, a script whose
+interpreter is missing, an env execve refuses.
+"""
 
 import errno
 import json
@@ -22,7 +23,8 @@ from session.tests.case import Case
 from session.tests.detach_support import CHILD
 
 MANAGER = "mgr"
-# The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists, at most 30 s.
+# The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists,
+# at most 30 s.
 
 
 class DetachTest(Case):
@@ -51,7 +53,8 @@ class DetachTest(Case):
             return set(json.load(f))
 
     def gone(self) -> bool:
-        # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped until another child of the server exits
+        # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped until another child of
+        # the server exits
         self.server.tmux("run-shell", "-b", "true")
         return self.driver.sessions("d.*") == []
 

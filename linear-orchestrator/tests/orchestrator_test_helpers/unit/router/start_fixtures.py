@@ -1,8 +1,7 @@
-
-
-
 class Start:
-    """The injected start: records each launch Namespace; per issue an exit code (`exits`) or an exception to raise."""
+    """The injected start: records each launch Namespace; per issue an exit code (`exits`) or an
+    exception to raise.
+    """
 
     def __init__(self, exits=None, raises=None):
         self.launches, self.exits, self.raises = [], exits or {}, raises or {}

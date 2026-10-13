@@ -195,7 +195,8 @@ class ClaudeCommon:
     ) -> Launch:
         """Build a Claude command with configured settings, access grants and output arguments;
         `env` under the config's. --mcp-config keeps a project's .mcp.json that a
-        --strict-mcp-config in spec.flags would drop."""
+        --strict-mcp-config in spec.flags would drop.
+        """
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access

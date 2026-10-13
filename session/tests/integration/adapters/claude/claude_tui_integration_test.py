@@ -1,9 +1,10 @@
 """session.engine.api's tui mode with runtime claude end to end on a private tmux server, as
 tui_integration_test sets it up: the real ClaudeAdapter runs
-session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively,
-its hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the
-usage-limit screen, deaths, resume, attach from another process, show (beside a detached
-session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
+session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its
+hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit
+screen, deaths, resume, attach from another process, show (beside a detached session) and close.
+CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test.
+"""
 
 import functools
 import json
@@ -52,7 +53,8 @@ TABLE = {
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
 RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
-# Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
+# Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first
+# TurnEnd, reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
 from agent_pm.session.engine import api
@@ -89,7 +91,8 @@ class Live(tui_live.Live):
         self, name: str, prompt: str = "hello", *, scenario: dict, sid=None, **kwargs
     ) -> api.Handle:
         """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file
-        self.events."""
+        self.events.
+        """
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **scenario}, f)
         handle = self.driver.start(
@@ -105,7 +108,8 @@ class Live(tui_live.Live):
 
     def stream(self, handle: api.Handle) -> Stream:
         """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a
-        later test's server."""
+        later test's server.
+        """
         stream = Stream(handle)
         self.addCleanup(stream.thread.join, WAIT)
         self.addCleanup(handle.stop)

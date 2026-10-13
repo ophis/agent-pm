@@ -1,10 +1,11 @@
-"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`,
-the payload JSON on stdin. Checks session.json, calls its optional adapter_hook on_hook(label,
-payload, state), then appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane
-with the label's word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH.
-Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and always
-exits 0 (a runtime may read both). stdlib only, standalone. False from the callback skips
-recording and marking; overflow drains stdin and stops the hook."""
+"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the
+payload JSON on stdin. Checks session.json, calls its optional adapter_hook on_hook(label, payload,
+state), then appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
+word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH. Payload strs are cut
+to CUT chars unless the word is done. Never prints on stdout and always exits 0 (a runtime may read
+both). stdlib only, standalone. False from the callback skips recording and marking; overflow drains
+stdin and stops the hook.
+"""
 
 from __future__ import annotations
 
@@ -81,7 +82,8 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
 
 def read_payload(stream) -> dict:
     """stdin's JSON object, read to its end (the writer never stalls); {} when not one; overflow
-    raises HookError."""
+    raises HookError.
+    """
     chunks, size = [], 0
     while True:
         chunk = stream.read(BLOCK)
@@ -104,7 +106,8 @@ def read_payload(stream) -> dict:
 
 def read_state(path: str) -> dict:
     """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
-    SESSION_STATE; else HookError."""
+    SESSION_STATE; else HookError.
+    """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:

@@ -1,8 +1,9 @@
-"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py
-(on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp: a run's exit code, stderr, out and
-run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an interrupt, a
-usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and
-resume_integration_test.py, the Delegate's part."""
+"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py (on
+PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp: a run's exit code, stderr, out and run.jsonl;
+its fix resume, a resume, a draft kept through a kill and resume, an interrupt, a usage limit,
+config errors. Main's tests/integration/core/drive_integration_test.py and
+resume_integration_test.py, the Delegate's part.
+"""
 
 import os
 import signal
@@ -464,7 +465,8 @@ class Interrupt(Integration):
         (call,) = self.calls()
         os.kill(proc.pid, signal.SIGINT)
         proc.wait(timeout=WAIT)
-        # Before communicate(): the fake shares the CLI's stderr pipe, which would wait for it to die by any path.
+        # Before communicate(): the fake shares the CLI's stderr pipe, which would wait for it to
+        # die by any path.
         self.assertFalse(running(call["pid"]))
         out, err = proc.communicate()
         self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)

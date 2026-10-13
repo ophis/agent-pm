@@ -1,6 +1,7 @@
 """Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with
-the prompt last after "--" so a leading "-" stays the prompt. parse turns init, assistant,
-result and rate-limit records into events, one LimitHit per run."""
+the prompt last after "--" so a leading "-" stays the prompt. parse turns init, assistant, result
+and rate-limit records into events, one LimitHit per run.
+"""
 
 from agent_pm.session.adapters.base import Headless
 from agent_pm.session.adapters.common import number

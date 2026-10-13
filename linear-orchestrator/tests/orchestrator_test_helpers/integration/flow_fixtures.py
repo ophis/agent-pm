@@ -1,8 +1,9 @@
 """The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
-accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3
--P -m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private
-tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
+accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3 -P
+-m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
+server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo.
+"""
 
 import copy
 import json
@@ -51,7 +52,9 @@ GUARD = (
 
 
 def steps(*names, mode="new", end=0, found=(), tuis=()):
-    """orchestrator.jsonl's lines of run.py's run ID, SID: launch, its tui lines, write-back steps, end."""
+    """orchestrator.jsonl's lines of run.py's run ID, SID: launch, its tui lines, write-back steps,
+    end.
+    """
     return [
         f"run launch {ID} mode={mode} sid={SID}",
         *tuis,
@@ -212,8 +215,10 @@ class Flow(Case):
 
 
 class TmuxFlow(Flow):
-    """A private tmux server (live_tmux) with session MANAGER for the Driver's sessions; fake_gh as `gh` over self.gh
-    (write_gh), REPO a bare repo that HOME's .gitconfig puts in place of github.com."""
+    """A private tmux server (live_tmux) with session MANAGER for the Driver's sessions; fake_gh as
+    `gh` over self.gh (write_gh), REPO a bare repo that HOME's .gitconfig puts in place of
+    github.com.
+    """
 
     SHIMS = ("claude", "gh")
 
@@ -264,8 +269,9 @@ class TmuxFlow(Flow):
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
     def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
-        """Until orchestrator.jsonl holds `ends` run end lines of sid and the Driver session of role and ident is
-        gone; else fails with the tails of orchestrator.jsonl and the run's run.jsonl."""
+        """Until orchestrator.jsonl holds `ends` run end lines of sid and the Driver session of role
+        and ident is gone; else fails with the tails of orchestrator.jsonl and the run's run.jsonl.
+        """
         driver = self.driver(role, ident)
 
         def ended():

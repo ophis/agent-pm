@@ -47,7 +47,9 @@ class FinishSteps1(FinishStepsBase):
 
     def test_other_attach_error_stops(self):
         gql = Gql(
-            fail=lambda name, _v: LinearError("linear api error: boom") if name == "attach" else None
+            fail=lambda name, _v: (
+                LinearError("linear api error: boom") if name == "attach" else None
+            )
         )
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))

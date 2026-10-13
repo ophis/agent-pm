@@ -1,7 +1,8 @@
 """FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions
-yield the class's script (FakeSession's is empty; scripted(*events) makes a subclass with
-those), then Exited(0) unless it ends with Exited. FakeSession and each subclass have their own
-started (start's arguments), live (name → session; stop and close remove it) and configured."""
+yield the class's script (FakeSession's is empty; scripted(*events) makes a subclass with those),
+then Exited(0) unless it ends with Exited. FakeSession and each subclass have their own started
+(start's arguments), live (name → session; stop and close remove it) and configured.
+"""
 
 from __future__ import annotations
 

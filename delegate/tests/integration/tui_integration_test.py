@@ -1,10 +1,10 @@
 """delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test,
-the session config's ClaudeAdapter running
-session/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn
-end with no prompt before it). The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the
-give-up, pending turn ends, a mark's reset, the idle give-up on a clock ahead
-(session.engine.api's `time` only), the fix send; the session left open. Main's
-tests/integration/core/drive_tui_integration_test.py, its tui run."""
+the session config's ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py
+interactively (a Stop hook step: a turn end with no prompt before it). The tui policy end to end
+(FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle give-up
+on a clock ahead (session.engine.api's `time` only), the fix send; the session left open. Main's
+tests/integration/core/drive_tui_integration_test.py, its tui run.
+"""
 
 import io
 import json
@@ -75,7 +75,8 @@ class TuiRun(tui_live.Live):
 
     def go(self, on_event=None, **scenario):
         """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each
-        callback, self.err the stderr."""
+        callback, self.err the stderr.
+        """
         with open(self.scenario, "w") as f:
             json.dump({**scenario, "log": self.log}, f)
         config, self.seen, err, ended = composer.resolve("dummy-tester"), [], io.StringIO(), []

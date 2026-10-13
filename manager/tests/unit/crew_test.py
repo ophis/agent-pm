@@ -1,6 +1,7 @@
 """agent_pm.manager.crew, the old core's crew_test ported onto a fake session.engine.api (Api):
 argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces the
-session options."""
+session options.
+"""
 
 import contextlib
 import dataclasses
@@ -138,7 +139,8 @@ class Attached:
 
 class Api:
     """session.engine.api as crew calls it: rows by name (own: the caller's), start adding its row,
-    every call recorded."""
+    every call recorded.
+    """
 
     def __init__(self, own="mgr", rows=()):
         self.own, self.rows = own, {r.name: r for r in rows}

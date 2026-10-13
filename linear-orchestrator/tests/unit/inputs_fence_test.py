@@ -1,4 +1,3 @@
-
 from orchestrator_test_helpers.unit.inputs.fence_fixtures import Fence as FenceBase
 
 

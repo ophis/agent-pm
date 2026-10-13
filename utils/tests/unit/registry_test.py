@@ -1,6 +1,6 @@
-"""utils/registry.py: load. Test modules are files in a temp dir, found by a finder on
-sys.meta_path for the test's span (guard import_hygiene counts a patched sys.path as a
-mutation)."""
+"""utils/registry.py: load. Test modules are files in a temp dir, found by a finder on sys.meta_path
+for the test's span (guard import_hygiene counts a patched sys.path as a mutation).
+"""
 
 import importlib.machinery
 import os

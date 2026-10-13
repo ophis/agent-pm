@@ -1,9 +1,10 @@
 """delegate/engine/runner.py over the fake runtime (session/tests/fake_adapter/, registered
-in-process): callbacks and replies (FR-17, FR-18), deliverable_file (FR-19), the fix resume
-(FR-21), idle (FR-22), a usage limit (FR-58), and main's drive_test Start, HostFailure and Sinks
-cases: records, saving, the missing start mark, stops, printable lines. The tui policy (FR-21,
-FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
-in_process-only fake, with no child process."""
+in-process): callbacks and replies (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21),
+idle (FR-22), a usage limit (FR-58), and main's drive_test Start, HostFailure and Sinks cases:
+records, saving, the missing start mark, stops, printable lines. The tui policy (FR-21, FR-23,
+FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the in_process-only
+fake, with no child process.
+"""
 
 import dataclasses
 import io
@@ -82,7 +83,8 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 class Base(Case):
     """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd
-    the workdir."""
+    the workdir.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -108,7 +110,8 @@ class Base(Case):
 
     def go(self, *steps, fixes=None, output=None, on_event=None, **kw) -> Result:
         """run() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets each
-        callback, self.err the stderr."""
+        callback, self.err the stderr.
+        """
         with open(self.scenario, "w") as f:
             json.dump(
                 {"steps": list(steps), **({"resume": list(fixes)} if fixes is not None else {})}, f
@@ -228,7 +231,8 @@ class Callbacks(Base):
 
 class Fix(Base):
     """FR-21: one fix resume of the same session after an invalid outcome block, only when the
-    client exited 0."""
+    client exited 0.
+    """
 
     def test_an_invalid_block_is_fixed_by_one_resume_of_the_session(self):
         r = self.go(said(START, block(INVALID)), fixes=[said(block(DONE))])
@@ -307,7 +311,8 @@ class Idle(Base):
 
 class UsageLimit(Base):
     """FR-58: a usage limit stops the session and ends the run: no outcome read, no fix resume, no
-    Finished."""
+    Finished.
+    """
 
     def test_a_limit_stops_the_session_and_is_the_result(self):
         at = 1767225600.0

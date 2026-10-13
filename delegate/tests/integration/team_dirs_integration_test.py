@@ -1,11 +1,11 @@
 """A local `team_dirs`, a team dir of TEAM's files. Read by the Composer in a child process
-(child.Case): a team dir's role composes with its tasks dir to read, never added; its catalog
-row; a read dir holding the team dir composes unadded, a write dir refused. Read by
-delegate/cli.py as a subprocess over the fake `claude`: a dry run, --list, a run in headless
-mode of the team dir's role, its tasks dir a read rule, never added; over fake_codex: a run and
-its resume reading the tasks dir unadded, a read dir holding the team dir run unadded, a write
-dir or CODEX_HOME overlapping it refused. Main's
-tests/integration/core/team_dirs_integration_test.py, the Delegate's part."""
+(child.Case): a team dir's role composes with its tasks dir to read, never added; its catalog row; a
+read dir holding the team dir composes unadded, a write dir refused. Read by delegate/cli.py as a
+subprocess over the fake `claude`: a dry run, --list, a run in headless mode of the team dir's role,
+its tasks dir a read rule, never added; over fake_codex: a run and its resume reading the tasks dir
+unadded, a read dir holding the team dir run unadded, a write dir or CODEX_HOME overlapping it
+refused. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's part.
+"""
 
 import json
 import os
@@ -75,7 +75,8 @@ def make_team(case: unittest.TestCase) -> str:
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class ComposerTeamDirs(child.Case):
     """The Composer in a child process over role `writer` of a team dir of TEAM as the local
-    `team_dirs`."""
+    `team_dirs`.
+    """
 
     def setUp(self):
         super().setUp()
@@ -200,7 +201,8 @@ class TeamDirs(Integration):
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CodexTeamDirs(CodexIntegration):
     """--runtime codex over fake_codex, role `writer` of a team dir (TEAM) as the local config's
-    `team_dirs`."""
+    `team_dirs`.
+    """
 
     ROLE, TASK = "writer", "note"
 

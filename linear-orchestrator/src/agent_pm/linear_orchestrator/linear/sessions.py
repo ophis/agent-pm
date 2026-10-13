@@ -1,6 +1,7 @@
 """Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness
-account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites
-it when a late write left an older one. status: a session's SessionStatus at its recorded cwd."""
+account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it
+when a late write left an older one. status: a session's SessionStatus at its recorded cwd.
+"""
 
 import re
 import threading

@@ -1,4 +1,6 @@
-""".github/run_tests.py: annotations, the step summary and crash detection, in-process and as CI runs it."""
+""".github/run_tests.py: annotations, the step summary and crash detection, in-process and as CI
+runs it.
+"""
 
 import contextlib
 import importlib.util
@@ -32,7 +34,8 @@ class Cases:
             self.fail("a:b, c% |")
 
 
-# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit 134 instead.
+# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit
+# 134 instead.
 SCRIPT = """import faulthandler, os, sys, unittest
 sys.path.insert(0, {github!r})
 import run_tests

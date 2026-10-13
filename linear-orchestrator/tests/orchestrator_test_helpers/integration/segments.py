@@ -1,7 +1,8 @@
 """The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
-comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a
-promote tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed
-requests, and verify() compares them when the step ends."""
+comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a promote
+tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed requests, and
+verify() compares them when the step ends.
+"""
 
 import contextlib
 import copy
@@ -57,7 +58,9 @@ BUILD = "Build the session registry."
 
 
 def lookup(account):
-    """A resumed run's look for an unledgered comment step's comment (FR-54): not found, then posted."""
+    """A resumed run's look for an unledgered comment step's comment (FR-54): not found, then
+    posted.
+    """
     return ("linear.Q_COMMENT", account, "error")
 
 
@@ -251,8 +254,10 @@ class Segment(TmuxFlow):
         return Script(outcome, [*steps, block(report)], report, {text: TEXT_KINDS[outcome]})
 
     def launch(self, ident, role, script, resumed):
-        """router.py --issue ident with script behind a new gate, until its fake_claude waits there and run.py's
-        session comment says running; returns the runs.jsonl line, fake_claude's call and the events since."""
+        """router.py --issue ident with script behind a new gate, until its fake_claude waits there
+        and run.py's session comment says running; returns the runs.jsonl line, fake_claude's call
+        and the events since.
+        """
         if self.pending:
             self.fail(
                 f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first"
@@ -456,8 +461,9 @@ class Segment(TmuxFlow):
             self.assertNotIn("handoff", [to for _, to, _ in self.history(ident)])
 
     def assert_child(self, ident, role, nxt):
-        """ident's one related child: nxt's Todo issue in its project, titled and described as promote makes it;
-        returns its identifier and title."""
+        """ident's one related child: nxt's Todo issue in its project, titled and described as
+        promote makes it; returns its identifier and title.
+        """
         with self.fake.lock:
             src = copy.deepcopy(self.fake.find(ident))
             related = [b for t, a, b in self.fake.relations if t == "related" and a == src["id"]]
@@ -523,9 +529,8 @@ class Segment(TmuxFlow):
         )
 
     def wait_next_second(self, ident):
-        # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo,
-        # and their ts is to the second
-        # (linear.stamp), so a claim within its second is no attempt
+        # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo, and their
+        # ts is to the second (linear.stamp), so a claim within its second is no attempt
         time.sleep(
             max(
                 0,
@@ -563,8 +568,8 @@ class Segment(TmuxFlow):
         return text
 
     def section(self, prompt, heading):
-        # up to the next `## ` line, a fenced one too: no text a test publishes or reports
-        # may hold one
+        # up to the next `## ` line, a fenced one too: no text a test publishes or reports may hold
+        # one
         if m := re.search(rf"^## {re.escape(heading)}\n\n(.*?)(?=^## |\Z)", prompt, re.M | re.S):
             return m[1]
         self.fail(f"no `## {heading}` section in the prompt:\n{prompt}")

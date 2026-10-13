@@ -1,7 +1,8 @@
 """hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux
 runs here): start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option,
-pane, mark, the events file, the show and its placement, the grid's tile, the CLI, the pane
-wrapper (EXEC) and the file standing alone."""
+pane, mark, the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper
+(EXEC) and the file standing alone.
+"""
 
 import ast
 import contextlib
@@ -64,13 +65,15 @@ SESSIONS = [
 LIVE = ["tmux", "list-panes", "-a", "-F", "#{pane_id}"]
 HOSTS = ["tmux", "list-panes", "-a", "-F", "#{pane_dead} #{pane_tty} #{pane_id}"]
 SOCK = "/tmp/s p"
-# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before the printed `tmux attach`
+# $TUI_ATTACH_PREFIX unset, blank and set, with the prefix each puts before the printed `tmux
+# attach`
 PREFIXES = (
     ({}, ""),
     ({"TUI_ATTACH_PREFIX": " \t"}, ""),
     ({"TUI_ATTACH_PREFIX": " docker exec -it box "}, "docker exec -it box "),
 )
-# tmux 3.7c #{window_layout}: 3 panes after select-layout main-vertical; 5 tiled, then pane 1 split -h
+# tmux 3.7c #{window_layout}: 3 panes after select-layout main-vertical; 5 tiled, then pane 1 split
+# -h
 MAIN_VERTICAL = "7f31,160x48,0,0{80x48,0,0,0,79x48,81,0[79x24,81,0,1,79x23,81,25,2]}"
 TILED_SPLIT = (
     "9a18,160x48,0,0[160x15,0,0{79x15,0,0,0,40x15,80,0,1,39x15,121,0,5},"
@@ -138,8 +141,9 @@ def grid_read(pane):
 def grid_set(window, manager, n=3, hooks=True, retile="all"):
     """The one tmux call setting a grid window's options, unsetting @grid-busy, then per grid hook
     in order: with hooks, setting each of retile's MODE_HOOKS (each starts a no-wait tile unless
-    @grid-busy is the window, under open-close only when the pane set changed); unsetting each
-    other one."""
+    @grid-busy is the window, under open-close only when the pane set changed); unsetting each other
+    one.
+    """
     flags = "--no-wait --if-panes-changed" if retile == "open-close" else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{@grid-busy}},{window}}}' '' "
@@ -195,7 +199,8 @@ def environ(**values):
 
 def clock(test, on_sleep=lambda n: None):
     """time.monotonic and time.sleep patched for test, the clock at 1000 s: a sleep advances it,
-    then calls on_sleep(sleeps so far). Returns the slept seconds."""
+    then calls on_sleep(sleeps so far). Returns the slept seconds.
+    """
     now, slept = [1000.0], []
 
     def sleep(seconds):
@@ -210,7 +215,8 @@ def clock(test, on_sleep=lambda n: None):
 
 def hold(test, path):
     """Another holder of the flock on path till test ends (path created when missing). Returns its
-    release."""
+    release.
+    """
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     test.addCleanup(os.close, fd)
     fcntl.flock(fd, fcntl.LOCK_EX)
@@ -219,8 +225,7 @@ def hold(test, path):
 
 @contextmanager
 def deadline(seconds=5):
-    """Fails a block still running after seconds (a blocked open is interrupted) instead of
-    hanging."""
+    """Fails a block still running after seconds (a blocked open is interrupted) instead of hanging."""
 
     def expire(*_):
         raise AssertionError(
@@ -287,13 +292,14 @@ def panes(*rows):
 
 
 class Tmux:
-    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after
-    any -u) or another program to its (rc, stdout, stderr), an exception to raise, or a function
-    of the argv giving either. `pane` is what display-message prints (None: no server). On
-    new-session it reads the handover file named in its argv (after EXEC); unless `hand_over` is
-    False it plays the wrapper on the errpipe named next: opens it, unlinks the handover, then
-    per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or
-    keeps it open ("hang", fd `writer`)."""
+    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after any
+    -u) or another program to its (rc, stdout, stderr), an exception to raise, or a function of the
+    argv giving either. `pane` is what display-message prints (None: no server). On new-session it
+    reads the handover file named in its argv (after EXEC); unless `hand_over` is False it plays the
+    wrapper on the errpipe named next: opens it, unlinks the handover, then per `wrapper` closes it
+    ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang", fd
+    `writer`).
+    """
 
     def __init__(self, pane=None, fail=(), hand_over=True, results=None, wrapper="exec"):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
@@ -421,7 +427,8 @@ class Start(Case):
                 self.assertEqual(self.stderr.getvalue(), "")
 
     def test_handover_file(self):
-        # the env as given but its terminal keys; PWD the cwd, given another (as here) or none (test_events_and_...)
+        # the env as given but its terminal keys; PWD the cwd, given another (as here) or none
+        # (test_events_and_...)
         env = {
             "PATH": self.bin,
             "HOME": "/h",
@@ -483,7 +490,8 @@ class Start(Case):
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
 
     def test_refused_before_tmux(self):
-        # the command resolved with the env's PATH (no sh there); an events file that is no regular file
+        # the command resolved with the env's PATH (no sh there); an events file that is no regular
+        # file
         link = os.path.join(self.root, "link")
         os.symlink(self.tool, link)
         for kw, error in (
@@ -1064,7 +1072,8 @@ MARK_KW = {**TMUX_KW, "timeout": 5}
 
 class Mark(Case):
     """The event protocol a hook writes: the pane's @state, and done or blocked lines in the events
-    file."""
+    file.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2134,7 +2143,8 @@ class Pane(Case):
         )
 
     def test_control_mode_client_gets_a_tmux_split_of_own_pane(self):
-        # iTerm2's tmux -CC: the control-mode client's tty is the hidden gateway tab's; iTerm2 draws the tmux split
+        # iTerm2's tmux -CC: the control-mode client's tty is the hidden gateway tab's; iTerm2 draws
+        # the tmux split
         clients = self.clients((300, "/dev/ttys009", "%1", "1"), (100, "/dev/ttys001", "%2"))
         for split, flag in ((None, "-h"), ("right", "-h"), ("below", "-v")):
             with self.subTest(split=split):
@@ -2351,8 +2361,9 @@ def seq(*results):
 class Stack(Case):
     """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal
     client (tty /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the
-    `live` pane ids (`hosts`, panes() rows, for the tty format); pgrep finds no iTerm2 unless
-    told; a tmux split prints %99."""
+    `live` pane ids (`hosts`, panes() rows, for the tty format); pgrep finds no iTerm2 unless told;
+    a tmux split prints %99.
+    """
 
     NONE = (0, "no iTerm2 pane shows the anchor\n")
 
@@ -2420,7 +2431,8 @@ class Stack(Case):
         )
 
     def test_below_the_newest_live_pane_else_right(self):
-        # the second below the first; the newest closed: below the previous live one; none live: right
+        # the second below the first; the newest closed: below the previous live one; none live:
+        # right
         three = [self.row(9, "a", "%9"), self.row(11, "c", "%11"), self.row(10, "b", "%10")]
         right = [clients_of("cmd"), HOSTS, PGREP, split_window("-h", "%3")]
         for rows, live, then in (
@@ -2471,7 +2483,8 @@ class Stack(Case):
                 *record("W", "NEW"),
             ],
         )
-        # W shown by a nested client in the commander's pane %8: that pane splits, never one in W's window
+        # W shown by a nested client in the commander's pane %8: that pane splits, never one in W's
+        # window
         fake = self.fake(
             stack, live, own="W", hosts=[("0", "/dev/ttys001", "%7"), ("0", "/dev/ttys004", "%8")]
         )
@@ -2723,9 +2736,10 @@ class Stack(Case):
 
 class Container(Case):
     """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0),
-    shown by a client on /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode;
-    else a plain docker exec -it tmux attach); no iTerm2 and no iTerm2 variables. pgrep finds
-    nothing: procps, busybox's usage error, or none installed."""
+    shown by a client on /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode; else a
+    plain docker exec -it tmux attach); no iTerm2 and no iTerm2 variables. pgrep finds nothing:
+    procps, busybox's usage error, or none installed.
+    """
 
     SOCK = "/tmp/tmux-0/default"
     ENV = {"TMUX": f"{SOCK},42,0", "TMUX_PANE": "%0", "PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -2815,9 +2829,10 @@ class Container(Case):
 
 class GridOpen(Case):
     """Grid mode. The caller is in root session mgr (no @opener), pane %3, shown by a terminal
-    client (tty /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes
-    rows (window, @grid-manager, pane, width, height), a pane not in it is gone; list-panes -a
-    prints nothing; iTerm2 runs; a split prints %20; tile records its call in the fake's calls."""
+    client (tty /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes rows
+    (window, @grid-manager, pane, width, height), a pane not in it is gone; list-panes -a prints
+    nothing; iTerm2 runs; a split prints %20; tile records its call in the fake's calls.
+    """
 
     MGR = ("$1", "mgr", "", "")
     NEW = [("@1", "", "%3", "160", "48")]  # mgr's window, no grid yet
@@ -2871,12 +2886,14 @@ class GridOpen(Case):
 
     def split(self, flag, pane, window="@1"):
         """A grid split: the window's hooks muted first, so a previous mode's hook starts no tile;
-        grid_set unmutes."""
+        grid_set unmutes.
+        """
         return [mute(window), split_window(flag, pane)]
 
     def opened(self, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
         """What follows a grid split: the records, the grid's options and hooks, then tile (none
-        under off)."""
+        under off).
+        """
         return [
             *record(opener, "%20"),
             grid_set(window, manager, n, hooks, retile),
@@ -3168,7 +3185,8 @@ class GridOpen(Case):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
 
     def test_retile_modes_with_a_hook_path_tmux_would_misread(self):
-        # all and open-close: the notice, no hook set, the others unset; off: no hook to set, no notice
+        # all and open-close: the notice, no hook set, the others unset; off: no hook to set, no
+        # notice
         notice = "tui: show: grid: hooks: /a b/python3: tmux would misread it\n"
         with unittest.mock.patch.object(sys, "executable", "/a b/python3"):
             for retile, printed in (("all", notice), ("open-close", notice), ("off", "")):
@@ -3362,8 +3380,9 @@ class GridLayout(Case):
         self.assertEqual(at - 1, cell.x + cell.w if across else cell.y + cell.h)
 
     def check(self, root, n, per_column, width=160, height=48):
-        """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights,
-        each +-1."""
+        """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights, each
+        +-1.
+        """
         self.tiles(root)
         self.assertEqual(
             (root.kind, root.w, root.h, root.x, root.y), (tmux_host.LEFT_RIGHT, width, height, 0, 0)
@@ -3612,7 +3631,8 @@ class GridTree(Case):
         )
 
     def test_an_orphan_group_main_does_not_reach_goes_main_whole(self):
-        # a (%1) and lead (%2) open each other; the orphans of gone c1 (%3, %4) sit right of a, or of x (%5, a's)
+        # a (%1) and lead (%2) open each other; the orphans of gone c1 (%3, %4) sit right of a, or
+        # of x (%5, a's)
         cycle = [
             (2, "a", "lead", "%1"),
             (3, "lead", "a", "%2"),
@@ -3681,7 +3701,8 @@ class GridTree(Case):
                 ["%0", "%1", "%3", "%4", "%5"],
                 [slot("%1", orphans, slot("%3"))],
             ),
-            # w2 killed as in the main cell case, manual pane %9 beside its orphans: they skip %9's cell
+            # w2 killed as in the main cell case, manual pane %9 beside its orphans: they skip %9's
+            # cell
             (
                 "skipping a manual pane's cell",
                 "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
@@ -3700,7 +3721,8 @@ class GridTree(Case):
                 self.assertEqual(self.tree(rows, panes, layout), want)
 
     def test_orphans_beside_a_one_pane_first_column_stay_main(self):
-        # P (%2; c1 %3, c2 %4) killed. N=1: main [a, P, b]; N=2: main [a, x, P, b], x and P killed together
+        # P (%2; c1 %3, c2 %4) killed. N=1: main [a, P, b]; N=2: main [a, x, P, b], x and P killed
+        # together
         rows = [
             (2, "a", "mgr", "%1"),
             (4, "c1", "P", "%3"),
@@ -3720,7 +3742,8 @@ class GridTree(Case):
                 )
 
     def test_two_orphan_groups_beside_a_one_pane_first_column_stay_main(self):
-        # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved first
+        # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved
+        # first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
         layout = tmux_host._render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
@@ -3829,9 +3852,10 @@ class LayoutString(Case):
 
 
 class Tile(Case):
-    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The
-    server's socket is in a temp dir, @3's lock file beside it; the clock (clock()) at 1000 s,
-    i.e. 1000000 ms."""
+    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The server's
+    socket is in a temp dir, @3's lock file beside it; the clock (clock()) at 1000 s, i.e. 1000000
+    ms.
+    """
 
     SOCKET = ["tmux", "display-message", "-p", "-t", "@3", "#{socket_path}"]
     READ = [
@@ -3942,9 +3966,10 @@ class Tile(Case):
         recorded=None,
         **results,
     ):
-        """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the
-        result of another display-message; rows: (session id, name, @opener, @pane) besides
-        mgr's; recorded: @grid-panes (None: panes' pane set, kept as self.set)."""
+        """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the result
+        of another display-message; rows: (session id, name, @opener, @pane) besides mgr's;
+        recorded: @grid-panes (None: panes' pane set, kept as self.set).
+        """
         rows = [("$1", "mgr", "", ""), *rows]
         self.set = " ".join(sorted(panes, key=lambda p: int(p[1:])))
         recorded = self.set if recorded is None else recorded
@@ -3976,7 +4001,8 @@ class Tile(Case):
     def applied(self, send, times="1000000"):
         """The two tmux calls of a re-tile sending `send` (a tmux call of swap-panes, then
         select-layout): @grid-tiles set to times, @grid-panes to the last fake's pane set and
-        @grid-busy to @3 before it in one command, then @grid-busy unset."""
+        @grid-busy to @3 before it in one command, then @grid-busy unset.
+        """
         return [
             [
                 "tmux",
@@ -4007,7 +4033,8 @@ class Tile(Case):
         ]
 
     def test_swaps_and_select_layout_sent_muted_then_unmuted(self):
-        # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second column
+        # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second
+        # column
         layout = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
         fake = self.tile(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3)
         self.assertEqual(
@@ -4220,7 +4247,8 @@ class Tile(Case):
         tile.assert_not_called()
 
     def test_a_window_split_top_bottom_before_the_grid(self):
-        # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager gets half
+        # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager
+        # gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
         fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
         want = tmux_host._render_layout(grid([slot("%2"), slot("%1")]))
@@ -4250,7 +4278,8 @@ class Tile(Case):
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
-        # the target's cells in another tree: a pass over the target would move them, but none follows a no-op
+        # the target's cells in another tree: a pass over the target would move them, but none
+        # follows a no-op
         layout = dump(
             "200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}"
         )
@@ -4285,7 +4314,8 @@ class Tile(Case):
             self.tile(layout, panes, recorded="", fail=("set-option",))
 
     def test_if_panes_changed_skips_while_the_pane_set_is_the_recorded_one(self):
-        # a drag or resize keeps the pane set: no pass, nothing sent; without the flag the drag snaps back
+        # a drag or resize keeps the pane set: no pass, nothing sent; without the flag the drag
+        # snaps back
         fake = self.tile(*self.WIDE, if_panes_changed=True)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
         fake = self.tile(*self.WIDE)
@@ -4293,7 +4323,8 @@ class Tile(Case):
             fake.calls,
             [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
         )
-        # another set (a pane opened or closed), or one unset or junk: the pass runs and records the new set
+        # another set (a pane opened or closed), or one unset or junk: the pass runs and records the
+        # new set
         for recorded in ("", "%0 %1", "%0 %1 %2 %3", "%0 %2 %1", "%0 %1 %2;", "%0 %1 %2\x00", "x"):
             with self.subTest(recorded=recorded):
                 fake = self.tile(*self.WIDE, if_panes_changed=True, recorded=recorded)
@@ -4332,7 +4363,8 @@ class Tile(Case):
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
 
     def test_a_state_needing_several_passes_gets_its_fixed_point_at_once(self):
-        # 200x50, orphans of gone openers in an old layout: 2 and 3 passes each, a pass over the result sends nothing
+        # 200x50, orphans of gone openers in an old layout: 2 and 3 passes each, a pass over the
+        # result sends nothing
         for n, layout, panes, rows, swap, want in (
             (
                 "1",
@@ -4400,7 +4432,8 @@ class Tile(Case):
                 self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
-        # FR-12: w2's command exited (its session and dead pane stay), its host pane %2 attaches on; w1 (%1) closed
+        # FR-12: w2's command exited (its session and dead pane stay), its host pane %2 attaches on;
+        # w1 (%1) closed
         layout = dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x32,80,0,2,80x15,80,33,3]}")
         fake = self.tile(layout, ["%0", "%2", "%3"], self.W3[1:])
         self.assertEqual(
@@ -4546,7 +4579,8 @@ class Tile(Case):
         )
 
     def test_session_fields_read_back_only_after_a_fullmatch(self):
-        # a row with a bad id or name is skipped (its pane a manual pane); an @opener that is no opener is unset
+        # a row with a bad id or name is skipped (its pane a manual pane); an @opener that is no
+        # opener is unset
         rows = [
             ("$2", "w1", "mgr", "%1"),
             ("2", "w2", "mgr", "%2"),
@@ -4599,7 +4633,8 @@ class Tile(Case):
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
-        # a failed re-tile: @grid-busy unset all the same, its failure not masking the re-tile's; the lock freed
+        # a failed re-tile: @grid-busy unset all the same, its failure not masking the re-tile's;
+        # the lock freed
         fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
         fake = self.fake(*self.WIDE, **fail)
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
@@ -4873,8 +4908,9 @@ class Exec(Case):
         self.addCleanup(os.close, self.reader)
 
     def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
-        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe;
-        `prelude` runs before it."""
+        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude`
+        runs before it.
+        """
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
         return subprocess.run(
@@ -4891,7 +4927,8 @@ class Exec(Case):
 
     def piped(self):
         """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds
-        it open."""
+        it open.
+        """
         out = b""
         while chunk := os.read(self.reader, 64):
             out += chunk

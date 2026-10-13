@@ -1,6 +1,7 @@
-"""An agent run's outcome: read parses an outcome block, reads its deliverable_file in and
-validates it against SCHEMA and what SCHEMA can't say. Its text stays untrusted: a path is shown
-as a repr, at most 200 characters."""
+"""An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates
+it against SCHEMA and what SCHEMA can't say. Its text stays untrusted: a path is shown as a repr, at
+most 200 characters.
+"""
 
 import functools
 import json

@@ -145,9 +145,7 @@ class PruneTest2(PruneTestBase):
         self.assertEqual(code, 3)
         self.assertEqual(out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree")
         self.assertTrue(
-            out.splitlines()[1].startswith(
-                "prune-error TASK-49 error=GitError: git --git-dir="
-            ),
+            out.splitlines()[1].startswith("prune-error TASK-49 error=GitError: git --git-dir="),
             out,
         )
         self.assertTrue(out.splitlines()[1].endswith("worktree prune: fatal: boom"), out)

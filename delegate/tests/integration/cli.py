@@ -1,6 +1,7 @@
 """delegate/cli.py as a subprocess: Integration over
 session/tests/integration/adapters/claude/fake_claude.py, CodexIntegration over
-session/tests/integration/adapters/codex/fake_codex.py, their outcomes."""
+session/tests/integration/adapters/codex/fake_codex.py, their outcomes.
+"""
 
 import json
 import os
@@ -57,7 +58,8 @@ class Runs(Case):
 
 class Integration(Runs):
     """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid
-    SID."""
+    SID.
+    """
 
     ROLE = "dummy-tester"
 
@@ -128,7 +130,8 @@ class Integration(Runs):
             ]
 
     def popen(self, *extra) -> subprocess.Popen:
-        # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of its own.
+        # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of
+        # its own.
         proc = subprocess.Popen(
             self.argv(*extra),
             cwd=self.proj,

@@ -1,5 +1,6 @@
-"""Real-team prompt helpers the prompt and real-team tests share: RUN's prompt of a role
-(composed), its sections and reference sources."""
+"""Real-team prompt helpers the prompt and real-team tests share: RUN's prompt of a role (composed),
+its sections and reference sources.
+"""
 
 import os
 import re
@@ -18,7 +19,8 @@ RUN = RunParams(
 
 def parameters(prompt):
     """{name: value} of the prompt's # Parameters lines after RULE, in order; a line of another
-    shape fails."""
+    shape fails.
+    """
     section_ = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
     lines = section_.split("\n\n", 1)[1].splitlines()
     return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
@@ -26,7 +28,8 @@ def parameters(prompt):
 
 def own_text(prompt):
     """`prompt` up to and including its # Input heading line: the input text, always last, is
-    dropped."""
+    dropped.
+    """
     return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
 
 
@@ -37,7 +40,8 @@ def heading_anchors(prompt):
 
 def composed(role, task=None, overlays=(), **changes):
     """The real core's prompt for `role` (and `task`) with RUN, its run changed by `changes`, and
-    that run."""
+    that run.
+    """
     run = replace(resolve(role, task, overlays=overlays), **changes)
     return render(run, RUN), run
 
@@ -53,8 +57,9 @@ def method(name):
 
 
 def role_sources(role, task=None):
-    """What `reference_errors` takes for `role` (and `task`): the real prompt's own text, the
-    role's task files and the method files these name."""
+    """What `reference_errors` takes for `role` (and `task`): the real prompt's own text, the role's
+    task files and the method files these name.
+    """
     own = own_text(composed(role, task)[0])
     tasks = {t: task_text(t) for t in index(role)}
     named = sorted(set(METHOD.findall(own + "".join(tasks.values()))))

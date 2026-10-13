@@ -1,4 +1,6 @@
-""".github/integration_jobs.py over temp test trees and crafted ids, then over the real repo (import only)."""
+""".github/integration_jobs.py over temp test trees and crafted ids, then over the real repo (import
+only).
+"""
 
 import contextlib
 import importlib.util

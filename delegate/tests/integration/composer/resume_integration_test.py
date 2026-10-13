@@ -1,5 +1,6 @@
 """The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a
-run whose role picks its task, a draft left at the deliverable's path."""
+run whose role picks its task, a draft left at the deliverable's path.
+"""
 
 import os
 import re
