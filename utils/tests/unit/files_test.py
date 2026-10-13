@@ -126,6 +126,41 @@ class ReadRegular(Base):
 
 
 class AppendLine(Base):
+    def test_default_append_creates_no_sidecar_lock(self):
+        files.append_line(self.path, "one\n")
+        self.assertFalse(Path(self.path + ".lock").exists())
+        self.assertEqual(self.content(), b"one\n")
+
+    def test_locked_append_opens_current_path_after_stable_lock_is_released(self):
+        files.append_line(self.path, "old\n")
+        waiting = threading.Event()
+        finished = threading.Event()
+        real_open = os.open
+
+        def opened(path, *args, **kwargs):
+            fd = real_open(path, *args, **kwargs)
+            if (
+                str(path) == self.path + ".lock"
+                and threading.current_thread() is not threading.main_thread()
+            ):
+                waiting.set()
+            return fd
+
+        def append():
+            files.append_line(self.path, "appended\n", own=True, locked=True)
+            finished.set()
+
+        with files.file_lock(self.path, own=True), mock.patch("os.open", side_effect=opened):
+            thread = threading.Thread(target=append)
+            thread.start()
+            self.assertTrue(waiting.wait(5))
+            self.assertFalse(finished.wait(0.05))
+            files.save(self.path, "replacement\n", own=True)
+            self.assertEqual(self.content(), b"replacement\n")
+        thread.join(5)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(self.content(), b"replacement\nappended\n")
+
     def test_appends_after_what_is_there_and_an_empty_text_creates_the_file_owner_only(self):
         files.append_line(self.path, "")
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
@@ -199,6 +234,48 @@ class AppendLine(Base):
         self.assertEqual((stat.S_IMODE(os.stat(self.path).st_mode), self.content()), (0o600, b""))
 
 
+class FileLock(Base):
+    def test_lock_is_private_regular_and_non_inheritable(self):
+        descriptors = []
+        real_open = os.open
+
+        def opened(path, *args, **kwargs):
+            fd = real_open(path, *args, **kwargs)
+            if str(path) == self.path + ".lock":
+                descriptors.append(fd)
+            return fd
+
+        with mock.patch("os.open", side_effect=opened), files.file_lock(self.path, own=True):
+            self.assertEqual(len(descriptors), 1)
+            self.assertFalse(os.get_inheritable(descriptors[0]))
+            self.assertEqual(stat.S_IMODE(os.stat(self.path + ".lock").st_mode), 0o600)
+        with self.assertRaises(OSError):
+            os.fstat(descriptors[0])
+        self.assertFalse(Path(self.path).exists())
+
+    def test_symlink_fifo_and_foreign_lock_are_refused(self):
+        lock = self.path + ".lock"
+        outside = Path(self.dir, "outside")
+        outside.write_text("keep")
+        Path(lock).symlink_to(outside)
+        with self.assertRaises(OSError), files.file_lock(self.path, own=True):
+            self.fail("followed lock symlink")
+        self.assertEqual(outside.read_text(), "keep")
+        Path(lock).unlink()
+        os.mkfifo(lock)
+        with self.assertRaises(OSError), files.file_lock(self.path, own=True):
+            self.fail("accepted FIFO lock")
+        Path(lock).unlink()
+        Path(lock).touch()
+        with (
+            mock.patch("os.getuid", return_value=os.getuid() + 1),
+            self.assertRaises(OSError) as error,
+            files.file_lock(self.path, own=True),
+        ):
+            self.fail("accepted foreign lock")
+        self.assertEqual(error.exception.errno, errno.EPERM)
+
+
 class Save(Base):
     def setUp(self):
         super().setUp()
@@ -210,6 +287,10 @@ class Save(Base):
         with open(self.path) as f:
             self.assertEqual(f.read(), "two\n")
         self.assertEqual(os.listdir(os.path.dirname(self.path)), ["f.txt"])
+
+    def test_binary_data_is_preserved_during_atomic_durable_save(self):
+        files.save(self.path, b"raw\xff\x00\n", own=True, durable=True)
+        self.assertEqual(Path(self.path).read_bytes(), b"raw\xff\x00\n")
 
     def test_a_planted_symlink_is_replaced_not_followed(self):
         outside = os.path.join(self.dir, "outside")

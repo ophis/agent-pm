@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from agent_pm.manager.engine.events import Events
 from agent_pm.manager.engine.types import Entry, Held, Lease, RosterError, Spec, Stale, State
-from agent_pm.utils import Record, printable, read_regular, save
+from agent_pm.utils import Record, file_lock, printable, read_regular, save
 
 VERSION = 2
 NOTE_MAX = 500
@@ -144,20 +144,29 @@ class Roster:
                             raise RosterError(f"{lock}: busy") from None
                         time.sleep(POLL)
                 data = self._read()
-                before = json.dumps(data, sort_keys=True)
-                yield data
-                maintain = self._maintenance_allowed(data)
-                if maintain:
-                    self._settle_receipts(data)
-                if json.dumps(data, sort_keys=True) != before:
-                    save(
-                        self.path,
-                        json.dumps(data, indent=2, sort_keys=True) + "\n",
-                        own=True,
-                        durable=True,
-                    )
-                if maintain:
-                    self._cleanup_receipts(data)
+                with file_lock(self._events.path, own=True):
+                    self._events.recover(data["gen"])
+                    before = json.dumps(data, sort_keys=True)
+                    try:
+                        yield data
+                        maintain = self._maintenance_allowed(data)
+                        if maintain:
+                            self._settle_receipts(data)
+                        if json.dumps(data, sort_keys=True) != before:
+                            save(
+                                self.path,
+                                json.dumps(data, indent=2, sort_keys=True) + "\n",
+                                own=True,
+                                durable=True,
+                            )
+                    except BaseException:
+                        if os.path.lexists(self._events.journal):
+                            self._events.recover(self._read()["gen"])
+                        raise
+                    else:
+                        self._events.finish(data["gen"])
+                        if maintain:
+                            self._cleanup_receipts(data)
             finally:
                 os.close(fd)
         except OSError as error:
@@ -650,7 +659,7 @@ class Roster:
     def rotate_events(self) -> bool:
         with self._locked() as data:
             self._lease(data)
-            if not self._events.rotate(data["cursor"]):
+            if not self._events.rotate(data["cursor"], data["gen"]):
                 return False
             data["cursor"], data["gen"] = 0, data["gen"] + 1
             return True

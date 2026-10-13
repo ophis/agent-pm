@@ -484,7 +484,8 @@ class RosterTest(Case):
             self.roster.note("x", "new")
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertEqual(
-            sorted(os.listdir(self.directory)), ["holder.lock", "roster.json", "roster.lock"]
+            sorted(os.listdir(self.directory)),
+            ["events.lock", "holder.lock", "roster.json", "roster.lock"],
         )
 
     def test_directory_symlink_and_public_directory_are_refused(self):
@@ -642,6 +643,7 @@ class RosterTest(Case):
         outside = Path(self.home, "outside")
         outside.write_bytes(b"keep")
         original = os.fstat
+        original_stat = os.stat
         for target in (path, Path(str(path) + ".1")):
             for kind in ("symlink", "fifo", "foreign"):
                 with self.subTest(target=target.name, kind=kind):
@@ -666,8 +668,20 @@ class RosterTest(Case):
                             return os.stat_result(values)
                         return opened
 
+                    def foreign_stat(file_path, *args, kind=kind, identity=identity, **kwargs):
+                        opened = original_stat(file_path, *args, **kwargs)
+                        if kind == "foreign" and (opened.st_dev, opened.st_ino) == (
+                            identity.st_dev,
+                            identity.st_ino,
+                        ):
+                            values = list(opened)
+                            values[4] += 1
+                            return os.stat_result(values)
+                        return opened
+
                     with (
                         mock.patch.object(os, "fstat", side_effect=foreign),
+                        mock.patch.object(os, "stat", side_effect=foreign_stat),
                         self.assertRaises(RosterError),
                     ):
                         self.roster.rotate_events()
@@ -766,21 +780,59 @@ class RosterTest(Case):
         self.assertTrue(self.roster.rotate_events())
         self.assertEqual(Path(path).read_bytes(), b"invalid\xff partial\n")
 
-    def test_failed_rotation_refill_keeps_archive_and_updates_generation(self):
+    def test_failed_rotation_refill_keeps_archive_and_rolls_back_generation(self):
         path = self.roster.events
         data = b"h" * (1 << 20) + b"\nunread\n"
         append_line(path, data)
         self.roster.advance(1, 0)
-        warning = io.StringIO()
+        ledger = Path(self.roster.path).read_bytes()
+        original = os.replace
+
+        def failed(source, destination):
+            if os.fspath(destination) == path + ".next":
+                raise OSError("disk full")
+            return original(source, destination)
+
         with (
-            mock.patch.object(os, "write", side_effect=OSError("disk full")),
-            mock.patch("sys.stderr", warning),
+            mock.patch.object(os, "replace", side_effect=failed),
+            self.assertRaises(RosterError) as failure,
         ):
-            self.assertTrue(self.roster.rotate_events())
+            self.roster.rotate_events()
         self.assertEqual(Path(path + ".1").read_bytes(), data)
-        self.assertEqual(self.roster.backlog(), (0, 1, []))
-        self.assertIn(path + ".1", warning.getvalue())
-        self.assertIn("after 1", warning.getvalue())
+        self.assertEqual(Path(path).read_bytes(), data)
+        self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
+        self.assertEqual(self.roster.backlog(), (1, 0, ["unread"]))
+        self.assertIn(path + ".1", str(failure.exception))
+        self.assertIn("after 1", str(failure.exception))
+
+    def test_ledger_publish_failure_after_rotation_restores_event_bytes_and_numbering(self):
+        path = self.roster.events
+        data = b"h" * (1 << 20) + b"\nunread\n"
+        append_line(path, data)
+        self.roster.advance(1, 0)
+        ledger = Path(self.roster.path).read_bytes()
+        original = os.replace
+        failed_once = False
+
+        def failed(source, destination):
+            nonlocal failed_once
+            if os.fspath(destination) == self.roster.path and not failed_once:
+                self.assertEqual(Path(path).read_bytes(), b"unread\n")
+                failed_once = True
+                raise OSError("ledger publish failed")
+            return original(source, destination)
+
+        with (
+            mock.patch.object(os, "replace", side_effect=failed),
+            self.assertRaisesRegex(RosterError, "ledger publish failed"),
+        ):
+            self.roster.rotate_events()
+        self.assertTrue(failed_once)
+        self.assertEqual(Path(path).read_bytes(), data)
+        self.assertEqual(Path(path + ".1").read_bytes(), data)
+        self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
+        self.assertEqual((self.content()["cursor"], self.content()["gen"]), (1, 0))
+        self.assertEqual(self.roster.backlog(), (1, 0, ["unread"]))
 
     def test_next_event_requires_attach_when_rotation_due(self):
         path = self.roster.events

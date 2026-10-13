@@ -7,9 +7,11 @@ from agent_pm.utils.files import (
     ConfinedFileError,
     ConfinedReason,
     append_line,
+    file_lock,
     read_confined,
     read_regular,
     save,
+    sync_directory,
 )
 from agent_pm.utils.git import (
     GUARD,
@@ -67,6 +69,7 @@ __all__ = [
     "common_dir",
     "err_text",
     "fenced",
+    "file_lock",
     "run_git",
     "import_roots",
     "load_config",
@@ -82,6 +85,7 @@ __all__ = [
     "redact",
     "resolve",
     "save",
+    "sync_directory",
     "sh",
     "sid_error",
     "temp_dirs",

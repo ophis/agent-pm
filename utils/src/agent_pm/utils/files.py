@@ -1,9 +1,11 @@
+import contextlib
 import errno
 import fcntl
 import os
 import stat
 import sys
 import tempfile
+from collections.abc import Iterator
 from enum import Enum
 from pathlib import Path
 
@@ -40,39 +42,68 @@ def read_regular(
         os.close(fd)
 
 
-def append_line(
-    path: str | Path, text: str | bytes, *, durable: bool = False, own: bool = False
-) -> None:
-    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it
-    and its directory; `own` also refuses one another user owns (EPERM).
+@contextlib.contextmanager
+def file_lock(path: str | Path, *, own: bool = False) -> Iterator[None]:
+    """Exclusive stable <path>.lock, non-inheritable. Event writers acquire it before opening
+    the event file and hold it through descriptor close, without acquiring a roster lock.
+    Rotators hold it through physical changes and durable ledger save; never replace this lock.
     """
-    data = memoryview(text.encode(errors="replace") if isinstance(text, str) else text)
-    fd = os.open(
-        path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
-    )
+    lock = str(path) + ".lock"
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(errno.EINVAL, "not a regular file", str(path))
-        if own and st.st_uid != os.getuid():
-            raise OSError(errno.EPERM, "not owned by you", str(path))
-        while data:
-            data = data[os.write(fd, data) :]
-        if durable:
-            os.fsync(fd)
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OSError(errno.EINVAL, "not a regular lock file", lock)
+        if own and opened.st_uid != os.getuid():
+            raise OSError(errno.EPERM, "lock not owned by you", lock)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
     finally:
         os.close(fd)
-    if durable:
-        parent = os.open(
-            os.path.dirname(os.path.abspath(path)), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+
+
+def sync_directory(path: str | Path) -> None:
+    """Persist directory entries after rename or unlink; filesystem errors propagate."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def append_line(
+    path: str | Path,
+    text: str | bytes,
+    *,
+    durable: bool = False,
+    own: bool = False,
+    locked: bool = False,
+) -> None:
+    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it
+    and its directory; `own` also refuses one another user owns (EPERM); `locked` uses file_lock.
+    """
+    data = memoryview(text.encode(errors="replace") if isinstance(text, str) else text)
+    with file_lock(path, own=own) if locked else contextlib.nullcontext():
+        fd = os.open(
+            path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
         )
         try:
-            os.fsync(parent)
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError(errno.EINVAL, "not a regular file", str(path))
+            if own and st.st_uid != os.getuid():
+                raise OSError(errno.EPERM, "not owned by you", str(path))
+            while data:
+                data = data[os.write(fd, data) :]
+            if durable:
+                os.fsync(fd)
         finally:
-            os.close(parent)
+            os.close(fd)
+        if durable:
+            sync_directory(os.path.dirname(os.path.abspath(path)))
 
 
-def save(path: str | Path, text: str, *, own: bool = False, durable: bool = False) -> None:
+def save(path: str | Path, text: str | bytes, *, own: bool = False, durable: bool = False) -> None:
     """Writes atomically. `own` refuses a nonregular or foreign destination; otherwise replaces
     symlinks without following. `durable` syncs the replacement and its directory.
     """
@@ -88,9 +119,9 @@ def save(path: str | Path, text: str, *, own: bool = False, durable: bool = Fals
                 raise OSError(errno.EINVAL, "not a regular file", str(path))
             if opened.st_uid != os.getuid():
                 raise OSError(errno.EPERM, "not owned by you", str(path))
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=".tmp-", delete=False) as f:
         try:
-            f.write(text)
+            f.write(text.encode() if isinstance(text, str) else text)
             if durable:
                 f.flush()
                 os.fsync(f.fileno())
@@ -100,11 +131,7 @@ def save(path: str | Path, text: str, *, own: bool = False, durable: bool = Fals
             os.unlink(f.name)
             raise
     if durable:
-        parent = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(parent)
-        finally:
-            os.close(parent)
+        sync_directory(path.parent)
 
 
 class ConfinedReason(Enum):
