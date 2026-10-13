@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm.delegate.composer.base import ConfigError
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
@@ -22,7 +22,7 @@ from agent_pm.delegate.composer.run import (
     trusted_dirs,
 )
 from agent_pm.delegate.composer.teams import team
-from agent_pm.utils.paths import IMPORT_ROOT
+from agent_pm.delegate.engine.config import PYTHONPATH
 
 from tests.case import Case
 from tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
@@ -490,7 +490,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.expanduser(agent_pm.config.LOCAL), "w") as f:
+        with open(os.path.expanduser(agent_pm.delegate.engine.config.LOCAL), "w") as f:
             f.write("malformed = [\n")
 
     def test_resolve(self):
@@ -543,7 +543,7 @@ class Access(Fake):
 
     def test_dirs_reads_writes_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
-        env = {"PYTHONPATH": IMPORT_ROOT}
+        env = {"PYTHONPATH": PYTHONPATH}
         out = os.path.join(self.root, "out")
         for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
             (

@@ -1,26 +1,27 @@
 """The repo's rules: each guard takes a root and returns its sorted violations; str constants include docstrings.
-A repo guard walks only TREES under the repo root.
+A repo guard walks only TREES, or LOWER's projects but their tests/.
 
-layer_imports(core)   imports go one way (README.md › Layout), a layer imports no package module outside LAYERS, SESSION
+layer_imports(repo)   imports go one way (README.md › Layout), a layer imports no package module outside LAYERS, SESSION
                       and SHARED, a session layer no delegate module, none imports TOOLS, ORCH or a BARE
                       name, nested, relative or import_module'd
-delegate_session(core) delegate/ imports SESSION only by an __all__ name
+delegate_session(repo) delegate/ imports SESSION only by an __all__ name
 layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
                       but SESSION_COMMAND
-core_standalone(core) no file names LINEAR
-runtime_names(core)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
+standalone(repo)      no file names LINEAR
+runtime_names(repo)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
-session_only(core)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
-adapters_key(core)    no str constant "adapters" outside config.py
+session_only(repo)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
+adapters_key(repo)    no str constant "adapters" outside CONFIG_FILE
 syntax_311(repo)      every .py parses as Python 3.11
-pure_utils(core)      each PURE unit imports only stdlib and its PURE entry
+pure_utils(repo)      each PURE unit imports only stdlib and its PURE entry
+manager_imports(repo) nothing else imports MANAGER; it imports stdlib, MANAGER_ALLOWED, MANAGER_EXCEPTIONS
 private_imports(root) no other module's _name
-modes_import_api(core) MODES never imports SESSION_API
-tmux_calls(core)      "tmux" only in TMUX_HOST
+modes_import_api(repo) MODES never imports SESSION_API
+tmux_calls(repo)      "tmux" only in TMUX_HOST
 status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
-syntax_39(core)       STANDALONE files parse as Python 3.9
+syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
-namespace_package(repo) each ROOTS' src/ holds only its package, no __init__.py, exactly OWN's subpackages
+namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name; any module name
@@ -56,6 +57,7 @@ LAYERS = (
 )
 SESSION = "session"
 OUTSIDE = "outside the layers"
+CONFIG = "delegate.engine.config"
 ALLOWED = {
     ("delegate", "delegate.composer"),
     ("delegate", SESSION),
@@ -66,21 +68,21 @@ ALLOWED = {
     (SESSION_TYPES, "session.adapters"),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
-    ("config", HOSTS),  # the [hosts] parser; PURE narrows it to HOST_TABLES
+    (CONFIG, HOSTS),  # the [hosts] parser; PURE narrows it to HOST_TABLES
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
 }
-SHARED = ("utils", "config", "delegate.event")
+SHARED = ("utils", CONFIG, "delegate.event")
 TOOLS = "delegate.team.tools"
 ORCH = "linear_orchestrator"
 UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
-    "config": ("utils", "config", HOST_TABLES),
+    CONFIG: ("utils", CONFIG, HOST_TABLES),
     "delegate.event": SHARED,
     "delegate.event.outcome": (*SHARED, "delegate.composer"),
-    TOOLS: ("utils", "config"),
+    TOOLS: ("utils", CONFIG),
 }
 BARE = (
     *GROUPS,
@@ -93,7 +95,7 @@ BARE = (
 SESSION_WORDS = (
     "config_file",
     "tomllib",
-    "agent_pm.config",
+    "agent_pm.delegate.engine.config",
     "agent-pm-progress",
     "agent-pm-outcome",
     "team/",
@@ -105,38 +107,49 @@ TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
 )
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
-TMUX_HOST = "src/agent_pm/session/hosts/tmux/tmux_host.py"
-TUI_HOOK = "src/agent_pm/session/modes/tui_hook.py"
-STANDALONE = (TMUX_HOST, TUI_HOOK)
+TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
+TUI_HOOK = "session/src/agent_pm/session/modes/tui_hook.py"
+PY39 = (TMUX_HOST, TUI_HOOK)
 HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
-CORE_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core", "src")
-CORE_PKG = "agent_pm"
-ORCH_PKG = f"{CORE_PKG}.{ORCH}"
-ORCH_SRC = f"src/{CORE_PKG}/{ORCH}/"
-ROOTS = (("core", CORE_PKG), ("linear-orchestrator", CORE_PKG))
-OWN = {
-    "core": ("config.py", "delegate", "manager", "session", "utils"),
-    "linear-orchestrator": (ORCH,),
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PKG = "agent_pm"
+ORCH_PKG = f"{PKG}.{ORCH}"
+ORCH_SRC = f"src/{PKG}/{ORCH}/"
+ORCH_PROJECT = "linear-orchestrator"
+PROJECTS = {
+    "delegate": "delegate",
+    "session": SESSION,
+    "utils": "utils",
+    "manager": "manager",
+    ORCH_PROJECT: ORCH,
 }
-TREES = (*(top for top, _ in ROOTS), "tests")
-CORE_TOP = f"{ROOTS[0][0]}/src/{CORE_PKG}/"
-SESSION_SRC = f"{CORE_TOP}{SESSION}/"
-STATUS_LOG_HOME = f"{CORE_TOP}session/engine/status_log.py"
+LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
+TREES = (*PROJECTS, "tests")
+SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
+CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
+STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
 STATUS_LOG_CLOCK = "%H:%M:%S"
 # until TASK-368
-STATUS_LOG_WRITERS = {f"{CORE_TOP}session/hosts/tmux/tmux_host.py"}
+STATUS_LOG_WRITERS = {TMUX_HOST}
 COMMAND_SRC = (
     SESSION_SRC,
-    f"{CORE_TOP}delegate/",
-    f"{ROOTS[1][0]}/{ORCH_SRC}",
+    f"delegate/src/{PKG}/delegate/",
+    f"{ORCH_PROJECT}/{ORCH_SRC}",
 )
+MANAGER = "manager"
+MANAGER_ALLOWED = {"manager.crew": ("utils", "manager.roster"), "manager.roster": ("utils",)}
+# until TASK-371: Crew then reaches the layers only through commands
+MANAGER_EXCEPTIONS = {
+    "manager.crew": (f"{PKG}.{CONFIG}", f"{PKG}.session.Session", f"{PKG}.session.api"),
+    "manager.roster": (f"{PKG}.{CONFIG}", f"{PKG}.session.api"),
+}
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
 SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
-LINEAR = re.compile(f"{ROOTS[1][0]}|{ORCH}")
-COMPOSER = f"{CORE_PKG}.delegate.composer"
-EXPORTERS = (f"{CORE_PKG}.delegate", COMPOSER)
+LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
+COMPOSER = f"{PKG}.delegate.composer"
+EXPORTERS = (f"{PKG}.delegate", COMPOSER)
 CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
@@ -145,18 +158,18 @@ ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
 LOAD_HELPERS = ("runnable", "run_config", "docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
-COMMAND_FILES = ("core/config.toml", "linear-orchestrator/config.toml")
-COMMAND_DOCS = ("core/skills/", f"{CORE_TOP}delegate/team/")
+COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
+COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
 PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
 PYTHON_OK = re.compile(
-    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{CORE_PKG}\.\w"
+    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{PKG}\.\w"
     r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
 )
 
 
-def layer_imports(core: str) -> list[str]:
+def layer_imports(repo: str) -> list[str]:
     found = set()
-    for rel, names, imports in _modules(core):
+    for rel, names, imports in _modules(repo):
         name = ".".join(names or ())
         layer = _unit(name)
         layer = layer if layer in LAYERS else OUTSIDE
@@ -179,11 +192,11 @@ def layer_imports(core: str) -> list[str]:
     return sorted(found)
 
 
-def delegate_session(core: str) -> list[str]:
+def delegate_session(repo: str) -> list[str]:
     found = set()
-    exported = _all(os.path.join(core, "src", _top(core) or "", SESSION, "__init__.py"))
-    for rel, names, imports in _modules(core):
-        if names and names[0] == "delegate":
+    exported = _all(os.path.join(repo, "session", "src", PKG, SESSION, "__init__.py"))
+    for rel, names, imports in _modules(repo):
+        if names and names[0] == "delegate" and not _within(".".join(names), CONFIG):
             found.update(
                 f"{rel}: imports {m} outside session.__all__"
                 for m, inner in imports
@@ -215,21 +228,24 @@ def layer_commands(repo: str) -> list[str]:
     return sorted(found)
 
 
-def core_standalone(core: str) -> list[str]:
+def standalone(repo: str) -> list[str]:
     found = set()
-    for top, dirs, names in os.walk(core):
-        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-        for name in sorted(names):
-            rel = os.path.relpath(os.path.join(top, name), core).replace(os.sep, "/")
-            with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
-                for number, line in enumerate(f, 1):
-                    found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
+    for project in LOWER:
+        for top, dirs, names in os.walk(os.path.join(repo, project)):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            if top == os.path.join(repo, project):
+                dirs[:] = [d for d in dirs if d != "tests"]
+            for name in sorted(names):
+                rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
+                with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                    for number, line in enumerate(f, 1):
+                        found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
     return sorted(found)
 
 
-def pure_utils(core: str) -> list[str]:
+def pure_utils(repo: str) -> list[str]:
     found = set()
-    for rel, names, imports in _modules(core):
+    for rel, names, imports in _modules(repo):
         package = max((p for p in PURE if _within(".".join(names or ()), p)), key=len, default=None)
         if package:
             found.update(
@@ -241,9 +257,27 @@ def pure_utils(core: str) -> list[str]:
     return sorted(found)
 
 
-def runtime_names(core: str) -> list[str]:
+def manager_imports(repo: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, (".py", ".toml"), skip="src/agent_pm/session/adapters/"):
+    for rel, names, imports in _modules(repo, tuple(PROJECTS)):
+        name = ".".join(names or ())
+        allowed = MANAGER_ALLOWED.get(name, ("utils",))
+        for m, inner in imports:
+            if not _within(name, MANAGER):
+                if _within(inner, MANAGER):
+                    found.add(f"{rel}: imports {m}")
+            elif not (
+                m.split(".")[0] in sys.stdlib_module_names
+                or any(_within(inner, u) for u in allowed)
+                or m in MANAGER_EXCEPTIONS.get(name, ())
+            ):
+                found.add(f"{rel}: {name} imports {m}")
+    return sorted(found)
+
+
+def runtime_names(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
@@ -269,9 +303,9 @@ def old_core(repo: str) -> list[str]:
     return sorted(found)
 
 
-def session_only(core: str) -> list[str]:
+def session_only(repo: str) -> list[str]:
     found = set()
-    for rel, names, imports in _modules(core):
+    for rel, names, imports in _modules(repo):
         name = ".".join(names or ())
         if _within(name, SESSION):
             found.update(
@@ -280,15 +314,15 @@ def session_only(core: str) -> list[str]:
                 if m.split(".")[0] not in sys.stdlib_module_names
                 and not (_within(inner, SESSION) or _within(inner, "utils"))
             )
-    for rel, text in _files(core, ".py"):
-        if rel.startswith(f"src/{_top(core)}/{SESSION}/"):
+    for rel, text in _lower_files(repo, ".py"):
+        if rel.startswith(SESSION_SRC):
             found.update(f"{rel}: names {w}" for w in SESSION_WORDS if w in text)
     return sorted(found)
 
 
-def adapters_key(core: str) -> list[str]:
+def adapters_key(repo: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py", skip="src/agent_pm/config.py"):
+    for rel, text in _lower_files(repo, ".py", skip=CONFIG_FILE):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))
@@ -307,9 +341,9 @@ def syntax_311(repo: str) -> list[str]:
     return sorted(found)
 
 
-def modes_import_api(core: str) -> list[str]:
+def modes_import_api(repo: str) -> list[str]:
     found = set()
-    for rel, names, imports in _modules(core):
+    for rel, names, imports in _modules(repo):
         if names and _within(".".join(names), MODES):
             found.update(
                 f"{rel}: imports {m}"
@@ -319,9 +353,9 @@ def modes_import_api(core: str) -> list[str]:
     return sorted(found)
 
 
-def tmux_calls(core: str) -> list[str]:
+def tmux_calls(repo: str) -> list[str]:
     found = set()
-    for rel, text in _files(core, ".py"):
+    for rel, text in _lower_files(repo, ".py"):
         if rel != TMUX_HOST:
             found.update(
                 f'{rel}:{line}: str constant "tmux"'
@@ -333,7 +367,7 @@ def tmux_calls(core: str) -> list[str]:
 
 def status_log_format(repo: str) -> list[str]:
     found = set()
-    for top, _ in ROOTS:
+    for top in PROJECTS:
         for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
             rel = f"{top}/src/{rel}"
             if rel != STATUS_LOG_HOME and rel not in STATUS_LOG_WRITERS:
@@ -345,10 +379,10 @@ def status_log_format(repo: str) -> list[str]:
     return sorted(found)
 
 
-def syntax_39(core: str) -> list[str]:
+def syntax_39(repo: str) -> list[str]:
     found = []
-    for rel, text in _files(core, ".py"):
-        if rel in STANDALONE:
+    for rel, text in _lower_files(repo, ".py"):
+        if rel in PY39:
             try:
                 ast.parse(text, rel, feature_version=(3, 9))
             except SyntaxError as e:
@@ -409,8 +443,8 @@ def import_hygiene(repo: str) -> list[str]:
 
 def namespace_package(repo: str) -> list[str]:
     found = set()
-    for top, package in ROOTS:
-        for rel, wanted in (("src", {package}), (f"src/{package}", set(OWN[top]))):
+    for top, own in PROJECTS.items():
+        for rel, wanted in (("src", {PKG}), (f"src/{PKG}", {own})):
             path = os.path.join(repo, top, rel)
             have = set(os.listdir(path) if os.path.isdir(path) else ()) - {"__pycache__"}
             found.update(
@@ -504,10 +538,18 @@ def orchestrator_imports(orch: str) -> list[str]:
                 )
                 found.add(f"{rel}:{line}: imports {full}")
         bound = _bindings(tree)
+        parents = {id(c): n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
         for n in ast.walk(tree):
             if isinstance(n, ast.Attribute):
                 base = _dotted(n.value, bound)
-                if base in exported and n.attr not in exported[base]:
+                outer = n
+                while isinstance(p := parents.get(id(outer)), ast.Attribute) and p.value is outer:
+                    outer = p
+                if (
+                    base in exported
+                    and n.attr not in exported[base]
+                    and not _shared(_dotted(outer, bound))
+                ):
                     found.add(f"{rel}:{n.lineno}: uses {base}.{n.attr}")
     return sorted(found)
 
@@ -567,7 +609,7 @@ def _denied(rel, module, name, exported):
     joined = f"{module}.{name}" if name else module
     if top in sys.stdlib_module_names or _within(joined, ORCH_PKG):
         return False
-    packages = (CORE_PKG, *(f"{CORE_PKG}.{g}" for g in GROUPS))
+    packages = (PKG, *(f"{PKG}.{g}" for g in GROUPS))
     target = next(
         (t for t in (joined, module) if t in exported or _shared(t)),
         joined if module in packages else module,
@@ -581,17 +623,19 @@ def _denied(rel, module, name, exported):
         )
     return not (
         _shared(target)
-        or (module, name) == (f"{CORE_PKG}.{SESSION}", "api")
-        or (module, name, rel) == (f"{CORE_PKG}.{SESSION}", "Session", CONFIG_PY)
+        or (module, name) == (f"{PKG}.{SESSION}", "api")
+        or (module, name, rel) == (f"{PKG}.{SESSION}", "Session", CONFIG_PY)
     )
 
 
 def _shared(module):
-    return any(_within(module, f"{CORE_PKG}.{s}") for s in SHARED)
+    return any(_within(module, f"{PKG}.{s}") for s in SHARED)
 
 
 def _exported(package):
-    return _all(os.path.join(CORE_SRC, *package.split("."), "__init__.py"))
+    return _all(
+        os.path.join(REPO, package.split(".")[1], "src", *package.split("."), "__init__.py")
+    )
 
 
 def _all(path):
@@ -654,20 +698,12 @@ def _private(name):
     return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
 
 
-def _top(core):
-    src = os.path.join(core, "src")
-    dirs = sorted(os.listdir(src)) if os.path.isdir(src) else []
-    dirs = [d for d in dirs if d != "__pycache__" and os.path.isdir(os.path.join(src, d))]
-    return dirs[0] if len(dirs) == 1 else None
-
-
-def _modules(core):
-    top = _top(core)
-    for rel, text in _files(core, ".py"):
+def _modules(repo, projects=LOWER):
+    for rel, text in _lower_files(repo, ".py", projects=projects):
         parts = rel[:-3].split("/")
-        names = parts[2:] if top and parts[:2] == ["src", top] else None
-        imports = _imports(ast.parse(text, rel), [top, *names[:-1]] if names else None, top)
-        yield rel, names, [(m, _inner(m, top)) for m in imports]
+        names = parts[3:] if parts[1:3] == ["src", PKG] else None
+        imports = _imports(ast.parse(text, rel), [PKG, *names[:-1]] if names else None, PKG)
+        yield rel, names, [(m, _inner(m, PKG)) for m in imports]
 
 
 def _unit(inner):
@@ -692,6 +728,14 @@ def _files(root, suffixes, skip=None):
             if name.endswith(suffixes) and not (skip and rel.startswith(skip)):
                 with open(os.path.join(top, name), encoding="utf-8") as f:
                     yield rel, f.read()
+
+
+def _lower_files(repo, suffixes, skip=None, projects=LOWER):
+    for project in projects:
+        for rel, text in _files(os.path.join(repo, project), suffixes):
+            rel = f"{project}/{rel}"
+            if not rel.startswith(f"{project}/tests/") and not (skip and rel.startswith(skip)):
+                yield rel, text
 
 
 def _tree_files(repo, suffixes):

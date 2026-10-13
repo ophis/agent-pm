@@ -1,4 +1,4 @@
-"""core/skills/act-as/SKILL.md as Claude Code runs it: its pre-approved rule is step 1's command, which lists the
+"""delegate/skills/act-as/SKILL.md as Claude Code runs it: its pre-approved rule is step 1's command, which lists the
 team with no PYTHON* variable inherited; step 3 runs the same Python, and step 4 puts its PYTHONPATH before each
 command of the prompt that runs an agent_pm module or team tool."""
 
@@ -9,9 +9,9 @@ import subprocess
 
 from agent_pm.delegate import cli, composer
 
-from tests.case import CORE, Case
+from tests.case import REPO, Case
 
-SKILL_DIR = os.path.join(CORE, "skills", "act-as")
+SKILL_DIR = os.path.join(REPO, "delegate", "skills", "act-as")
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
 

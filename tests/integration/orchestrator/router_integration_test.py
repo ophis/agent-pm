@@ -13,7 +13,7 @@ import unittest
 from agent_pm.linear_orchestrator.engine import config
 
 from tests import live_tmux
-from tests.case import ROOT
+from tests.case import PYTHONPATH
 from tests.integration.delegate.cli_integration_test import mark, option
 from tests.integration.orchestrator.flow_fixtures import (
     ACCOUNTS,
@@ -318,7 +318,7 @@ class Gate(Flow):
         res = subprocess.run(
             ["sh", "-c", config.load().roles["researcher"].run.gate],
             cwd=self.root,
-            env={**self.env(), "PYTHONPATH": ROOT},
+            env={**self.env(), "PYTHONPATH": PYTHONPATH},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

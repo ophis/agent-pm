@@ -724,7 +724,7 @@ class TestConfigError(Base):
             ("bogus = 1\n" + CONFIG, "linear-orchestrator/config.toml: unknown keys: bogus"),
             (
                 CONFIG + role_table("bogus"),
-                "linear-orchestrator/config.toml: role 'bogus' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
             ),
         )
         for text, reason in cases:

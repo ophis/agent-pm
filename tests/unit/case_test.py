@@ -8,9 +8,10 @@ import unittest
 from unittest import mock
 
 import agent_pm
+import agent_pm.delegate.engine.config
 from agent_pm.session.adapters import registry
 
-from tests.case import ORCH_ROOT, REPO, ROOT, Case, child_env
+from tests.case import ORCH_ROOT, PYTHONPATH, REPO, ROOTS, SRC, Case, child_env
 
 
 class CaseTest(Case):
@@ -90,11 +91,16 @@ class CaseTest(Case):
         ran = []
         result = self.run_inner(ran.append, set_up=ran.append)
         ((_, failure),) = result.failures
-        self.assertIn(f"{message}: run with PYTHONPATH=core/src:linear-orchestrator/src", failure)
+        self.assertIn(
+            f"{message}: run with PYTHONPATH=delegate/src:session/src:utils/src:manager/src:"
+            "linear-orchestrator/src",
+            failure,
+        )
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
     def test_a_subpackage_from_another_tree_fails_the_test_before_its_set_up(self):
-        for name, root in (("agent_pm.session", ROOT), ("agent_pm.linear_orchestrator", ORCH_ROOT)):
+        for sub, root in SRC.items():
+            name = f"agent_pm.{sub}"
             elsewhere = {name: self.module(name, "/elsewhere/src")}
             with self.subTest(name), mock.patch.dict(sys.modules, elsewhere):
                 self.assert_fails_before_set_up(
@@ -108,6 +114,12 @@ class CaseTest(Case):
             self.assert_fails_before_set_up(
                 "agent_pm.__path__ holds /elsewhere/src/agent_pm, not only this tree's"
             )
+
+    def test_a_missing_import_root_fails_the_test(self):
+        manager = os.path.realpath(os.path.join(SRC["manager"], "agent_pm"))
+        path = [p for p in agent_pm.__path__ if os.path.realpath(p) != manager]
+        with mock.patch.object(agent_pm, "__path__", path):
+            self.assert_fails_before_set_up(f"agent_pm.__path__ lacks {manager}")
 
     def test_the_orchestrator_absent_or_this_trees_passes(self):
         self.assertEqual(ORCH_ROOT, os.path.join(REPO, "linear-orchestrator", "src"))
@@ -123,9 +135,11 @@ class CaseTest(Case):
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)
 
-    def test_agent_pm_spans_only_this_trees_src_dirs(self):
-        own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in (ROOT, ORCH_ROOT)}
-        self.assertLessEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
+    def test_agent_pm_spans_exactly_this_trees_five_src_dirs(self):
+        own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
+        self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
+        self.assertEqual(len(own), 5)
+        self.assertEqual(PYTHONPATH, agent_pm.delegate.engine.config.PYTHONPATH)
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath(self):
@@ -138,12 +152,14 @@ class CaseTest(Case):
         }
         self.assertEqual(
             child_env(base, "/r1", "/r2"),
-            {"HOME": "/h", "PATH": "/b", "PYTHONPATH": os.pathsep.join((ROOT, "/r1", "/r2"))},
+            {"HOME": "/h", "PATH": "/b", "PYTHONPATH": os.pathsep.join((*ROOTS, "/r1", "/r2"))},
         )
         with mock.patch.dict(os.environ, {"PYTHONWARNINGS": "error", "OTHER": "1"}):
             env = child_env()
         self.assertNotIn("PYTHONWARNINGS", env)
-        self.assertEqual((env["PYTHONPATH"], env["OTHER"], env["HOME"]), (ROOT, "1", self.home))
+        self.assertEqual(
+            (env["PYTHONPATH"], env["OTHER"], env["HOME"]), (PYTHONPATH, "1", self.home)
+        )
 
 
 if __name__ == "__main__":

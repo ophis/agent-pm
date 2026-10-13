@@ -13,9 +13,9 @@ import sys
 import threading
 import time
 
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.api import Key, Paste
-from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.record import Display, Record
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -162,7 +162,7 @@ class FakeHost(Host):
         with open(os.path.join(folder, "output"), "ab") as output:
             supervisor = subprocess.Popen(
                 [sys.executable, "-P", SUPERVISOR, folder, events],
-                env={**own, "PYTHONPATH": IMPORT_ROOT},
+                env={**own, "PYTHONPATH": PYTHONPATH},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=output,

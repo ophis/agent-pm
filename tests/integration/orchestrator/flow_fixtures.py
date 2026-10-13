@@ -15,7 +15,7 @@ from urllib.parse import quote
 from agent_pm.linear_orchestrator.linear import linear
 
 from tests import live_tmux
-from tests.case import ORCH_ROOT, PY, Case, child_env
+from tests.case import PY, Case, child_env
 from tests.integration.adapters.claude import fake_claude
 from tests.integration.orchestrator import fake_gh, fake_linear
 from tests.unit.orchestrator import board_ids, run_fixtures
@@ -115,7 +115,7 @@ class Flow(Case):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}, ORCH_ROOT),
+            **child_env({}),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),

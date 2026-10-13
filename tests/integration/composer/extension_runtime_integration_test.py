@@ -6,7 +6,7 @@ import unittest
 
 from agent_pm.delegate.composer.prompt import RETURN
 
-from tests.case import ROOT
+from tests.case import ROOTS
 from tests.integration.composer import child
 
 BANNER = "Extension handover."
@@ -22,7 +22,7 @@ class ExtensionRuntime(child.Case):
         got = self.compose("dummy-tester", "echo")
         self.assertFalse(got["repo_imported"])
         for path in got["files"]:
-            self.assertTrue(path.startswith(ROOT + os.sep), path)
+            self.assertTrue(path.startswith(tuple(r + os.sep for r in ROOTS)), path)
         self.assertEqual(
             (got["run"]["runtime"], got["run"]["tier"], got["run"]["effort"]),
             ("extension", 3, "low"),

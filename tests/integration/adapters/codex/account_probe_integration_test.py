@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from tests.case import REPO, ROOT, Case
+from tests.case import REPO, SRC, Case
 from tests.integration.adapters.codex import fake_app_server
 
 
@@ -45,7 +45,12 @@ class AccountProbeIntegrationTest(Case):
             FAKE_LOG=str(self.log),
         )
         self.script = (
-            Path(ROOT) / "agent_pm" / "session" / "adapters" / "codex" / "account_probe.py"
+            Path(SRC["session"])
+            / "agent_pm"
+            / "session"
+            / "adapters"
+            / "codex"
+            / "account_probe.py"
         )
         self.addCleanup(self.cleanup)
 

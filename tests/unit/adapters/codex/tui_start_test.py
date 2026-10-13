@@ -13,9 +13,8 @@ import types
 from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
-from agent_pm.utils.paths import IMPORT_ROOT
 
-from tests.case import Case
+from tests.case import PYTHONPATH, Case
 from tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -68,8 +67,8 @@ class SiblingTest(Case):
             (1, "", "codex tui: Codex tui launch: malformed launch data\n"),
         )
 
-    def test_its_protected_core_root_is_the_import_root(self):
-        self.assertEqual(tui_start.IMPORT_ROOT, IMPORT_ROOT)
+    def test_its_protected_roots_are_the_import_roots(self):
+        self.assertEqual(os.pathsep.join(tui_start.sessions.IMPORT_ROOTS), PYTHONPATH)
 
 
 class StartTest(Base):

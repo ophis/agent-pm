@@ -82,7 +82,7 @@ class PolicyTest(Base):
             self.assertEqual(launch.argv[start : start + len(expected)], expected)
 
     def test_adapters_contain_no_role_policy_names(self):
-        root = Path(REPO) / "core" / "src" / "agent_pm" / "session" / "adapters"
+        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
         forbidden = ("role_policy", "permission-mode", "approval_policy", "approvals_reviewer")
         for path in root.rglob("*.py"):
             for name in forbidden:
@@ -90,7 +90,7 @@ class PolicyTest(Base):
                     self.assertNotIn(name, path.read_text())
 
     def test_recovery_helpers_use_driver_selection_without_literal_builders(self):
-        root = Path(REPO) / "core" / "src" / "agent_pm" / "session" / "adapters"
+        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
         for runtime in ("claude", "codex"):
             source = (root / runtime / "common.py").read_text()
             with self.subTest(runtime=runtime):

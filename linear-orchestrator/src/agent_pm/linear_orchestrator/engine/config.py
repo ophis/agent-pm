@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm.delegate import composer
 from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
@@ -147,8 +147,8 @@ def load(
     *,
     path: str = CONFIG,
     local: str = LOCAL,
-    core: str = agent_pm.config.CONFIG,
-    core_local: str = agent_pm.config.LOCAL,
+    core: str = agent_pm.delegate.engine.config.CONFIG,
+    core_local: str = agent_pm.delegate.engine.config.LOCAL,
 ) -> Config:
     try:
         cfg = config_file.read_config(path, local)
@@ -167,7 +167,9 @@ def load(
 def _configure(core, core_local):
     try:
         Session.configure(
-            **agent_pm.config.session_settings(config_file.read_config(core, core_local))
+            **agent_pm.delegate.engine.config.session_settings(
+                config_file.read_config(core, core_local)
+            )
         )
     except (OSError, ValueError, api.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
@@ -444,7 +446,7 @@ def _runnable(cfg, root, work, core, core_local):
     for name, p in cfg["roles"].items():
         if name not in core_roles:
             raise ConfigError(
-                f"linear-orchestrator/config.toml: role {name!r} is not in core/config.toml"
+                f"linear-orchestrator/config.toml: role {name!r} is not in delegate/config.toml"
             )
         if name not in TASKS:
             raise ConfigError(

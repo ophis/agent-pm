@@ -18,11 +18,11 @@ import types
 import unittest
 import unittest.mock
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
 from agent_pm.session import api
 
-from tests.case import PY, ROOT, Case, child_env
+from tests.case import PY, SRC, Case, child_env
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
@@ -983,7 +983,8 @@ class RosterTest(Base):
 
     def test_recovery_runs_the_crew_module_for_a_crew_py_or_legacy_workers_py_entry(self):
         self.assertEqual(
-            roster.CREW, os.path.realpath(os.path.join(ROOT, "agent_pm", "manager", "crew.py"))
+            roster.CREW,
+            os.path.realpath(os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")),
         )
         self.assertTrue(os.path.isfile(roster.CREW))
         for script in ("/old/version/workers.py", "/old/skills/tmux/scripts/crew.py"):
@@ -1222,7 +1223,7 @@ class WorkerDirTest(Base):
 
 class DefaultRuntimeTest(Base):
     def test_the_core_configs_runtime_with_the_local_file_on_top(self):
-        with open(agent_pm.config.CONFIG, "rb") as f:
+        with open(agent_pm.delegate.engine.config.CONFIG, "rb") as f:
             base = tomllib.load(f)["runtime"]
         self.assertEqual(roster.default_runtime(), base)
         self.local('runtime = "rt9"\n')

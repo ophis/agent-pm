@@ -10,7 +10,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from tests.case import REPO
 from tests.integration.composer import child
 
-TEAM = os.path.join(REPO, "core", "src", "agent_pm", "delegate", "team")
+TEAM = os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "team")
 ANSWER = "Say hello."
 PICK = "**Your task**: pick it from your charter's Tasks section"
 

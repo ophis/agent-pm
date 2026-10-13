@@ -1,15 +1,16 @@
-"""Every module of agent_pm (both import roots) and tests imported alone in a fresh child, an empty temp dir
-its HOME and cwd, with only the import roots it needs (EXTRA): it exits 0, leaving the dir empty and sys.path
-unchanged."""
+"""Every module of agent_pm (the five import roots) and tests imported alone in a fresh child, an empty temp dir its
+HOME and cwd, with only the import roots it needs (PATHS: the orchestrator's only for it and tests): it exits 0,
+leaving the dir empty and sys.path unchanged."""
 
 import os
 import subprocess
 import tempfile
 import unittest
 
-from tests.case import ORCH_ROOT, PY, REPO, ROOT, Case, child_env
+from tests.case import ORCH_ROOT, PY, REPO, ROOTS, SRC, Case, child_env
 
-EXTRA = {"agent_pm": (), "agent_pm.linear_orchestrator": (ORCH_ROOT,), "tests": (ORCH_ROOT, REPO)}
+LOWER = tuple(r for r in ROOTS if r != ORCH_ROOT)
+PATHS = {"agent_pm": LOWER, "agent_pm.linear_orchestrator": ROOTS, "tests": (*ROOTS, REPO)}
 CHILD = """import importlib, sys
 path = list(sys.path)
 importlib.import_module(sys.argv[1])
@@ -27,17 +28,15 @@ def modules(root: str, package: str) -> list[str]:
     return found
 
 
-def extra(name: str) -> tuple[str, ...]:
-    return EXTRA[max((p for p in EXTRA if f"{name}.".startswith(f"{p}.")), key=len)]
+def paths(name: str) -> tuple[str, ...]:
+    return PATHS[max((p for p in PATHS if f"{name}.".startswith(f"{p}.")), key=len)]
 
 
 class ImportsAlone(Case):
     def test_each_module(self):
-        names = (
-            modules(ROOT, "agent_pm")
-            + modules(ORCH_ROOT, "agent_pm.linear_orchestrator")
-            + modules(REPO, "tests")
-        )
+        names = [
+            n for sub, root in SRC.items() for n in modules(root, f"agent_pm.{sub}")
+        ] + modules(REPO, "tests")
         self.assertIn("agent_pm.session.engine.api", names)
         self.assertIn("agent_pm.linear_orchestrator.engine.run", names)
         self.assertIn("tests.case", names)
@@ -46,7 +45,7 @@ class ImportsAlone(Case):
                 res = subprocess.run(
                     [*PY, "-c", CHILD, name],
                     cwd=home,
-                    env={**child_env(None, *extra(name)), "HOME": home},
+                    env={**child_env(), "PYTHONPATH": os.pathsep.join(paths(name)), "HOME": home},
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     text=True,

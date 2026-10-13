@@ -7,6 +7,7 @@
     "name": "Frank Wang"
   },
   "skills": [
-    "./core/skills/"
+    "./delegate/skills/",
+    "./manager/skills/"
   ]
 }

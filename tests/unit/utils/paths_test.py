@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/paths.py: IMPORT_ROOT, CORE, real_dirs, under, temp_dirs and printable_abs."""
+"""utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs and printable_abs."""
 
 import os
 import subprocess
@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils.paths import CORE, IMPORT_ROOT, printable_abs, real_dirs, temp_dirs, under
+from agent_pm.utils.paths import printable_abs, real_dirs, temp_dirs, under
 
-from tests.case import REPO, ROOT, Case
+from tests.case import REPO, Case
 
 
 class PathsTest(Case):
@@ -81,15 +81,6 @@ class PathsTest(Case):
         for error in (OSError("no getconf"), subprocess.TimeoutExpired("getconf", 60)):
             with self.subTest(error=error), mock.patch("subprocess.run", side_effect=error):
                 self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
-
-
-class Roots(Case):
-    def test_the_import_root_holds_the_package_and_the_core_dir_holds_it(self):
-        self.assertEqual(IMPORT_ROOT, ROOT)
-        self.assertEqual(IMPORT_ROOT, os.path.join(REPO, "core", "src"))
-        self.assertEqual(CORE, os.path.join(REPO, "core"))
-        self.assertTrue(os.path.isfile(os.path.join(IMPORT_ROOT, "agent_pm", "utils", "paths.py")))
-        self.assertTrue(os.path.isfile(os.path.join(CORE, "config.toml")))
 
 
 class PrintableAbs(Case):

@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/shell.py: err_text and redact."""
+"""utils/src/agent_pm/utils/shell.py: err_text and redact."""
 
 import subprocess
 import unittest

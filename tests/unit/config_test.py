@@ -1,16 +1,25 @@
-"""config.py: hosts(), a merged core config's [hosts] tables (their cases: session/host_tables_test.py) and core
-[delegates]; session_settings(), Session.configure's keyword arguments."""
+"""delegate/src/agent_pm/delegate/engine/config.py: its paths; hosts(), a merged core config's [hosts] tables (their
+cases: session/host_tables_test.py) and core [delegates]; session_settings(), Session.configure's keyword arguments."""
 
 import os
 import tomllib
 import unittest
 from unittest import mock
 
-import agent_pm.config
-from agent_pm.config import CONFIG, Hosts, hosts, session_settings
+import agent_pm.delegate.engine.config
+from agent_pm.delegate.engine.config import (
+    CONFIG,
+    DELEGATE,
+    IMPORT_ROOTS,
+    PYTHONPATH,
+    Hosts,
+    hosts,
+    session_settings,
+)
 from agent_pm.session.hosts import tables
 from agent_pm.utils.config_file import read_config
 
+from tests import case
 from tests.case import Case
 
 TWO = """[hosts]
@@ -28,6 +37,14 @@ NAMES = "a, b_2"
 
 def parsed(text: str = "", base: str = TWO) -> dict:
     return tomllib.loads(base + text)
+
+
+class PathsTest(Case):
+    def test_the_delegate_dir_holds_the_config_and_the_roots_are_every_projects_src(self):
+        self.assertEqual(DELEGATE, os.path.join(case.REPO, "delegate"))
+        self.assertEqual(CONFIG, os.path.join(DELEGATE, "config.toml"))
+        self.assertTrue(os.path.isfile(CONFIG))
+        self.assertEqual((IMPORT_ROOTS, PYTHONPATH), (case.ROOTS, case.PYTHONPATH))
 
 
 class HostsTest(Case):
@@ -103,7 +120,9 @@ class SessionSettingsTest(Case):
         with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
             f.write("[hosts.tmux]\nstatus_line = true\n")
         found = session_settings()
-        self.assertEqual(found, session_settings(read_config(CONFIG, agent_pm.config.LOCAL)))
+        self.assertEqual(
+            found, session_settings(read_config(CONFIG, agent_pm.delegate.engine.config.LOCAL))
+        )
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
         self.assertEqual(found["default_host"], "tmux")
         self.assertIs(found["hosts"]["tmux"]["status_line"], True)

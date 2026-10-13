@@ -34,7 +34,7 @@ from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.engine import records
 
 from tests import live_tmux
-from tests.case import PY, REPO, ROOT, Case, child_env, settings
+from tests.case import PY, REPO, ROOTS, Case, child_env, settings
 from tests.integration.adapters.codex import fake_codex, fake_tui
 
 WAIT = 15
@@ -589,7 +589,7 @@ class TuiIntegrationTest(Live):
         native.write_bytes(original)
 
     def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_runtime(self):
-        roots = (str(self.home), self.server.bin, ROOT, sys.prefix)
+        roots = (str(self.home), self.server.bin, *ROOTS, sys.prefix)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
                 spec = dataclasses.replace(

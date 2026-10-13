@@ -1,4 +1,4 @@
-"""On the real team root (composer.TEAM) and core/config.toml: every built-in role × task composes with no reference
+"""On the real team root (composer.TEAM) and delegate/config.toml: every built-in role × task composes with no reference
 error, the neutral Return and Parameters, the FR-31 destinations, the package API, the schema left as on main, and the
 shipped text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
 ones)."""
@@ -19,9 +19,8 @@ from agent_pm.delegate.composer.prompt import RETURN, RULE, reference_errors
 from agent_pm.delegate.composer.run import check_old_keys
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils.markdown import unfenced
-from agent_pm.utils.paths import IMPORT_ROOT
 
-from tests.case import CORE, REPO, Case
+from tests.case import REPO, ROOTS, Case
 from tests.unit.composer.prompt_test import (
     RUN,
     composed,
@@ -200,7 +199,7 @@ class Package(Case):
         self.assertIsInstance(composer.teams, types.ModuleType)
         self.assertIs(composer.team, composer.teams.team)
         self.assertIs(composer.team_paths, composer.teams.team_paths)
-        self.assertEqual(CONFIG, os.path.join(CORE, "config.toml"))
+        self.assertEqual(CONFIG, os.path.join(REPO, "delegate", "config.toml"))
         self.assertEqual(
             (composer.PROGRESS, composer.OUTCOME), ("agent-pm-progress", "agent-pm-outcome")
         )
@@ -699,9 +698,7 @@ class RealCore(Case):
             (r, t) for r, t in role_tasks() if r in want
         ]:
             self.assertEqual(parameter_names(role, task), want[role], (role, task))
-        self.assertEqual(
-            parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"]
-        )
+        self.assertEqual(parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"])
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
@@ -734,7 +731,8 @@ class RealCore(Case):
             prompt, _ = composed(role, task)
             for value in (RUN.workdir, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
-            self.assertNotIn(IMPORT_ROOT, prompt.replace(composer.TEAM, "<team>"), (role, task))
+            for root in ROOTS:
+                self.assertNotIn(root, prompt.replace(composer.TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
     def test_every_repo_command_takes_the_inputs_checkout(self):
@@ -742,9 +740,7 @@ class RealCore(Case):
         for role in roles():
             prompt, _ = composed(role)
             text = prompt + "".join(task_text(t) for t in catalog()[role])
-            cmds = re.findall(
-                r"`python3 -P <team>/tools/repo\.py (worktree|status) ([^`]*)`", text
-            )
+            cmds = re.findall(r"`python3 -P <team>/tools/repo\.py (worktree|status) ([^`]*)`", text)
             self.assertNotIn("<scripts>", text, role)
             found[role] = [cmd for cmd, _ in cmds]
             for cmd, args in cmds:

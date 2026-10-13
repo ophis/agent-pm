@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
+"""utils/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
 
 import os
 import subprocess

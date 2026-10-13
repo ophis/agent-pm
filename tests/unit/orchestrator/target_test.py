@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 import agent_pm.utils.repos
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config, target
@@ -45,7 +45,9 @@ def roles():
     """Each role's tasks: the committed core config's index (no local file)."""
     return {
         r: SimpleNamespace(
-            tasks=tuple(composer.index(r, config=agent_pm.config.CONFIG, local=os.devnull))
+            tasks=tuple(
+                composer.index(r, config=agent_pm.delegate.engine.config.CONFIG, local=os.devnull)
+            )
         )
         for r in config.TASKS
     }

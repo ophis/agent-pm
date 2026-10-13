@@ -17,7 +17,7 @@ from tests.integration.composer import child
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(REPO, "work", "new-team-dirs-tests")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
-CORE_TASKS = os.path.join(REPO, "core", "src", "agent_pm", "delegate", "team", "tasks")
+CORE_TASKS = os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
 NOTE = (
     f"# Note\n\n## Steps\n\n1. **Report progress:**\n   {MARK}\n2. **Write.** Write it.\n\n"
@@ -30,7 +30,7 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from agent_pm.config import CONFIG, LOCAL
+CATALOG = """from agent_pm.delegate.engine.config import CONFIG, LOCAL
 from agent_pm.utils.config_file import read_config
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])

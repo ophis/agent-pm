@@ -25,7 +25,7 @@ from agent_pm.session import api
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.shell import SHORT
 
-from tests.case import ORCH_ROOT, ROOT
+from tests.case import PYTHONPATH
 from tests.unit.orchestrator import run_fixtures
 from tests.unit.orchestrator.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from tests.unit.orchestrator.board_ids import STATES as IDS_BY_KEY
@@ -3204,7 +3204,7 @@ class OuterBase(TickBase):
         self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
         self.assertEqual(
             env,
-            {**os.environ, "PATH": config.path(), "PYTHONPATH": os.pathsep.join((ROOT, ORCH_ROOT))},
+            {**os.environ, "PATH": config.path(), "PYTHONPATH": PYTHONPATH},
         )
         return argv
 
@@ -3654,7 +3654,7 @@ class Entry(OuterBase):
             ("bogus = 1\n" + OUTER, "linear-orchestrator/config.toml: unknown keys: bogus"),
             (
                 OUTER + role_table("bogus"),
-                "linear-orchestrator/config.toml: role 'bogus' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'bogus' is not in delegate/config.toml",
             ),
         ):
             self.write_config(text)

@@ -36,7 +36,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from tests import fake_adapter
-from tests.case import ROOT, Case
+from tests.case import SRC, Case
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -192,7 +192,7 @@ class PathsTest(Base):
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
-        hook = os.path.join(ROOT, "agent_pm", "session", "modes", "tui_hook.py")
+        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
         self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
         self.assertTrue(os.path.isabs(argv[2]))

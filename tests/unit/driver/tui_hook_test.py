@@ -21,9 +21,9 @@ import uuid
 from agent_pm.session.modes import tui_hook
 
 from tests import guards
-from tests.case import ROOT, Case
+from tests.case import SRC, Case
 
-HOOK = os.path.join(ROOT, "agent_pm", "session", "modes", "tui_hook.py")
+HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
 PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
@@ -504,7 +504,7 @@ class InProcess(Case):
         self.assertEqual(
             os.path.realpath(module.__file__),
             os.path.realpath(
-                os.path.join(ROOT, "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
+                os.path.join(SRC["session"], "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
             ),
         )
         self.assertTrue(callable(module.mark))

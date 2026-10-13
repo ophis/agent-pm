@@ -21,13 +21,13 @@ from unittest import mock
 from agent_pm.manager import crew, roster
 
 from tests import live_tmux
-from tests.case import PY, REPO, ROOT, Case
+from tests.case import PY, PYTHONPATH, REPO, SRC, Case
 from tests.integration.adapters.claude import fake_claude
 from tests.integration.adapters.codex import fake_codex, fake_tui
 
 CREW = [*PY, "-m", "agent_pm.manager.crew"]
 ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.crew"]
-TMUX_HOST = os.path.join(ROOT, "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
+TMUX_HOST = os.path.join(SRC["session"], "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
 MANAGER = "mgr"
 SECOND = "mgr2"
 TIMEOUT = 60
@@ -72,7 +72,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     me, events, name = (
-        f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.manager.crew",
+        f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.crew",
         shlex.quote(os.path.join(directory, "events")),
         os.path.basename(directory),
     )
@@ -177,7 +177,7 @@ class Live(Case):
             )
 
     def workers(self, *args: str, **kw) -> subprocess.CompletedProcess:
-        return self.call(*CREW, *args, **{"PYTHONPATH": ROOT, **kw})
+        return self.call(*CREW, *args, **{"PYTHONPATH": PYTHONPATH, **kw})
 
     def attach(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.ok(self.workers("attach", *args, **kw))
@@ -344,7 +344,7 @@ class Live(Case):
 
     def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:
         e = self.roster()["entries"][name]
-        return self.call(*roster.recovery(e), cwd=e["cwd"], PYTHONPATH=ROOT, **extra)
+        return self.call(*roster.recovery(e), cwd=e["cwd"], PYTHONPATH=PYTHONPATH, **extra)
 
     def worker_entry(self, name: str, sid: str, *rest: str, client: str = "claude") -> list[str]:
         return [
@@ -727,7 +727,7 @@ class RosterTest(RosterLive):
         procs = {
             s: subprocess.Popen(
                 [*CREW, "attach", "--manager", MANAGER],
-                env=self.server.env(PYTHONPATH=ROOT, **self.server.inside(s)),
+                env=self.server.env(PYTHONPATH=PYTHONPATH, **self.server.inside(s)),
                 cwd=self.cwd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -749,7 +749,7 @@ class RosterTest(RosterLive):
 
     def test_a_printed_resume_line_gives_the_recovered_worker_the_callers_pythonpath(self):
         user = os.path.join(self.root, "user lib")
-        given = f"{ROOT}{os.pathsep}{user}"
+        given = f"{PYTHONPATH}{os.pathsep}{user}"
         claude = self.dumping("claude", fake_claude.__file__)
         self.attach(PYTHONPATH=given)
         self.started("w1", PYTHONPATH=given)
@@ -826,7 +826,7 @@ class RosterTest(RosterLive):
         )
         waiting = subprocess.Popen(
             [*CREW, "next-event", "--manager", MANAGER, "--after", "3", "--gen", "0"],
-            env=self.server.env(PYTHONPATH=ROOT, **self.server.inside(SECOND)),
+            env=self.server.env(PYTHONPATH=PYTHONPATH, **self.server.inside(SECOND)),
             cwd=self.cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -900,7 +900,7 @@ class RosterRecoveryTest(RosterLive):
         self.assertEqual(
             self.attach().stdout,
             f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
-            f"resume w1: env PYTHONPATH={shlex.quote(ROOT)} {shlex.join(resume)}\n"
+            f"resume w1: env PYTHONPATH={shlex.quote(PYTHONPATH)} {shlex.join(resume)}\n"
             f"{tail(self.directory, 0, 0, f'1 {done}')}",
         )
         self.assertEqual(self.roster()["entries"]["w1"]["state"], "gone")

@@ -21,8 +21,8 @@ from agent_pm.session.adapters.base import (
     TurnEnd,
 )
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.utils.paths import IMPORT_ROOT
 
+from tests.case import ROOTS
 from tests.selection import configured
 from tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
@@ -268,7 +268,7 @@ class TuiTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         for resume in (False, True):
-            for index, tmpdir in enumerate(("/protected", "/driver-only", IMPORT_ROOT, sys.prefix)):
+            for index, tmpdir in enumerate(("/protected", "/driver-only", *ROOTS, sys.prefix)):
                 with self.subTest(resume=resume, tmpdir=tmpdir):
                     config = {**self.common.config, "env": {"TMPDIR": tmpdir}}
                     adapter = configured(CodexAdapter, config)

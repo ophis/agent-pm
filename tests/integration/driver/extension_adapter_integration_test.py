@@ -1,8 +1,8 @@
-"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of core,
-the fake adapter's package copied into it as src/agent_pm/session/adapters/fake/ and its table appended to the copy's
-config.toml, nothing else changed, runs a headless session through session.engine.api.start in a child Python whose
-PYTHONPATH is only the copy's src/. A table without its package, or a package without its table, fails there before
-anything starts."""
+"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of
+the projects but the orchestrator, the fake adapter's package copied in as session's adapters/fake/ and its table
+appended to the copy's delegate/config.toml, nothing else changed, runs a headless session through
+session.engine.api.start in a child Python whose PYTHONPATH is only the copy's src/ dirs. A table without its
+package, or a package without its table, fails there before anything starts."""
 
 import json
 import os
@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 from tests import fake_adapter
-from tests.case import CORE, PY, Case, child_env
+from tests.case import PROJECTS, PY, REPO, Case, child_env
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
@@ -35,10 +35,14 @@ class ExtensionAdapterIntegration(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        core = os.path.join(self.root, "core")
-        shutil.copytree(CORE, core, ignore=SKIP)
-        self.src = os.path.join(core, "src")
-        self.config = os.path.join(core, "config.toml")
+        projects = [p for sub, p in PROJECTS.items() if sub != "linear_orchestrator"]
+        for project in projects:
+            shutil.copytree(
+                os.path.join(REPO, project), os.path.join(self.root, project), ignore=SKIP
+            )
+        self.srcs = os.pathsep.join(os.path.join(self.root, p, "src") for p in projects)
+        self.src = os.path.join(self.root, "session", "src")
+        self.config = os.path.join(self.root, "delegate", "config.toml")
         self.package("fake")
         self.home = os.path.join(self.root, "home")
         os.mkdir(self.home)
@@ -74,7 +78,7 @@ class ExtensionAdapterIntegration(Case):
         return subprocess.run(
             [*PY, "-c", CHILD, self.work, runtime],
             cwd=self.root,
-            env={**child_env({**os.environ, "HOME": self.home}), "PYTHONPATH": self.src},
+            env={**child_env({**os.environ, "HOME": self.home}), "PYTHONPATH": self.srcs},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

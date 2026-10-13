@@ -1,4 +1,4 @@
-"""core/src/agent_pm/delegate/team/tools/repo.py, loaded by file path as agent runs run it, ported from the old
+"""delegate/src/agent_pm/delegate/team/tools/repo.py, loaded by file path as agent runs run it, ported from the old
 core's tests (its tmux display helpers dropped; its config, path, shell, git and repo spec helpers' cases:
 unit/utils/)."""
 

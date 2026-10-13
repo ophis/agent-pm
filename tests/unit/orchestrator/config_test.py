@@ -12,7 +12,7 @@ import tomllib
 import unittest
 from unittest import mock
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config
@@ -57,7 +57,7 @@ HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 ROOT_Q = shlex.quote(config.ROOT)
 GATE = (
-    f"env PYTHONPATH={ROOT_Q}/core/src:{ROOT_Q}/linear-orchestrator/src "
+    f"env PYTHONPATH={ROOT_Q}/delegate/src:{ROOT_Q}/session/src:{ROOT_Q}/utils/src:{ROOT_Q}/manager/src:{ROOT_Q}/linear-orchestrator/src "
     "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 )
 LABEL = ("linear-orchestrator/config.toml", "core")
@@ -393,8 +393,8 @@ class Config(ConfigFile, Case):
                     None,
                     overlays=[overlay],
                     label=LABEL,
-                    config=agent_pm.config.CONFIG,
-                    local=agent_pm.config.LOCAL,
+                    config=agent_pm.delegate.engine.config.CONFIG,
+                    local=agent_pm.delegate.engine.config.LOCAL,
                 )
                 for r in roles
             ],
@@ -402,7 +402,11 @@ class Config(ConfigFile, Case):
         self.assertEqual(
             index.call_args_list,
             [
-                mock.call(r, config=agent_pm.config.CONFIG, local=agent_pm.config.LOCAL)
+                mock.call(
+                    r,
+                    config=agent_pm.delegate.engine.config.CONFIG,
+                    local=agent_pm.delegate.engine.config.LOCAL,
+                )
                 for r in roles
             ],
         )
@@ -425,7 +429,7 @@ class Config(ConfigFile, Case):
                 PIPELINE.replace(f'team = "{TEAM}"\n', ""),
             ),
             (
-                "linear-orchestrator/config.toml: role 'ghost' is not in core/config.toml",
+                "linear-orchestrator/config.toml: role 'ghost' is not in delegate/config.toml",
                 PIPELINE + role("ghost"),
             ),
         ):
@@ -507,7 +511,7 @@ class Runnable(ConfigFile, Case):
 
     def test_rejected(self):
         cases = [
-            (PIPELINE + role("ghost"), "role 'ghost' is not in core/config.toml"),
+            (PIPELINE + role("ghost"), "role 'ghost' is not in delegate/config.toml"),
             (PIPELINE + role("dummy-tester"), "role 'dummy-tester' has no entry in config.TASKS"),
             (
                 HEADER + role("researcher", 'next = "pm"'),
@@ -550,13 +554,16 @@ class Runnable(ConfigFile, Case):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(agent_pm.config.CONFIG) as f:
+        with open(agent_pm.delegate.engine.config.CONFIG) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
         with open(os.path.join(composer.TEAM, "output", "destinations", "github.md")) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
-        self.assertEqual(agent_pm.config.CONFIG, os.path.join(config.ROOT, "core", "config.toml"))
+        self.assertEqual(
+            agent_pm.delegate.engine.config.CONFIG,
+            os.path.join(config.ROOT, "delegate", "config.toml"),
+        )
 
 
 HOSTS_TOML = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nimplementation = "agent_pm.session.hosts.tmux:TmuxHost"\n'
@@ -588,8 +595,8 @@ class OtherRoot(ConfigFile, Case):
         self.root = os.path.join(self.dir, "my root")
         self.dir = os.path.join(self.root, "linear-orchestrator")
         os.makedirs(self.dir)
-        os.makedirs(os.path.join(self.root, "core"))
-        self.core_path = os.path.join(self.root, "core", "config.toml")
+        os.makedirs(os.path.join(self.root, "delegate"))
+        self.core_path = os.path.join(self.root, "delegate", "config.toml")
         self.core(CORE_TOML)
 
     def core(self, text):
@@ -613,7 +620,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(
             fake.call_args_list,
             [
-                mock.call(r, config=self.core_path, local=agent_pm.config.LOCAL)
+                mock.call(r, config=self.core_path, local=agent_pm.delegate.engine.config.LOCAL)
                 for r in ("researcher", "pm", "engineer")
             ],
         )

@@ -9,8 +9,8 @@ import os
 import shlex
 import sys
 
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import files
-from agent_pm.utils.paths import IMPORT_ROOT
 from agent_pm.utils.record import Record, RecordError, Status
 
 COMMAND = "fake-ctl"
@@ -23,7 +23,7 @@ GONE = {"alive": False, "state": "gone", "outcome": None, "displayable": False, 
 def install(bin_dir: str, state_dir: str) -> str:
     os.makedirs(state_dir, exist_ok=True)
     path = os.path.join(bin_dir, COMMAND)
-    argv = ("env", f"PYTHONPATH={IMPORT_ROOT}", sys.executable, "-P", SCRIPT)
+    argv = ("env", f"PYTHONPATH={PYTHONPATH}", sys.executable, "-P", SCRIPT)
     files.save(path, f'#!/bin/sh\nexec {shlex.join((*argv, os.path.abspath(state_dir)))} "$@"\n')
     os.chmod(path, 0o755)
     return COMMAND

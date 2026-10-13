@@ -24,6 +24,7 @@ import unittest
 import uuid
 from unittest import mock
 
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import api
 from agent_pm.session.adapters import base, selection
 from agent_pm.session.adapters.base import Access, Launch
@@ -31,7 +32,6 @@ from agent_pm.session.engine import records
 from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.utils.paths import IMPORT_ROOT
 
 from tests import fake_adapter
 from tests.case import Case, committed
@@ -1469,13 +1469,13 @@ class SessionEnvTest(TuiBase):
         super().setUp()
         self.configure("env", probe={"argv": ("probe-cmd",)})
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
-        self.access = Access(commands=("git",), env={"PYTHONPATH": IMPORT_ROOT})
+        self.access = Access(commands=("git",), env={"PYTHONPATH": PYTHONPATH})
 
     def test_a_headless_session_gets_it_and_its_usage_probe_does_not(self):
         handle, _ = self.run_once(runtime="env", spec=self.spec(access=self.access))
         with open(self.log, encoding="utf-8") as f:
             (entry,) = [json.loads(line) for line in f]
-        self.assertEqual(entry["env"]["PYTHONPATH"], IMPORT_ROOT)
+        self.assertEqual(entry["env"]["PYTHONPATH"], PYTHONPATH)
         with mock.patch.object(headless, "probe", return_value="7") as probe:
             self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
         self.assertEqual(probe.call_args.kwargs["env"]["PYTHONPATH"], "/parent")
@@ -1483,7 +1483,7 @@ class SessionEnvTest(TuiBase):
     def test_a_tui_session_gets_it(self):
         self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
         (call,) = self.host.start.call_args_list
-        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], IMPORT_ROOT)
+        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], PYTHONPATH)
 
 
 class AttachTest(TuiBase):

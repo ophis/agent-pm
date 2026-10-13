@@ -12,8 +12,8 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import detach
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import api
-from agent_pm.utils.paths import IMPORT_ROOT
 
 from tests.case import Case
 from tests.unit.delegate.plan_test import SID, Base
@@ -83,7 +83,7 @@ class Detach(Base):
             DRIVER,
             self.argv("headless"),
             cwd=self.tmp,
-            env={**os.environ, "PYTHONPATH": IMPORT_ROOT},
+            env={**os.environ, "PYTHONPATH": PYTHONPATH},
             opener=None,
         )
         with open(self.events, "rb") as f:

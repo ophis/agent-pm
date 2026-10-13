@@ -15,15 +15,16 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
-from agent_pm.utils.paths import IMPORT_ROOT, temp_dirs, under
+from agent_pm.utils.paths import temp_dirs, under
 
 from tests import fake_adapter
 from tests.case import REPO, Case, committed
@@ -110,7 +111,9 @@ class Configures(Base):
 
     def test_a_core_config_error_refuses_the_plan(self):
         with mock.patch.object(
-            agent_pm.config, "session_settings", side_effect=ValueError("[hosts]: missing")
+            agent_pm.delegate.engine.config,
+            "session_settings",
+            side_effect=ValueError("[hosts]: missing"),
         ):
             self.assertEqual(self.refused(), "[hosts]: missing")
 
@@ -292,7 +295,7 @@ class Planned(Base):
 
     def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
         command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
-        env = {"PYTHONPATH": IMPORT_ROOT}
+        env = {"PYTHONPATH": PYTHONPATH}
         for keys, commands, want in (
             (self.KEYS | {"gate": gate}, (command, gate), env),
             (self.KEYS | {"gate": ""}, (command,), env),

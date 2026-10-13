@@ -20,13 +20,14 @@ import unittest
 import uuid
 from unittest import mock
 
+import agent_pm.delegate.engine.config
 from agent_pm.manager import crew, roster
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 
-from tests.case import ROOT, Case
+from tests.case import PYTHONPATH, SRC, Case
 
-CREW = os.path.join(ROOT, "agent_pm", "manager", "crew.py")
+CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")
 MODULE = ["-P", "-m", "agent_pm.manager.crew"]
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 SID2 = "1" + SID[1:]
@@ -188,7 +189,7 @@ def started(name, *rest):
 
 def recovered(argv):
     """A crew module's recovery as attach prints it."""
-    return f"env PYTHONPATH={shlex.quote(ROOT)} {shlex.join(argv)}"
+    return f"env PYTHONPATH={shlex.quote(PYTHONPATH)} {shlex.join(argv)}"
 
 
 class Runs:
@@ -221,7 +222,7 @@ class CrewCase(Case):
             self.enterContext(mock.patch.object(api, name, functools.partial(self.call, name)))
         self.sleep = self.enterContext(mock.patch.object(crew.time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
-        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": ROOT}))
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": PYTHONPATH}))
         self.local('runtime = "rt0"\n')
 
     def call(self, fn, /, *args, **kw):
@@ -590,7 +591,7 @@ class RestartTest(WorkerCase):
             return fake(*args, **kw)
 
         self.api.start = start
-        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u1"}):
+        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{PYTHONPATH}:/u1"}):
             self.assertEqual(self.run_main("restart", "w1")[0], 0)
         self.assertEqual(seen, ["/u1"])
 
@@ -782,14 +783,15 @@ class MainTest(WorkerCase):
         self.assertEqual(err, "tui: session w1: tmux attach -t '=w1'\n")
 
     def test_a_worker_starts_with_its_pythonpath_less_each_entry_resolving_to_its_import_root(self):
+        root = SRC["session"]
         link = os.path.join(self.dir, "root")
-        os.symlink(ROOT, link)
-        rel = os.path.relpath(ROOT)
+        os.symlink(root, link)
+        rel = os.path.relpath(root)
         cases = {
-            "w1": (f"{ROOT}:/u1:{rel}:{link}:{ROOT}/:/u2", "/u1:/u2"),
-            "w2": (f"{rel}:{ROOT}", None),
+            "w1": (f"{PYTHONPATH}:/u1:{rel}:{link}:{root}/:/u2", "/u1:/u2"),
+            "w2": (f"{rel}:{PYTHONPATH}", None),
             "w3": ("/u1", "/u1"),
-            "w4": (f"{ROOT}:", None),
+            "w4": (f"{PYTHONPATH}:", None),
         }
         seen, fake = [], self.api.start
 
@@ -1364,7 +1366,7 @@ def numbered(count, start=1):
 
 def tail(directory, n=0, gen=0, *backlog):
     me, events = (
-        f"env PYTHONPATH={shlex.quote(ROOT)} python3 {' '.join(MODULE)}",
+        f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 {' '.join(MODULE)}",
         shlex.quote(os.path.join(directory, "events")),
     )
     name = os.path.basename(directory)
@@ -1821,18 +1823,18 @@ class AttachTest(RosterCase):
         self.assertEqual(shlex.split(role)[:4], ["cd", cwd, "&&", PY])
         self.assertEqual(
             shlex.split(out.splitlines()[-6].split(": ", 1)[1]),
-            ["env", f"PYTHONPATH={ROOT}", PY, *MODULE, "; rm -rf ~"],
+            ["env", f"PYTHONPATH={PYTHONPATH}", PY, *MODULE, "; rm -rf ~"],
         )
 
     def test_a_worker_entrys_resume_line_names_the_import_root_then_the_callers_pythonpath(self):
         e = entry(resume=started("w1", "--client", "rt0"))
         self.seed(w1=e)
-        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u 1"}):
+        with mock.patch.dict(os.environ, {"PYTHONPATH": f"{PYTHONPATH}:/u 1"}):
             out = self.synced(self.server())
         (line,) = (x for x in out.splitlines() if x.startswith("resume w1: "))
         self.assertEqual(
             shlex.split(line.removeprefix("resume w1: ")),
-            ["env", f"PYTHONPATH={ROOT}:/u 1", *roster.recovery(e)],
+            ["env", f"PYTHONPATH={PYTHONPATH}:/u 1", *roster.recovery(e)],
         )
 
     def test_a_worker_entry_without_a_client_recovers_with_the_configs_runtime(self):
@@ -2479,7 +2481,7 @@ class ResumeTest(RosterCase):
     def test_each_gone_entry_runs_its_recovery_argv_in_its_cwd_unlocked_no_shell_in_table_order(
         self,
     ):
-        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": f"{ROOT}:/u1"}))
+        self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": f"{PYTHONPATH}:/u1"}))
         cwd, finished = os.path.join(self.dir, "it's a role"), os.path.join(self.dir, "finished")
         os.mkdir(finished)
         with open(os.path.join(finished, "run.jsonl"), "w") as f:
@@ -2520,7 +2522,7 @@ class ResumeTest(RosterCase):
             ),
         )
         ran = {name: roster.recovery(entries[name]) for name in ("B", "a", "b", "p1")}
-        env = {n: {"PYTHONPATH": f"{ROOT}:/u1"} if n in "ab" else {} for n in ran}
+        env = {n: {"PYTHONPATH": f"{PYTHONPATH}:/u1"} if n in "ab" else {} for n in ran}
         self.assertEqual(
             self.runs.recoveries,
             [
@@ -2554,7 +2556,7 @@ class ResumeTest(RosterCase):
             "b": entry(cwd=self.dir, resume=started("b")),
             "p1": entry("pipeline", cwd=self.dir),
         }
-        for given, user in ((f"{ROOT}:/u1", "/u1"), (ROOT, None), (None, None)):
+        for given, user in ((f"{PYTHONPATH}:/u1", "/u1"), (PYTHONPATH, None), (None, None)):
             with self.subTest(given=given), mock.patch.dict(os.environ):
                 os.environ.pop("PYTHONPATH", None)
                 if given is not None:
@@ -2567,7 +2569,7 @@ class ResumeTest(RosterCase):
                     {k: env.get("PYTHONPATH") for k, env in envs.items()},
                     {
                         "/x/drive.py": user,
-                        "b": ROOT if user is None else f"{ROOT}:{user}",
+                        "b": PYTHONPATH if user is None else f"{PYTHONPATH}:{user}",
                         "/x/router.py": user,
                     },
                 )
@@ -2713,7 +2715,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = f"env PYTHONPATH={shlex.quote(ROOT)} python3 -P -m agent_pm.manager.crew"
+        me = f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.crew"
         self.assertEqual(
             self.attach(),
             (
@@ -2747,7 +2749,7 @@ class CursorTest(RosterCase):
         )
 
     def test_attach_names_the_crew_module_on_its_import_root_then_the_callers_pythonpath(self):
-        for given, want in ((ROOT, ROOT), (f"{ROOT}:/u 1", f"{ROOT}:/u 1")):
+        for given, want in ((PYTHONPATH, PYTHONPATH), (f"{PYTHONPATH}:/u 1", f"{PYTHONPATH}:/u 1")):
             with self.subTest(given=given), mock.patch.dict(os.environ, {"PYTHONPATH": given}):
                 rc, out, err = self.attach()
                 self.assertEqual((rc, err), (0, ""))
@@ -2766,7 +2768,8 @@ class CursorTest(RosterCase):
         root = os.path.join(self.dir, "my src")
         with (
             mock.patch.dict(os.environ, {"HOME": home, "PYTHONPATH": root}),
-            mock.patch.object(crew, "IMPORT_ROOT", root),
+            mock.patch.object(agent_pm.delegate.engine.config, "PYTHONPATH", root),
+            mock.patch.object(agent_pm.delegate.engine.config, "IMPORT_ROOTS", (root,)),
         ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))

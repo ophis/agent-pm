@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/text.py: printable (main's Sinks case)."""
+"""utils/src/agent_pm/utils/text.py: printable (main's Sinks case)."""
 
 import unittest
 

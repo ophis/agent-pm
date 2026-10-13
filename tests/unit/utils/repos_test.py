@@ -1,4 +1,4 @@
-"""core/src/agent_pm/utils/repos.py: repo specs, origin URLs and the checkout path."""
+"""utils/src/agent_pm/utils/repos.py: repo specs, origin URLs and the checkout path."""
 
 import os
 import unittest

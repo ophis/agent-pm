@@ -20,7 +20,7 @@ import unittest
 from agent_pm.session.engine import records
 
 from tests import live_tmux
-from tests.case import ROOT, Case
+from tests.case import PYTHONPATH, Case
 from tests.integration.adapters.claude import fake_claude
 from tests.integration.delegate.cli_integration_test import (
     ASKING,
@@ -68,7 +68,7 @@ class Detach(Case):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, "turns": list(turns)}, f)
         env = self.server.env(
-            PYTHONPATH=ROOT,
+            PYTHONPATH=PYTHONPATH,
             CLAUDE_CONFIG_DIR=os.path.join(self.dir, "config"),
             **{fake_claude.ENV: self.scenario},
             **(self.server.inside(inside) if inside else {}),

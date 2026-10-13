@@ -1,5 +1,5 @@
 """Case, every test's base, the session settings helpers (HOSTS, settings, committed) and the child helpers: namespace
-package agent_pm only from this tree's import roots (ROOT, ORCH_ROOT)."""
+package agent_pm only from this tree's import roots (SRC, ROOTS, PYTHONPATH)."""
 
 import os
 import sys
@@ -8,18 +8,26 @@ import unittest
 from unittest import mock
 
 import agent_pm
-import agent_pm.config
+import agent_pm.delegate.engine.config
 from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.utils.config_file import read_config
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CORE = os.path.join(REPO, "core")
-ROOT = os.path.join(CORE, "src")
-ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
+PROJECTS = {
+    "delegate": "delegate",
+    "session": "session",
+    "utils": "utils",
+    "manager": "manager",
+    "linear_orchestrator": "linear-orchestrator",
+}
+SRC = {sub: os.path.join(REPO, project, "src") for sub, project in PROJECTS.items()}
+ROOTS = tuple(sorted(SRC.values()))
+PYTHONPATH = os.pathsep.join(ROOTS)
+ORCH_ROOT = SRC["linear_orchestrator"]
 PY = (sys.executable, "-P", "-s")
-_session_settings = agent_pm.config.session_settings
-PYTHONPATH = "core/src:linear-orchestrator/src"
+_session_settings = agent_pm.delegate.engine.config.session_settings
+RUN_WITH = ":".join(f"{project}/src" for project in PROJECTS.values())
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
@@ -31,7 +39,7 @@ def settings(adapters, tmux=None) -> dict:
 
 def committed(local: str = os.devnull) -> dict:
     """The core config's [adapters] tables, `local` merged (none by default), even under Case.configure_session."""
-    return _session_settings(read_config(agent_pm.config.CONFIG, local))["adapters"]
+    return _session_settings(read_config(agent_pm.delegate.engine.config.CONFIG, local))["adapters"]
 
 
 class Case(unittest.TestCase):
@@ -61,31 +69,37 @@ class Case(unittest.TestCase):
                 registry.reset()
 
     def configure_session(self, adapters, tmux=None) -> None:
-        """Session.configure with settings(adapters, tmux), also what agent_pm.config.session_settings returns for
-        the rest of the test, so an entry configuring again keeps them."""
+        """Session.configure with settings(adapters, tmux), also what session_settings returns for the rest
+        of the test, so an entry configuring again keeps them."""
         given = settings(adapters, tmux)
         self.enterContext(
-            mock.patch.object(agent_pm.config, "session_settings", return_value=given)
+            mock.patch.object(
+                agent_pm.delegate.engine.config, "session_settings", return_value=given
+            )
         )
         Session.configure(**given)
 
 
 def _foreign() -> str | None:
-    own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in (ROOT, ORCH_ROOT)}
+    own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
     for path in agent_pm.__path__:
         if os.path.realpath(path) not in own:
-            return f"agent_pm.__path__ holds {path}, not only this tree's: run with PYTHONPATH={PYTHONPATH}"
+            return f"agent_pm.__path__ holds {path}, not only this tree's: run with PYTHONPATH={RUN_WITH}"
+    if missing := own - {os.path.realpath(p) for p in agent_pm.__path__}:
+        return (
+            f"agent_pm.__path__ lacks {', '.join(sorted(missing))}: run with PYTHONPATH={RUN_WITH}"
+        )
     for name, module in list(sys.modules.items()):
         top, _, sub = name.partition(".")
         where = getattr(module, "__file__", None)
         if top == "agent_pm" and sub and "." not in sub and where:
             found = os.path.dirname(os.path.dirname(where))
             found = os.path.dirname(found) if os.path.basename(where) == "__init__.py" else found
-            root = ORCH_ROOT if sub == "linear_orchestrator" else ROOT
-            if os.path.realpath(found) != os.path.realpath(root):
+            root = SRC.get(sub)
+            if root is None or os.path.realpath(found) != os.path.realpath(root):
                 return (
                     f"{name} is imported from {found}, not this tree's {root}: "
-                    f"run with PYTHONPATH={PYTHONPATH}"
+                    f"run with PYTHONPATH={RUN_WITH}"
                 )
     return None
 
@@ -94,5 +108,5 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
     env = os.environ if base is None else base
     return {
         **{k: v for k, v in env.items() if not k.startswith("PYTHON")},
-        "PYTHONPATH": os.pathsep.join((ROOT, *extra)),
+        "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
     }

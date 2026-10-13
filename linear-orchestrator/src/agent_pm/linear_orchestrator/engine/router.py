@@ -29,6 +29,7 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
@@ -46,7 +47,6 @@ from agent_pm.linear_orchestrator.linear.linear import (
     team,
 )
 from agent_pm.session import api
-from agent_pm.utils.paths import IMPORT_ROOT
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -61,9 +61,6 @@ BUSY = "another router is running"
 USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 FLAGS = {"--dry-run": "dry", "--now": "now"}
 RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
-ROOTS = os.pathsep.join(
-    (IMPORT_ROOT, os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 3)))
-)
 SESSIONS = "agent-pm-"
 SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
 DONE = {"completed", "canceled", "duplicate"}
@@ -558,7 +555,7 @@ def outer(a, cfg, *, gql, run, keychain):
                 f"--input={text}",
             ],
             cwd=rd,
-            env={**os.environ, "PYTHONPATH": ROOTS},
+            env={**os.environ, "PYTHONPATH": PYTHONPATH},
         )
     except (api.ConfigError, api.DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
