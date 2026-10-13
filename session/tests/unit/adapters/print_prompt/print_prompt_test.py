@@ -12,7 +12,14 @@ from unittest import mock
 
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
-from agent_pm.session.engine.types import ConfigError, Reply, SessionStatus, Spec, TurnEnd
+from agent_pm.session.engine.types import (
+    ConfigError,
+    Reply,
+    SessionRequest,
+    SessionStatus,
+    Spec,
+    TurnEnd,
+)
 from agent_pm.utils import fenced
 
 from session.tests.case import SPAWNS, Case
@@ -74,7 +81,7 @@ class Run(Case):
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
                 for target in SPAWNS
             ]
-            found = list(self.session.run(prompt, self.spec, False))
+            found = list(self.session.run(prompt, SessionRequest(self.spec, resumed=False)))
         for spawn in spawns:
             spawn.assert_not_called()
         self.assertEqual((os.getcwd(), dict(os.environ)), (cwd, environ))
@@ -86,14 +93,14 @@ class Run(Case):
             return f.read()
 
     def test_check_refuses_resume_only(self):
-        self.assertIsNone(self.session.check(PROMPT, self.spec, False))
+        self.assertIsNone(self.session.check(SessionRequest(self.spec, resumed=False)))
         with self.assertRaises(ConfigError) as caught:
-            self.session.check(PROMPT, self.spec, True)
+            self.session.check(SessionRequest(self.spec, resumed=True))
         self.assertEqual(str(caught.exception), "print_prompt has no session to resume")
 
     def test_check_refuses_a_spec_without_the_reply_protocol(self):
         with self.assertRaises(ConfigError) as caught:
-            self.session.check(PROMPT, Spec(workdir=self.workdir), False)
+            self.session.check(SessionRequest(Spec(workdir=self.workdir), resumed=False))
         self.assertEqual(
             str(caught.exception),
             "print_prompt needs the caller's reply protocol (Spec.reply_tags)",
@@ -129,7 +136,7 @@ class Run(Case):
     def test_a_failed_file_create_raises(self):
         with mock.patch("tempfile.mkstemp", side_effect=OSError(28, "No space left on device")):
             with self.assertRaises(OSError):
-                list(self.session.run(PROMPT, self.spec, False))
+                list(self.session.run(PROMPT, SessionRequest(self.spec, resumed=False)))
 
 
 if __name__ == "__main__":

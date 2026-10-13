@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import Driver
+from agent_pm.session import Driver, StartOptions
 from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine import records
@@ -30,6 +30,7 @@ from agent_pm.session.engine.types import (
     Exited,
     LimitHit,
     SessionBound,
+    SessionRequest,
     Spec,
     TurnEnd,
 )
@@ -173,7 +174,7 @@ class Live(Case):
             dataclasses.replace(
                 kwargs.pop("spec", self.spec), name=name, sid=kwargs.pop("sid", self.sid)
             ),
-            **{"events": str(self.events), **kwargs},
+            options=StartOptions(**{"events": str(self.events), **kwargs}),
         )
         self.addCleanup(handle.stop)
         return handle
@@ -226,7 +227,7 @@ class Live(Case):
             "headless",
             "headless",
             dataclasses.replace(self.spec, sid=self.sid),
-            resume=self.sid if resume else None,
+            options=StartOptions(resume=self.sid if resume else None),
         )
         self.addCleanup(handle.stop)
         stream = Stream(self, handle)
@@ -991,7 +992,9 @@ class HookTrustIntegrationTest(Live):
         self.scene(catalog_case="silent")
         run = self.driver.registry.adapter("codex").tui()
         launch = run.launch(
-            "hello", dataclasses.replace(self.spec, sid=self.sid), False, (sys.executable, "-V")
+            "hello",
+            SessionRequest(dataclasses.replace(self.spec, sid=self.sid), resumed=False),
+            (sys.executable, "-V"),
         )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}

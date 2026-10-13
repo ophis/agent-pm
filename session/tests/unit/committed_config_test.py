@@ -11,6 +11,7 @@ from agent_pm.session import Driver, Spec
 from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.session.engine.types import SessionRequest
 from agent_pm.utils import read_project
 
 from session.tests.case import Case, settings
@@ -54,7 +55,12 @@ class Committed(Case):
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (
             adapter.headless()
-            .launch("hi", Spec(workdir=tmp.name, tier=4, effort="low", sid=SID), False)
+            .launch(
+                "hi",
+                SessionRequest(
+                    Spec(workdir=tmp.name, tier=4, effort="low", sid=SID), resumed=False
+                ),
+            )
             .argv
         )
         self.assertEqual(

@@ -9,6 +9,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
+    SessionRequest,
     Stderr,
     TurnEnd,
 )
@@ -19,7 +20,7 @@ from session.tests.unit.adapters.codex.support import NATIVE, Base
 class HeadlessTest(Base):
     def run_instance(self):
         run = self.adapter.headless()
-        run.launch("hello", self.spec, False)
+        run.launch("hello", SessionRequest(self.spec, resumed=False))
         return run
 
     def test_native_binding_precedes_event(self):
@@ -110,7 +111,7 @@ class HeadlessTest(Base):
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        run.launch("again", self.spec, True)
+        run.launch("again", SessionRequest(self.spec, resumed=True))
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
 
     def test_source_quota_error_emits_limit(self):

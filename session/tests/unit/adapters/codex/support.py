@@ -8,7 +8,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.sessions import store_root
-from agent_pm.session.engine.types import Access, Spec
+from agent_pm.session.engine.types import Access, SessionRequest, Spec
 
 from session.tests.case import REPO, Case
 
@@ -54,7 +54,7 @@ class Base(Case):
         )
 
     def prepare(self):
-        return self.common.prepare(self.spec, False)
+        return self.common.prepare(SessionRequest(self.spec, resumed=False))
 
     def rollout(self, native=NATIVE, *, cwd=None, parent=None, stamp=100):
         path = self.codex_home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{native}.jsonl"

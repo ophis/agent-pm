@@ -8,8 +8,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END, Tui
-from agent_pm.session.engine.types import LimitHit
+from agent_pm.session.engine.types import LimitHit, SessionRequest
 from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
@@ -53,7 +54,8 @@ class ClaudeTui(Tui):
     def __init__(self, common: ClaudeCommon):
         self.common = common
 
-    def launch(self, prompt, spec, resume, hook):
+    def launch(self, prompt, request: SessionRequest, hook):
+        spec = request.spec
         common = self.common
         hooks = {
             label: [
@@ -66,7 +68,7 @@ class ClaudeTui(Tui):
         }
         tail = ("--", prompt) if prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, resume, settings, tail=(*flags, *tail))
+        return common.launch(request, settings, command=ClaudeCommand(tail=(*flags, *tail)))
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")

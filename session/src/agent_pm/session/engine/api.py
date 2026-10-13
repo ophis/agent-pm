@@ -27,6 +27,7 @@ from agent_pm.session.adapters.selection import check as check_selection
 from agent_pm.session.adapters.types import Adapter, Headless, InProcess, Tui
 from agent_pm.session.engine import records
 from agent_pm.session.engine.records import holds, session_record
+from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
 from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
@@ -38,6 +39,7 @@ from agent_pm.session.engine.types import (
     Reply,
     SessionBound,
     SessionInfo,
+    SessionRequest,
     SessionRow,
     SessionStatus,
     Spec,
@@ -264,11 +266,12 @@ class _LaunchSteps(ABC):
     runtime: str
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch: ...
+    def launch(self, prompt: str, request: SessionRequest) -> Launch: ...
 
-    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
+        spec = request.spec
         assert spec.sid is not None
-        self.command = launch = self.launch(prompt, spec, resumed)
+        self.command = launch = self.launch(prompt, request)
         if not launch.argv:
             raise ConfigError.empty_command(self.runtime)
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
@@ -307,8 +310,8 @@ class _HeadlessSteps(_LaunchSteps):
         _no_tui_keys(spec.name, events)
         self.run, self.runtime = run, runtime
 
-    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
-        return self.run.launch(prompt, spec, resumed)
+    def launch(self, prompt: str, request: SessionRequest) -> Launch:
+        return self.run.launch(prompt, request)
 
     def prepared(
         self, info: SessionInfo, workdir: str
@@ -357,8 +360,8 @@ class _TuiSteps(_LaunchSteps):
         )
         return replace(spec, name=self.name, protect=(*spec.protect, *hooks))
 
-    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
-        return self.run.launch(prompt, spec, resumed, tui.hook_argv(tui.session_dir(self.name)))
+    def launch(self, prompt: str, request: SessionRequest) -> Launch:
+        return self.run.launch(prompt, request, tui.hook_argv(tui.session_dir(self.name)))
 
     @contextlib.contextmanager
     def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
@@ -406,10 +409,11 @@ class _InProcessSteps:
         _no_tui_keys(spec.name, events)
         self.run = run
 
-    def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
+        spec = request.spec
         assert spec.sid is not None
-        self.run.check(prompt, spec, resumed)
-        self.args = prompt, spec, resumed
+        self.run.check(request)
+        self.args = prompt, request
         return SessionInfo(
             spec.sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", ""
         )
@@ -501,17 +505,16 @@ class Driver:
         adapters: Mapping,
         hosts: Mapping,
         default_host: str,
-        host=tmux_host,
-        probe=headless.probe,
-        clock=None,
+        services: DriverServices | None = None,
     ):
-        self.host, self.probe, self.clock = host, probe, clock
+        services = DriverServices() if services is None else services
+        self.host, self.probe, self.clock = services.host, services.probe, services.clock
         self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
 
     @classmethod
-    def from_config(cls, config: Mapping, **dependencies):
+    def from_config(cls, config: Mapping, *, services: DriverServices | None = None):
         try:
-            return cls(**registry.settings(config), **dependencies)
+            return cls(**registry.settings(config), services=services)
         except ValueError as error:
             raise ConfigError(str(error)) from error
 
@@ -521,14 +524,15 @@ class Driver:
         mode: str,
         prompt: str,
         spec: Spec,
-        resume: str | None = None,
-        idle_timeout: float | None = None,
-        events: str | None = None,
+        *,
+        options: StartOptions | None = None,
     ) -> Handle:
-        """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name,
-        else <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead
+        """spec.sid: its id (None: options.resume, else a new one); tui: tmux session spec.name,
+        else <runtime>-<sid[:8]>, refused when running; options.events gets done, blocked and dead
         lines; spec.protect gains the hook paths.
         """
+        options = StartOptions() if options is None else options
+        resume, idle_timeout, events = options.resume, options.idle_timeout, options.events
         if mode not in MODES:
             raise ConfigError.mode(MODES, mode)
         _idle(idle_timeout)
@@ -547,7 +551,7 @@ class Driver:
         spec = steps.specced(spec)
         if spec.access.commands and adapter.runtime_note:
             prompt = prompt + "\n\n" + adapter.runtime_note
-        info = steps.info(prompt, spec, resume is not None)
+        info = steps.info(prompt, SessionRequest(spec, resumed=resume is not None))
         with steps.prepared(info, spec.workdir) as host:
             os.makedirs(spec.workdir, exist_ok=True)
             records.note(
@@ -687,7 +691,11 @@ class Driver:
             raise ConfigError(error)
         adapter = self.registry.adapter(runtime)
         try:
-            return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
+            return tuple(
+                adapter.writable_dirs(
+                    SessionRequest(replace(spec, sid=resume), resumed=resume is not None)
+                )
+            )
         except OSError as e:
             raise ConfigError.writable_directories(runtime, e) from e
 

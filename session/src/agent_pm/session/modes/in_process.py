@@ -11,7 +11,7 @@ import threading
 import traceback
 
 from agent_pm.session.adapters.types import InProcess
-from agent_pm.session.engine.types import DriverError, Event, Spec, Stderr
+from agent_pm.session.engine.types import DriverError, Event, SessionRequest, Stderr
 
 END = object()
 
@@ -21,17 +21,17 @@ class InProcessMode:
         self.run, self.begun, self.stopped, self.code = run, False, False, None
         self.items, self.lock, self.over = queue.Queue(), threading.Lock(), threading.Event()
 
-    def begin(self, prompt: str, spec: Spec, resume: bool) -> None:
+    def begin(self, prompt: str, request: SessionRequest) -> None:
         try:
-            threading.Thread(target=self._pump, args=(prompt, spec, resume), daemon=True).start()
+            threading.Thread(target=self._pump, args=(prompt, request), daemon=True).start()
         except RuntimeError as e:
             raise DriverError(f"cannot start the in_process run: {e}") from e
         self.begun = True
 
-    def _pump(self, prompt: str, spec: Spec, resume: bool) -> None:
+    def _pump(self, prompt: str, request: SessionRequest) -> None:
         events, code = None, 1
         try:
-            events = iter(self.run.run(prompt, spec, resume))
+            events = iter(self.run.run(prompt, request))
             for item in events:
                 with self.lock:
                     if self.stopped:

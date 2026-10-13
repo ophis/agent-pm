@@ -6,7 +6,7 @@ import sys
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.engine.types import ConfigError, SessionRequest
 
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
@@ -16,9 +16,9 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 class SandboxTest(Base):
     def argv(self, adapter, mode, spec, resume=False):
         if mode == "headless":
-            return list(adapter.headless().launch("hi", spec, resume).argv)
+            return list(adapter.headless().launch("hi", SessionRequest(spec, resumed=resume)).argv)
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = adapter.tui().launch("hi", spec, resume, HOOK)
+            launch = adapter.tui().launch("hi", SessionRequest(spec, resumed=resume), HOOK)
         return json.loads(launch.argv[-1])["argv"]
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):

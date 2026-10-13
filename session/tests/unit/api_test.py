@@ -27,6 +27,7 @@ import uuid
 from unittest import mock
 
 import agent_pm.session as session_pkg
+from agent_pm.session import StartOptions
 from agent_pm.session.adapters import selection
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
@@ -42,6 +43,7 @@ from agent_pm.session.engine.types import (
     Reply,
     SessionBound,
     SessionInfo,
+    SessionRequest,
     SessionRow,
     SessionStatus,
     Spec,
@@ -70,7 +72,7 @@ class BlankAdapter(fake_adapter.FakeAdapter):
 
 
 class BlankRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
         return Launch(())
 
 
@@ -80,7 +82,7 @@ class FailingAdapter(fake_adapter.FakeAdapter):
 
 
 class FailingRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
         raise LookupError("no binding")
 
 
@@ -94,9 +96,12 @@ class CheckedAdapter(fake_adapter.InProcessFakeAdapter):
 
 
 class CheckedRun(fake_adapter.FakeInProcess):
-    """check: refuses tier 4, else logs its arguments and whether run.jsonl exists."""
+    """check: refuses tier 4, records preflight, and retains the request for execution."""
 
-    def check(self, prompt, spec, resume):
+    def check(self, request: SessionRequest):
+        self.checked_request = request
+        spec = request.spec
+        resume = request.resumed
         LAUNCHED.append(spec)
         if spec.tier == 4:
             raise engine_types.ConfigError("tier 4 is unmapped")
@@ -104,7 +109,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
             f.write(
                 json.dumps(
                     {
-                        "check": prompt,
+                        "check": True,
                         "sid": spec.sid,
                         "resume": resume,
                         "recorded": os.path.exists(records.path(spec.workdir)),
@@ -112,6 +117,10 @@ class CheckedRun(fake_adapter.FakeInProcess):
                 )
                 + "\n"
             )
+
+    def run(self, prompt, request: SessionRequest):
+        assert request is self.checked_request
+        yield from super().run(prompt, request)
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
@@ -148,9 +157,10 @@ class InnerAdapter(fake_adapter.FakeAdapter):
 
 
 class InnerTui(fake_adapter.FakeTui):
-    def launch(self, prompt, spec, resume, hook):
+    def launch(self, prompt, request: SessionRequest, hook):
+        spec = request.spec
         LAUNCHED.append(spec)
-        launch = super().launch(prompt, spec, resume, hook)
+        launch = super().launch(prompt, request, hook)
         env = {**spec.env, "LAUNCH_SET": "1"}
         return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
@@ -174,15 +184,17 @@ class EnvAdapter(ProbeAdapter):
 
 
 class EnvRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
+        spec = request.spec
         LAUNCHED.append(spec)
-        launch = super().launch(prompt, spec, resume)
+        launch = super().launch(prompt, request)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 class EnvTui(fake_adapter.FakeTui):
-    def launch(self, prompt, spec, resume, hook):
-        launch = super().launch(prompt, spec, resume, hook)
+    def launch(self, prompt, request: SessionRequest, hook):
+        spec = request.spec
+        launch = super().launch(prompt, request, hook)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
@@ -256,7 +268,7 @@ class Base(Case):
         """`sid` and `name` go into the spec, as self.driver.start takes them."""
         given = {k: kwargs.pop(k) for k in ("sid", "name") if k in kwargs}
         spec = dataclasses.replace(spec or self.spec(), **given)
-        handle = self.driver.start(runtime, mode, prompt, spec, **kwargs)
+        handle = self.driver.start(runtime, mode, prompt, spec, options=StartOptions(**kwargs))
         self.addCleanup(handle.stop)
         return handle
 
@@ -435,16 +447,20 @@ class ChecksTest(Base):
 
     def test_selection_uses_declared_syntax_and_uuid_validation(self):
         syntax = (("--session-id",), ("--resume",))
-        self.assertEqual(selection.select(SID, False, syntax, uuid=True), ("--session-id", SID))
-        self.assertEqual(selection.select(SID, True, syntax, uuid=True), ("--resume", SID))
-        self.assertEqual(selection.select("native", False, ((), ("resume",))), ())
-        self.assertEqual(selection.select("native", True, ((), ("resume",))), ("resume", "native"))
+        self.assertEqual(
+            selection.select(SID, syntax, uuid=True, resume=False), ("--session-id", SID)
+        )
+        self.assertEqual(selection.select(SID, syntax, uuid=True, resume=True), ("--resume", SID))
+        self.assertEqual(selection.select("native", ((), ("resume",)), resume=False), ())
+        self.assertEqual(
+            selection.select("native", ((), ("resume",)), resume=True), ("resume", "native")
+        )
         for native in ("abc", SID.upper(), SID + "\n"):
             with (
                 self.subTest(native=native),
                 self.assertRaisesRegex(ConfigError, "session ids are UUIDs"),
             ):
-                selection.select(native, False, syntax, uuid=True)
+                selection.select(native, syntax, uuid=True, resume=False)
 
     def test_a_registry_error_passes_through(self):
         self.refused(
@@ -702,7 +718,7 @@ class InProcessTest(Base):
         self.assertEqual((handle.sid, entry["sid"], entry["resume"]), (SID, SID, True))
         self.assertEqual(self.written()[0]["sid"], SID)
 
-    def test_check_gets_the_noted_prompt_the_spec_with_its_sid_and_resume_before_the_record(self):
+    def test_check_gets_the_same_request_before_record_and_execution(self):
         for kwargs, resume in (({"sid": SID}, False), ({"resume": SID}, True)):
             with self.subTest(kwargs=kwargs):
                 self.workdir = os.path.join(self.dir, f"work-{resume}")
@@ -713,14 +729,14 @@ class InProcessTest(Base):
                 self.assertEqual(
                     check,
                     {
-                        "check": "hello\n\nFAKE NOTE",
+                        "check": True,
                         "sid": SID,
                         "resume": resume,
                         "recorded": False,
                     },
                 )
                 self.assertEqual(
-                    (run["prompt"], run["sid"], run["resume"]), (check["check"], SID, resume)
+                    (run["prompt"], run["sid"], run["resume"]), ("hello\n\nFAKE NOTE", SID, resume)
                 )
 
     def test_a_config_error_from_check_refuses_with_no_record_and_no_run(self):
@@ -1149,10 +1165,16 @@ class WritableDirsTest(Base):
             self.assertEqual(
                 self.driver.writable_dirs("probe", spec, "r1"), (self.dir, self.workdir)
             )
-            self.assertEqual(self.driver.writable_dirs("probe", spec), (self.dir, self.workdir))
+            self.assertEqual(
+                self.driver.writable_dirs("probe", spec),
+                (self.dir, self.workdir),
+            )
         self.assertEqual(
             [c.args[1:] for c in dirs.call_args_list],
-            [(dataclasses.replace(spec, sid="r1"), True), (spec, False)],
+            [
+                (SessionRequest(dataclasses.replace(spec, sid="r1"), resumed=True),),
+                (SessionRequest(spec, resumed=False),),
+            ],
         )
 
     def test_refuses_a_spec_sid_a_bad_resume_or_an_unknown_runtime(self):

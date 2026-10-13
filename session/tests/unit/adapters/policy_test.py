@@ -8,6 +8,7 @@ from pathlib import Path
 from agent_pm.session import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.engine.types import SessionRequest
 
 from session.tests.case import REPO
 from session.tests.unit.adapters.codex.support import NATIVE, Base
@@ -27,14 +28,14 @@ class PolicyTest(Base):
             str(self.extra),
         )
         spec = dataclasses.replace(self.spec, flags=flags, env={"K": "saved"})
-        first = self.adapter.headless().launch("one", spec, False)
+        first = self.adapter.headless().launch("one", SessionRequest(spec, resumed=False))
         state = self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
-        resumed = adapter.headless().launch("two", changed, True)
+        resumed = adapter.headless().launch("two", SessionRequest(changed, resumed=True))
         self.assertEqual(state.snapshot["flags"], list(flags))
         self.assertEqual(first.env["K"], "saved")
         self.assertEqual(resumed.env["K"], "saved")
@@ -53,7 +54,7 @@ class PolicyTest(Base):
             else:
                 adapter = ClaudeAdapter({})
                 spec = Spec(workdir=str(self.work), sid=NATIVE, flags=flags)
-            launch = adapter.headless().launch("hi", spec, False)
+            launch = adapter.headless().launch("hi", SessionRequest(spec, resumed=False))
             start = launch.argv.index(flags[0])
             self.assertEqual(launch.argv[start : start + len(flags)], flags)
 

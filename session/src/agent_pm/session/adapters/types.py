@@ -1,5 +1,5 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`. Its
-Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
+Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and request into
 a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
 the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
 the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
@@ -25,8 +25,8 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionBound,
     SessionInfo,
+    SessionRequest,
     SessionStatus,
-    Spec,
     Stderr,
     TurnEnd,
     Usage,
@@ -59,8 +59,8 @@ class Adapter(ABC):
             raise ConfigError.unknown_adapter_key(extra[0], type(self).__name__)
         self.config = dict(config)
 
-    def select_session(self, native: str, resume: bool) -> tuple[str, ...]:
-        return select(native, resume, self.selection, uuid=self.selection_uuid)
+    def select_session(self, native: str, *, resume: bool) -> tuple[str, ...]:
+        return select(native, self.selection, uuid=self.selection_uuid, resume=resume)
 
     @abstractmethod
     def headless(self) -> "Headless | None":
@@ -76,18 +76,18 @@ class Adapter(ABC):
     def usage_probe(self) -> Launch | None:
         return None
 
-    def usage(self, output: str) -> Usage | None:
+    def usage(self, _output: str, /) -> Usage | None:
         """None only when the probe failed."""
         return None
 
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         return info
 
-    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+    def session_status(self, _sid: str, _cwd: str, /) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
-    def writable_dirs(self, spec: Spec, resume: bool) -> tuple[str, ...]:
-        """Own write dirs (resume: spec.sid's)."""
+    def writable_dirs(self, _request: SessionRequest, /) -> tuple[str, ...]:
+        """Own write dirs (resume: request.spec.sid's)."""
         return ()
 
 
@@ -96,8 +96,8 @@ class Headless(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, resume: bool) -> Launch:
-        """The command; resume continues spec.sid."""
+    def launch(self, prompt: str, request: SessionRequest) -> Launch:
+        """The command; request.resumed continues request.spec.sid."""
 
     @abstractmethod
     def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
@@ -120,7 +120,7 @@ class Tui(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
+    def launch(self, prompt: str, request: SessionRequest, hook: tuple[str, ...]) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
         payload on stdin.
         """
@@ -131,20 +131,20 @@ class Tui(ABC):
     @abstractmethod
     def reply(self, payload: dict) -> str: ...
 
-    def pending(self, payload: dict) -> int:
+    def pending(self, _payload: dict, /) -> int:
         return 0
 
-    def activity(self, payload: dict) -> str:
+    def activity(self, _payload: dict, /) -> str:
         return ""
 
-    def blocked_reason(self, payload: dict) -> str:
+    def blocked_reason(self, _payload: dict, /) -> str:
         return ""
 
     def session_id(self, payload: dict) -> str:
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
-    def limit(self, screen: str) -> LimitHit | None:
+    def limit(self, _screen: str, /) -> LimitHit | None:
         """The runtime's usage-limit message on the visible pane `screen`; None: none shown."""
         return None
 
@@ -171,11 +171,11 @@ class InProcess(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def run(self, prompt: str, spec: Spec, resume: bool) -> Iterable[Event | Stderr]:
-        """The session's events; resume continues spec.sid."""
+    def run(self, prompt: str, request: SessionRequest) -> Iterable[Event | Stderr]:
+        """The session's events; request.resumed continues request.spec.sid."""
 
-    def check(self, prompt: str, spec: Spec, resume: bool) -> None:
-        pass
+    def check(self, _request: SessionRequest, /) -> None:
+        return None
 
 
 PACKAGE = "agent_pm.session"

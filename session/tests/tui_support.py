@@ -8,7 +8,7 @@ import threading
 import time
 from unittest import mock
 
-from agent_pm.session import Driver
+from agent_pm.session import Driver, StartOptions
 from agent_pm.session.engine import api
 from agent_pm.session.engine.types import (
     Exited,
@@ -112,7 +112,7 @@ class Live(Case):
             "tui",
             "hello",
             Spec(workdir=self.workdir, name=name, sid=sid),
-            **{"events": self.events, **kwargs},
+            options=StartOptions(**{"events": self.events, **kwargs}),
         )
         self.addCleanup(handle.stop)
         return handle

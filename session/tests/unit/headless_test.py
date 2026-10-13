@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.types import Adapter, Headless
-from agent_pm.session.engine.types import DriverError, Launch, Reply, Stderr
+from agent_pm.session.engine.types import DriverError, Launch, Reply, SessionRequest, Stderr
 from agent_pm.session.modes import headless
 from agent_pm.session.modes.headless import HeadlessMode
 
@@ -82,7 +82,7 @@ class StubAdapter(Adapter):
 class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
         return Launch((sys.executable,))
 
     def parse(self, record):

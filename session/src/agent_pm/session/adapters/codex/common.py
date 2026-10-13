@@ -40,6 +40,7 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
     SessionInfo,
+    SessionRequest,
     SessionStatus,
     Usage,
     Window,
@@ -234,7 +235,9 @@ class CodexCommon:
         return result
 
     @_recover
-    def prepare(self, spec, resume: bool, *, persist: bool = True) -> SessionState:
+    def prepare(self, request: SessionRequest, *, persist: bool = True) -> SessionState:
+        spec = request.spec
+        resume = request.resumed
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
@@ -298,7 +301,9 @@ class CodexCommon:
         ]
 
     @_recover
-    def writable_dirs(self, spec, resume: bool) -> tuple[str, ...]:
+    def writable_dirs(self, request: SessionRequest) -> tuple[str, ...]:
+        spec = request.spec
+        resume = request.resumed
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
@@ -323,7 +328,7 @@ class CodexCommon:
         return save_session(state)
 
     @_recover
-    def load(self, workdir: str, sid: str) -> SessionState | None:
+    def load(self, workdir: str, sid: object) -> SessionState | None:
         return load_session(workdir, sid)
 
     @_recover
@@ -360,7 +365,7 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
-        selection = self.selector(state.native_id, True)
+        selection = self.selector(state.native_id, resume=True)
         _, literal = split_flags(snapshot["flags"])
         argv = [
             "codex",

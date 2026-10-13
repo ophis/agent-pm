@@ -17,6 +17,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
+from agent_pm.session import StartOptions
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.engine import api
 from agent_pm.session.engine.types import (
@@ -100,8 +101,7 @@ class Live(tui_live.Live):
             "tui",
             prompt,
             Spec(workdir=self.workdir, name=name, sid=sid),
-            events=self.events,
-            **kwargs,
+            options=StartOptions(events=self.events, **kwargs),
         )
         self.addCleanup(handle.stop)
         return handle

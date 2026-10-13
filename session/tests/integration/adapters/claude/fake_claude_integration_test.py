@@ -17,7 +17,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.engine.types import Access, Spec
+from agent_pm.session.engine.types import Access, SessionRequest, Spec
 
 from session.tests import case, live_tmux
 from session.tests.integration.adapters.claude import fake_claude
@@ -683,7 +683,10 @@ class ClaudeTuiLaunch(Case):
             ],
             background=1,
         )
-        new, resume = tui.launch("do it", spec, False, hook), tui.launch("", spec, True, hook)
+        new, resume = (
+            tui.launch("do it", SessionRequest(spec, resumed=False), hook),
+            tui.launch("", SessionRequest(spec, resumed=True), hook),
+        )
         self.assertEqual(new.argv[-2:], ("--", "do it"))
         res = self.run_argv(new.argv)
         self.assertEqual(res.returncode, 0, res.stderr)

@@ -33,6 +33,7 @@ from agent_pm.session.engine.types import (
     Paste,
     Reply,
     SessionBound,
+    SessionRequest,
     SessionStatus,
     Spec,
     Stderr,
@@ -57,7 +58,7 @@ class StubAdapter(Adapter):
 
 
 class StubHeadless(Headless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
         return Launch(("stub", prompt))
 
     def parse(self, record):
@@ -65,7 +66,7 @@ class StubHeadless(Headless):
 
 
 class StubTui(Tui):
-    def launch(self, prompt, spec, resume, hook):
+    def launch(self, prompt, request: SessionRequest, hook):
         return Launch(("stub", *hook))
 
     def reply(self, payload):
@@ -73,12 +74,12 @@ class StubTui(Tui):
 
 
 class StubInProcess(InProcess):
-    def run(self, prompt, spec, resume):
+    def run(self, prompt, request: SessionRequest):
         yield Reply(prompt)
 
 
 class CheckOnlyInProcess(InProcess):
-    def check(self, prompt, spec, resume):
+    def check(self, request: SessionRequest):
         return None
 
 
@@ -471,11 +472,13 @@ class AdapterTest(Refusals):
 
     def test_selects_a_session_through_its_selection_syntax(self):
         adapter = StubAdapter({})
-        self.assertEqual(adapter.select_session("n", True), ())
+        self.assertEqual(adapter.select_session("n", resume=True), ())
         adapter.selection, adapter.selection_uuid = (("--new",), ("--pick",)), True
-        self.assertEqual(adapter.select_session(UUID, False), ("--new", UUID))
-        self.assertEqual(adapter.select_session(UUID, True), ("--pick", UUID))
-        self.refused(lambda: adapter.select_session("n", True), "session ids are UUIDs, got 'n'")
+        self.assertEqual(adapter.select_session(UUID, resume=False), ("--new", UUID))
+        self.assertEqual(adapter.select_session(UUID, resume=True), ("--pick", UUID))
+        self.refused(
+            lambda: adapter.select_session("n", resume=True), "session ids are UUIDs, got 'n'"
+        )
 
     def test_keeps_a_copy_of_its_config(self):
         config = {"model": "m", "flags": ["-x"]}
@@ -503,7 +506,9 @@ class AdapterTest(Refusals):
         spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")
         for resume in (False, True):
             with self.subTest(resume=resume):
-                self.assertEqual(StubAdapter({}).writable_dirs(spec, resume), ())
+                self.assertEqual(
+                    StubAdapter({}).writable_dirs(SessionRequest(spec, resumed=resume)), ()
+                )
 
     def test_in_process_is_none_unless_overridden(self):
         self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))
@@ -546,7 +551,9 @@ class InProcessTest(Case):
         self.assertIs(run.adapter, adapter)
         for resume in (False, True):
             with self.subTest(resume=resume):
-                self.assertIsNone(run.check("p", Spec(workdir="/w", sid="s"), resume))
+                self.assertIsNone(
+                    run.check(SessionRequest(Spec(workdir="/w", sid="s"), resumed=resume))
+                )
 
 
 class TuiTest(Case):
@@ -679,7 +686,7 @@ class NoProcessTest(Case):
             adapter.usage("output")
             adapter.session_status("s", "/c")
             adapter.in_process()
-            StubInProcess(adapter).check("p", Spec(workdir="/w"), False)
+            StubInProcess(adapter).check(SessionRequest(Spec(workdir="/w"), resumed=False))
         popen.assert_not_called()
         run.assert_not_called()
 

@@ -31,6 +31,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
+    SessionRequest,
     SessionStatus,
     TurnEnd,
     Usage,
@@ -46,7 +47,7 @@ class ClaudeCommon(UnconfiguredCommon):
         super().__init__(
             config,
             selector=lambda native, resume: select(
-                native, resume, ClaudeAdapter.selection, uuid=True
+                native, ClaudeAdapter.selection, uuid=True, resume=resume
             ),
         )
 
@@ -127,7 +128,7 @@ class Base(Case):
 
     def launch(self, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless().launch(prompt, spec, resume)
+        return ClaudeAdapter(config).headless().launch(prompt, SessionRequest(spec, resumed=resume))
 
 
 class ConfigTest(Base):
@@ -368,8 +369,8 @@ class ReadRulesTest(Base):
         spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
         adapter = ClaudeAdapter({} if config is None else config)
         return (
-            lambda: adapter.headless().launch("hi", spec, resume),
-            lambda: adapter.tui().launch("hi", spec, resume, HOOK),
+            lambda: adapter.headless().launch("hi", SessionRequest(spec, resumed=resume)),
+            lambda: adapter.tui().launch("hi", SessionRequest(spec, resumed=resume), HOOK),
         )
 
     def both(self, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -464,7 +465,11 @@ class EnvTest(Base):
             (
                 ClaudeAdapter(config)
                 .tui()
-                .launch("hi", Spec(workdir=self.work, sid=SID, access=access), False, HOOK),
+                .launch(
+                    "hi",
+                    SessionRequest(Spec(workdir=self.work, sid=SID, access=access), resumed=False),
+                    HOOK,
+                ),
                 {},
             ),
         ):
@@ -1033,7 +1038,7 @@ WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 def tui_launch(work, prompt="hi", config=CONFIG, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, **spec})
-    return ClaudeAdapter(config).tui().launch(prompt, spec, resume, HOOK)
+    return ClaudeAdapter(config).tui().launch(prompt, SessionRequest(spec, resumed=resume), HOOK)
 
 
 class TuiArgvTest(Base):
@@ -1668,7 +1673,7 @@ class WritableDirsTest(Base):
 
     def dirs(self, resume=False, workdir=None, **access) -> tuple[str, ...]:
         spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
-        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume)
+        return ClaudeAdapter(CONFIG).writable_dirs(SessionRequest(spec, resumed=resume))
 
     def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
@@ -1730,7 +1735,10 @@ class WritableDirsTest(Base):
                         access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
                         flags=given,
                     )
-                    self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec, resume), dirs)
+                    self.assertEqual(
+                        ClaudeAdapter(CONFIG).writable_dirs(SessionRequest(spec, resumed=resume)),
+                        dirs,
+                    )
 
 
 if __name__ == "__main__":

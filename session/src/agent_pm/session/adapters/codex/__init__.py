@@ -4,6 +4,7 @@ from agent_pm.session.adapters.codex.common import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
 from agent_pm.session.adapters.codex.tui import CodexTui
 from agent_pm.session.adapters.types import Adapter
+from agent_pm.session.engine.types import SessionRequest
 
 
 class CodexAdapter(Adapter):
@@ -51,5 +52,5 @@ class CodexAdapter(Adapter):
     def session_status(self, sid, cwd):
         return self.common.session_status(sid, cwd)
 
-    def writable_dirs(self, spec, resume):
-        return self.common.writable_dirs(spec, resume)
+    def writable_dirs(self, request: SessionRequest):
+        return self.common.writable_dirs(request)

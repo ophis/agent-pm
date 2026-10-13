@@ -4,9 +4,17 @@ and rate-limit records into events, one LimitHit per run.
 """
 
 from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.adapters.common import number
 from agent_pm.session.adapters.types import Headless
-from agent_pm.session.engine.types import Activity, LimitHit, Reply, SessionBound, TurnEnd
+from agent_pm.session.engine.types import (
+    Activity,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionRequest,
+    TurnEnd,
+)
 
 
 class ClaudeHeadless(Headless):
@@ -15,16 +23,18 @@ class ClaudeHeadless(Headless):
         self.limit_sent = False
         self.resets_at = None
 
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, request: SessionRequest):
+        spec = request.spec
         common = self.common
         return common.launch(
-            spec,
-            resume,
+            request,
             None,
-            ("-p",),
-            ("--output-format", "stream-json", "--verbose"),
-            (*spec.flags, "--", prompt),
-            common.ENV,
+            command=ClaudeCommand(
+                head=("-p",),
+                output=("--output-format", "stream-json", "--verbose"),
+                tail=(*spec.flags, "--", prompt),
+                env=common.ENV,
+            ),
         )
 
     def parse(self, record):

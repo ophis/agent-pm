@@ -8,12 +8,13 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
+from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.adapters.selection import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
+    SessionRequest,
     SessionStatus,
-    Spec,
     Usage,
     Window,
 )
@@ -175,7 +176,7 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return common.resume_command(cwd, env, ("claude", *self.selector(sid, True), *added))
+        return common.resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
 
     @staticmethod
     def uuid(sid) -> str:
@@ -185,18 +186,19 @@ class ClaudeCommon:
 
     def launch(
         self,
-        spec: Spec,
-        resume: bool,
+        request: SessionRequest,
         settings: Mapping | None,
-        head: tuple[str, ...] = (),
-        output: tuple[str, ...] = (),
-        tail: tuple[str, ...] = (),
-        env: Mapping[str, str] = MappingProxyType({}),
+        *,
+        command: ClaudeCommand | None = None,
     ) -> Launch:
         """Build a Claude command with configured settings, access grants and output arguments;
-        `env` under the config's. --mcp-config keeps a project's .mcp.json that a
+        command.env under the config's. --mcp-config keeps a project's .mcp.json that a
         --strict-mcp-config in spec.flags would drop.
         """
+        command = ClaudeCommand() if command is None else command
+        spec = request.spec
+        resume = request.resumed
+        head, output, tail, env = command.head, command.output, command.tail, command.env
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -208,7 +210,7 @@ class ClaudeCommon:
             *self.allow,
         )
         strict = "--strict-mcp-config" in _before_end(spec.flags)
-        selection = self.selector(sid, resume)
+        selection = self.selector(sid, resume=resume)
         if not isinstance(sid, str):
             raise ConfigError.session_uuid(sid)
         argv = (

@@ -63,7 +63,7 @@ class RecoveryError(Exception):
     pass
 
 
-def absolute_path(path: str, label: str) -> str:
+def absolute_path(path: object, label: str) -> str:
     if not isinstance(path, str) or not path or not os.path.isabs(path) or "\x00" in path:
         raise RecoveryError(f"invalid Codex recovery {label}: expected an absolute path")
     return os.path.realpath(path)
@@ -264,7 +264,7 @@ def _copy_snapshot(value: object) -> dict:
     return copied
 
 
-def session_identity(workdir: str, sid: str) -> tuple[str, str]:
+def session_identity(workdir: object, sid: object) -> tuple[str, str]:
     workdir = absolute_path(workdir, "workdir")
     if not isinstance(sid, str) or not sid or len(sid) > 1024 or "\x00" in sid:
         raise RecoveryError("invalid recovery run ID")
@@ -530,7 +530,7 @@ def save_session(state: SessionState, *, root: str | None = None) -> SessionStat
     return state
 
 
-def load_session(workdir: str, sid: str, *, root: str | None = None) -> SessionState | None:
+def load_session(workdir: str, sid: object, *, root: str | None = None) -> SessionState | None:
     workdir, sid = session_identity(workdir, sid)
     root = store_directory(create=False, root=root)
     if root is None:

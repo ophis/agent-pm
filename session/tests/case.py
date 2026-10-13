@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import agent_pm
-from agent_pm.session import Driver
+from agent_pm.session import Driver, DriverServices
 from agent_pm.utils import import_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,7 +55,10 @@ class Case(unittest.TestCase):
             return super().run(result)
 
     def configure_session(self, adapters, tmux=None) -> None:
-        self.driver = Driver(**settings(adapters, tmux), **getattr(self, "driver_dependencies", {}))
+        self.driver = Driver(
+            **settings(adapters, tmux),
+            services=DriverServices(**getattr(self, "driver_dependencies", {})),
+        )
 
 
 def _foreign() -> str | None:
