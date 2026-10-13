@@ -74,8 +74,7 @@ from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import Entry
 for i in range(15):
     spec = Entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"])
-    with roster.locked(sys.argv[1]) as record:
-        roster.record(record, sys.argv[2] + str(i), roster.entry(spec))
+    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry(spec))
 """
 
 
@@ -823,6 +822,17 @@ class EntriesTest(RosterCase):
                     with self.assertRaisesRegex(roster.RosterError, "^entry 'a b': name: want"):
                         setter(r, "a b", good())
                 self.assertEqual(self.entries(), {"w1": good(note="n")})
+
+    def test_put_records_one_entry_under_the_lock(self):
+        roster.put(self.dir, "w1", good(note="n"))
+        roster.put(self.dir, "w2", good(state="done"))
+        roster.put(self.dir, "w1", good(state="done"))
+        self.assertEqual(
+            self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")}
+        )
+        with self.assertRaises(roster.RosterError):
+            roster.put(self.dir, "w3", good(kind="boss"))
+        self.assertEqual(sorted(self.entries()), ["w1", "w2"])
 
     def test_record_keeps_the_note_of_a_replaced_entry_of_the_same_sid(self):
         cases = {
@@ -1703,7 +1713,7 @@ class StorageTest(RosterCase):
         self.assertAlmostEqual(sum(clock.slept), roster.LOCK_TIMEOUT, delta=0.2)
         self.assertFalse(os.path.exists(self.path))
 
-    def test_two_processes_record_concurrently_and_both_entries_land(self):
+    def test_two_processes_put_concurrently_and_both_entries_land(self):
         procs = [
             subprocess.Popen(
                 [*PY, "-c", CHILD, self.dir, tag],
@@ -1784,8 +1794,7 @@ class StorageTest(RosterCase):
             roster.recovery(r["entries"]["w1"]),
             ["/usr/bin/python3", *MODULE, "start", "w1", "--client", "rt9"],
         )
-        with roster.locked(self.dir) as record:
-            roster.record(record, "w2", good())
+        roster.put(self.dir, "w2", good())
         self.assertEqual(self.entries(), {"w1": good(resume=resume), "w2": good()})
 
 
@@ -1872,8 +1881,8 @@ class ValidationTest(RosterCase):
     def test_later_write_drops_a_skipped_entry(self):
         self.store(self.doc(entries={"bad": good(sid="; rm -rf ~")}))
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), roster.locked(self.dir) as record:
-            roster.record(record, "w1", good())
+        with contextlib.redirect_stderr(err):
+            roster.put(self.dir, "w1", good())
         self.assertEqual(list(self.entries()), ["w1"])
         self.assertEqual(err.getvalue().count("\n"), 1)
 

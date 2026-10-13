@@ -1,1 +1,1 @@
-"""Role run configuration, planning, execution and shared types."""
+"""The Delegate ABC (base.py) and how it runs."""

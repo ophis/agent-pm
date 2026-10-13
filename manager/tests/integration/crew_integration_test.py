@@ -374,8 +374,7 @@ class Live(Case):
             self.ok(self.server.tmux("new-session", "-d", "-s", session, *live_tmux.IDLE))
         resume = [sys.executable, os.path.join(self.root, "drive.py"), f"--role={ROLE}"]
         e = roster.entry(Entry("role", sid=ROLE_SID, cwd=work, resume=resume, tui=ROLE_TUI))
-        with roster.locked(self.directory) as record:
-            roster.record(record, ROLE_DRIVER, e)
+        roster.put(self.directory, ROLE_DRIVER, e)
         return e
 
     def recover(self, name: str, **extra: str) -> subprocess.CompletedProcess:

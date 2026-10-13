@@ -15,4 +15,4 @@ class PrintPromptAdapter(Adapter):
         return None
 
     def in_process(self):
-        return PrintPromptInProcess()
+        return PrintPromptInProcess(self)

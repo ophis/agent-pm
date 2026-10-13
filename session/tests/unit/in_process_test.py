@@ -10,7 +10,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.types import InProcess
+from agent_pm.session.adapters.types import Adapter, InProcess
 from agent_pm.session.engine.types import DriverError, Reply, SessionRequest, Spec, Stderr
 from agent_pm.session.modes.in_process.types import InProcessMode
 
@@ -21,10 +21,19 @@ SHORT = 0.2  # a timeout that must lapse, in seconds
 SPEC = Spec(workdir="/tmp/in-process-test")
 
 
+class StubAdapter(Adapter):
+    def headless(self):
+        return None
+
+    def tui(self):
+        return None
+
+
 class StubRun(InProcess):
     """run: script(prompt, spec, resume)."""
 
     def __init__(self, script):
+        super().__init__(StubAdapter({}))
         self.script = script
 
     def run(self, prompt, request: SessionRequest):

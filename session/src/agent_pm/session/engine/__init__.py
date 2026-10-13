@@ -1,1 +1,1 @@
-"""How a session runs: API, records, status log and shared types."""
+"""The Session ABC (base.py) and how a session runs: api.py, records.py, status_log.py, types.py."""

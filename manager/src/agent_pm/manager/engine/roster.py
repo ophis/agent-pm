@@ -461,7 +461,7 @@ def _write(directory: str, path: str, text: str) -> None:
 
 @contextlib.contextmanager
 def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
-    # not reentrant: never call locked() inside a block (a second flock waits for the first)
+    # not reentrant: never call locked() or put() inside a block (a second flock waits)
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
         raise RosterError.not_attached(directory)
@@ -543,6 +543,11 @@ def record(r: dict, name: str, value: dict) -> None:
         and old["sid"] == value["sid"]
     ):
         r["entries"][name] = {**value, "note": old["note"]}
+
+
+def put(directory: str, name: str, value: dict) -> None:
+    with locked(directory) as r:
+        record(r, name, value)
 
 
 def unwritten(name: str, error: Exception) -> None:

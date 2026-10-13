@@ -209,11 +209,6 @@ def result(**fields):
     return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
 
 
-def stored_entry(directory, name, value):
-    with roster.locked(directory) as record:
-        roster.record(record, name, value)
-
-
 class FakeDriverError(DriverError):
     @classmethod
     def close_failed(cls, name):
@@ -1240,7 +1235,7 @@ class StopAllTest(RosterCase):
         )
         w1 = os.path.join(self.agent_pm, "managers", "w1")
         roster.ensure(w1)
-        stored_entry(w1, "w3", entry())
+        roster.put(w1, "w3", entry())
         fake = Api(rows=self.rows())
         self.assertEqual(
             self.main_with(fake, "stop-all"),
@@ -1677,12 +1672,9 @@ class DisplayTest(AttachCase):
 
         cases = {
             "same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
-            "sid changed": (
-                lambda: stored_entry(self.mdir, "w1", entry(sid=SID2)),
-                entry(sid=SID2),
-            ),
+            "sid changed": (lambda: roster.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
             "kind changed": (
-                lambda: stored_entry(self.mdir, "w1", entry("pipeline")),
+                lambda: roster.put(self.mdir, "w1", entry("pipeline")),
                 entry("pipeline"),
             ),
             "removed": (drop, None),

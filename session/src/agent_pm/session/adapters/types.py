@@ -91,6 +91,9 @@ class Adapter(ABC):
 
 
 class Headless(ABC):
+    def __init__(self, adapter: Adapter):
+        self.adapter = adapter
+
     @abstractmethod
     def launch(self, prompt: str, request: SessionRequest) -> Launch:
         """The command; request.resumed continues request.spec.sid."""
@@ -106,6 +109,9 @@ class Headless(ABC):
 class Tui(ABC):
     hooks: Mapping[str, str] = {}  # hook label → TURN_END, BLOCKED or ACTIVITY
     dialogs: tuple[str, ...] = ()
+
+    def __init__(self, adapter: Adapter):
+        self.adapter = adapter
 
     @abstractmethod
     def launch(self, prompt: str, request: SessionRequest, hook: tuple[str, ...]) -> Launch:
@@ -155,6 +161,9 @@ class Tui(ABC):
 
 
 class InProcess(ABC):
+    def __init__(self, adapter: Adapter):
+        self.adapter = adapter
+
     @abstractmethod
     def run(self, prompt: str, request: SessionRequest) -> Iterable[Event | Stderr]:
         """The session's events; request.resumed continues request.spec.sid."""

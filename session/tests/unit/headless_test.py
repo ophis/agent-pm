@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.types import Headless
+from agent_pm.session.adapters.types import Adapter, Headless
 from agent_pm.session.engine.types import DriverError, Launch, Reply, SessionRequest, Stderr
 from agent_pm.session.modes.headless import types as headless
 from agent_pm.session.modes.headless.types import HeadlessMode
@@ -72,6 +72,14 @@ def until(check) -> bool:
     return True
 
 
+class StubAdapter(Adapter):
+    def headless(self):
+        return StubRun(self)
+
+    def tui(self):
+        return None
+
+
 class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
@@ -92,7 +100,7 @@ class Base(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.mode = HeadlessMode(StubRun())
+        self.mode = HeadlessMode(StubAdapter({}).headless())
 
     def begin(self, code: str, env: dict | None = None, **kwargs):
         argv = (sys.executable, "-I", "-c", textwrap.dedent(code))
@@ -217,7 +225,7 @@ class Streams(Base):
         for level in (logging.NOTSET, logging.CRITICAL):
             with self.subTest(level=level), mock.patch("sys.stderr", new=io.StringIO()) as console:
                 logging.disable(level)
-                self.mode = HeadlessMode(ErrorRun())
+                self.mode = HeadlessMode(ErrorRun(StubAdapter({})))
                 self.begin("print('{}')")
                 with self.assertRaises(KeyboardInterrupt) as caught:
                     self.drain()
@@ -253,7 +261,7 @@ class Stop(Base):
     def test_falls_back_to_killing_the_process_when_killpg_fails(self):
         for error in (ProcessLookupError, PermissionError):
             with self.subTest(error=error.__name__):
-                self.mode = HeadlessMode(StubRun())
+                self.mode = HeadlessMode(StubAdapter({}).headless())
                 self.begin(SLEEPER)
                 with mock.patch("os.killpg", side_effect=error) as killpg:
                     self.promptly(self.mode.stop)
