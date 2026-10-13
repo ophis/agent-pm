@@ -5,7 +5,6 @@ and rate-limit records into events, one LimitHit per run.
 
 from agent_pm.session.adapters.base import Headless
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.adapters.common import number
 from agent_pm.session.engine.types import (
     Activity,
     LimitHit,
@@ -14,6 +13,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
+from agent_pm.utils import number
 
 
 class ClaudeHeadless(Headless):

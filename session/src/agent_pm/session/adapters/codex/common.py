@@ -27,7 +27,7 @@ from agent_pm.session.adapters.codex.sessions import (
     session_paths,
     validate_snapshot,
 )
-from agent_pm.session.adapters.common import check, number, resume_command
+from agent_pm.session.adapters.common import check
 from agent_pm.session.adapters.flags import scan, split_flags
 from agent_pm.session.engine.types import (
     ConfigError,
@@ -38,6 +38,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.utils import number, resume_command
 
 TABLE = "[adapters.codex]"
 LIMIT_PREFIXES = (

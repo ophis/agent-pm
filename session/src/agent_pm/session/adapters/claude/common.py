@@ -19,7 +19,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import json_records, printable_abs
+from agent_pm.utils import json_records, number, printable_abs, resume_command
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
@@ -59,8 +59,8 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
 
 
 def _window(value) -> Window | None:
-    used = common.number(value.get("utilization")) if isinstance(value, dict) else None
-    return None if used is None else Window(100 * used, common.number(value.get("resetsAt")))
+    used = number(value.get("utilization")) if isinstance(value, dict) else None
+    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
 
 
 def _full(window: Window | None, resets: float | None) -> Window:
@@ -178,7 +178,7 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return common.resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
+        return resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
 
     @staticmethod
     def uuid(sid) -> str:
@@ -263,7 +263,7 @@ class ClaudeCommon:
         )
         weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
-            resets = common.number(info.get("resetsAt"))
+            resets = number(info.get("resetsAt"))
             kind = info.get("rateLimitType")
             if isinstance(kind, str) and kind.startswith("seven_day"):
                 weekly = _full(weekly, resets)

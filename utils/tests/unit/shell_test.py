@@ -3,7 +3,7 @@
 import subprocess
 import unittest
 
-from agent_pm.utils import shell
+from agent_pm.utils import resume_command, shell
 
 from utils.tests.case import Case
 
@@ -33,6 +33,23 @@ class ErrText(Case):
                 self.assertEqual(
                     shell.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want
                 )
+
+
+class ResumeCommand(Case):
+    def test_plain_argv_without_environment(self):
+        self.assertEqual(
+            resume_command("/work", {}, ("codex", "resume", "id")), "cd /work && codex resume id"
+        )
+
+    def test_quotes_directory_environment_and_arguments(self):
+        self.assertEqual(
+            resume_command(
+                "/work dir",
+                {"LABEL": "a b", "EMPTY": ""},
+                ("claude", "--resume", "a; echo bad", ""),
+            ),
+            "cd '/work dir' && LABEL='a b' EMPTY='' claude --resume 'a; echo bad' ''",
+        )
 
 
 if __name__ == "__main__":

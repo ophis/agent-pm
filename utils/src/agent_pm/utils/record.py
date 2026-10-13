@@ -4,6 +4,7 @@ session layer interprets it. json_records yields JSON objects from text or byte 
 """
 
 import json
+import math
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, fields
 from typing import Self
@@ -118,3 +119,13 @@ def json_records(lines: Iterable[str | bytes]) -> Iterator[dict]:
             continue
         if isinstance(record, dict):
             yield record
+
+
+def number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) else None

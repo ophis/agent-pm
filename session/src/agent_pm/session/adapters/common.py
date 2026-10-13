@@ -1,7 +1,5 @@
 """What the Claude and Codex adapters share."""
 
-import math
-import shlex
 from collections.abc import Mapping
 
 from agent_pm.session.engine.types import EFFORTS, ConfigError
@@ -39,18 +37,3 @@ def check(config: Mapping, table: str, checks=CHECKS) -> None:
     for key, ok, what in checks:
         if key in config and not ok(config[key]):
             raise ConfigError(f"{table}.{key} must be {what}")
-
-
-def number(value) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        value = float(value)
-    except OverflowError:
-        return None
-    return value if math.isfinite(value) else None
-
-
-def resume_command(cwd: str, env: Mapping[str, str], argv) -> str:
-    assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
-    return f"cd {shlex.quote(cwd)} && {assign}{shlex.join(argv)}"

@@ -34,10 +34,10 @@ from agent_pm.utils.paths import (
     temp_dirs,
     under,
 )
-from agent_pm.utils.record import Display, Record, Status, json_records
+from agent_pm.utils.record import Display, Record, Status, json_records, number
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
-from agent_pm.utils.shell import LONG, SHORT, Runner, Stopped, err_text, redact, sh
+from agent_pm.utils.shell import LONG, SHORT, Runner, Stopped, err_text, redact, resume_command, sh
 from agent_pm.utils.text import printable, sid_error
 
 __all__ = [
@@ -72,6 +72,7 @@ __all__ = [
     "load_config",
     "json_records",
     "load_class",
+    "number",
     "origin",
     "printable",
     "printable_abs",
@@ -81,6 +82,7 @@ __all__ = [
     "real_dirs",
     "redact",
     "resolve",
+    "resume_command",
     "save",
     "sh",
     "sid_error",
