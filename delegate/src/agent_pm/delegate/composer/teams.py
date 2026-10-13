@@ -4,7 +4,6 @@ index; the checks that keep a team dir out of reach of the agent run."""
 import os
 import re
 import stat
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,9 +17,8 @@ from agent_pm.delegate.composer.base import (
     read_text,
     title_of,
 )
-from agent_pm.delegate.engine.config import LOCAL
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils.config_file import read_config
+from agent_pm.utils.config_file import LOCAL, read_config, read_project
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import temp_dirs, under
 
@@ -126,10 +124,10 @@ class Team:
 def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
     try:
         own, value = (
-            "team_dirs" in read_config(config, os.devnull),
-            read_config(config, local).get("team_dirs"),
+            read_config(config, os.devnull).get("team_dirs"),
+            read_project("delegate", path=config, local=local).get("team_dirs"),
         )
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+    except (OSError, ValueError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
         raise ConfigError(f"team_dirs: set it in {local}, not {os.path.basename(config)}")
@@ -206,7 +204,7 @@ def index(
 ) -> dict[str, str]:
     team = team_or_default(team)
     if not (charter := team.charter(role)):
-        raise no_charter(role, read_config(config, local), team)
+        raise no_charter(role, read_project("delegate", path=config, local=local), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -244,14 +242,15 @@ def catalog(
     team = team_or_default(team)
     role_tables(config, local)
     return {
-        role: index(role, team, config, local) for role in roles(team, read_config(config, local))
+        role: index(role, team, config, local)
+        for role in roles(team, read_project("delegate", path=config, local=local))
     }
 
 
 def role_tables(config: str, local: str) -> Mapping:
     if not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = read_config(config, local).get("roles")
+    roles = read_project("delegate", path=config, local=local).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():

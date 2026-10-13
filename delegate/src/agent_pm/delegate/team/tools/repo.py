@@ -29,9 +29,9 @@ import subprocess
 import sys
 from datetime import datetime
 
-from agent_pm.delegate.engine.config import CONFIG, LOCAL
+from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import read_config
+from agent_pm.utils.config_file import LOCAL, read_project
 from agent_pm.utils.git import GUARD, LOCK, common_dir, git  # noqa: F401
 from agent_pm.utils.paths import real_dirs, temp_dirs, under
 from agent_pm.utils.repos import (  # noqa: F401
@@ -411,7 +411,7 @@ def main(
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_config(config, local)
+        cfg = read_project("delegate", path=config, local=local)
         if a.cmd == "worktree":
             r = worktree(
                 a.repo,

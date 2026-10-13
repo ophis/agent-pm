@@ -10,7 +10,7 @@ standalone(repo)      no file names LINEAR but CONFIG_LEVELS' LEVELS line (the c
 runtime_names(repo)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
 session_only(repo)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
-adapters_key(repo)    no str constant "adapters" outside CONFIG_FILE
+adapters_key(repo)    no str constant "adapters" outside ADAPTERS_HOME
 syntax_311(repo)      every .py parses as Python 3.11
 pure_utils(repo)      each PURE unit imports only stdlib and its PURE entry
 manager_imports(repo) nothing else imports MANAGER; it: stdlib, MANAGER_ALLOWED, MANAGER_EXCEPTIONS
@@ -137,6 +137,7 @@ CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
+ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
 STATUS_LOG_CLOCK = "%H:%M:%S"
 # until TASK-368
@@ -151,7 +152,7 @@ MANAGER_ALLOWED = {"manager.crew": ("utils", "manager.roster"), "manager.roster"
 # until TASK-371
 MANAGER_EXCEPTIONS = {
     "manager.crew": (f"{PKG}.{CONFIG}", f"{PKG}.session.Session", f"{PKG}.session.api"),
-    "manager.roster": (f"{PKG}.{CONFIG}", f"{PKG}.session.api"),
+    "manager.roster": (f"{PKG}.session.api",),
 }
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
@@ -333,7 +334,7 @@ def session_only(repo: str) -> list[str]:
 
 def adapters_key(repo: str) -> list[str]:
     found = set()
-    for rel, text in _lower_files(repo, ".py", skip=CONFIG_FILE):
+    for rel, text in _lower_files(repo, ".py", skip=ADAPTERS_HOME):
         found.update(
             f'{rel}:{line}: literal key "adapters"'
             for line, s in _strings(ast.parse(text, rel))

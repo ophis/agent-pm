@@ -40,7 +40,7 @@ DEAD_TEXT = "Error: boom\n\n  \n" + "\n" * 10 + "Pane is dead (status 1)\n"
 DEAD_MSG = "w1: rt0 exited 1 at once; its pane's last lines:\nError: boom\nPane is dead (status 1)"
 MGR = {"session": "mgr", "since": WHEN}
 OTHER = {"session": "other", "since": WHEN}
-LOCAL = "core-new.local.toml"
+LOCAL = "local.toml"
 WIDTH = 64
 SPAN = roster.EVENTS_MAX // WIDTH
 
@@ -725,7 +725,7 @@ class RuntimeTest(WorkerCase):
                 self.local(text)
                 with self.assertRaises(crew.WorkersError) as cm:
                     self.started()
-                self.assertEqual(str(cm.exception), "core config: runtime: want a runtime name")
+                self.assertEqual(str(cm.exception), "config: runtime: want a runtime name")
                 self.assertEqual(self.api.calls, [])
 
     def test_env_overrides_become_the_specs_env(self):
@@ -976,7 +976,7 @@ class MainTest(WorkerCase):
         self.assertEqual((rc, out, err), (0, "", "tui: session w1: tmux attach -t '=w1'\n"))
         self.assertEqual(self.api.starts[-1]["resume"], SID)
 
-    def test_main_configures_the_session_from_the_core_config_before_reaching_it(self):
+    def test_main_configures_the_session_from_the_session_config_before_reaching_it(self):
         seen, attach = [], api.attach
         self.api.tuis["w1"] = ("done", "")
         with mock.patch.object(
@@ -985,11 +985,13 @@ class MainTest(WorkerCase):
             self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
         self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
 
-    def test_a_core_config_error_exits_1(self):
-        self.local("x = \n")
-        rc, out, err = self.run_main("reply", "w1")
-        self.assertEqual((rc, out), (1, ""))
-        self.assertTrue(err.startswith("workers: core config "), err)
+    def test_a_config_error_exits_1(self):
+        for text in ("x = \n", "bogus = 1\n"):
+            with self.subTest(text):
+                self.local(text)
+                rc, out, err = self.run_main("reply", "w1")
+                self.assertEqual((rc, out), (1, ""))
+                self.assertTrue(err.startswith("workers: config: "), err)
         self.assertEqual(self.api.calls, [])
 
     def test_reply(self):
@@ -1847,7 +1849,7 @@ class AttachTest(RosterCase):
         self.local('runtime = ""\n')
         self.assertEqual(
             self.attach(self.server()),
-            (1, "", "workers: core config: runtime: want a runtime name\n"),
+            (1, "", "workers: config: runtime: want a runtime name\n"),
         )
 
     def test_an_invalid_entry_is_skipped_with_one_stderr_line(self):

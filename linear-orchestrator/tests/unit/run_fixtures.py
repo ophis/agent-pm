@@ -161,9 +161,8 @@ class Base(Case):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.local = os.path.join(self.agent_pm, "linear-new.local.toml")
-        self.write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
-        self.write(self.local, local(self.work))
+        self.local = os.path.join(self.agent_pm, "local.toml")
+        self.write_local(local(self.work))
         self.rd = os.path.join(self.work, "work", ID)
         self.logs = os.path.join(self.work, "logs")
         self.runs = os.path.join(self.logs, "runs.jsonl")
@@ -176,6 +175,10 @@ class Base(Case):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(text)
+
+    def write_local(self, text):
+        """~/.agent-pm/local.toml: `text`, then CORE_LOCAL (the delegate's keys)."""
+        self.write(self.local, text + "\n" + CORE_LOCAL)
 
     def said(self, src=None):
         return [

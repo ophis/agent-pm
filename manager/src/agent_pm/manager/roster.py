@@ -5,7 +5,7 @@ router.py --tui (a pipeline), keyed by the driver session (the new core's: TASK-
 its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled
 (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
 Sessions are reached only through session.engine.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
-default_runtime: the core config's `runtime`, which recovery gives a worker entry without --client. A worker entry runs
+default_runtime: `runtime` as read_project("manager") reads it (delegate/config.toml's, local.toml on top), which recovery gives a worker entry without --client. A worker entry runs
 crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
 script, or the module agent_pm.crew, to that form."""
 
@@ -23,9 +23,8 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
-from agent_pm.delegate.engine.config import CONFIG, LOCAL
 from agent_pm.session import api
-from agent_pm.utils.config_file import read_config
+from agent_pm.utils.config_file import LOCAL, read_project
 
 ROOT = "~/.agent-pm/managers"
 WORKERS = "~/.agent-pm/workers"
@@ -142,13 +141,13 @@ def worker_dir(sid) -> str:
     return path
 
 
-def default_runtime(config: str = CONFIG, local: str = LOCAL) -> str:
+def default_runtime(local: str = LOCAL) -> str:
     try:
-        runtime = read_config(config, local).get("runtime")
+        runtime = read_project("manager", local=local).get("runtime")
     except (OSError, ValueError) as e:
-        raise RosterError(f"core config: {e}") from e
+        raise RosterError(f"config: {e}") from e
     if not (isinstance(runtime, str) and runtime):
-        raise RosterError("core config: runtime: want a runtime name")
+        raise RosterError("config: runtime: want a runtime name")
     return runtime
 
 

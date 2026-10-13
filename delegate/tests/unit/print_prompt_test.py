@@ -84,7 +84,7 @@ class PrintPrompt(Case):
 
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
-            with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+            with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
                 f.write(local)
             for role in ROLES:
                 with self.subTest(github=bool(local), role=role):

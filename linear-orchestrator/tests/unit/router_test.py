@@ -287,7 +287,7 @@ class Changed(FakeLinear):
 class Base(run_fixtures.Base):
     def setUp(self):
         super().setUp()
-        self.write(self.local, f'work_dir = "{self.work}"\n')
+        self.write_local(f'work_dir = "{self.work}"\n')
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = tmp.name
@@ -1399,7 +1399,7 @@ class TaskLabels(Base):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/linear-new.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in ~/.agent-pm/local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (
             ([], (None, None)),
             (outside, (None, None)),
@@ -3672,7 +3672,7 @@ class Entry(OuterBase):
         with mock.patch.object(config, "load", side_effect=error):
             self.assertEqual(self.entry(), 1)
         self.assertEqual(self.said(), ["config-error reason=linear-orchestrator/config.toml: bad"])
-        self.write(self.local, 'work_dir = "w"\n')
+        self.write_local('work_dir = "w"\n')
         self.assertEqual(self.entry(), 1)
         self.assertEqual(
             (self.err, self.said()),

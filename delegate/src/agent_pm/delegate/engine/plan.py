@@ -1,5 +1,5 @@
 """One run's plan: its cwd, Spec, sid and prompt, every check before anything starts, writing nothing; first it
-configures the session from the core config (the Delegate's start). A refusal is ConfigError, a Composer or Driver one
+configures the session from the session config (the Delegate's start). A refusal is ConfigError, a Composer or Driver one
 keeping its message."""
 
 import functools
@@ -8,13 +8,11 @@ import sys
 import uuid
 from dataclasses import dataclass, replace
 
-import agent_pm.delegate.engine.config
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
-from agent_pm.delegate.engine.config import CONFIG, LOCAL
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Session, api
-from agent_pm.utils.config_file import read_config
+from agent_pm.utils.config_file import read_project
 from agent_pm.utils.paths import under
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
@@ -26,7 +24,7 @@ class ConfigError(Exception):
 
 def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
     try:
-        tables = read_config(CONFIG, LOCAL).get("policy", {})
+        tables = read_project("delegate").get("policy", {})
         if not isinstance(tables, dict):
             raise ConfigError("policy must be a table")
         value = tables.get(runtime, {})
@@ -43,8 +41,8 @@ def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
 
 def _configure() -> None:
     try:
-        Session.configure(**agent_pm.delegate.engine.config.session_settings())
-    except ValueError as e:
+        Session.configure(**Session.settings(read_project("session")))
+    except (OSError, ValueError) as e:
         raise ConfigError(str(e)) from None
 
 

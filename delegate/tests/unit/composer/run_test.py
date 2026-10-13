@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-import agent_pm.delegate.engine.config
 from agent_pm.delegate.composer.base import ConfigError
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
@@ -23,6 +22,7 @@ from agent_pm.delegate.composer.run import (
 )
 from agent_pm.delegate.composer.teams import team
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.utils import config_file
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
@@ -308,9 +308,10 @@ class Validate(Fake):
             with self.subTest(change=change), self.assertRaises(ConfigError):
                 replace(run, **change)
 
-    def test_show_is_unset_by_default_and_an_overlay_sets_it_at_any_level(self):
-        self.assertIsNone(self.resolved("editor").show)
+    def test_show_is_empty_a_pane_by_default_and_an_overlay_sets_it_at_any_level(self):
+        self.assertEqual(self.resolved("editor").show, "")
         for overlay, show in (
+            ({"show": "none"}, "none"),
             ({"show": ""}, ""),
             ({"show": "open-it {{session}}"}, "open-it {{session}}"),
             ({"roles": {"editor": {"show": "x {{session}}"}}}, "x {{session}}"),
@@ -490,7 +491,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.expanduser(agent_pm.delegate.engine.config.LOCAL), "w") as f:
+        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
             f.write("malformed = [\n")
 
     def test_resolve(self):

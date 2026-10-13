@@ -1,4 +1,4 @@
-"""delegate/config.toml's committed [adapters] tables: each builds its Adapter through the session registry."""
+"""session/config.toml's committed [adapters] tables: each builds its Adapter through the session registry."""
 
 import os
 import tempfile
@@ -10,6 +10,7 @@ from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+
 from delegate.tests.case import Case, committed
 from session.tests.case import settings
 
@@ -36,6 +37,9 @@ class Committed(Case):
             tables["claude"],
             {
                 "implementation": "adapters.claude:ClaudeAdapter",
+                "flags": [],
+                "allow": [],
+                "env": {},
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },

@@ -257,7 +257,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
             f.write("malformed = [\n")
 
     def test_team_dirs(self):
@@ -480,7 +480,7 @@ class TeamDirs(Fake):
                 self.assertEqual(
                     self.refused(call, self.with_dir(files, name)),
                     f"{self.path(rel, name)}: front matter (---) is not read: team dir files hold text "
-                    "only; run keys go in ~/.agent-pm/core-new.local.toml",
+                    "only; run keys go in ~/.agent-pm/local.toml",
                 )
 
     def test_each_defect_of_a_team_dir_file_names_it(self):

@@ -35,9 +35,8 @@ BASE = (
 PIPELINE = (
     HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
 )
-CORE_LOCAL = """language = "Chinese"
-
-[roles.researcher.output]
+CORE_TOP = 'language = "Chinese"\n'
+CORE_TABLES = """[roles.researcher.output]
 type = "github"
 repo = "ophis/private_docs"
 branch = "main"
@@ -49,6 +48,7 @@ repo = "ophis/private_docs"
 branch = "main"
 dir = "Product Design/"
 """
+CORE_LOCAL = CORE_TOP + "\n" + CORE_TABLES
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
@@ -66,7 +66,7 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 def missing(keys):
     return (
-        f"missing {keys}: set them in ~/.agent-pm/linear-new.local.toml (linear-orchestrator/config.toml's "
+        f"required, unset: {keys}: set them in ~/.agent-pm/local.toml (linear-orchestrator/config.toml's "
         "`# local:` lines)"
     )
 
@@ -85,13 +85,14 @@ def write(path, text):
 
 class ConfigFile:
     def setUp(self):
-        write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
+        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
 
     def local(self, text):
-        write(os.path.join(self.agent_pm, "linear-new.local.toml"), text)
+        """~/.agent-pm/local.toml: `text` amid CORE_LOCAL (the delegate's keys)."""
+        write(os.path.join(self.agent_pm, "local.toml"), CORE_TOP + text + "\n" + CORE_TABLES)
 
     def load(self, text):
         path = os.path.join(self.dir, "config.toml")
@@ -109,7 +110,7 @@ class Config(ConfigFile, Case):
     def test_tests_never_read_this_machines_local_file(self):
         self.assertEqual(
             os.path.expanduser(config.LOCAL),
-            os.path.join(self.agent_pm, "linear-new.local.toml"),
+            os.path.join(self.agent_pm, "local.toml"),
         )
 
     def test_stage_order(self):
@@ -153,10 +154,7 @@ class Config(ConfigFile, Case):
                 "[roles.solo] has unknown keys: read_only, tasks",
             ),
             (x + 'key = "k-x"\n', missing("roles.x.account")),
-            (
-                x + 'account = ""\nkey = "k-x"\n',
-                "[roles.x] account must be the role's Linear email: ''",
-            ),
+            (x + 'account = ""\nkey = "k-x"\n', missing("roles.x.account")),
             (
                 x + 'account = 5\nkey = "k-x"\n',
                 "[roles.x] account must be the role's Linear email: 5",
@@ -164,12 +162,9 @@ class Config(ConfigFile, Case):
             (x + 'account = "x@agents.test"\n', missing("roles.x.key")),
             (
                 BASE + "[roles.x]\n[roles.y]\nkey = 'k-y'\n",
-                missing("roles.x.account, roles.x.key, roles.y.account"),
+                missing("roles.x.account, roles.y.account, roles.x.key"),
             ),
-            (
-                x + 'account = "x@agents.test"\nkey = ""\n',
-                "[roles.x] key must be a Keychain service name: ''",
-            ),
+            (x + 'account = "x@agents.test"\nkey = ""\n', missing("roles.x.key")),
             (
                 x + 'account = "x@agents.test"\nkey = ["k"]\n',
                 "[roles.x] key must be a Keychain service name: ['k']",
@@ -394,7 +389,7 @@ class Config(ConfigFile, Case):
                     overlays=[overlay],
                     label=LABEL,
                     config=agent_pm.delegate.engine.config.CONFIG,
-                    local=agent_pm.delegate.engine.config.LOCAL,
+                    local=config_file.LOCAL,
                 )
                 for r in roles
             ],
@@ -405,7 +400,7 @@ class Config(ConfigFile, Case):
                 mock.call(
                     r,
                     config=agent_pm.delegate.engine.config.CONFIG,
-                    local=agent_pm.delegate.engine.config.LOCAL,
+                    local=config_file.LOCAL,
                 )
                 for r in roles
             ],
@@ -438,7 +433,7 @@ class Config(ConfigFile, Case):
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
     def test_importing_reads_no_config_file(self):
-        write(os.path.join(self.agent_pm, "linear-new.local.toml"), "[[[ not toml")
+        write(os.path.join(self.agent_pm, "local.toml"), "[[[ not toml")
         code = (
             "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
             "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
@@ -566,9 +561,7 @@ class Runnable(ConfigFile, Case):
         )
 
 
-HOSTS_TOML = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nimplementation = "agent_pm.session.hosts.tmux:TmuxHost"\n'
-CORE_TOML = (
-    """tier = 2
+CORE_TOML = """tier = 2
 effort = "high"
 runtime = "claude"
 output = { type = "local" }
@@ -582,8 +575,6 @@ output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Design
 [roles.engineer]
 output = { type = "pull-request" }
 """
-    + HOSTS_TOML
-)
 DESIGN = 'output = { type = "github", repo = "acme/notes", branch = "trunk", dir = "Designs/" }'
 DIRS = {"researcher": "Research/", "pm": "Designs/"}
 
@@ -591,7 +582,7 @@ DIRS = {"researcher": "Research/", "pm": "Designs/"}
 class OtherRoot(ConfigFile, Case):
     def setUp(self):
         super().setUp()
-        os.remove(os.path.join(self.agent_pm, "core-new.local.toml"))
+        os.remove(os.path.join(self.agent_pm, "local.toml"))
         self.root = os.path.join(self.dir, "my root")
         self.dir = os.path.join(self.root, "linear-orchestrator")
         os.makedirs(self.dir)
@@ -620,26 +611,25 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(
             fake.call_args_list,
             [
-                mock.call(r, config=self.core_path, local=agent_pm.delegate.engine.config.LOCAL)
+                mock.call(r, config=self.core_path, local=config_file.LOCAL)
                 for r in ("researcher", "pm", "engineer")
             ],
         )
 
-    def test_reads_only_the_paths_passed(self):
-        for name in ("linear-new.local.toml", "core-new.local.toml"):
-            write(os.path.join(self.agent_pm, name), "[[[ not toml")
-        path, local, core_local = (
-            os.path.join(self.dir, n) for n in ("config.toml", "local.toml", "core.local.toml")
-        )
+    def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
+        write(os.path.join(self.agent_pm, "local.toml"), "[[[ not toml")
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
         write(path, PIPELINE)
-        write(local, role("engineer", "max_runs = 2"))
-        write(core_local, 'language = "French"\n')
+        write(local, 'language = "French"\n' + role("engineer", "max_runs = 2"))
         with mock.patch.object(config_file, "open", create=True, side_effect=open) as opened:
-            cfg = config.load(
-                self.root, path=path, local=local, core=self.core_path, core_local=core_local
-            )
+            cfg = config.load(self.root, path=path, local=local, core=self.core_path)
+        projects = {
+            os.path.join(config_file.ROOT, p, "config.toml")
+            for level in config_file.LEVELS
+            for p in level
+        }
         self.assertEqual(
-            {c.args[0] for c in opened.call_args_list}, {path, local, self.core_path, core_local}
+            {c.args[0] for c in opened.call_args_list} - projects, {path, local, self.core_path}
         )
         engineer = cfg.roles["engineer"]
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
@@ -674,16 +664,19 @@ class OtherRoot(ConfigFile, Case):
         self.core(f'trusted_dirs = ["{os.path.join(work, "x")}", "{self.dir}/other"]\n' + CORE_TOML)
         self.assertEqual(self.load(text).work_dir, work)
 
-    def test_load_configures_the_session_from_the_core_config(self):
-        self.core(CORE_TOML + '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n')
+    def test_load_configures_the_session_from_the_session_config(self):
+        write(
+            os.path.join(self.agent_pm, "local.toml"),
+            '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n',
+        )
         self.refused_unconfigured()
         self.load(PIPELINE)
-        self.assertEqual(registry.configured(), ["a"])
-        self.assertEqual(registry.tui(), registry.TuiSettings())
+        self.assertEqual(registry.configured(), ["a", "claude", "codex", "print_prompt"])
+        self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
 
-    def test_a_core_config_without_hosts_stops_the_caller(self):
-        self.core(CORE_TOML.replace(HOSTS_TOML, ""))
-        self.fails("core: [hosts]: missing", PIPELINE)
+    def test_a_bad_session_config_stops_the_caller(self):
+        write(os.path.join(self.agent_pm, "local.toml"), '[hosts]\ndefault = "nope"\n')
+        self.fails("session: [hosts] default: want one of tmux", PIPELINE)
         self.refused_unconfigured()
 
     def refused_unconfigured(self):
@@ -769,7 +762,7 @@ class OtherRoot(ConfigFile, Case):
     def test_docs_mismatch(self):
         message = (
             "core: document roles must publish to one github.com repo and branch (their [output] in "
-            "~/.agent-pm/core-new.local.toml)"
+            "~/.agent-pm/local.toml)"
         )
         for design in (
             DESIGN.replace("acme/notes", "acme/other"),
@@ -829,7 +822,7 @@ class Local(ConfigFile, Case):
     def test_local_alone_and_no_local(self):
         self.local(PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
-        os.remove(os.path.join(self.agent_pm, "linear-new.local.toml"))
+        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
         self.assertEqual(self.load(PIPELINE).team, TEAM)
 
     def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
@@ -884,7 +877,7 @@ class TeamDirsIgnored(ConfigFile, Case):
     def test_team_dirs_change_no_orchestrator_run(self):
         before = self.seen()
         write(
-            os.path.join(self.agent_pm, "core-new.local.toml"),
+            os.path.join(self.agent_pm, "local.toml"),
             f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
         )
         self.assertIn(
@@ -898,21 +891,30 @@ class TeamDirsIgnored(ConfigFile, Case):
 
 class RealConfig(Case):
     def setUp(self):
-        write(os.path.join(self.agent_pm, "core-new.local.toml"), CORE_LOCAL)
-        self.local = os.path.join(self.agent_pm, "linear-new.local.toml")
+        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
+        self.local = os.path.join(self.agent_pm, "local.toml")
 
     def load(self, local=None):
         if local is not None:
-            write(self.local, local)
+            write(self.local, CORE_TOP + local + "\n" + CORE_TABLES)
         return config.load()
 
     def test_committed_config_holds_no_deployment_values(self):
         with open(config.CONFIG, "rb") as f:
             committed = tomllib.load(f)
-        self.assertFalse(DEPLOYMENT & set(committed))
         self.assertEqual(
-            {r: set(p) & {"account", "key"} for r, p in committed["roles"].items()},
-            {"researcher": set(), "pm": set(), "engineer": set()},
+            {k: committed[k] for k in DEPLOYMENT},
+            {
+                **dict.fromkeys(("team", "harness_key", "task_label_group"), ""),
+                "states": dict.fromkeys(config.STATES, ""),
+                "human_members": [],
+                **dict.fromkeys(("task_labels", "project_repos", "local_clones"), {}),
+                "work_dir": "~/.agent-pm",
+            },
+        )
+        self.assertEqual(
+            {r: {k: p[k] for k in ("account", "key")} for r, p in committed["roles"].items()},
+            dict.fromkeys(("researcher", "pm", "engineer"), {"account": "", "key": ""}),
         )
 
     def test_without_local_names_what_is_missing(self):
@@ -923,8 +925,8 @@ class RealConfig(Case):
             "linear-orchestrator/config.toml: "
             + missing(
                 "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
-                "states.done, states.canceled, roles.researcher.account, roles.researcher.key, roles.pm.account, roles.pm.key, "
-                "roles.engineer.account, roles.engineer.key"
+                "states.done, states.canceled, roles.researcher.account, roles.pm.account, roles.engineer.account, "
+                "roles.researcher.key, roles.pm.key, roles.engineer.key"
             ),
         )
 

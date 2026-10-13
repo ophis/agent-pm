@@ -1,4 +1,4 @@
-"""delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test, the core config's
+"""delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test, the session config's
 ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn end with no prompt before it).
 The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle
 give-up on a clock ahead (session.engine.api's `time` only), the fix send; the session left open. Main's

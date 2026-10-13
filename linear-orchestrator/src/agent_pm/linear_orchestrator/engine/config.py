@@ -1,5 +1,6 @@
-"""The Linear orchestrator's config: load() reads linear-orchestrator/config.toml (its local file merged) and the core
-config once, configures the session from the core config (every entry's main calls load first) and returns a frozen
+"""The Linear orchestrator's config: load() reads its own keys once (linear-orchestrator/config.toml with the keys of
+~/.agent-pm/local.toml it owns: TOP_KEYS, and ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and
+the delegate's, configures the session from the session's (every entry's main calls load first) and returns a frozen
 Config with a resolved RunConfig per role, or raises ConfigError; plus TUI names and shared helpers."""
 
 import os
@@ -21,7 +22,7 @@ from agent_pm.utils.repos import NAME, OWNER
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
-LOCAL = "~/.agent-pm/linear-new.local.toml"
+LOCAL = config_file.LOCAL
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
@@ -50,6 +51,14 @@ STATES = {
     "canceled": "Canceled",
 }
 ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
+REQUIRED = (
+    "team",
+    "harness_key",
+    "task_label_group",
+    *(f"states.{k}" for k in STATES),
+    "roles.*.account",
+    "roles.*.key",
+)
 
 
 @dataclass(frozen=True)
@@ -148,31 +157,26 @@ def load(
     path: str = CONFIG,
     local: str = LOCAL,
     core: str = agent_pm.delegate.engine.config.CONFIG,
-    core_local: str = agent_pm.delegate.engine.config.LOCAL,
 ) -> Config:
     try:
-        cfg = config_file.read_config(path, local)
+        cfg = config_file.read_project("linear-orchestrator", path=path, local=local, own=True)
     except (OSError, ValueError) as e:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg, root)
     try:
-        found = _load(cfg, root, work, local, core, core_local)
-        _configure(core, core_local)
+        found = _load(cfg, root, work, local, core)
+        _configure(local)
         return found
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
 
 
-def _configure(core, core_local):
+def _configure(local):
     try:
-        Session.configure(
-            **agent_pm.delegate.engine.config.session_settings(
-                config_file.read_config(core, core_local)
-            )
-        )
+        Session.configure(**Session.settings(config_file.read_project("session", local=local)))
     except (OSError, ValueError, api.ConfigError) as e:
-        raise ConfigError(f"core: {e}") from None
+        raise ConfigError(f"session: {e}") from None
 
 
 def session(role, issue):
@@ -275,10 +279,10 @@ def _work_dir(cfg, root, clones=None):
     return path
 
 
-def _load(cfg, root, work, local, core, core_local):
+def _load(cfg, root, work, local, core):
     _load_config(cfg, root, local)
-    roles = _runnable(cfg, root, work, core, core_local)
-    docs = _docs(roles, core_local)
+    roles = _runnable(cfg, root, work, core, local)
+    docs = _docs(roles, local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
         for k in ("states", "task_labels", "project_repos", "local_clones")
@@ -321,22 +325,10 @@ def _check_ids(cfg):
         )
 
 
-def _missing(cfg):
-    missing = [k for k in ("team", "harness_key", "task_label_group") if k not in cfg]
-    states = cfg.get("states")
-    missing += [f"states.{k}" for k in STATES if not isinstance(states, dict) or k not in states]
-    roles = cfg.get("roles")
-    for name, p in roles.items() if isinstance(roles, dict) else ():
-        missing += [
-            f"roles.{name}.{k}" for k in ("account", "key") if isinstance(p, dict) and k not in p
-        ]
-    return missing
-
-
 def _load_config(cfg, root, local):
-    if missing := _missing(cfg):
+    if missing := config_file.unset(cfg, REQUIRED):
         raise ConfigError(
-            f"linear-orchestrator/config.toml: missing {', '.join(missing)}: set them in {local} "
+            f"linear-orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} "
             "(linear-orchestrator/config.toml's `# local:` lines)"
         )
     _check_ids(cfg)
@@ -433,10 +425,10 @@ def _fill_root(value, root):
     return value
 
 
-def _runnable(cfg, root, work, core, core_local):
+def _runnable(cfg, root, work, core, local):
     try:
-        core_roles = config_file.read_config(core, core_local).get("roles", {})
-        trusted = composer.trusted_dirs(config=core, local=core_local)
+        core_roles = config_file.read_project("delegate", path=core, local=local).get("roles", {})
+        trusted = composer.trusted_dirs(config=core, local=local)
     except (OSError, ValueError, composer.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
@@ -459,9 +451,9 @@ def _runnable(cfg, root, work, core, core_local):
                 overlays=[overlay],
                 label=("linear-orchestrator/config.toml", "core"),
                 config=core,
-                local=core_local,
+                local=local,
             )
-            tasks = tuple(composer.index(name, config=core, local=core_local))
+            tasks = tuple(composer.index(name, config=core, local=local))
         except composer.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(
@@ -507,14 +499,14 @@ def _runnable(cfg, root, work, core, core_local):
     return out
 
 
-def _docs(roles, core_local):
+def _docs(roles, local):
     outs = {name: o for name, r in roles.items() if (o := r.run.output)["type"] == "github"}
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
         raise ConfigError(
             "core: document roles must publish to one github.com repo and branch (their [output] in "
-            f"{core_local})"
+            f"{local})"
         )
     return Docs(name, branch, MappingProxyType({r: o["dir"] for r, o in outs.items()}))
 

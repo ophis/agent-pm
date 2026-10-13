@@ -88,12 +88,8 @@ class Flow(Case):
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         state = os.path.join(self.root, "state")
         self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
-        for name, text in (
-            ("linear-new.local.toml", run_fixtures.local(state) + TASK_LABELS),
-            ("core-new.local.toml", run_fixtures.CORE_LOCAL),
-        ):
-            with open(os.path.join(self.agent_pm, name), "w") as f:
-                f.write(text)
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+            f.write(run_fixtures.local(state) + TASK_LABELS + "\n" + run_fixtures.CORE_LOCAL)
         self.fake = fake_linear.FakeLinear(harness=HARNESS)
         self.ids = {HARNESS_EMAIL: self.fake.user(HARNESS_EMAIL, "Harness", HARNESS)}
         for r in ROLES:

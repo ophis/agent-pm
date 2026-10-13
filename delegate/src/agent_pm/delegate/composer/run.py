@@ -17,8 +17,8 @@ from agent_pm.delegate.composer.teams import (
     tasks_path,
     team_or_default,
 )
-from agent_pm.delegate.engine.config import LOCAL, PYTHONPATH
-from agent_pm.utils.config_file import read_config
+from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.utils.config_file import LOCAL, read_project
 from agent_pm.utils.paths import real_dirs
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -57,7 +57,7 @@ class RunConfig:
     templates: list[str] = field(default_factory=list)
     gate: str = ""
     language: str = ""
-    show: str | None = None
+    show: str = ""  # "": a pane; "none": nothing; else a command
     cwd: str = ""
     role_title: str = ""
 
@@ -80,7 +80,7 @@ class RunConfig:
             raise ConfigError("gate must be one line of shell command without backticks")
         if not isinstance(self.language, str) or "\n" in self.language:
             raise ConfigError("language must be one line of text")
-        if self.show is not None and (not isinstance(self.show, str) or "\n" in self.show):
+        if not isinstance(self.show, str) or "\n" in self.show:
             raise ConfigError("show must be one line of shell command")
         if self.cwd and (
             not isinstance(self.cwd, str)
@@ -152,7 +152,7 @@ def resolve(
             _check_overlay(overlay, known, where)
         except ConfigError as e:
             raise ConfigError(f"{source}: {e}") from None
-    cfg = read_config(config, local)
+    cfg = read_project("delegate", path=config, local=local)
     _check(cfg)
     values = _run_keys(cfg, role)
     run = RunConfig(
@@ -177,7 +177,10 @@ def resolve(
 
 def trusted_dirs(config: str = CONFIG, local: str = LOCAL) -> frozenset[str]:
     try:
-        return real_dirs(read_config(config, local).get("trusted_dirs", []), "trusted_dirs")
+        return real_dirs(
+            read_project("delegate", path=config, local=local).get("trusted_dirs", []),
+            "trusted_dirs",
+        )
     except ValueError as e:
         raise ConfigError(str(e)) from None
 
@@ -282,4 +285,8 @@ def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:
-    return {k: v for k in RUN_KEYS if (v := lookup(layer, role, k)) is not None}
+    """A layer's run keys for `role`; an [output] key "" is unset."""
+    values = {k: v for k in RUN_KEYS if (v := lookup(layer, role, k)) is not None}
+    if isinstance(output := values.get("output"), Mapping):
+        values["output"] = {k: v for k, v in output.items() if v != ""}
+    return values

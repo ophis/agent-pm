@@ -109,7 +109,7 @@ class Base(Case):
             json.dump(list(steps), f)
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
             f.write(text)
 
     def cli(self, *argv, stdin=""):

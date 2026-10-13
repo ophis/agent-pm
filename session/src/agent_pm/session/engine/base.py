@@ -87,6 +87,12 @@ class Session(ABC):
         it again replaces the settings; bad input: ConfigError, the settings kept."""
         registry.configure(adapters=adapters, hosts=hosts, default_host=default_host)
 
+    @staticmethod
+    def settings(config: Mapping) -> dict:
+        """configure's keyword arguments from an already-read session config (session/config.toml, the caller's
+        read): its [adapters] and parsed [hosts]; else ValueError."""
+        return registry.settings(config)
+
     @classmethod
     def start(
         cls,

@@ -1,0 +1,89 @@
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/local.toml, the one local file over every
+# project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
+# file owns is a real line below; a `# local:` line shows a value to copy there, uncommented.
+#
+# The session's keys: [adapters.<name>] and [hosts]. The session reads no config file: each entry reads this file
+# through agent_pm.utils.config_file.read_project("session") and hands it to Session.configure (Session.settings).
+
+# ── Adapters ────────────────────────────────────────────
+# [adapters.<name>]  one table per runtime, built only by session/src/agent_pm/session/adapters/registry.py; <name> is the
+#                    runtime name session.engine.api.start takes and the package session/src/agent_pm/session/adapters/<name>/
+#   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
+#   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
+
+# [adapters.claude]  Claude Code (session/src/agent_pm/session/adapters/claude/)
+#   flags            claude flags added to every session command; never --setting-sources (the Driver's); empty → none
+#   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read
+#                    rules; empty → none
+#   env              variables added to every command's environment, over the adapter's defaults; empty → none
+# [adapters.claude.tiers]    tier "1".."4" → its --model
+# [adapters.claude.efforts]  effort (low, medium, high, xhigh, max) → its --effort
+#                            starting a run whose tier or effort has no entry here is a config error
+[adapters.claude]
+implementation = "adapters.claude:ClaudeAdapter"
+flags = []
+allow = []
+# local: [adapters.claude]
+# local: allow = ["<rule>"]
+
+[adapters.claude.env]
+
+[adapters.claude.tiers]
+1 = "fable"
+2 = "opus"
+3 = "sonnet"
+4 = "haiku"
+
+[adapters.claude.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+[adapters.codex]
+implementation = "adapters.codex:CodexAdapter"
+
+[adapters.codex.tiers]
+1 = "gpt-6-astra"
+2 = "gpt-6.1-sol"
+3 = "gpt-6-luna"
+4 = "gpt-5.6-terra"
+
+[adapters.codex.efforts]
+low = "low"
+medium = "medium"
+high = "high"
+xhigh = "xhigh"
+max = "max"
+
+# Launch/probe variables, including CODEX_HOME; empty → none; resume keeps the saved CODEX_HOME.
+[adapters.codex.env]
+
+# [adapters.print_prompt]  act-as's runtime (session/src/agent_pm/session/adapters/print_prompt/): in_process mode only; its
+#                          run hands the composed prompt back as the deliverable and starts no process; no other keys
+[adapters.print_prompt]
+implementation = "adapters.print_prompt:PrintPromptAdapter"
+
+# ── Hosts ───────────────────────────────────────────────
+# [hosts]             default: the [hosts.<name>] sessions run on
+# [hosts.<name>]      one table per Host, parsed only by session/src/agent_pm/session/hosts/tables.py
+#   implementation    required: "module.path:Class", the Host class; checked for that form only, never loaded there
+# [hosts.tmux]        tmux's display keys:
+#   status_line       true → tui sessions show tmux's status line
+#   workers_per_column panes per tmux grid column (the Driver's show), 1..9999
+#   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
+#                     window resize), "off" (never by itself: session/src/agent_pm/session/hosts/tmux/tmux_host.py tile @N)
+[hosts]
+default = "tmux"
+
+[hosts.tmux]
+# a forward name: TmuxHost does not exist yet, and nothing loads it until it does
+implementation = "agent_pm.session.hosts.tmux:TmuxHost"
+status_line = false
+workers_per_column = 3
+grid_retile = "open-close"
+# local: [hosts.tmux]
+# local: status_line = true
+# local: workers_per_column = 2
+# local: grid_retile = "all"

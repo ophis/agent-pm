@@ -586,7 +586,7 @@ class RuntimeTest(Live):
         sid = self.started("w1", **codex_session())
         self.assertEqual(self.record(sid)["runtime"], "claude")
         self.assertEqual((len(self.calls("w1")), self.codex_calls("w1")), (1, []))
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
             f.write('runtime = "codex"\n')
         sid = self.started("w2")
         self.assertEqual(self.record(sid)["runtime"], "codex")

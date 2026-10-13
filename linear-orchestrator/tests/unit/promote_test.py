@@ -184,7 +184,7 @@ class FakePruner:
 class Base(run_fixtures.Base):
     def setUp(self):
         super().setUp()
-        self.write(self.local, f'work_dir = "{self.work}"\n')
+        self.write_local(f'work_dir = "{self.work}"\n')
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.config_path = os.path.join(tmp.name, "config.toml")
@@ -750,7 +750,7 @@ class TestConfigError(Base):
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
 
     def test_a_bad_work_dir_is_said_on_stderr_and_logs_nothing(self):
-        self.write(self.local, 'work_dir = "w"\n')
+        self.write_local('work_dir = "w"\n')
         self.assertEqual(self.run_main(), 1)
         self.assertEqual(
             self.err,

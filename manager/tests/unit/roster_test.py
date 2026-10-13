@@ -13,16 +13,15 @@ import shutil
 import signal
 import stat
 import subprocess
-import tomllib
 import types
 import unittest
 import unittest.mock
 
-import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
 from agent_pm.session import api
+from agent_pm.utils.config_file import read_project
 
-from manager.tests.case import PY, SRC, Case, child_env
+from manager.tests.case import PY, REPO, SRC, Case, child_env
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
@@ -31,7 +30,7 @@ MODULE = ["-P", "-m", "agent_pm.manager.crew"]
 PRE_MOVE = ["-P", "-m", "agent_pm.crew"]
 NOT_REGULAR = "{}: not a regular file owned by you"
 NOT_A_DIR = "not a directory owned by you"
-NO_RUNTIME = "core config: runtime: want a runtime name"
+NO_RUNTIME = "config: runtime: want a runtime name"
 
 
 def mode(path):
@@ -93,7 +92,7 @@ class Base(Case):
         return path
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
             f.write(text)
 
 
@@ -1222,9 +1221,9 @@ class WorkerDirTest(Base):
 
 
 class DefaultRuntimeTest(Base):
-    def test_the_core_configs_runtime_with_the_local_file_on_top(self):
-        with open(agent_pm.delegate.engine.config.CONFIG, "rb") as f:
-            base = tomllib.load(f)["runtime"]
+    def test_the_delegate_configs_runtime_with_the_local_file_on_top(self):
+        base = read_project("delegate", local=os.devnull)["runtime"]
+        self.assertFalse(os.path.exists(os.path.join(REPO, "manager", "config.toml")))
         self.assertEqual(roster.default_runtime(), base)
         self.local('runtime = "rt9"\n')
         self.assertEqual(roster.default_runtime(), "rt9")
@@ -1237,18 +1236,22 @@ class DefaultRuntimeTest(Base):
                     roster.default_runtime()
                 self.assertEqual(str(cm.exception), NO_RUNTIME)
 
-    def test_the_config_paths_given(self):
-        config = os.path.join(self.home, "core.toml")
-        with open(config, "w") as f:
+    def test_the_local_path_given(self):
+        local = os.path.join(self.home, "mine.toml")
+        with open(local, "w") as f:
             f.write('runtime = "rt7"\n')
         self.local('runtime = "rt9"\n')
-        self.assertEqual(roster.default_runtime(config, os.devnull), "rt7")
-        local = os.path.join(self.agent_pm, "core-new.local.toml")
-        self.assertEqual(roster.default_runtime(config, local), "rt9")
+        self.assertEqual(roster.default_runtime(local), "rt7")
+        self.assertEqual(roster.default_runtime(), "rt9")
+
+    def test_an_unknown_local_key_refused(self):
+        self.local("bogus = 1\n")
+        with self.assertRaisesRegex(roster.RosterError, "^config: .*unknown key 'bogus'"):
+            roster.default_runtime()
 
     def test_an_unreadable_local_file_refused(self):
         self.local("runtime = \n")
-        with self.assertRaisesRegex(roster.RosterError, "^core config: .*line 1"):
+        with self.assertRaisesRegex(roster.RosterError, "^config: .*line 1"):
             roster.default_runtime()
 
 

@@ -103,7 +103,7 @@ class Defaults(Case):
         )
 
     def test_the_home_local_file_goes_on_top_and_the_old_ones_are_not_read(self):
-        for old in ("core.local.toml", "core-new.local.toml"):
+        for old in (f"{name}.local.toml" for name in ("core", "core-new", "linear-new")):
             self.local('users = ["old"]\n', old)
         self.assertEqual(
             read_config(self.path, LOCAL), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
@@ -213,6 +213,32 @@ class Projects(Case):
         orch = self.read("linear-orchestrator")
         self.assertEqual(orch["roles"]["new"], {"account": "n@x", "max_runs": 2, "tier": 3})
         self.assertEqual(orch["core"]["roles"]["pm"], {"gate": "g", "cwd": "/c"})
+
+    def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
+        self.local(
+            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = 1\nacount = "typo"\n'
+            '[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = "github"\n'
+        )
+        self.write("delegate", 'cwd = ""\n' + DELEGATE)
+        self.assertEqual(
+            self.read("linear-orchestrator", own=True),
+            {
+                "team": "T",
+                "work_dir": "~/w",
+                "roles": {
+                    "pm": {"account": "pm@x", "max_runs": 3, "acount": "typo"},
+                    "new": {"max_runs": 2},
+                },
+                "core": {"roles": {"pm": {"gate": "g"}}},
+            },
+        )
+        found = self.read("delegate", own=True)
+        self.assertEqual(
+            found["roles"],
+            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "acount": "typo"}},
+        )
+        self.assertNotIn("hosts", found)
+        self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
 
     def test_a_local_top_level_key_no_project_has_is_refused_at_run_time(self):
         self.local('runtime = "b"\nbogus = 1\n')

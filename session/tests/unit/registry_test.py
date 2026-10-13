@@ -1,10 +1,12 @@
 """adapters/registry.py: what Session.configure stores (the [adapters.<name>] tables, the hosts' tables and the default
-host), the tui settings from [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the
+host), settings() (Session.settings) from a read session config, the tui settings from [hosts.tmux] and Adapter
+loading. Adapter packages are registered in sys.modules or the
 import system only for the test's span; the registry itself is never patched. Case resets it around each test."""
 
 import importlib
 import importlib.abc
 import importlib.util
+import os
 import sys
 import tomllib
 import types
@@ -16,6 +18,7 @@ import agent_pm.session.hosts.tmux
 from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter, ConfigError
+from agent_pm.utils import config_file
 from agent_pm.utils import registry as class_registry
 
 from session.tests import fake_adapter
@@ -137,6 +140,38 @@ class ConfigureTest(Base):
         imp.assert_not_called()
         load.assert_not_called()
         self.assertFalse(hasattr(agent_pm.session.hosts.tmux, "TmuxHost"))
+
+
+class SettingsTest(Base):
+    TWO = '[hosts]\ndefault = "a"\n[hosts.a]\nimplementation = "pkg.mod:AHost"\n[hosts.b]\nimplementation = "p.b:B"\n'
+
+    def test_the_adapters_hosts_and_default_of_a_read_config(self):
+        config = tomllib.loads(self.TWO + FAKE)
+        found = registry.settings(config)
+        self.assertEqual(
+            found,
+            {
+                "adapters": {"fake": {"implementation": "adapters.fake:FakeAdapter"}},
+                "hosts": {
+                    "a": {"implementation": "pkg.mod:AHost"},
+                    "b": {"implementation": "p.b:B"},
+                },
+                "default_host": "a",
+            },
+        )
+        self.assertEqual(Session.settings(config), found)
+        self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})
+        with self.assertRaisesRegex(ValueError, r"\A\[hosts\]: missing\Z"):
+            registry.settings({})
+
+    def test_the_session_config_with_the_local_file_on_top(self):
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+            f.write("[hosts.tmux]\nstatus_line = true\n")
+        found = Session.settings(config_file.read_project("session"))
+        self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
+        self.assertEqual(found["default_host"], "tmux")
+        Session.configure(**found)
+        self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
 
 
 class TuiTest(Base):

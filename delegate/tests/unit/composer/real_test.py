@@ -480,7 +480,7 @@ class RealCore(Case):
         self.local(FIXTURE)
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
             f.write(text)
 
     def test_the_config_renders_the_language_and_progress_rules_once(self):
@@ -575,12 +575,12 @@ class RealCore(Case):
 
     def test_a_local_files_other_layers_keys_are_left_alone(self):
         self.local(
-            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = ""\nworkers_per_column = 2\n'
-            'grid_retile = "off"\n'
+            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
+            'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
         )
         for role, task in role_tasks():
             run = composer.resolve(role, task)
-            self.assertEqual((run.task, run.show), (task, ""))
+            self.assertEqual((run.task, run.show), (task, "none"))
 
     def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
         for role, task in runs():

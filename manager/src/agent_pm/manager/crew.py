@@ -1,12 +1,12 @@
 """A manager's workers, each a plain tui session reached only through session.engine.api, and its roster (roster.py). start
-picks the runtime (--client, else the caller's own tui session's, else the core config's `runtime`), starts the worker
+picks the runtime (--client, else the caller's own tui session's, else the config's `runtime`, roster.default_runtime), starts the worker
 with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (what restart replays), shows it, enters
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
 reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits 1 on an error, 2 on a usage
 error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONPATH=<the import roots>[:U] python3
 -P -m agent_pm.manager.crew …`, the form of each crew command it prints. main first sets PYTHONPATH to U, the caller's minus
 each entry resolving to one (unset when empty): what workers and recovered role or pipeline entries get; then
-configures the session from the core config. The import roots (delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it
+configures the session from the session config. The import roots (delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it
 prints (U as at print time) and a recovered worker entry."""
 
 import argparse
@@ -25,6 +25,7 @@ from collections.abc import Iterator
 import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
 from agent_pm.session import Session, api
+from agent_pm.utils.config_file import read_project
 from agent_pm.utils.files import save
 from agent_pm.utils.paths import printable_abs
 
@@ -781,9 +782,9 @@ def _drop_import_root() -> None:
 
 def _configure() -> None:
     try:
-        Session.configure(**agent_pm.delegate.engine.config.session_settings())
-    except (ValueError, api.ConfigError) as e:
-        raise WorkersError(str(e)) from None
+        Session.configure(**Session.settings(read_project("session")))
+    except (OSError, ValueError, api.ConfigError) as e:
+        raise WorkersError(f"config: {e}") from None
 
 
 def main(argv=None) -> int:
@@ -804,7 +805,7 @@ def main(argv=None) -> int:
     p.add_argument(
         "--client",
         metavar="NAME",
-        help="the worker's runtime (default: your tui session's, else the core config's runtime)",
+        help="the worker's runtime (default: your tui session's, else the config's runtime)",
     )
     p.add_argument(
         "--env",

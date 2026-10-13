@@ -34,7 +34,7 @@ class TeamDirs(Integration):
         super().setUp()
         self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
-        with open(os.path.join(self.env["HOME"], ".agent-pm", "core-new.local.toml"), "w") as f:
+        with open(os.path.join(self.env["HOME"], ".agent-pm", "local.toml"), "w") as f:
             f.write(f"team_dirs = {json.dumps([self.team])}\n")
 
     def test_a_dry_run(self):
@@ -80,7 +80,7 @@ class CodexTeamDirs(codex_integration_test.Integration):
         self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
         os.makedirs(os.path.join(self.home, ".agent-pm"), exist_ok=True)
-        self.toml = os.path.join(self.home, ".agent-pm", "core-new.local.toml")
+        self.toml = os.path.join(self.home, ".agent-pm", "local.toml")
         with open(self.toml, "w") as f:
             f.write(f"team_dirs = {json.dumps([self.team])}\n")
 

@@ -19,7 +19,7 @@ from agent_pm.utils import repos, shell
 
 from delegate.tests.case import Case
 
-LOCAL = "core-new.local.toml"
+LOCAL = "local.toml"
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
 SPEC = importlib.util.spec_from_file_location("repo", os.path.join(TEAM, "tools", "repo.py"))
@@ -1145,6 +1145,16 @@ class Status(Base):
                 self.assertEqual((code, r["pr"]["number"]), (0, 7), r)
                 self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
                 self.assertEqual([e["body"] for e in r["others"]], ["from the bot"])
+        with self.subTest("users = [] is the gh login"):
+            code, r, _ = self.status(
+                pr_list([pr()]),
+                (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                NO_FEEDBACK,
+                config=self.config("users = []\n"),
+                local=os.devnull,
+            )
+            self.assertEqual((code, [e["body"] for e in r["user"]]), (0, ["from the bot"]), r)
+            self.assertEqual([e["body"] for e in r["others"]], ["do Y"])
 
     def test_other_branches_plan_docs_and_no_pr(self):
         self.plan_doc(branch="other")
@@ -1177,8 +1187,8 @@ class Status(Base):
         )
         self.assertEqual(code, 1)
 
-    def test_the_defaults_are_the_core_config_pair(self):
-        with unittest.mock.patch.object(repo, "read_config", return_value={}) as read:
+    def test_the_defaults_are_the_delegate_config_and_the_local_file(self):
+        with unittest.mock.patch.object(repo, "read_project", return_value={}) as read:
             code = repo.main(
                 ["status", "o/n", "--branch", "b", "--dir", self.dir],
                 run=Fake([]),
@@ -1186,7 +1196,8 @@ class Status(Base):
                 err=io.StringIO(),
             )
         self.assertEqual(code, 2)
-        read.assert_called_once_with(repo.CONFIG, repo.LOCAL)
+        read.assert_called_once_with("delegate", path=repo.CONFIG, local=repo.LOCAL)
+        self.assertEqual(repo.LOCAL, "~/.agent-pm/local.toml")
 
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))

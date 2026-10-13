@@ -1,7 +1,8 @@
 """The adapter registry: Session.configure's settings (the [adapters.<name>] tables, the hosts' tables, the default
 host), checked and stored by configure() until the next configure() or reset() (tests). adapter(name) builds the class
 [adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or any failure:
-ConfigError."""
+ConfigError. settings(config): configure's keyword arguments from an already-read session config (its [adapters] and
+[hosts], the latter through tables.parse); else ValueError."""
 
 import importlib
 import inspect
@@ -41,6 +42,15 @@ class Settings:
 
 
 _settings: Settings | None = None
+
+
+def settings(config: Mapping) -> dict:
+    found = tables.parse(config.get("hosts"))
+    return {
+        "adapters": config.get("adapters", {}),
+        "hosts": found.tables,
+        "default_host": found.default,
+    }
 
 
 def configure(*, adapters: Mapping, hosts: Mapping, default_host: str) -> None:

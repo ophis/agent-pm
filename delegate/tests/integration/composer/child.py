@@ -1,5 +1,5 @@
 """The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME (its
-~/.agent-pm/core-new.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
+~/.agent-pm/local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
 agent run as its caller (the Delegate) would."""
 
 import json
@@ -46,7 +46,7 @@ class Case(case.Case):
         self.out = os.path.join(self.work, "out.md")
 
     def local(self, text: str, mode: str = "w") -> None:
-        with open(os.path.join(self.agent_pm, "core-new.local.toml"), mode, encoding="utf-8") as f:
+        with open(os.path.join(self.agent_pm, "local.toml"), mode, encoding="utf-8") as f:
             f.write(text)
 
     def child(self, code: str, *args: str):

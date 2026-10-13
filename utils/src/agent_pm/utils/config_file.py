@@ -5,10 +5,10 @@ Merge rules (merge): tables merge key by key, the higher layer's value wins, any
 the lower one's whole; a layer cannot drop a key a lower one sets.
 
 Ownership of a local key: a top-level key in one project's config.toml is that project's. A top-level table in
-several (roles) is resolved by the full dotted key: the projects whose config.toml has that key, else one with the
-same table, depth and last key (a key of a role table it does not list, e.g. roles.<new role>.account), else every
-project with the table (e.g. roles.<role>.cwd, a run key). read_project(name) takes the local keys owned at or below
-name's level; a local top-level key no project has is a ValueError."""
+several (roles) is resolved by the full dotted key, among the projects with that table: those whose config.toml has
+the key, else the same table, depth and last key (roles.<new role>.account), else a suffix of the key
+(roles.<role>.cwd: cwd), else all of them. read_project(name) takes the local keys owned at or below name's level,
+own=True only name's file and the local keys it owns; a local top-level key no project has is a ValueError."""
 
 import os
 import tomllib
@@ -39,14 +39,20 @@ def read_config(path: str, local: str) -> dict:
 
 
 def read_project(
-    name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT
+    name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
     """Every project config.toml at or below `name`'s level, in LEVELS order, then `local`'s keys owned at or below
-    it. `path` stands in for `name`'s own config.toml. A missing config.toml or local file is empty."""
+    it; `own`: `name`'s config.toml and the local keys it owns. `path` stands in for `name`'s own config.toml (owning
+    its keys and the file's). A missing config.toml or local file is empty."""
     rank = _rank(name)
     configs = _configs(root, name, path)
+    known = (
+        {**configs, name: merge(_configs(root, name, None)[name], configs[name])}
+        if path
+        else configs
+    )
     out = {}
-    for level in LEVELS[: rank + 1]:
+    for level in () if own else LEVELS[: rank + 1]:
         layer = {}
         for project in level:
             if clash := sorted(set(layer) & set(configs[project])):
@@ -56,9 +62,11 @@ def read_project(
             layer.update(configs[project])
         out = merge(out, layer)
     found = _load(os.path.expanduser(local))
-    if unknown := sorted(k for k in found if not any(k in c for c in configs.values())):
+    if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
         raise ValueError(f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it")
-    return merge(out, _owned(found, configs, rank))
+    if own:
+        return merge(configs[name], _owned(found, known, lambda owners: name in owners))
+    return merge(out, _owned(found, known, lambda owners: min(map(_rank, owners)) <= rank))
 
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
@@ -90,10 +98,10 @@ def _load(path: str) -> dict:
         return tomllib.load(f)
 
 
-def _owned(found: dict, configs: dict[str, dict], rank: int) -> dict:
+def _owned(found: dict, configs: dict[str, dict], taken) -> dict:
     out = {}
     for keys, value in _leaves(found, ()):
-        if min(_rank(p) for p in _owners(keys, configs)) <= rank:
+        if taken(_owners(keys, configs)):
             table = out
             for k in keys[:-1]:
                 table = table.setdefault(k, {})
@@ -112,7 +120,8 @@ def _owners(keys: tuple, configs: dict[str, dict]) -> list[str]:
         if isinstance(top := configs[p][keys[0]], Mapping)
         and any(len(k) == len(keys) and k[-1] == keys[-1] for k, _ in _leaves(top, keys[:1]))
     ]
-    return exact or shaped or having
+    suffix = [p for p in having if any(_has(configs[p], keys[i:]) for i in range(1, len(keys)))]
+    return exact or shaped or suffix or having
 
 
 def _has(table, keys) -> bool:

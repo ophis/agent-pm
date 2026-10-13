@@ -1183,7 +1183,7 @@ class Bounce(Base):
             comment(
                 self.text(
                     reason,
-                    " Or fix ~/.agent-pm/linear-new.local.toml's [project_repos] entry.",
+                    " Or fix ~/.agent-pm/local.toml's [project_repos] entry.",
                 )
             ),
             gql.calls,

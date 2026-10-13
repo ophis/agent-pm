@@ -1,17 +1,17 @@
-# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/core-new.local.toml, read on top of this file:
-# create it and copy in the lines marked `# local:` below, uncommented, with your values. It may override any other key
-# too: tables merge key by key, the local value wins, a list is replaced whole (repeat the items you keep); a table
-# cannot drop a key this file sets, so a local [output] or [adapters.<name>] keeps this file's other keys in that table.
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/local.toml, the one local file over every
+# project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
+# file owns is a real line below, a key you set only locally with its empty default; a `# local:` line shows a value
+# to copy there, uncommented. A table cannot drop a key this file sets, so a local [output] keeps this file's other
+# keys in that table.
 #
 # Each layer reads only its own keys (paths from the repo root): the Composer (delegate/src/agent_pm/delegate/composer/)
 # the run keys, [output], [roles.<role>], trusted_dirs and team_dirs; delegate/src/agent_pm/delegate/team/tools/repo.py
 # users and trusted_dirs; manager/src/agent_pm/manager/roster.py runtime (the default of
-# manager/src/agent_pm/manager/crew.py's workers); delegate/src/agent_pm/delegate/engine/config.py [adapters.<name>],
-# [hosts] and [delegates], handing the first two to the Driver (session/src/agent_pm/session/, which reads no config
-# file) through Session.configure; the Delegate (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<runtime>].
+# manager/src/agent_pm/manager/crew.py's workers); delegate/src/agent_pm/delegate/engine/config.py [delegates]; the
+# Delegate (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<runtime>]. [adapters] and [hosts]: session/config.toml.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
-#   layers  this file (core-new.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
+#   layers  this file (local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
 #           them); so a later layer's global value beats an earlier layer's role value
 #   levels  within a layer: global → role ([roles.<role>])
 
@@ -20,22 +20,22 @@
 #   effort          required: low | medium | high | xhigh | max; the runtime's Adapter maps it to its own effort value
 #   runtime         required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
 #                   overlay may set it per role. The Composer passes it through unchecked
-#   language        the language reports and PRDs are written in (one line); unset → no rule: the model's default
-#   show            local: tui mode only: how the agent run's TUI window opens.
-#                   unset        → open a pane: a tmux grid, else stacked (the Driver's show)
-#                   ""           → open nothing; print the `tmux attach` command
+#   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
+#   show            tui mode only: how the agent run's TUI window opens.
+#                   ""           → open a pane: a tmux grid, else stacked (the Driver's show)
+#                   "none"       → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name
-#   cwd             local: the dir the agent run starts in (absolute or ~ path); unset → the caller's current directory
+#   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
 #                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
-#   users           local, global only: GitHub logins whose PR comments are the user's; unset → the gh login
-#   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); unset → none. A cwd
+#   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
+#   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); [] → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
 #                   notice unless it is the workdir; a trusted cwd in the workdir is refused. A listed local clone's
 #                   worktrees check out symlinks as links; every other checkout gets core.symlinks=false. A listed
 #                   clone trusts every link in fetched origin/<branch> commits, which may point outside the worktree:
 #                   list only stable paths only you write. An agent run cannot add one (no flag; the overlay rejects it)
 #   team_dirs       local, global only: dirs of your own roles, tasks and templates (absolute or ~ path, matched by
-#                   real path), read in order after core's team/; unset → none; never found from the cwd. Each may hold
+#                   real path), read in order after core's team/; [] → none; never found from the cwd. Each may hold
 #                   roles/, tasks/ and templates/ (each optional) of <name>.md files ([a-z0-9-] names) in team/'s
 #                   formats (delegate/src/agent_pm/delegate/composer/__init__.py's docstring). Add-only: a name core or another team dir
 #                   defines stops the run, naming both files, so no team dir file changes or extends a core role. A team
@@ -46,12 +46,23 @@
 #                   dir of it is writable by group or others (not sticky) or owned by neither you nor root
 #                   (delegate/src/agent_pm/delegate/engine/plan.py). The orchestrator's runs ignore it, but refuse a team dir
 #                   overlapping their workdir, cwd or a dir they add or can write
+#   templates, read, write, commands, gate  as in Roles below, for a role that does not set its own; [] or "" → none
 tier = 2
 effort = "high"
 runtime = "claude"
 language = "English"
+templates = []
+read = []
+write = []
+commands = []
+gate = ""
+show = ""
+cwd = ""
+users = []
+trusted_dirs = []
+team_dirs = []
 # local: language = "Chinese"
-# local: show = ""   # e.g. on a server: no window, attach by hand
+# local: show = "none"   # e.g. on a server: no window, attach by hand
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
@@ -63,17 +74,22 @@ language = "English"
 #   repo    github: required; <owner>/<name>
 #   branch  github: required
 #   dir     github: required; the folder in the repo
-#   host    github: unset → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
-# The orchestrator needs researcher's and pm's [output] on one github.com repo and branch (local: below).
+#   host    github: "" → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
+# A key "" is unset. The orchestrator needs researcher's and pm's [output] on one github.com repo and branch (local:
+# below).
 [output]
 type = "local"
+repo = ""
+branch = ""
+dir = ""
+host = ""
 
 # Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (core's team/roles/<role>.md › Tasks). A
 # role table holding the old task-level keys is an error (root README › Task labels: Upgrade).
-#   templates     names of team/templates/*.md inlined into the prompt; unset → none
+#   templates     names of team/templates/*.md inlined into the prompt; [] → none
 #   read          extra dirs the agent run needs to read; `repo` is the caller's repo dir, {{team}} core's team/;
 #                 the role's tasks dir (core's team/tasks/, or a team dir's: team_dirs) is always
-#                 included; unset → none. Read-only: never --add-dir. Claude gets a Read(//<dir>/**) allow rule each
+#                 included; [] → none. Read-only: never --add-dir. Claude gets a Read(//<dir>/**) allow rule each
 #                 (Read; Grep and Glob best-effort), so a file-tool write there is denied headless (-p) and prompts in
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
@@ -81,11 +97,11 @@ type = "local"
 #                 default danger-full-access can write there too (README.md › Runtime policy). A dir also in write,
 #                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
 #                 regardless
-#   write         extra dirs the agent run needs to write; the workdir is always reachable; unset → none
+#   write         extra dirs the agent run needs to write; the workdir is always reachable; [] → none
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the runtime's Adapter decides how
-#                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; unset → none
+#                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
-#                 round); its approval follows the runtime's Adapter; unset → none (the orchestrator's overlay sets it)
+#                 round); its approval follows the runtime's Adapter; "" → none (the orchestrator's overlay sets it)
 #   <run key>     tier, effort, runtime, language, show, cwd or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
@@ -124,80 +140,10 @@ type = "pull-request"
 tier = 3
 effort = "low"
 
-# ── Adapters ────────────────────────────────────────────
-# [adapters.<name>]  one table per runtime, built only by session/src/agent_pm/session/adapters/registry.py; <name> is the
-#                    runtime name session.engine.api.start takes and the package session/src/agent_pm/session/adapters/<name>/
-#   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
-#   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
-
-# [adapters.claude]  Claude Code (session/src/agent_pm/session/adapters/claude/); each key optional
-#   flags            claude flags added to every session command; never --setting-sources (the Driver's)
-#   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read rules
-#   env              variables added to every command's environment, over the adapter's defaults
-# [adapters.claude.tiers]    tier "1".."4" → its --model
-# [adapters.claude.efforts]  effort (low, medium, high, xhigh, max) → its --effort
-#                            starting a run whose tier or effort has no entry here is a config error
-[adapters.claude]
-implementation = "adapters.claude:ClaudeAdapter"
-# allow = ["<rule>"]
-
-[adapters.claude.tiers]
-1 = "fable"
-2 = "opus"
-3 = "sonnet"
-4 = "haiku"
-
-[adapters.claude.efforts]
-low = "low"
-medium = "medium"
-high = "high"
-xhigh = "xhigh"
-max = "max"
-
-[adapters.codex]
-implementation = "adapters.codex:CodexAdapter"
-
-[adapters.codex.tiers]
-1 = "gpt-6-astra"
-2 = "gpt-6.1-sol"
-3 = "gpt-6-luna"
-4 = "gpt-5.6-terra"
-
-[adapters.codex.efforts]
-low = "low"
-medium = "medium"
-high = "high"
-xhigh = "xhigh"
-max = "max"
-
-# Optional local env table supplies launch/probe variables, including CODEX_HOME; resume keeps the saved CODEX_HOME.
-[adapters.codex.env]
-
-# [adapters.print_prompt]  act-as's runtime (session/src/agent_pm/session/adapters/print_prompt/): in_process mode only; its
-#                          run hands the composed prompt back as the deliverable and starts no process; no other keys
-[adapters.print_prompt]
-implementation = "adapters.print_prompt:PrintPromptAdapter"
-
-# ── Hosts ───────────────────────────────────────────────
-# [hosts]             default: the [hosts.<name>] sessions run on
-# [hosts.<name>]      one table per Host, parsed only by session/src/agent_pm/session/hosts/tables.py
-#   implementation    required: "module.path:Class", the Host class; checked for that form only, never loaded there
-# [hosts.tmux]        tmux; each display key optional:
-#   status_line       local: true → tui sessions show tmux's status line; unset → false
-#   workers_per_column local: panes per tmux grid column (the Driver's show), 1..9999; unset → 3
-#   grid_retile       local: when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
-#                     window resize), "off" (never by itself: session/src/agent_pm/session/hosts/tmux/tmux_host.py tile @N);
-#                     unset → "open-close"
-[hosts]
-default = "tmux"
-
-[hosts.tmux]
-# a forward name: TmuxHost does not exist yet, and nothing loads it until it does
-implementation = "agent_pm.session.hosts.tmux:TmuxHost"
-# local: [hosts.tmux]
-# local: status_line = true
-# local: workers_per_column = 2
-# local: grid_retile = "all"
+# [delegates]
+#   harness_host  the [hosts.<name>] (session/config.toml) the harness runs on; "" → none
+[delegates]
+harness_host = ""
 
 # [policy.<runtime>]  a role run's flags and env, the Delegate's (README.md › Runtime policy); in claude's
 #                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load

@@ -15,7 +15,6 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-import agent_pm.delegate.engine.config
 from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
@@ -70,7 +69,7 @@ class Base(Case):
 
     def local(self, text):
         """The local config `text`, the session configured with its adapters and the fake runtime."""
-        local = os.path.join(self.agent_pm, "core-new.local.toml")
+        local = os.path.join(self.agent_pm, "local.toml")
         with open(local, "w") as f:
             f.write(text)
         fake = {"implementation": "adapters.fake:FakeAdapter"}
@@ -110,11 +109,7 @@ class Configures(Base):
         self.assertIn("fake", registry.configured())
 
     def test_a_core_config_error_refuses_the_plan(self):
-        with mock.patch.object(
-            agent_pm.delegate.engine.config,
-            "session_settings",
-            side_effect=ValueError("[hosts]: missing"),
-        ):
+        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
             self.assertEqual(self.refused(), "[hosts]: missing")
 
 
@@ -145,7 +140,7 @@ class Cwd(Base):
         with open(os.path.join(self.work, "run.jsonl"), "w") as f:
             f.writelines(json.dumps({"ts": "t", "kind": "session", **e}) + "\n" for e in entries)
 
-    def test_unset_is_the_callers_current_directory(self):
+    def test_empty_is_the_callers_current_directory(self):
         here = os.getcwd()
         self.assertEqual(self.placed(), ((here, False), notice(here)))
 

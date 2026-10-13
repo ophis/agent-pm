@@ -346,8 +346,8 @@ class Inner(Case):
             (
                 bad_config,
                 {},
-                "linear-orchestrator/config.toml: missing harness_key: set them in "
-                "~/.agent-pm/linear-new.local.toml (linear-orchestrator/config.toml's `# local:` lines)",
+                "linear-orchestrator/config.toml: required, unset: harness_key: set them in "
+                "~/.agent-pm/local.toml (linear-orchestrator/config.toml's `# local:` lines)",
             ),
         ]  # last: it changes the config
         for setup, kw, reason in cases:

@@ -9,10 +9,9 @@ import unittest
 from unittest import mock
 
 import agent_pm
-import agent_pm.delegate.engine.config
 from agent_pm.session import Session
 from agent_pm.session.adapters import registry
-from agent_pm.utils.config_file import read_config
+from agent_pm.utils.config_file import read_project
 
 from session.tests.case import settings
 
@@ -23,12 +22,12 @@ ROOTS = tuple(sorted(set(SRC.values())))
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = ":".join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
-_session_settings = agent_pm.delegate.engine.config.session_settings
+_settings = registry.settings
 
 
 def committed(local: str = os.devnull) -> dict:
-    """The delegate config's [adapters], `local` merged (default none), even under Case.configure_session."""
-    return _session_settings(read_config(agent_pm.delegate.engine.config.CONFIG, local))["adapters"]
+    """The session config's [adapters], `local` merged (default none), even under Case.configure_session."""
+    return _settings(read_project("session", local=local))["adapters"]
 
 
 class Case(unittest.TestCase):
@@ -58,14 +57,10 @@ class Case(unittest.TestCase):
                 registry.reset()
 
     def configure_session(self, adapters, tmux=None) -> None:
-        """Session.configure with settings(adapters, tmux), also what session_settings returns for the rest
+        """Session.configure with settings(adapters, tmux), also what Session.settings returns for the rest
         of the test, so an entry configuring again keeps them."""
         given = settings(adapters, tmux)
-        self.enterContext(
-            mock.patch.object(
-                agent_pm.delegate.engine.config, "session_settings", return_value=given
-            )
-        )
+        self.enterContext(mock.patch.object(registry, "settings", return_value=given))
         Session.configure(**given)
 
 

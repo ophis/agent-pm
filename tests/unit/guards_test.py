@@ -80,6 +80,7 @@ class RealTree(Case):
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
             (guards.config_levels, REPO),
+            (guards.explicit_keys, REPO),
             *((guard, ORCH) for guard in ORCH_GUARDS),
             *((guards.private_imports, src) for src in SRC.values()),
         ):
@@ -553,8 +554,7 @@ class ManagerImports(Sample):
                 "from agent_pm.manager import roster\nfrom agent_pm.session import Session, api\n"
                 "from agent_pm.utils.files import save\nfrom . import roster\n",
                 f"manager/{PKG}/manager/roster.py": "import json\nfrom agent_pm.session import api\n"
-                "from agent_pm.delegate.engine.config import CONFIG, LOCAL\n"
-                "from agent_pm.utils.config_file import read_config\n",
+                "from agent_pm.utils.config_file import read_project\n",
             }
         )
         self.assertEqual(guards.manager_imports(root), [])
@@ -729,20 +729,22 @@ class OldCore(Sample):
 
 
 class AdaptersKey(Sample):
-    def test_the_literal_key_only_in_config_py(self):
+    def test_the_literal_key_only_in_the_session_config_parser(self):
         sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/composer/x.py": sample,
-                f"session/{PKG}/session/adapters/registry.py": sample,
+                f"session/{PKG}/session/adapters/x.py": sample,
                 guards.CONFIG_FILE: sample,
+                guards.ADAPTERS_HOME: sample,
             }
         )
         self.assertEqual(
             guards.adapters_key(root),
             [
                 f'delegate/{PKG}/delegate/composer/x.py:2: literal key "adapters"',
-                f'session/{PKG}/session/adapters/registry.py:2: literal key "adapters"',
+                f'{guards.CONFIG_FILE}:2: literal key "adapters"',
+                f'session/{PKG}/session/adapters/x.py:2: literal key "adapters"',
             ],
         )
 
