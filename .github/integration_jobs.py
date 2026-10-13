@@ -1,7 +1,7 @@
 """CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each project's): JOBS
 entries, from the repo root, are directories ending in /, files, or <file>::<Class>. Exact classes outrank
 the longest matching path. --check rejects loader errors, unmatched classes/tests, empty jobs, duplicate
-tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests."""
+tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests through run_tests.py."""
 
 import json
 import re
@@ -9,6 +9,8 @@ import sys
 import unittest
 from collections import Counter
 from pathlib import Path
+
+import run_tests
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTORIES = (
@@ -115,20 +117,23 @@ def check(root, directories, jobs, workflow):
     return split
 
 
-def run(suite):
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(suite))
-    return 0 if result.wasSuccessful() else 1
+def run(suite, title):
+    return run_tests.run(unittest.TestSuite(suite), title, verbosity=2)
 
 
 def main(argv):
     if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
         raise ValueError("give --check or a job name: " + ", ".join(JOBS))
+    title = f"Integration {argv[0]}"
+    code = None if argv == ["--check"] else run_tests.supervise(title)
+    if code is not None:
+        return code
     split = check(ROOT, DIRECTORIES, JOBS, WORKFLOW.read_text())
     if argv == ["--check"]:
         counts = ", ".join(f"{job} {len(suite)}" for job, suite in split.items())
         print(f"integration jobs match discovery and the workflow: {counts}")
         return 0
-    return run(split[argv[0]])
+    return run(split[argv[0]], title)
 
 
 if __name__ == "__main__":
