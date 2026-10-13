@@ -98,7 +98,7 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    error_projects = ", ".join((p for level in LEVELS for p in level))
+    error_projects = ", ".join(p for level in LEVELS for p in level)
     raise ConfigFileError(f"project {name!r}: want one of {error_projects}")
 
 

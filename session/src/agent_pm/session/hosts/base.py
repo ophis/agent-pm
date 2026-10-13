@@ -1,6 +1,4 @@
-"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows
-them.
-"""
+"""Hosts own processes, Records and Displays; Displayable Hosts show them."""
 
 from __future__ import annotations
 
@@ -12,7 +10,7 @@ from agent_pm.utils import Display, Record
 
 
 class NotDisplayable(DriverError):
-    """From a Host that is not Displayable: `host <name> cannot display`."""
+    """`host <name> cannot display`."""
 
 
 class HostProcess(ABC):
@@ -47,10 +45,9 @@ class Terminal(HostProcess):
 
 
 class Host(ABC):
-    """settings: its [hosts.<name>] table minus implementation. detach, terminal: env verbatim; on
-    exit, events gets `exited <rc>` / `dead`. attach: a Terminal for one, unknown → DriverError.
-    list: sorted names matching display ("" none). display: a value completed in the caller's
-    process.
+    """settings: [hosts.<name>] minus implementation. detach/terminal: env verbatim; on exit, events
+    gets `exited <rc>` / `dead`. attach: a Terminal, unknown → DriverError. list: sorted display
+    matches ("" none). display: completed in the caller's process.
     """
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:

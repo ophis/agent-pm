@@ -2578,7 +2578,8 @@ class RunStartRecords(Base):
     def test_one_json_line_and_the_launch_namespace(self):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         found = issue("TASK-1", "In Progress", "researcher")
-        with frozen("2026-10-09T00:26:33-04:00"):
+        stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
+        with frozen(stamp):
             got = [
                 router.begin(
                     path,
@@ -2595,7 +2596,7 @@ class RunStartRecords(Base):
             self.assertEqual(
                 f.read(),
                 "".join(
-                    f'{{"ts": "2026-10-09T00:26:33-04:00", "kind": "{kind}", "issue": "TASK-1", '
+                    f'{{"ts": "{stamp}", "kind": "{kind}", "issue": "TASK-1", '
                     '"sid": "s1", "role": "researcher", "runtime": "a"}\n'
                     for kind in ("start", "resume")
                 ),
@@ -3790,12 +3791,13 @@ class ScheduledRuns(TickScenario):
 
     def test_begin_appends_one_json_line_to_runs_jsonl(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        with frozen("2026-10-09T00:26:33-04:00"):
+        stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
+        with frozen(stamp):
             self.tick(fake, "--now", hour=12)
         (launch,) = self.start.launches
         self.assertEqual(
             self.state,
-            '{"ts": "2026-10-09T00:26:33-04:00", "kind": "start", "issue": "TASK-1", '
+            f'{{"ts": "{stamp}", "kind": "start", "issue": "TASK-1", '
             f'"sid": "{launch.sid}", "role": "researcher", "runtime": "a"}}\n',
         )
         self.assertEqual(

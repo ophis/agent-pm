@@ -148,7 +148,7 @@ def record(event, args):
         imports.add(args[0].partition(".")[0])
 sys.addaudithook(record)
 runpy.run_path(sys.argv[1])
-print(json.dumps(sorted(imports - sys.stdlib_module_names)))
+print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names)))
 """
         for name in (
             "sessions.py",

@@ -112,7 +112,7 @@ class Gql:
 
 
 class Logs(Case):
-    TS = "2026-10-09T00:26:33-04:00"
+    TS = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

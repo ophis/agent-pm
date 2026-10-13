@@ -379,7 +379,7 @@ class Failure(Case):
     def test_worker_control_flow_propagates_to_the_caller(self):
         for error in (KeyboardInterrupt(), Stopped(143)):
             with self.subTest(error=error), self.assertRaises(type(error)) as caught:
-                sessions._bounded(lambda: self.failing(error)("query"), 1)
+                sessions._bounded(lambda error=error: self.failing(error)("query"), 1)
             self.assertIs(caught.exception, error)
 
     def test_update_failure_never_creates(self):
