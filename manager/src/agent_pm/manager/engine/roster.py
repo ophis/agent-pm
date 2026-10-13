@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from typing import NoReturn, overload
 
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import Driver, DriverError
+from agent_pm.session import DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
 
 ROOT = f"{STATE}/managers"
@@ -79,15 +79,14 @@ class Held(RosterError):
 
 
 @overload
-def directory(manager: str, *, driver=None) -> str: ...
+def directory(manager: str, *, driver) -> str: ...
 
 
 @overload
-def directory(manager: None = None, *, driver=None) -> str | None: ...
+def directory(manager: None = None, *, driver) -> str | None: ...
 
 
-def directory(manager: str | None = None, *, driver=None) -> str | None:
-    driver = _configure() if driver is None else driver
+def directory(manager: str | None = None, *, driver) -> str | None:
     if manager is None:
         try:
             manager = next((row.name for row in driver.sessions() if row.own), None)
@@ -165,7 +164,7 @@ def events(directory: str, *, create: bool = True) -> str:
     return path
 
 
-def home(name: str | None, events: str | None, *, driver=None) -> str | None:
+def home(name: str | None, events: str | None, *, driver) -> str | None:
     d = directory(name, driver=driver)
     if d is None or not os.path.isdir(d) or events is None:
         return None
@@ -429,15 +428,14 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
                 _write(directory, path, text)
 
 
-def _live(session: str, *, driver=None) -> bool:
-    driver = _configure() if driver is None else driver
+def _live(session: str, *, driver) -> bool:
     try:
         return bool(driver.sessions(re.escape(session)))
     except DriverError:
         return False
 
 
-def _holds(r: dict, directory: str, own: str | None, *, driver=None) -> bool:
+def _holds(r: dict, directory: str, own: str | None, *, driver) -> bool:
     holder = r["holder"]
     if holder is None:
         return False
@@ -451,12 +449,12 @@ def _holds(r: dict, directory: str, own: str | None, *, driver=None) -> bool:
     return False
 
 
-def take(r: dict, directory: str, own: str | None, *, driver=None) -> None:
+def take(r: dict, directory: str, own: str | None, *, driver) -> None:
     if not _holds(r, directory, own, driver=driver) and own is not None:
         r["holder"] = {"session": own, "since": now()}
 
 
-def check(r: dict, directory: str, own: str | None, *, driver=None) -> None:
+def check(r: dict, directory: str, own: str | None, *, driver) -> None:
     # the lease holds only for this block: a take-over can follow, so a later write must not assume
     # it
     if not _holds(r, directory, own, driver=driver) and own is not None:
@@ -531,8 +529,7 @@ def remove(r: dict, name: str) -> dict:
         raise RosterError(f"{name} not in roster") from None
 
 
-def stop(r: dict, name: str, *, driver=None) -> str:
-    driver = _configure() if driver is None else driver
+def stop(r: dict, name: str, *, driver) -> str:
     entries = r["entries"]
     key = (
         name
@@ -696,7 +693,3 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         print(f"manager: rotate: {e}: lines after {cursor} of {old} not copied", file=sys.stderr)
     r["cursor"], r["gen"] = 0, r["gen"] + 1
     return True
-
-
-def _configure():
-    return Driver.from_config(read_project("session"))

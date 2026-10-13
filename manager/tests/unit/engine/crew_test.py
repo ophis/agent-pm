@@ -474,7 +474,7 @@ class StartTest(WorkerCase):
             with self.subTest(msg):
                 directory = kw.pop("directory", self.directory)
                 with self.assertRaises(crew.WorkersError) as cm:
-                    start("w1", directory, own=None, **{"cwd": self.dir, **kw})
+                    start("w1", directory, own=None, driver=self.api, **{"cwd": self.dir, **kw})
                 self.assertEqual(str(cm.exception), msg)
                 self.assertEqual(self.api.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.dir, "m9")))
@@ -1070,6 +1070,24 @@ class MainTest(WorkerCase):
                     self.assertNotIn("config", err)
             self.api = workers
 
+    def test_non_start_command_does_not_read_session_configuration(self):
+        roster.ensure(self.directory)
+        self.local("x = \n")
+        out, err = io.StringIO(), io.StringIO()
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.communicate.return_value = ("", "no server running")
+        process.poll.return_value = process.returncode = 1
+        with (
+            mock.patch.object(subprocess, "Popen", return_value=process),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            code = crew.main(["release", "--manager", "m1"])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(out.getvalue(), f"workers: released {self.directory}\n")
+
     def test_reply(self):
         for reply, want in (("done", (0, "done\n", "")), ("", (0, "", "")), (None, (0, "", ""))):
             with self.subTest(reply=reply):
@@ -1444,6 +1462,41 @@ class NextEventContentTest(CrewCase):
                 self.assertEqual(self.run_event(event, self.live("r")), (0, nl(f"1 {event}"), ""))
                 self.assertEqual(self.api.ran("sessions"), [None])
                 self.assertEqual(self.api.ran("attach"), [])
+
+    def test_main_non_attachment_events_never_read_configuration(self):
+        self.local("x = \n")
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.communicate.return_value = ("", "no server running")
+        process.poll.return_value = process.returncode = 1
+        for event in ("10:00:01 w1-drive outcome done", "10:00:01 w1 new kind"):
+            with self.subTest(event):
+                with open(self.path, "w") as file:
+                    file.write(event + "\n")
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(subprocess, "Popen", return_value=process),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(err),
+                ):
+                    code = crew.main(
+                        ["next-event", "--manager", "m1", "--after", "0", "--gen", "0"]
+                    )
+                self.assertEqual((code, out.getvalue(), err.getvalue()), (0, nl(f"1 {event}"), ""))
+
+    def test_done_reply_and_screen_share_one_configured_driver(self):
+        self.api.rows["w1"] = self.live(None)
+        calls = []
+
+        def configured():
+            calls.append(self.api)
+            return self.api
+
+        self.assertEqual(
+            crew.content("10:00:01 w1 done", driver=self.api, configure=configured),
+            "\n".join(self.PANE),
+        )
+        self.assertEqual(calls, [self.api])
 
     def test_empty_reply_prints_nothing_more(self):
         got = self.run_event("10:00:01 w1 done", self.live(""))

@@ -500,14 +500,14 @@ def note(workdir: str, kind: str, **fields) -> None:
 
 
 class Driver:
-    """A caller owns the configuration for every session it starts or attaches."""
+    """A caller owns configuration; omitted settings support host operations without runtimes."""
 
     def __init__(
         self,
         *,
-        adapters: Mapping,
-        hosts: Mapping,
-        default_host: str,
+        adapters: Mapping | None = None,
+        hosts: Mapping | None = None,
+        default_host: str = tmux_host.HOST,
         host=tmux_host,
         probe=headless.probe,
         clock: Callable[[], float] | None = None,
@@ -515,7 +515,12 @@ class Driver:
     ):
         self.host, self.probe, self.clock = host, probe, clock
         self.registry = registry.Registry(
-            adapters=adapters, hosts=hosts, default_host=default_host, class_loader=class_loader
+            adapters={} if adapters is None else adapters,
+            hosts={tmux_host.HOST: {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
+            if hosts is None
+            else hosts,
+            default_host=default_host,
+            class_loader=class_loader,
         )
 
     @classmethod

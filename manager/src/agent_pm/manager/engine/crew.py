@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TypeGuard
 
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
@@ -89,6 +89,7 @@ class NotAWorker(WorkersError):
 class Refused(WorkersError):
     pass
 
+
 @contextlib.contextmanager
 def _driver() -> Iterator[None]:
     try:
@@ -102,25 +103,24 @@ def _check(name: str) -> None:
         raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
-def _rows(match: str | None = None, *, driver=None) -> list[SessionRow]:
-    driver = _configure() if driver is None else driver
+def _rows(match: str | None = None, *, driver) -> list[SessionRow]:
     with _driver():
         return driver.sessions(match)
 
 
-def _row(name: str, *, driver=None) -> SessionRow | None:
+def _row(name: str, *, driver) -> SessionRow | None:
     return next(iter(_rows(re.escape(name), driver=driver)), None)
 
 
-def _live(*, driver=None) -> dict[str, SessionRow]:
+def _live(*, driver) -> dict[str, SessionRow]:
     return {row.name: row for row in _rows(driver=driver)}
 
 
-def _caller(*, driver=None) -> SessionRow | None:
+def _caller(*, driver) -> SessionRow | None:
     return next((row for row in _rows(driver=driver) if row.own), None)
 
 
-def _own(*, driver=None) -> str | None:
+def _own(*, driver) -> str | None:
     row = _caller(driver=driver)
     return None if row is None else row.name
 
@@ -178,7 +178,7 @@ def _spec(record: dict, workdir: str) -> SessionSpec:
         )
 
 
-def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> None:
+def _enroll(record: dict, own: str | None, note: str | None, *, driver) -> None:
     name, directory, split, split_from = (
         record[k] for k in ("name", "manager", "split", "split_from")
     )
@@ -220,7 +220,7 @@ def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> 
         roster.unwritten(name, e)
 
 
-def _died(name: str, runtime: str, code: int, *, driver=None) -> str:
+def _died(name: str, runtime: str, code: int, *, driver) -> str:
     row = _row(name, driver=driver)
     if row is None:
         return f"{name}: session ended at once"
@@ -230,7 +230,7 @@ def _died(name: str, runtime: str, code: int, *, driver=None) -> str:
     )
 
 
-def _early(name: str, runtime: str, handle: Handle, *, driver=None) -> None:
+def _early(name: str, runtime: str, handle: Handle, *, driver) -> None:
     deadline = time.monotonic() + EARLY
     with _driver():
         for event in handle.events():
@@ -251,9 +251,8 @@ def _launch(
     prompt: str,
     resume: str | None,
     note: str | None,
-    driver=None,
+    driver,
 ) -> None:
-    driver = _configure() if driver is None else driver
     name = record["name"]
     with _driver():
         handle = driver.start(
@@ -287,7 +286,7 @@ def start(
     own_runtime: str | None = None,
     split: str | None = None,
     split_from: str | None = None,
-    driver=None,
+    driver,
 ) -> str:
     _check(spec.name)
     if split_from is not None:
@@ -376,8 +375,7 @@ def _recorded(workdir: str, name: str, sid: str) -> dict:
     return data
 
 
-def restart(name: str, *, own: str | None, driver=None) -> None:
-    driver = _configure() if driver is None else driver
+def restart(name: str, *, own: str | None, driver) -> None:
     _check(name)
     row = _row(name, driver=driver)
     if row is None or row.sid is None or not roster.SID.fullmatch(row.sid):
@@ -390,8 +388,7 @@ def restart(name: str, *, own: str | None, driver=None) -> None:
     _launch(record, spec, own, prompt="", resume=row.sid, note=None, driver=driver)
 
 
-def reply(name: str, *, driver=None) -> str | None:
-    driver = _configure() if driver is None else driver
+def reply(name: str, *, driver) -> str | None:
     _check(name)
     with _driver():
         return driver.attach(name).reply
@@ -430,15 +427,15 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         time.sleep(0.5)
 
 
-def content(event: str, *, driver=None) -> str:
-    driver = _configure() if driver is None else driver
+def content(event: str, *, driver, configure: Callable[[], Driver]) -> str:
     name, kind = event.split(" ")[1:3]
     if kind not in ("done", "blocked", "dead"):
         return ""
+    attached_driver = None
     if kind == "done":
-        driver = _configure() if driver is None else driver
+        attached_driver = configure()
         try:
-            text = driver.attach(name).reply
+            text = attached_driver.attach(name).reply
         except (ConfigError, DriverError):
             text = None
         if text is not None:
@@ -448,9 +445,10 @@ def content(event: str, *, driver=None) -> str:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
-    driver = _configure() if driver is None else driver
+    if attached_driver is None:
+        attached_driver = configure()
     with _driver():
-        return driver.attach(name).screen(PANE_LINES)
+        return attached_driver.attach(name).screen(PANE_LINES)
 
 
 def _status(cwd: str) -> str | None:
@@ -524,9 +522,8 @@ def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
 
 
 def _reopen(
-    panes: dict, entries: dict, live: dict[str, SessionRow], *, driver=None
+    panes: dict, entries: dict, live: dict[str, SessionRow], *, driver
 ) -> tuple[dict, list]:
-    driver = _configure() if driver is None else driver
     shown, opened = {}, []
     for name in sorted(panes):
         session, e = panes[name], entries[name]
@@ -589,7 +586,7 @@ def attach(
     *,
     after: int | None = None,
     gen: int | None = None,
-    driver=None,
+    driver,
 ) -> tuple[str, dict]:
     try:
         events = roster.events(directory)
@@ -671,7 +668,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
 
 
 @contextlib.contextmanager
-def _leased(directory: str, own: str | None, *, write: bool = True, driver=None):
+def _leased(directory: str, own: str | None, *, write: bool = True, driver):
     try:
         with roster.locked(directory, write=write) as r:
             roster.check(r, directory, own, driver=driver)
@@ -680,12 +677,12 @@ def _leased(directory: str, own: str | None, *, write: bool = True, driver=None)
         raise WorkersError(str(e)) from e
 
 
-def release(directory: str, own: str | None, *, driver=None) -> None:
+def release(directory: str, own: str | None, *, driver) -> None:
     with _leased(directory, own, driver=driver) as r:
         r["holder"] = None
 
 
-def note(directory: str, own: str | None, name: str, text: str, *, driver=None) -> None:
+def note(directory: str, own: str | None, name: str, text: str, *, driver) -> None:
     _check(name)
     with _leased(directory, own, driver=driver) as r:
         if name not in r["entries"]:
@@ -693,7 +690,7 @@ def note(directory: str, own: str | None, name: str, text: str, *, driver=None) 
         r["entries"][name]["note"] = _note_text(text)
 
 
-def stop(directory: str, own: str | None, name: str, *, driver=None) -> None:
+def stop(directory: str, own: str | None, name: str, *, driver) -> None:
     _check(name)
     with _leased(directory, own, driver=driver) as r:
         roster.stop(r, name, driver=driver)
@@ -727,8 +724,7 @@ def _entries(directory: str) -> dict:
         return {}
 
 
-def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[list[str], list[str]]:
-    driver = _configure() if driver is None else driver
+def stop_all(own: str | None, *, dry_run: bool = False, driver) -> tuple[list[str], list[str]]:
     if own is None:
         raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
     home = roster.directory(own, driver=driver)
@@ -773,7 +769,7 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
     return lines, left
 
 
-def forget(directory: str, own: str | None, name: str, *, driver=None) -> None:
+def forget(directory: str, own: str | None, name: str, *, driver) -> None:
     _check(name)
     with _leased(directory, own, driver=driver) as r:
         pane, session_driver = _sessions(name, roster.remove(r, name), _live(driver=driver))
@@ -782,7 +778,7 @@ def forget(directory: str, own: str | None, name: str, *, driver=None) -> None:
             raise WorkersError(f"{name}: session {live_session} is live")
 
 
-def _directory(name: str | None, *, driver=None) -> str:
+def _directory(name: str | None, *, driver) -> str:
     try:
         directory = roster.directory(name, driver=driver)
     except RosterError as e:
@@ -793,7 +789,7 @@ def _directory(name: str | None, *, driver=None) -> str:
 
 
 def _record(
-    directory: str, own: str | None, after: int | None, gen: int, *, driver=None
+    directory: str, own: str | None, after: int | None, gen: int, *, driver
 ) -> tuple[str, int, bool]:
     with _leased(directory, own, driver=driver) as r:
         try:
@@ -832,6 +828,7 @@ def _configure() -> Driver:
 
 
 def main(argv=None, *, driver=None, event_source=None) -> int:
+    configure = _configure if driver is None else lambda driver=driver: driver
     _drop_import_root()
     argv = sys.argv[1:] if argv is None else list(argv)
     flags = []
@@ -903,8 +900,8 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
     if a.cmd == "attach" and (a.after is None) != (a.gen is None):
         ap.error("--after and --gen go together")
     try:
-        if a.cmd in STARTS:
-            driver = _configure() if driver is None else driver
+        if driver is None:
+            driver = _configure() if a.cmd in STARTS else Driver()
         if a.cmd == "start":
             directory = _directory(a.manager, driver=driver)
             parent = _caller(driver=driver)
@@ -948,7 +945,7 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
             line, event = read_event(events, after)
             print(f"{line} {event}")
             try:
-                text = content(event, driver=driver)
+                text = content(event, driver=driver, configure=configure)
             except WorkersError as e:
                 text = f"workers: {e}"  # stdout: background readers watch only it
             if text:
