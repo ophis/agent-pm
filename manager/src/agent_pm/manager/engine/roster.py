@@ -26,7 +26,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
-from typing import overload
+from typing import NoReturn, overload
 
 from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import Driver, DriverError
@@ -43,6 +43,7 @@ SPLITS = ("right", "below")
 SCRIPTS = ("crew.py", "drive.py", "router.py")
 # Old script and module names still validate; recovery rewrites them to CREW_MODULE.
 LEGACY = "workers.py"
+LEGACY_MODULES = (("-P", "-m", "agent_pm.crew"), ("-P", "-m", "agent_pm.manager.crew"))
 CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
 CREW_MODULE = ("-P", "-m", "agent_pm.manager.engine.crew")
 TOP = ("version", "holder", "cursor", "gen", "entries")
@@ -281,6 +282,42 @@ def _fault(name, value) -> str | None:
     return _value_fault(value)
 
 
+def _check(data, path: str, *, strict: bool) -> dict:
+    def fail(why: str) -> NoReturn:
+        raise RosterError(f"{path}: {why}")
+
+    if not isinstance(data, dict):
+        fail("want a JSON object")
+    if bad := _keys(data, TOP):
+        fail(bad)
+    if type(data["version"]) is not int or data["version"] != VERSION:
+        fail(_want("version", data["version"], VERSION))
+    holder = data["holder"]
+    if holder is not None:
+        if not isinstance(holder, dict):
+            fail("holder: want null or an object with session and since")
+        if bad := _keys(holder, ("session", "since")):
+            fail(f"holder: {bad}")
+        if not _match(NAME, holder["session"]):
+            fail(_want("holder.session", holder["session"], "a session name"))
+        if not _time(holder["since"]):
+            fail(_want("holder.since", holder["since"], _TIME))
+    for field in ("cursor", "gen"):
+        if type(data[field]) is not int or data[field] < 0:
+            fail(_want(field, data[field], "a non-negative integer"))
+    if not isinstance(data["entries"], dict):
+        fail("entries: want an object")
+    entries = {}
+    for name, value in data["entries"].items():
+        if bad := _fault(name, value):
+            if strict:
+                fail(f"entry {name!r}: {bad}")
+            print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
+        else:
+            entries[name] = value
+    return {**data, "entries": entries}
+
+
 _NOT_REGULAR = "not a regular file owned by you"
 
 
@@ -375,7 +412,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
     with _locked(os.path.join(directory, "roster.lock")):
         data = _read(path)
         missing = data is None
-        r = _validated(
+        r = _check(
             {"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
             if missing
             else data,
@@ -385,7 +422,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
         before = _dump(r)
         yield r
         if write:
-            _validated(r, path, strict=True)
+            _check(r, path, strict=True)
             text = _dump(r)
             if missing or text != before:
                 _write(directory, path, text)
@@ -631,9 +668,6 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
             view = view[os.write(fd, view) :]
 
 
-LEGACY_MODULES = (("-P", "-m", "agent_pm.crew"), ("-P", "-m", "agent_pm.manager.crew"))
-
-
 def rotate(r: dict, directory: str, *, sleep=None) -> bool:
     if not due(r, directory):
         return False
@@ -663,48 +697,5 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
     return True
 
 
-def _validated(data, path: str, *, strict: bool) -> dict:
-    if bad := _top_fault(data):
-        raise RosterError(f"{path}: {bad}")
-    entries = {}
-    for name, value in data["entries"].items():
-        if bad := _fault(name, value):
-            if strict:
-                raise RosterError(f"{path}: entry {name!r}: {bad}")
-            print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
-        else:
-            entries[name] = value
-    return {**data, "entries": entries}
-
-
 def _configure():
     return Driver.from_config(read_project("session"))
-
-
-def _holder_fault(holder) -> str | None:
-    if holder is None:
-        return None
-    if not isinstance(holder, dict):
-        return "holder: want null or an object with session and since"
-    if bad := _keys(holder, ("session", "since")):
-        return f"holder: {bad}"
-    if not _match(NAME, holder["session"]):
-        return _want("holder.session", holder["session"], "a session name")
-    if not _time(holder["since"]):
-        return _want("holder.since", holder["since"], _TIME)
-    return None
-
-
-def _top_fault(data) -> str | None:
-    if not isinstance(data, dict):
-        return "want a JSON object"
-    if bad := _keys(data, TOP):
-        return bad
-    if type(data["version"]) is not int or data["version"] != VERSION:
-        return _want("version", data["version"], VERSION)
-    if bad := _holder_fault(data["holder"]):
-        return bad
-    for field in ("cursor", "gen"):
-        if type(data[field]) is not int or data[field] < 0:
-            return _want(field, data[field], "a non-negative integer")
-    return None if isinstance(data["entries"], dict) else "entries: want an object"
