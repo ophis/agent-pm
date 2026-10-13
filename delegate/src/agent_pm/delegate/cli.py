@@ -136,9 +136,9 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
 
 def _configure() -> None:
     try:
-        settings = Session.settings(read_project("session"))
-        harness_host(read_project("delegate"), settings["hosts"])
-        Session.configure(**settings)
+        table = read_project("session")
+        harness_host(read_project("delegate"), Session.parse_hosts(table.get("hosts")).tables)
+        Session.configure_from(table)
     except (OSError, ValueError, api.ConfigError) as e:
         raise ConfigError(f"session config: {e}") from None
 

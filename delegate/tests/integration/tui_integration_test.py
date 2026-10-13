@@ -75,7 +75,7 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        Session.configure(**Session.settings(read_project("session")))
+        Session.configure_from(read_project("session"))
 
     def go(self, on_event=None, **scenario):
         """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each callback, self.err the

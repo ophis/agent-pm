@@ -55,7 +55,7 @@ class Base(Case):
                 },
             )
         )
-        Session.configure(**Session.settings(read_project("session")))
+        Session.configure_from(read_project("session"))
 
     def go(self, steps, **scenario):
         """run() with the fake's `steps`; self.events gets each callback."""

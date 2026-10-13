@@ -289,10 +289,10 @@ def start(
     run = kind.run_of(adapter)
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
-    sid = resume or spec.sid or str(uuid.uuid4())
-    steps = kind(run, runtime, sid, spec.name, events)
+    spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
+    steps = kind(run, runtime, spec, events)
     check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
-    spec = steps.specced(replace(spec, sid=sid))
+    spec = steps.specced(spec)
     if spec.access.commands and adapter.runtime_note:
         prompt = prompt + "\n\n" + adapter.runtime_note
     info = steps.info(prompt, spec, resume is not None)
@@ -301,7 +301,7 @@ def start(
         records.note(
             records.path(spec.workdir),
             "session",
-            sid=sid,
+            sid=spec.sid,
             cwd=info.cwd,
             project=info.project,
             transcript=info.transcript,
@@ -360,8 +360,8 @@ class _HeadlessSteps(_LaunchSteps):
     def run_of(adapter: Adapter) -> Headless | None:
         return adapter.headless()
 
-    def __init__(self, run: Headless, runtime: str, sid: str, name, events):
-        _no_tui_keys(name, events)
+    def __init__(self, run: Headless, runtime: str, spec: Spec, events):
+        _no_tui_keys(spec.name, events)
         self.run, self.runtime = run, runtime
 
     def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch:
@@ -385,9 +385,9 @@ class _TuiSteps(_LaunchSteps):
     def run_of(adapter: Adapter) -> Tui | None:
         return adapter.tui()
 
-    def __init__(self, run: Tui, runtime: str, sid: str, name, events):
+    def __init__(self, run: Tui, runtime: str, spec: Spec, events):
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
-        self.name = _name(f"{runtime}-{sid[:8]}" if name is None else name)
+        self.name = _name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
         self.events = _events(events)
         self.tmux = tmux_host.tmux_path()
         if self.tmux is None:
@@ -436,8 +436,8 @@ class _InProcessSteps:
     def run_of(adapter: Adapter) -> InProcess | None:
         return adapter.in_process()
 
-    def __init__(self, run: InProcess, runtime: str, sid: str, name, events):
-        _no_tui_keys(name, events)
+    def __init__(self, run: InProcess, runtime: str, spec: Spec, events):
+        _no_tui_keys(spec.name, events)
         self.run = run
 
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:

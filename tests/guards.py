@@ -74,6 +74,7 @@ ALLOWED = {
     ("session.adapters", SESSION_TYPES),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
+    ("session.engine.base", HOSTS),  # Session.parse_hosts
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
@@ -126,6 +127,7 @@ LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_p
 TYPE_HOMES = {
     "delegate.event.outcome.Outcome": "the event unit sits below the engine",
     "linear_orchestrator.linear.issues.Issue": "issues.py is its parser",
+    "session.hosts.tables.Hosts": "hosts imports no session.engine module",
     **dict.fromkeys(
         (f"session.adapters.codex.sessions.{n}" for n in ("SessionFile", "SessionState")),
         "sessions.py runs by path as a stdlib-only script",

@@ -7,6 +7,7 @@ from collections.abc import Iterator, Mapping
 
 from agent_pm.session.adapters import registry
 from agent_pm.session.engine.types import (
+    ConfigError,
     Event,
     IdleTimeout,
     SessionInfo,
@@ -16,7 +17,9 @@ from agent_pm.session.engine.types import (
     Stderr,
     Usage,
 )
+from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.tables import Hosts
 from agent_pm.utils.record import Display, Record
 
 
@@ -90,13 +93,24 @@ class Session(ABC):
     @staticmethod
     def settings(config: Mapping) -> dict:
         """configure's keyword arguments from an already-read session config (session/config.toml, the caller's
-        read): its [adapters] and parsed [hosts]; else ValueError."""
-        return registry.settings(config)
+        read): its [adapters] and parsed [hosts]; else ConfigError."""
+        try:
+            return registry.settings(config)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
 
     @classmethod
-    def parse_hosts(cls, table):
-        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else ValueError."""
-        return registry.parse_hosts(table)
+    def configure_from(cls, config: Mapping) -> None:
+        """configure(**settings(config))."""
+        cls.configure(**cls.settings(config))
+
+    @staticmethod
+    def parse_hosts(table) -> Hosts:
+        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else ConfigError."""
+        try:
+            return tables.parse(table)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
 
     @classmethod
     def start(

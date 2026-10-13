@@ -524,7 +524,7 @@ class UsageLimit(Integration):
         )
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
-        Session.configure(**Session.settings(read_project("session")))
+        Session.configure_from(read_project("session"))
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(api.session_info("claude", SID, self.proj).resumable, "yes")
 

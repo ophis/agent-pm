@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import unittest
+from unittest import mock
 
 from agent_pm.session import DriverError
 from agent_pm.session.engine.api import Key, Paste
@@ -81,6 +82,14 @@ class FakeHostOnly(Case):
                 while not gone(child) and time.monotonic() < deadline:
                     time.sleep(0.05)
                 self.assertTrue(gone(child))
+
+    def test_the_group_is_killed_once_its_pid_free_for_reuse_after(self):
+        terminal = self.host.terminal("w1", program(SLEEP), self.home, {})
+        with mock.patch.object(os, "killpg", wraps=os.killpg) as killpg:
+            terminal.kill()
+            terminal.kill()
+            terminal.close()
+        self.assertEqual(killpg.call_count, 1)
 
 
 if __name__ == "__main__":

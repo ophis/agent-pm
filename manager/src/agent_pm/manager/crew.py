@@ -785,7 +785,7 @@ def _drop_import_root() -> None:
 
 def _configure() -> None:
     try:
-        Session.configure(**Session.settings(read_project("session")))
+        Session.configure_from(read_project("session"))
     except (OSError, ValueError, api.ConfigError) as e:
         raise WorkersError(f"config: {e}") from None
 

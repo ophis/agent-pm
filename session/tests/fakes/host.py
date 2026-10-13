@@ -71,10 +71,13 @@ class FakeProcess(HostProcess):
         return True
 
     def kill(self) -> None:
-        """The whole process group, whatever its leader's state: a child the program left is in it."""
-        if (pid := self._pid()) is not None:
+        """The whole process group, whatever its leader's state (a child the program left is in it), once: its pid
+        may be reused after."""
+        if (pid := self._pid()) is not None and _read(self.folder, "killed") is None:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+            with open(os.path.join(self.folder, "killed"), "w"):
+                pass
         self.wait_exit(5)
 
     def close(self) -> None:

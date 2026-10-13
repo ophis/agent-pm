@@ -169,15 +169,16 @@ def load(
 
 def _configure(local, core_cfg):
     try:
-        settings = Session.settings(config_file.read_project("session", local=local))
-    except (OSError, ValueError) as e:
+        table = config_file.read_project("session", local=local)
+        hosts = Session.parse_hosts(table.get("hosts")).tables
+    except (OSError, ValueError, api.ConfigError) as e:
         raise ConfigError(f"session: {e}") from None
     try:
-        agent_pm.delegate.engine.config.harness_host(core_cfg, settings["hosts"])
+        agent_pm.delegate.engine.config.harness_host(core_cfg, hosts)
     except ValueError as e:
         raise ConfigError(f"core: {e}") from None
     try:
-        Session.configure(**settings)
+        Session.configure_from(table)
     except api.ConfigError as e:
         raise ConfigError(f"session: {e}") from None
 

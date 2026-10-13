@@ -46,9 +46,6 @@ class Settings:
 _settings: Settings | None = None
 
 
-parse_hosts = tables.parse
-
-
 def settings(config: Mapping) -> dict:
     if not isinstance(config, Mapping):
         raise ValueError("session config: want a table")

@@ -23,7 +23,7 @@ CHILD = """import dataclasses, json, sys
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
 try:
-    Session.configure(**Session.settings(read_project("session")))
+    Session.configure_from(read_project("session"))
     handle = api.start(sys.argv[2], "headless", "hello", api.Spec(workdir=sys.argv[1]))
 except api.ConfigError as e:
     sys.exit(f"ConfigError: {e}")
