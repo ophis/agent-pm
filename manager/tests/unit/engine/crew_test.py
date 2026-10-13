@@ -446,6 +446,15 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["one"]}])
 
+    def test_stop_prefers_exact_roster_alias_over_another_entries_session_name(self):
+        first = self.crew.run(Spec("first", (self.command, "start", "actual")))
+        self.crew.run(Spec("actual", (self.command, "start", "other")))
+        self.crew.stop("actual")
+        self.assertEqual(set(self.roster.entries()), {"first"})
+        self.assertEqual(self.roster.entries()["first"].record, first)
+        self.assertTrue(self.crew.status(("first",))[0].alive)
+        self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["other"]}])
+
     def test_failed_close_retains_entry(self):
         self.start("worker")
         with (
