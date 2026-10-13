@@ -7,6 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
+from importlib._bootstrap_external import _NamespacePath
 from unittest import mock
 
 import agent_pm
@@ -137,7 +138,9 @@ class Checks:
 
     def test_another_trees_agent_pm_dir_on_the_package_path_fails_the_test(self):
         with mock.patch.object(
-            agent_pm, "__path__", [*agent_pm.__path__, "/elsewhere/src/agent_pm"]
+            _NamespacePath,
+            "_recalculate",
+            return_value=[*agent_pm.__path__, "/elsewhere/src/agent_pm"],
         ):
             self.assert_fails_before_set_up(
                 "agent_pm.__path__ holds /elsewhere/src/agent_pm, not only this tree's"
@@ -146,7 +149,7 @@ class Checks:
     def test_a_missing_import_root_fails_the_test(self):
         manager = os.path.realpath(os.path.join(self.case.SRC["manager"], "agent_pm"))
         path = [p for p in agent_pm.__path__ if os.path.realpath(p) != manager]
-        with mock.patch.object(agent_pm, "__path__", path):
+        with mock.patch.object(_NamespacePath, "_recalculate", return_value=path):
             self.assert_fails_before_set_up(f"agent_pm.__path__ lacks {manager}")
 
     def test_the_orchestrator_absent_or_this_trees_passes(self):

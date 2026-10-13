@@ -1081,7 +1081,7 @@ class TestBoundaries(Sample):
         prefix = "from unittest.mock import patch\nimport agent_pm.session.engine.api as api\n"
         for statement, reason in (
             ("patch.multiple('agent_pm.session.engine.api', start=object())", "shipped code patch"),
-            ("patch.dict(api.MODES, {})", "own project dictionary patch"),
+            ("patch.dict(api.MODES, {})", "shipped dictionary patch"),
         ):
             with self.subTest(statement=statement):
                 self.assertEqual(
@@ -1092,6 +1092,20 @@ class TestBoundaries(Sample):
     def test_standard_library_and_lower_layer_fakes_are_allowed(self):
         sample = "from unittest.mock import patch\nimport os\nfrom session.tests import fake_adapter\npatch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\nfake_adapter.start = object()\npatch.dict(os.environ, {})\n"
         self.assertEqual(self.violations(sample, "delegate"), [])
+
+    def test_lower_layer_patches_have_exact_diagnostics(self):
+        prefix = "from unittest.mock import patch\nfrom agent_pm import session\n"
+        for statement, reason in (
+            ("patch.object(session, 'sessions')", "shipped object patch"),
+            ("patch('agent_pm.session.sessions')", "shipped code patch"),
+            ("patch.multiple(session, sessions=object())", "shipped code patch"),
+            ("patch.dict(session.MODES, {})", "shipped dictionary patch"),
+        ):
+            with self.subTest(statement=statement):
+                self.assertEqual(
+                    self.violations(prefix + statement, "manager"),
+                    [f"manager/tests/probe.py:3: {reason}"],
+                )
 
     def test_test_imports_are_rejected_including_dynamic_imports(self):
         for statement in (

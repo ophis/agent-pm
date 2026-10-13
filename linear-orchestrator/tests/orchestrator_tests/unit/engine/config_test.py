@@ -3,6 +3,7 @@ cases) onto load()'s frozen Config, plus the old attended name cases (TUI names)
 
 import builtins
 import dataclasses
+import io
 import json
 import os
 import re
@@ -12,7 +13,7 @@ import tempfile
 import tomllib
 from unittest import mock
 
-from agent_pm import delegate, utils
+from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.utils import GUARD, SHORT, temp_dirs
 from orchestrator_tests.case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
@@ -61,8 +62,6 @@ STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group"
 ROOT_Q = shlex.quote(config.ROOT)
 
 LABEL = ("linear-orchestrator/config.toml", "core")
-
-CORE = delegate.CONFIG
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
@@ -588,33 +587,13 @@ class ConfigurationLoading(ConfigFile, Case):
             (cfg.human_members, cfg.roles["pm"].tasks), (("a@x.com",), ("product-design",))
         )
 
-    def test_one_resolve_and_one_index_per_role(self):
-        with (
-            mock.patch.object(delegate, "resolve_run", wraps=delegate.resolve_run) as resolve,
-            mock.patch.object(delegate, "task_index", wraps=delegate.task_index) as index,
-        ):
-            cfg = self.load(PIPELINE + "[core.roles.pm]\ntier = 1\n")
+    def test_roles_keep_delegate_runs_and_task_indexes_with_core_overlay(self):
+        cfg = self.load(PIPELINE + "[core.roles.pm]\ntier = 1\n")
         overlay = {"roles": {"pm": {"tier": 1}}}
         roles = ["researcher", "pm", "engineer"]
-        core = utils.read_project("delegate")
         self.assertEqual(
-            resolve.call_args_list,
-            [
-                mock.call(
-                    r,
-                    None,
-                    overlays=(overlay,),
-                    label=LABEL,
-                    config=CORE,
-                    local=config.LOCAL,
-                    cfg=core,
-                )
-                for r in roles
-            ],
-        )
-        self.assertEqual(
-            index.call_args_list,
-            [mock.call(r, config=CORE, local=config.LOCAL, cfg=core) for r in roles],
+            {r: x.tasks for r, x in cfg.roles.items()},
+            {r: ROLES[r][2] for r in roles},
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
@@ -1158,23 +1137,23 @@ class ConfigurationRoot(ConfigFile, Case):
         return config.load(self.root, path=path, core=self.core_path)
 
     def test_tasks_are_the_core_configs_index(self):
-        index = delegate.task_index
-        with mock.patch.object(
-            delegate,
-            "task_index",
-            side_effect=lambda r, cfg, **kw: (
-                {"deep-research": ""} if r == "researcher" else index(r, cfg=cfg, **kw)
-            ),
-        ) as fake:
+        with self.charter(
+            "# Researcher\n\n## Tasks\n\n"
+            "unsure → `deep-research` (`<tasks>/deep-research.md`)\n\n"
+            "- `deep-research` (`<tasks>/deep-research.md`): research.\n"
+        ):
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
-        core = utils.read_project("delegate", path=self.core_path)
-        self.assertEqual(
-            fake.call_args_list,
-            [
-                mock.call(r, config=self.core_path, local=config.LOCAL, cfg=core)
-                for r in ("researcher", "pm", "engineer")
-            ],
+
+    def charter(self, text):
+        path = os.path.join(
+            REPO, "delegate", "src", "agent_pm", "delegate", "team", "roles", "researcher.md"
         )
+        opened = open
+
+        def read(file, *args, **kwargs):
+            return io.StringIO(text) if file == path else opened(file, *args, **kwargs)
+
+        return mock.patch.object(builtins, "open", side_effect=read)
 
     def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
@@ -1196,19 +1175,12 @@ class ConfigurationRoot(ConfigFile, Case):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "")
-        with (
-            mock.patch.object(builtins, "open", side_effect=open) as opened,
-            mock.patch.object(utils, "read_project", wraps=utils.read_project) as read,
-        ):
+        with mock.patch.object(builtins, "open", side_effect=open) as opened:
             config.load(self.root, path=path, local=local, core=self.core_path)
         paths = [c.args[0] for c in opened.call_args_list]
         session = os.path.join(REPO, "session", "config.toml")
         self.assertEqual(
-            [paths.count(p) for p in (path, self.core_path, session)], [1, 1, 3], paths
-        )
-        self.assertEqual(
-            sorted(c.args[0] for c in read.call_args_list),
-            ["delegate", "linear-orchestrator"],
+            [paths.count(p) for p in (path, self.core_path, session, local)], [1, 1, 3, 3], paths
         )
 
     def test_an_unknown_harness_host_or_delegates_key_stops_the_caller(self):
@@ -1221,10 +1193,11 @@ class ConfigurationRoot(ConfigFile, Case):
                 self.fails(f"delegate config: {want}", PIPELINE)
 
     def test_an_index_error_stops_the_caller(self):
-        error = delegate.ComposerConfigError(
-            "roles/researcher.md: lists 'ghost' without tasks/ghost.md"
-        )
-        with mock.patch.object(delegate, "task_index", side_effect=error):
+        with self.charter(
+            "# Researcher\n\n## Tasks\n\n"
+            "unsure → `ghost` (`<tasks>/ghost.md`)\n\n"
+            "- `ghost` (`<tasks>/ghost.md`): absent.\n"
+        ):
             self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md", PIPELINE)
 
     def test_overlay_fills_root(self):

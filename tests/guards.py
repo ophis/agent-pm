@@ -446,12 +446,10 @@ def _boundary_calls(node, aliases, own, modules):
     target = _resolve_boundary(raw, modules)
     rules = {
         "shipped code patch": call.endswith((".patch", ".patch.multiple"))
-        and raw.startswith("agent_pm."),
-        "own project object patch": call.endswith(".patch.object")
-        and _within(target, f"agent_pm.{own}"),
+        and (_within(raw, "agent_pm") or _within(target, "agent_pm")),
+        "shipped object patch": call.endswith(".patch.object") and _within(target, "agent_pm"),
         "sys.modules dictionary patch": call.endswith(".patch.dict") and target == "sys.modules",
-        "own project dictionary patch": call.endswith(".patch.dict")
-        and _within(target, f"agent_pm.{own}"),
+        "shipped dictionary patch": call.endswith(".patch.dict") and _within(target, "agent_pm"),
         "own project attribute mutation": call in {"setattr", "delattr"}
         and _within(target, f"agent_pm.{own}"),
         "test module import": (call.endswith("import_module") or call == "__import__")
