@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from agent_pm.linear_orchestrator.engine import config, promote, prune, router
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
+from orchestrator_tests.integration.fixture_errors import FakeCredentialError, FixtureError, Problem
 from orchestrator_tests.unit.board_ids import STATES, TEAM
 
 KEY = "TASK"
@@ -53,10 +54,6 @@ COMPARATORS = {
     "in": lambda x, a: x in a,
     "null": lambda x, a: (x is None) == a,
 }
-
-
-class Problem(Exception):
-    pass
 
 
 @dataclass
@@ -121,7 +118,7 @@ def project(value, sel, op):
     if isinstance(value, list):
         return [project(v, sel, op) for v in value]
     if missing := [f for f in sel if f not in value]:
-        raise Problem(f"fake: {op} has no field {missing[0]}")
+        raise Problem.unknown_field(op, missing[0])
     return {f: project(value[f], s, op) for f, s in sel.items()}
 
 
@@ -136,7 +133,7 @@ def index(named):
     out = {}
     for name, text in named.items():
         if text in out:
-            raise ValueError(f"one query text, two ops: {out[text]}, {name}")
+            raise FixtureError.conflicting_operations(out[text], name)
         out[text] = name
     return out
 
@@ -166,7 +163,7 @@ class FakeLinear:
                 u["email"].lower() == email.lower() or (service and u["service"] == service)
                 for u in self.users.values()
             ):
-                raise ValueError(f"user {email} or service {service} seeded twice")
+                raise FixtureError.duplicate_user(email, service)
             uid = str(uuid.uuid4())
             self.users[uid] = {"id": uid, "email": email, "name": name, "service": service}
             return uid
@@ -200,7 +197,7 @@ class FakeLinear:
             if (assignee is not None and assignee not in self.users) or any(
                 i not in self.labels for i in labels
             ):
-                raise ValueError("assignee or a label not seeded")
+                raise FixtureError.unseeded_access()
             if project:
                 self.projects[project["id"]] = project["name"]
             at = stamp(created)
@@ -224,7 +221,7 @@ class FakeLinear:
     def comment(self, issue, user, body, *, at=None):
         with self.lock:
             if user is not None and user not in self.users:
-                raise ValueError(f"user {user} not seeded")
+                raise FixtureError.unseeded_user(user)
             return self._comment(self._get(issue), user, body, stamp(at))
 
     def move(self, issue, to, *, actor, at=None):
@@ -235,7 +232,7 @@ class FakeLinear:
         with self.lock:
             a, b = self.find(issue), self.find(related)
             if a is None or b is None:
-                raise ValueError(f"issue {issue if a is None else related} not seeded")
+                raise FixtureError.unseeded_issue(issue if a is None else related)
             self.relations.append((type, a["id"], b["id"]))
 
     def find(self, ref):
@@ -259,9 +256,7 @@ class FakeLinear:
                     )
                 )
             ):
-                raise ValueError(
-                    f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse"
-                )
+                raise FixtureError.invalid_failure(op, kind, account, times)
             self.failures.append(_Failure(op, kind, account, times, seconds))
 
     def answer(self, query, variables, key):
@@ -306,7 +301,7 @@ class FakeLinear:
                     data = {top: {f: False if f == "success" else None for f in sel[top]}}
                 else:
                     data = project(OPS[op](self, caller, variables), sel, op)
-            except Exception as e:
+            except (Problem, KeyError, TypeError, ValueError, LookupError, AttributeError) as e:
                 message = (
                     str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
                 )
@@ -325,7 +320,7 @@ class FakeLinear:
         service = service or self.harness
         keys = self.keys()
         if service not in keys:
-            raise LinearError(f"fake transport: no key for {service}")
+            raise FakeCredentialError(service)
         status, body, delay = self.answer(query, variables, keys[service])
         if delay:
             time.sleep(min(delay, timeout))
@@ -342,7 +337,7 @@ class FakeLinear:
                 io.BytesIO(json.dumps(body).encode()),
             )
         if body.get("errors"):
-            raise LinearError(f"linear api error: {body['errors']}")
+            raise LinearError.api(body["errors"])
         return body["data"]
 
     def _log(self, op, account, variables, result, status, body, delay=0):
@@ -360,16 +355,14 @@ class FakeLinear:
 
     def _get(self, ref):
         if (rec := self.find(ref)) is None:
-            raise Problem("Entity not found: Issue")
+            raise Problem.missing_entity("Issue")
         return rec
 
     def _add(self, id, identifier, **fields):
         numbers = [int(i["identifier"].split("-")[1]) for i in self.issues.values()]
         identifier = identifier or f"{KEY}-{max(numbers, default=0) + 1}"
         if self.find(id) or self.find(identifier) or not re.fullmatch(rf"{KEY}-\d+", identifier):
-            raise Problem(
-                f"fake: issue id {id} or identifier {identifier} in use, or not {KEY}-<n>"
-            )
+            raise Problem.invalid_issue(id, identifier, KEY)
         self.issues[id] = {
             "id": id,
             "identifier": identifier,
@@ -387,7 +380,7 @@ class FakeLinear:
         if cid is None:
             cid = str(uuid.uuid4())
         elif self._comment_of(cid) is not None:
-            raise Problem(f"fake: comment id {cid} in use")
+            raise Problem.duplicate_comment(cid)
         rec["comments"].append({"id": cid, "body": body, "createdAt": at, "user": user})
         return cid
 
@@ -504,10 +497,10 @@ class FakeLinear:
         }
         for field, cond in flt.items():
             if field not in values:
-                raise Problem(f"fake: no issue filter {field}")
+                raise Problem.unknown_filter(field)
             for c, arg in (cond["id"] if field != "id" and "id" in cond else cond).items():
                 if c not in COMPARATORS:
-                    raise Problem(f"fake: no comparator {c}")
+                    raise Problem.unknown_comparator(c)
                 if not COMPARATORS[c](values[field], arg):
                     return False
         return True
@@ -536,7 +529,7 @@ class FakeLinear:
 
     def _label_group(self, _caller, v):
         if v["i"] not in self.labels:
-            raise Problem("Entity not found: IssueLabel")
+            raise Problem.missing_entity("IssueLabel")
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
         return {"issueLabel": {**self._label(v["i"]), "children": {"nodes": children}}}
 
@@ -579,7 +572,7 @@ class FakeLinear:
 
     def _comment_by_id(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
-            raise Problem("Entity not found: Comment")
+            raise Problem.missing_entity("Comment")
         rec, c = found
         return {
             "comment": {**c, "issue": {"id": rec["id"]}, "user": self._person(c["user"], caller)}
@@ -587,16 +580,16 @@ class FakeLinear:
 
     def _comment_update(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
-            raise Problem("Entity not found: Comment")
+            raise Problem.missing_entity("Comment")
         _, c = found
         if c["user"] != caller["id"]:
-            raise Problem("fake: commentUpdate: only its author edits a comment")
+            raise Problem.foreign_comment()
         c["body"] = v["b"]
         return {"commentUpdate": {"success": True}}
 
     def _set_state(self, caller, v):
         if v["s"] not in NAMES:
-            raise Problem("Entity not found: WorkflowState")
+            raise Problem.missing_entity("WorkflowState")
         self._move(self._get(v["i"]), v["s"], caller["id"], stamp())
         return {"issueUpdate": {"success": True}}
 
@@ -609,7 +602,7 @@ class FakeLinear:
         rec = self._get(v["i"])
         user = next((u for u in self.users.values() if u["email"].lower() == v["e"].lower()), None)
         if user is None:
-            raise Problem("Entity not found: User")
+            raise Problem.missing_entity("User")
         if user["email"] not in rec["subscribers"]:
             rec["subscribers"].append(user["email"])
         return {"issueSubscribe": {"success": True}}
@@ -636,14 +629,14 @@ class FakeLinear:
             new.get("stateId", STATES["todo"]),
         )
         if extra := sorted(set(new) - CREATE):
-            raise Problem(f"fake: issueCreate has no input {extra[0]}")
+            raise Problem.unknown_create_input(extra[0])
         if (
             new.get("teamId") != TEAM
             or (pid and pid not in self.projects)
             or (uid and uid not in self.users)
             or sid not in NAMES
         ):
-            raise Problem("Entity not found: Team, Project, User or WorkflowState")
+            raise Problem.missing_entities(("Team", "Project", "User", "WorkflowState"))
         rec = self._add(
             new.get("id") or str(uuid.uuid4()),
             None,

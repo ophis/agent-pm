@@ -13,6 +13,7 @@ from agent_pm.utils import sh
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_support as tp
 from orchestrator_tests.unit.fake_api import FakeApi
+from orchestrator_tests.unit.fixture_errors import CommandAssertion
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.prune_data import (
     NOW,
@@ -31,7 +32,7 @@ class Git:
     def __call__(self, argv, timeout):
         self.calls.append(argv)
         if not self.real:
-            raise AssertionError(f"git ran: {argv}")
+            raise CommandAssertion.git_ran(argv)
         return sh(argv, timeout)
 
 

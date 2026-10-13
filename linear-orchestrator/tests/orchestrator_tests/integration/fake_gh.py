@@ -39,7 +39,7 @@ def bare(root: str, owner: str, name: str, branches=()) -> str:
         def git(*args: str) -> str:
             res = subprocess.run(["git", *args], env=env, input="", capture_output=True, text=True)
             if res.returncode != 0:
-                raise RuntimeError(f"git {' '.join(args)}: {res.stderr.strip()}")
+                raise GitCommandError(args, res.stderr.strip())
             return res.stdout.strip()
 
         git("init", "--bare", "--quiet", "--initial-branch=main", path)
@@ -120,6 +120,11 @@ def main(argv: list[str]) -> None:
         sys.stdout.buffer.write(files[path].encode())
     else:
         print(json.dumps({"name": path.rsplit("/", 1)[-1], "path": path, "type": "file"}))
+
+
+class GitCommandError(RuntimeError):
+    def __init__(self, argv, stderr):
+        super().__init__(f"git {' '.join(argv)}: {stderr}")
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ class FakeLinear:
         if "issues(filter" in query:
             f = v["f"]
             if self.todo_error and "inverseRelations" in query:
-                raise LinearError("linear api error: [{'message': 'Entity not found'}]")
+                raise LinearError.api([{"message": "Entity not found"}])
             drop = (
                 {"state", "labels"}
                 if "inverseRelations" in query
@@ -87,7 +87,7 @@ class FakeLinear:
             }
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
-                raise LinearError("linear api error: [{'message': 'Entity not found'}]")
+                raise LinearError.api([{"message": "Entity not found"}])
             return {"issue": {"inverseRelations": self.issues[v["i"]]["inverseRelations"]}}
         if query == RECHECK:
             i = self.issues[v["i"]]

@@ -194,7 +194,7 @@ class PruneACloneAnAgentRun(PruneScenario):
 
         def gql(query, **v):
             if query == prune.Q_FINISHED:
-                raise LinearError("linear api error: down")
+                raise LinearError.api("down")
             return issues(query, **v)
 
         code, out = self.prune(gql)
@@ -330,7 +330,7 @@ class PruneACloneAnAgentRun(PruneScenario):
         clone = self.mkc("TASK-49", "src", "o", "repo")
 
         def down(_query, **_v):
-            raise LinearError("linear api error: down")
+            raise LinearError.api("down")
 
         code, state, out = self.tick(down)
         self.assertEqual((code, state), (0, "Done"))

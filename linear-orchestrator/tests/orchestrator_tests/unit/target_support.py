@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+from orchestrator_tests.unit.fixture_errors import CommandAssertion
+
 
 def ok(stdout="", code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
@@ -19,7 +21,7 @@ class FakeRun:
                 if isinstance(res, BaseException):
                     raise res
                 return res
-        raise AssertionError(f"unexpected {argv}")
+        raise CommandAssertion.unexpected(argv)
 
 
 def api(full_name="ophis/agent-pm", default="main", push=True):

@@ -68,7 +68,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
             if ident in fail:
-                raise LinearError("linear api error: boom")
+                raise LinearError.api("boom")
             if ident not in refuse:
                 gql.gone.add(ident)
             return {"issueArchive": {"success": ident not in refuse}}

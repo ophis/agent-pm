@@ -19,12 +19,12 @@ def install(path):
             value = json.load(stream)
         url = urllib.parse.urlsplit(value["url"])
         if url.scheme != "http" or url.hostname not in ("127.0.0.1", "::1") or url.port is None:
-            raise ValueError("fake transport requires a loopback HTTP endpoint")
+            raise TransportError.non_loopback()
         return value
 
     def send(request, *, timeout):
         if request.full_url != "https://api.linear.app/graphql":
-            raise ValueError("fake transport refuses an unexpected endpoint")
+            raise TransportError.unexpected_endpoint()
         value = settings()
         redirected = urllib.request.Request(
             value["url"], data=request.data, headers=dict(request.header_items())
@@ -39,7 +39,7 @@ def install(path):
             or list(argv[1:3]) != ["find-generic-password", "-s"]
             or (len(argv) == 5 and argv[4] != "-w")
         ):
-            raise ValueError("fake transport refuses an unexpected credential command")
+            raise TransportError.unexpected_credentials()
         key = settings()["keys"].get(argv[3])
         result = subprocess.CompletedProcess(
             argv,
@@ -55,3 +55,17 @@ def install(path):
     stack.enter_context(mock.patch.object(urllib.request, "urlopen", send))
     stack.enter_context(mock.patch.object(subprocess, "run", process))
     return stack
+
+
+class TransportError(ValueError):
+    @classmethod
+    def non_loopback(cls):
+        return cls("fake transport requires a loopback HTTP endpoint")
+
+    @classmethod
+    def unexpected_endpoint(cls):
+        return cls("fake transport refuses an unexpected endpoint")
+
+    @classmethod
+    def unexpected_credentials(cls):
+        return cls("fake transport refuses an unexpected credential command")
