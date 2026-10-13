@@ -19,7 +19,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Paste,
     SessionBound,
-    Spec,
     TurnEnd,
 )
 

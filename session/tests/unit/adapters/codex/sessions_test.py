@@ -2,7 +2,6 @@
 
 from agent_pm.session import Access, ConfigError
 from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
-from agent_pm.session.engine.types import Spec
 
 from session.tests.unit.adapters.codex.support import Base
 

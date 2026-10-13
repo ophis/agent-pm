@@ -12,7 +12,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    Spec,
     Stderr,
     TurnEnd,
 )
