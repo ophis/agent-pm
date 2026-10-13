@@ -1032,7 +1032,8 @@ class WritableDirsTest(Base):
         spec = self.spec(access=Access(dirs=(self.dir,), cwd=self.dir), tier=2)
         with self.dirs(return_value=[self.dir, self.workdir]) as dirs:
             self.assertEqual(
-                self.driver.writable_dirs("probe", spec, "r1"), (self.dir, self.workdir)
+                self.driver.writable_dirs("probe", spec, "r1"),
+                (self.dir, self.workdir),
             )
             self.assertEqual(
                 self.driver.writable_dirs("probe", spec),
@@ -1489,7 +1490,7 @@ class TuiStartTest(TuiBase):
     def test_the_names_lock_is_held_from_prepare_to_begin(self):
         held = []
 
-        def locked(*args, **kwargs):
+        def locked(*_args, **_kwargs):
             fd = os.open(os.path.join(self.root, "w1.lock"), os.O_RDONLY)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
