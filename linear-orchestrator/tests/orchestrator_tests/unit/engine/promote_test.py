@@ -679,19 +679,30 @@ class PromotionScope(Base):
         self.assertEqual(self.fake.mutations, [])
         self.assertEqual(src["state"], "Handoff")
 
-    def test_stage_prefixes(self):
-        self.fake = FakeLinear()
-        self.write_config(PM_NEXT)
-        self.ready(role="pm", title="PRD: Title DR-1")
-        self.run_main()
-        (child,) = self.fake.children.values()
-        self.assertEqual(
-            (child["projectId"], child["assigneeId"], child["title"]),
-            ("p-dr", "u-engineer", "ENG: Title DR-1"),
-        )
-        self.assertEqual(
-            instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X"
-        )
+    def test_config_only_extension(self):
+        custom = {
+            "pm": config.Task("design", prefix="DES"),
+            "engineer": config.Task("build", prefix="BLD"),
+        }
+        for tasks, title, want in (
+            (config.TASKS, "PRD: Title DR-1", "ENG: Title DR-1"),
+            (custom, "DES: Title DR-1", "BLD: Title DR-1"),
+        ):
+            with self.subTest(want=want):
+                self.fake = FakeLinear()
+                self.write_config(PM_NEXT)
+                self.ready(role="pm", title=title)
+                cfg = config.load(path=self.config_path)
+                gql = functools.partial(self.fake, service=cfg.harness_key)
+                promote.Promoter(gql, cfg, NOW, dry=False, tasks=tasks).run()
+                (child,) = self.fake.children.values()
+                self.assertEqual(
+                    (child["projectId"], child["assigneeId"], child["title"]),
+                    ("p-dr", "u-engineer", want),
+                )
+                self.assertEqual(
+                    instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X"
+                )
 
     def test_instructions_optional(self):
         self.write_config(PM_NEXT)

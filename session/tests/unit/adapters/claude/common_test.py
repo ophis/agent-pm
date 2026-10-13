@@ -5,6 +5,7 @@ import os
 import shlex
 import unittest
 from functools import partial
+from unittest import mock
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
@@ -14,7 +15,7 @@ from agent_pm.session.engine.types import (
     Window,
 )
 
-from session.tests.case import Case
+from session.tests.case import SPAWNS, Case
 from session.tests.unit.adapters.claude.support import (
     CEILING,
     CONFIG,
@@ -114,6 +115,23 @@ class ReadRulesTest(Base):
                         f"claude: read dir {read!r:.80} must be a printable absolute path "
                         "without *?[]{}()\\,",
                     )
+
+        self.driver_dependencies = {
+            "host": mock.Mock(tmux_path=mock.Mock(return_value="/protected/tmux"))
+        }
+        self.configure_session({"claude": {"implementation": "adapters.claude:ClaudeAdapter"}})
+        for read in bad:
+            for mode in ("headless", "tui"):
+                with self.subTest(read=read, mode=mode):
+                    launched = [self.enterContext(mock.patch(target)) for target in SPAWNS]
+                    spec = Spec(workdir=self.work, sid=SID, access=Access(reads=("/ok", read)))
+                    self.refused(
+                        partial(self.driver.start, "claude", mode, "hi", spec),
+                        f"claude: read dir {read!r:.80} must be a printable absolute path without *?[]{{}}()\\,",
+                    )
+                    for spawn in launched:
+                        spawn.assert_not_called()
+                    self.assertFalse(os.path.exists(os.path.join(self.work, "run.jsonl")))
 
     def test_a_read_dir_whose_real_path_a_rule_cannot_hold_is_refused(self):
         target = os.path.join(self.tmp, "a*b")

@@ -759,7 +759,9 @@ class CommittedConfiguration(Case):
 class TeamDirectoryIsolation(ConfigFile, Case):
     def setUp(self):
         super().setUp()
-        self.team = os.path.realpath(os.path.join(self.agent_pm, "team"))
+        team = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
+        self.addCleanup(team.cleanup)
+        self.team = os.path.realpath(team.name)
         writer = (
             "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
             "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
@@ -793,6 +795,15 @@ class TeamDirectoryIsolation(ConfigFile, Case):
             os.path.join(self.agent_pm, "config.local.toml"),
             f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
         )
+        listed = subprocess.run(
+            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertIn("writer", listed.stdout)
         after = self.seen()
         self.assertEqual(after, before)
         self.assertNotIn("one-pager", after[1].prompt)

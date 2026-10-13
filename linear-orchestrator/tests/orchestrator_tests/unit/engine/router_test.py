@@ -1304,6 +1304,13 @@ class RouterEntry(OuterBase):
             self.assertEqual(
                 [show(e) for e in logged(self.logs)], [f"config-error reason={reason}"]
             )
+        self.write_config('"bad\\nkey" = 1\n' + OUTER)
+        self.logs = None
+        self.assertEqual(self.entry(), 1)
+        self.assertEqual(
+            self.said(),
+            ["config-error reason=linear-orchestrator/config.toml: unknown keys: bad key"],
+        )
         self.logs = None
         self.write_local('work_dir = "w"\n')
         self.assertEqual(self.entry(), 1)

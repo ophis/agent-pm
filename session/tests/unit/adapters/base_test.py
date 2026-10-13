@@ -43,6 +43,11 @@ from session.tests.case import Case
 UUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 
+class ConstantsTest(Case):
+    def test_resumable_states(self):
+        self.assertEqual(base.RESUMABLE, ("yes", "no", "unknown"))
+
+
 class StubAdapter(Adapter):
     keys = frozenset({"model", "flags"})
 

@@ -241,6 +241,10 @@ class _InProcessSteps:
         host.begin(*self.args, resume=self.resume)
 
 
+__all__ = ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"]
+
+STATES = ("live", "absent", "unknown")
+
 _STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
 
 POLL = 0.5

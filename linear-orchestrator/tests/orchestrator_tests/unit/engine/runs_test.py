@@ -246,11 +246,14 @@ class Trim(Case):
             row("resume", "TASK-1", "a", minutes=5),
         ]
         self.write(lines)
+        before = os.stat(self.log)
         with (
             mock.patch.object(os, "replace") as rep,
         ):
             runs.trim(self.log, NOW)
         rep.assert_not_called()
+        self.assertEqual(os.stat(self.log).st_mtime_ns, before.st_mtime_ns)
+        self.assertEqual(os.stat(self.log).st_ino, before.st_ino)
         self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
     def test_rewrites_through_the_atomic_save(self):

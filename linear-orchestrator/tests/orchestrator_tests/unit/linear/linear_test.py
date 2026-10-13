@@ -590,6 +590,7 @@ class Log(Logs):
         with (
             logs_at(None),
             mock.patch.object(os, "makedirs") as makedirs,
+            mock.patch.object(os, "open") as opened,
         ):
             self.assertEqual(
                 self.log("run", "end", "TASK-1", once=True, tty=True),
@@ -597,6 +598,7 @@ class Log(Logs):
             )
             self.assertEqual(self.log("run", "end", "TASK-1"), "")
         makedirs.assert_not_called()
+        opened.assert_not_called()
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_an_oserror_from_the_file_never_raises(self):

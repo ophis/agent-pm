@@ -31,6 +31,7 @@ from agent_pm.utils import json_records
 TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
+RESUMABLE = ("yes", "no", "unknown")
 
 
 class Adapter(ABC):

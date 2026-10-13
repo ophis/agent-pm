@@ -85,8 +85,9 @@ def child_title(prefix, src_prefix, title):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, now, dry, *, wait=True):
+    def __init__(self, gql, cfg, now, dry, *, tasks, wait=True):
         self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
+        self.tasks = tasks
         self.team = team(gql, cfg)
         self.states = self.team.states
         self.humans = {e.lower() for e in cfg.human_members}
@@ -208,8 +209,8 @@ class Promoter:
                         "stateId": self.states["todo"],
                         "priority": src["priority"],
                         "title": child_title(
-                            config.TASKS[nxt].prefix,
-                            config.TASKS[role].prefix or None,
+                            self.tasks[nxt].prefix,
+                            self.tasks[role].prefix or None,
                             src["title"],
                         ),
                         "description": self.description(src, comments, detail),
@@ -345,7 +346,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
     try:
-        promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
+        promoter = Promoter(gql, cfg, now, dry, tasks=config.TASKS, wait="--now" not in argv)
         promoter.run()
     except LinearError as e:
         return linear.config_error("promote", e, dry=dry)

@@ -1,3 +1,4 @@
+import ast
 import importlib
 import json
 import os
@@ -1135,6 +1136,26 @@ class ConfigOnce(Sample):
                 "src/config.py:2: calls _runnable",
             ],
         )
+
+    def test_the_load_helpers_are_config_py_functions(self):
+        with open(os.path.join(REPO, guards.ORCH_PROJECT, guards.CONFIG_PY), encoding="utf-8") as f:
+            defined = {n.name for n in ast.parse(f.read()).body if isinstance(n, ast.FunctionDef)}
+        self.assertLessEqual(set(guards.LOAD_HELPERS), defined)
+
+    def test_the_real_entries_calls_outside_an_entry(self):
+        files = {}
+        for name in ("run.py", "promote.py"):
+            with open(
+                os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator", "engine", name),
+                encoding="utf-8",
+            ) as f:
+                files[f"{OPKG}/not_{name}"] = f.read()
+        found = guards.config_once(self.wrap_orchestrator(self.tree(files)))
+        self.assertEqual(
+            {(f.split(":")[0], f.split(": ", 1)[1]) for f in found},
+            {(rel, call) for rel in files for call in (self.LOAD, self.USE_LOGS)},
+        )
+
 
 class OrchestratorAbsent(Sample):
     def test_an_absent_or_empty_tree_is_clean(self):
