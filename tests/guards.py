@@ -179,12 +179,12 @@ NOQA_ALLOWED = {
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
         "duplicate-code",
         "outer",
-    ): "B8 direct keyword call",
+    ): "Build writeback.context directly in both callers; no shared builder by design.",
     (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
         "duplicate-code",
         "inner",
-    ): "B8 direct keyword call",
+    ): "Build writeback.context directly in both callers; no shared builder by design.",
 }
 
 

@@ -97,7 +97,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     rec = sessions.base(
         sid=a.sid, workdir=rd, runtime=a.runtime, started_at=now(), driver=cfg.driver
     )
-    # pylint: disable=duplicate-code  # B8 direct keyword call
+    # pylint: disable=duplicate-code  # Build writeback.context directly in both callers; no shared builder by design.
     ctx = writeback.context(
         cfg,
         role,

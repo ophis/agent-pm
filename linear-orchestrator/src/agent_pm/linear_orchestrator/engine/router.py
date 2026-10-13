@@ -525,7 +525,7 @@ def outer(a, cfg, *, gql, run, keychain):
         issue = issues.read_issue(gql, a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
-    # pylint: disable=duplicate-code  # B8 direct keyword call
+    # pylint: disable=duplicate-code  # Build writeback.context directly in both callers; no shared builder by design.
     ctx = writeback.context(
         cfg,
         role,
