@@ -15,7 +15,7 @@ from unittest import mock
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.session import api
+from agent_pm.session import ConfigError
 from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
 from agent_pm.utils.git import GUARD
@@ -661,7 +661,7 @@ class OtherRoot(ConfigFile, Case):
                 self.core(CORE_TOML + text)
                 registry.reset()
                 self.fails(f"delegate config: {want}", PIPELINE)
-                with self.assertRaisesRegex(api.ConfigError, "not configured"):
+                with self.assertRaisesRegex(ConfigError, "not configured"):
                     registry.configured()
 
     def test_an_index_error_stops_the_caller(self):
@@ -719,7 +719,7 @@ class OtherRoot(ConfigFile, Case):
         self.refused_unconfigured()
 
     def refused_unconfigured(self):
-        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+        with self.assertRaisesRegex(ConfigError, "not configured"):
             registry.configured()
 
     def test_no_core_table(self):

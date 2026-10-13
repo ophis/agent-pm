@@ -22,7 +22,19 @@ from unittest import mock
 
 from agent_pm.manager import crew, roster
 from agent_pm.manager.engine.types import Spec
-from agent_pm.session import api
+from agent_pm.session import (
+    Access,
+    Activity,
+    Blocked,
+    ConfigError,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    SessionBound,
+    SessionRow,
+    api,
+)
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
 
@@ -76,7 +88,7 @@ def within(seconds=10):
 
 
 def row(name, sid=None, state="working", pane=None, opener=None, shown=None, **kw):
-    return api.SessionRow(
+    return SessionRow(
         name,
         sid,
         kw.get("runtime"),
@@ -123,7 +135,7 @@ class Api:
             self.rows.setdefault(own, row(own, shown="mgr"))
         self.calls, self.starts, self.shows = [], [], []
         self.error, self.error_after, self.start_error = None, 0, None
-        self.events = [api.IdleTimeout(crew.EARLY)]
+        self.events = [IdleTimeout(crew.EARLY)]
         self.dead = self.placed = self.on_show = self.handle = None
         self.gone, self.tuis, self.stuck = False, {}, set()
 
@@ -171,13 +183,13 @@ class Api:
     def close(self, name):
         self.calls.append(("close", name))
         if name in self.stuck:
-            raise api.DriverError(f"cannot close tui session {name}: tmux: boom")
+            raise DriverError(f"cannot close tui session {name}: tmux: boom")
         self.rows.pop(name, None)
 
     def attach(self, name, idle_timeout=None):
         self.calls.append(("attach", name))
         if name not in self.tuis:
-            raise api.DriverError(f"no tui session {name}")
+            raise DriverError(f"no tui session {name}")
         return Attached(self, name)
 
     def ran(self, what):
@@ -309,11 +321,11 @@ class StartTest(WorkerCase):
     def test_a_worker_uses_the_common_spec_without_policy_flags(self):
         sid = self.started(prompt="do it", flags=("--model", "m"))
         self.assertEqual(str(uuid.UUID(sid)), sid)
-        spec = api.Spec(
+        spec = SessionSpec(
             workdir=os.path.join(self.agent_pm, "workers", sid),
             sid=sid,
             name="w1",
-            access=api.Access(cwd=self.dir, project=True),
+            access=Access(cwd=self.dir, project=True),
             flags=("--model", "m"),
             env={},
             protect=self.protect(),
@@ -411,10 +423,10 @@ class StartTest(WorkerCase):
 
     def test_an_api_refusal_starts_nothing_more(self):
         for error in (
-            api.ConfigError("--resume: picks the session; use crew.py start --resume <sid>"),
-            api.ConfigError("env HOME: want one of A, B"),
-            api.ConfigError("Codex tui writable root /w could rewrite hook dependency /w/x"),
-            api.DriverError("tmux not found"),
+            ConfigError("--resume: picks the session; use crew.py start --resume <sid>"),
+            ConfigError("env HOME: want one of A, B"),
+            ConfigError("Codex tui writable root /w could rewrite hook dependency /w/x"),
+            DriverError("tmux not found"),
         ):
             with self.subTest(str(error)):
                 self.api = Api(own=None)
@@ -478,7 +490,7 @@ class EarlyWatchTest(WorkerCase):
 
     def dies(self, text=DEAD_TEXT, code=1):
         def setup():
-            self.api.events, self.api.dead = [api.Exited(code)], text
+            self.api.events, self.api.dead = [Exited(code)], text
 
         return setup
 
@@ -486,7 +498,7 @@ class EarlyWatchTest(WorkerCase):
         for run in self.RUNS:
             with self.subTest(run=run):
                 self.api = Api(own=None)
-                events = [api.Activity(), api.SessionBound("n"), api.IdleTimeout(5), api.Activity()]
+                events = [Activity(), SessionBound("n"), IdleTimeout(5), Activity()]
                 self.watch(run, self.scripted(*events))
                 self.assertEqual(self.api.handle.taken, 3)
 
@@ -496,7 +508,7 @@ class EarlyWatchTest(WorkerCase):
         def ticking():
             for t in (1, 4.9, 5, 6):
                 clock[0] = t
-                yield api.Activity()
+                yield Activity()
 
         with mock.patch.object(crew.time, "monotonic", lambda: clock[0]):
             for run in self.RUNS:
@@ -539,7 +551,7 @@ class EarlyWatchTest(WorkerCase):
             with self.subTest(run=run):
                 self.api, err = Api(own=None), io.StringIO()
                 with contextlib.redirect_stderr(err):
-                    self.watch(run, self.scripted(api.Blocked("Trust alpha?"), api.Activity()))
+                    self.watch(run, self.scripted(Blocked("Trust alpha?"), Activity()))
                 self.assertEqual(
                     err.getvalue().splitlines()[-1], "workers: w1: waits on a dialog: Trust alpha?"
                 )
@@ -547,13 +559,13 @@ class EarlyWatchTest(WorkerCase):
 
     def test_a_failure_while_watching_raises(self):
         def unknown():
-            self.api.error, self.api.error_after = api.DriverError("tmux sessions unknown: x"), 0
-            yield api.Exited(1)
+            self.api.error, self.api.error_after = DriverError("tmux sessions unknown: x"), 0
+            yield Exited(1)
 
         for why, setup, msg in (
             (
                 "events",
-                self.scripted(api.DriverError("tui session w1: boom")),
+                self.scripted(DriverError("tui session w1: boom")),
                 "tui session w1: boom",
             ),
             ("its row", lambda: setattr(self.api, "events", unknown), "tmux sessions unknown: x"),
@@ -900,9 +912,9 @@ class MainTest(WorkerCase):
 
     def test_start_an_api_refusal_exits_1(self):
         for error in (
-            api.ConfigError("env HOME: want one of A, B"),
-            api.ConfigError("runtime 'nope' is not configured"),
-            api.DriverError("tmux not found"),
+            ConfigError("env HOME: want one of A, B"),
+            ConfigError("runtime 'nope' is not configured"),
+            DriverError("tmux not found"),
         ):
             with self.subTest(str(error)):
                 self.api = Api(own=None)
@@ -937,7 +949,7 @@ class MainTest(WorkerCase):
                 self.api = Api(own=None)
                 if argv[0] == "restart":
                     self.started(resume=SID)
-                self.api.events, self.api.dead = [api.Exited(1)], DEAD_TEXT
+                self.api.events, self.api.dead = [Exited(1)], DEAD_TEXT
                 rc, out, err = self.run_main(*argv)
                 self.assertEqual((rc, out), (1, ""))
                 self.assertTrue(err.endswith(f"workers: {DEAD_MSG}\n"), err)
@@ -1039,7 +1051,7 @@ class MainTest(WorkerCase):
         self.assertEqual(self.run_main("reply", "w1"), (1, "", "workers: no tui session w1\n"))
 
     def test_unknown_sessions_exit_1(self):
-        self.api.error = api.DriverError("tmux sessions unknown: tmux failed")
+        self.api.error = DriverError("tmux sessions unknown: tmux failed")
         for argv in (
             ["start", "w1", "--manager", "m1"],
             ["restart", "w1"],
@@ -1110,7 +1122,7 @@ class ManagerDirTest(CrewCase):
 
         def failing():
             fake = Api("mgr")
-            fake.error = api.DriverError(unknown)
+            fake.error = DriverError(unknown)
             return fake
 
         cases = (
@@ -1949,12 +1961,12 @@ class AttachTest(RosterCase):
             with self.subTest(after=after):
                 before = self.seed(MGR, w1=entry())
                 fake = self.server()
-                fake.error, fake.error_after = api.DriverError(msg[9:-1]), after
+                fake.error, fake.error_after = DriverError(msg[9:-1]), after
                 self.assertEqual(self.attach(fake, "--manager", "mgr"), (1, "", msg))
                 self.assertEqual(self.bytes(), before)
         os.unlink(self.path)
         fake = self.server()
-        fake.error, fake.error_after = api.DriverError("x"), 1
+        fake.error, fake.error_after = DriverError("x"), 1
         self.assertEqual(self.attach(fake, "--manager", "mgr")[0], 1)
         self.assertFalse(os.path.exists(self.path))
 
@@ -2121,7 +2133,7 @@ class StartEntryTest(RosterCase):
 
     def test_no_row_or_unknown_sessions_places_nothing(self):
         def unknown(name):
-            self.api.error, self.api.error_after = api.DriverError("x"), 0
+            self.api.error, self.api.error_after = DriverError("x"), 0
 
         for why, setup in (
             ("no row", lambda: setattr(self.api, "gone", True)),
@@ -2136,7 +2148,7 @@ class StartEntryTest(RosterCase):
                 self.assertEqual((e["pane"], e["opener"]), (None, None))
 
     def test_a_worker_that_exits_at_once_leaves_a_working_entry_attach_syncs(self):
-        self.api.events, self.api.dead = [api.Exited(1)], DEAD_TEXT
+        self.api.events, self.api.dead = [Exited(1)], DEAD_TEXT
         with self.assertRaisesRegex(crew.WorkersError, "^w1: rt0 exited 1 at once"):
             self.start()
         sid = self.api.starts[0]["sid"]
@@ -2168,8 +2180,8 @@ class StartEntryTest(RosterCase):
         def watched():
             for _ in range(3):
                 free.append(lock_free(self.lock))
-                yield api.Activity()
-            yield api.IdleTimeout(5)
+                yield Activity()
+            yield IdleTimeout(5)
 
         self.api.events = watched
         self.start()
@@ -2203,7 +2215,7 @@ class StartEntryTest(RosterCase):
             os.mkdir(os.path.join(roster.worker_dir(SID), "worker.json"))
 
         for why, setup in (
-            ("api.start", lambda: setattr(self.api, "start_error", api.DriverError("boom"))),
+            ("api.start", lambda: setattr(self.api, "start_error", DriverError("boom"))),
             ("the worker record", unwritable),
         ):
             with self.subTest(why):
@@ -2256,7 +2268,7 @@ class RosterCommandsTest(RosterCase):
             with self.subTest(cmd=cmd[0]):
                 fake = Api(rows=[row("w1", SID)])
                 self.assertEqual(self.main_with(fake, *cmd)[0], 0)
-        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+        with self.assertRaisesRegex(ConfigError, "not configured"):
             registry.configured()
 
     def test_release_by_the_holder_keeps_the_cursor(self):
@@ -2347,7 +2359,7 @@ class RosterCommandsTest(RosterCase):
     def test_forget_after_unknown_sessions_writes_nothing(self):
         before = self.seed(MGR, w1=entry(state="gone"))
         fake = Api()
-        fake.error, fake.error_after = api.DriverError("tmux sessions unknown: tmux failed"), 1
+        fake.error, fake.error_after = DriverError("tmux sessions unknown: tmux failed"), 1
         self.assertEqual(
             self.main_with(fake, "forget", "w1"),
             (1, "", "workers: tmux sessions unknown: tmux failed\n"),
@@ -2980,7 +2992,7 @@ class CursorTest(RosterCase):
         data = numbered(self.BIG).encode()
         before = self.fill(data, self.BIG - 3)
         fake = Api()
-        fake.error, fake.error_after = api.DriverError("tmux sessions unknown: tmux failed"), 1
+        fake.error, fake.error_after = DriverError("tmux sessions unknown: tmux failed"), 1
         self.assertEqual(
             self.main_with(fake, "attach"), (1, "", "workers: tmux sessions unknown: tmux failed\n")
         )

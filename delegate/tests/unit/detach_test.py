@@ -13,7 +13,8 @@ from unittest import mock
 from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import PYTHONPATH
-from agent_pm.session import api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, api
 
 from delegate.tests.case import Case
 from delegate.tests.unit.plans import SID, Base
@@ -108,7 +109,7 @@ class Detach(Base):
         )
 
     def test_no_pane_without_split_from_is_no_opener(self):
-        self.layout.side_effect = api.DriverError("no pane to show the TUI beside (x)")
+        self.layout.side_effect = DriverError("no pane to show the TUI beside (x)")
         self.assertEqual(
             self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI)
         )
@@ -116,7 +117,7 @@ class Detach(Base):
         self.assertIsNone(self.started.call_args.kwargs["opener"])
 
     def test_layout_errors_with_split_from_are_refusals(self):
-        for error in (api.DriverError("no pane (x)"), api.ConfigError("no tmux session mgr")):
+        for error in (DriverError("no pane (x)"), SessionConfigError("no tmux session mgr")):
             with self.subTest(error=error):
                 self.layout.side_effect = error
                 self.assertEqual(self.refusal(self.plan("tui"), split_from="mgr"), str(error))
@@ -160,8 +161,8 @@ class Detach(Base):
 
     def test_the_drivers_refusal_is_a_config_error_its_failure_propagates(self):
         for error, raised in (
-            (api.ConfigError("cwd must be an existing directory"), ConfigError),
-            (api.DriverError(f"detach {DRIVER}: duplicate session"), api.DriverError),
+            (SessionConfigError("cwd must be an existing directory"), ConfigError),
+            (DriverError(f"detach {DRIVER}: duplicate session"), DriverError),
         ):
             with self.subTest(error=error):
                 self.started.side_effect = error

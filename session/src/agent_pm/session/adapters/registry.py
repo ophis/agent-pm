@@ -1,12 +1,10 @@
 """The adapter registry: Session.configure's settings (the [adapters.<name>] tables, the hosts' tables, the default
-host), checked and stored by configure() until the next configure() or reset() (tests). adapter(name) builds the class
+host), checked and stored by configure() until the next configure() or reset(). adapter(name) builds the class
 [adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or any failure:
-ConfigError. settings(config): configure's keyword arguments from an already-read session config (its [adapters] and
-[hosts], the latter through tables.parse); else ValueError."""
+ConfigError. settings(config): configure's keyword arguments from a read session config
+([hosts] through tables.parse); else ValueError."""
 
 import copy
-import importlib
-import inspect
 import re
 import threading
 from collections.abc import Mapping
@@ -17,6 +15,7 @@ from agent_pm.session.adapters.selection import configure as configure_selection
 from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.utils.registry import load
 
 PACKAGE = __package__.rpartition(".")[0]
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
@@ -120,24 +119,8 @@ def adapter(name: str) -> Adapter:
         raise ConfigError(
             f'[adapters.{name}].implementation must be "adapters.{name}:<Class>Adapter"'
         )
-    package = f"adapters.{name}"
     try:
-        module = importlib.import_module(f"{PACKAGE}.{package}")
-    except ModuleNotFoundError as e:
-        if e.name in (f"{PACKAGE}.{package}", f"{PACKAGE}.adapters"):
-            raise ConfigError(f"adapter {name!r} has no package {package}") from e
-        raise ConfigError(f"cannot import adapter {name!r}: {e}") from e
-    except (ImportError, OSError, SyntaxError) as e:
-        raise ConfigError(f"cannot import adapter {name!r}: {e}") from e
-    try:
-        cls = getattr(module, found["cls"])
-    except AttributeError:
-        raise ConfigError(f"{package} has no {found['cls']}") from None
-    if (
-        not isinstance(cls, type)
-        or cls is Adapter
-        or not issubclass(cls, Adapter)
-        or inspect.isabstract(cls)
-    ):
-        raise ConfigError(f"{package}:{found['cls']} must be a concrete Adapter subclass")
+        cls = load(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
+    except ValueError as e:
+        raise ConfigError(f"adapter {name!r}: {e}") from e
     return configure_selection(cls(config))

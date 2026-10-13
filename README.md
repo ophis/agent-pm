@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each calls only the next lower one and imports only lower layers' public packages; the rules and their exceptions: `CLAUDE.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -21,36 +21,34 @@ flowchart TB
     LD[launchd]
     HU[the user]
   end
-  subgraph LO["agent_pm.linear_orchestrator (linear-orchestrator/)"]
-    R["router.py<br>pick · usage gate"]
-    RU["run.py<br>one run · write-back"]
-    PP["promote.py → prune.py"]
-    LC["config.py<br>[core] overlay"]
+  subgraph MG[agent_pm.manager]
+    W[crew.py] --> RS[roster.py]
   end
-  subgraph AP["agent_pm (delegate/, session/, utils/, manager/)"]
-    subgraph MG[manager/]
-      W[crew.py] --> RS[roster.py]
-    end
-    subgraph DL[delegate/]
-      D["API · CLI · run"]
-      C["composer/<br>prompt · run spec"]
-      EV["event/<br>reply · outcome check · callback line"]
-      subgraph TM[team/]
-        T["roles · tasks · templates"]
-        AT[tools/]
-      end
-    end
-    subgraph SE[session/]
-      DR["engine/: api · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
-      subgraph AD[adapters/]
-        CL[claude]
-        CX[codex]
-        PR[print_prompt]
-      end
-    end
-    U["utils/"]
-    CF["delegate/engine/config.py<br>config paths"]
+  subgraph LO[agent_pm.linear_orchestrator]
+    R["engine/router.py<br>pick · usage gate"]
+    RU["engine/run.py<br>one run · write-back"]
+    PP["engine/promote.py → prune.py"]
+    LC["engine/config.py<br>[core] overlay"]
   end
+  subgraph DL[agent_pm.delegate]
+    D["API · CLI · run"]
+    C["composer/<br>prompt · run spec"]
+    EV["event/<br>reply · outcome check · callback line"]
+    CF["engine/config.py<br>config paths"]
+    subgraph TM[team/]
+      T["roles · tasks · templates"]
+      AT[tools/]
+    end
+  end
+  subgraph SE[agent_pm.session]
+    DR["engine/: api · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
+    subgraph AD[adapters/]
+      CL[claude]
+      CX[codex]
+      PR[print_prompt]
+    end
+  end
+  U[agent_pm.utils]
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
@@ -60,12 +58,12 @@ flowchart TB
   HU -.->|"act-as · CLI"| D
   HU -.-> W
   R -.->|detached session| RU
-  RU -->|"delegate.__all__"| D
-  LC -->|"composer.__all__"| C
-  LO -->|"session.engine.api · session chores"| DR
-  MG -->|session.engine.api| DR
+  RU -->|agent_pm.delegate| D
+  LC -->|agent_pm.delegate.composer| C
+  LO -->|"agent_pm.session.api, until TASK-372"| DR
+  MG -->|"agent_pm.session.api, until TASK-371"| DR
   D --> C
-  D -->|"session.__all__"| SE
+  D -->|agent_pm.session| SE
   C -->|reads| T
   DR --> AD
   CL -.-> P1
@@ -75,7 +73,7 @@ flowchart TB
   class EV,U,CF shared
 ```
 
-Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.engine.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `CLAUDE.md` › Import rules.
+Solid arrow: an import, the only direction allowed, or a file read (`reads`); its label names the package imported, by its `__all__`. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn.
 
 ## Install
 
@@ -102,7 +100,7 @@ Requires macOS, Install's requirements and `gh` logged in as you. The Linear orc
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # the only item under config.local.toml's harness_key
    ```
 
-launchd scheduling of router and promote returns after the re-architecture.
+launchd scheduling of router and promote returns with [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379).
 
 ## Using the board
 

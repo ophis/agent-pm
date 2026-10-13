@@ -7,19 +7,31 @@ import unittest
 from agent_pm import session
 from agent_pm.session import (
     Access,
+    Activity,
+    Blocked,
     ConfigError,
     Displayable,
     DriverError,
+    Exited,
     Host,
     HostProcess,
+    IdleTimeout,
+    LimitHit,
     NotDisplayable,
+    Reply,
     Session,
+    SessionBound,
+    SessionRow,
+    SessionStatus,
     SessionStatusLog,
     Spec,
+    Stderr,
     Terminal,
+    TurnEnd,
     Usage,
-    api,
+    Window,
 )
+from agent_pm.session.engine import types
 
 from session.tests.case import Case
 
@@ -37,7 +49,17 @@ NAMES = (
     "Spec",
     "Access",
 )
-ALLOWED_CONCRETE = {SessionStatusLog, Usage, Spec, Access}
+EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, SessionBound, Stderr, TurnEnd}
+ALLOWED_CONCRETE = {
+    SessionStatusLog,
+    Usage,
+    Window,
+    Spec,
+    Access,
+    SessionRow,
+    SessionStatus,
+    *EVENTS,
+}
 PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 ABSTRACT = {
     Session: {
@@ -48,7 +70,7 @@ ABSTRACT = {
         "info",
         "reply",
         "close",
-        "session_info",
+        "session_status",
         "record",
         "displayable",
         "show",
@@ -76,10 +98,11 @@ class Exports(Case):
                 self.assertIn(name, session.__all__)
         self.assertEqual([n for n in session.__all__ if not hasattr(session, n)], [])
 
-    def test_usage_and_the_errors_are_the_drivers(self):
-        for name in ("Usage", "DriverError", "ConfigError", "Spec", "Access"):
-            with self.subTest(name=name):
-                self.assertIs(getattr(session, name), getattr(api, name))
+    def test_the_types_are_engine_types(self):
+        for name in session.__all__:
+            if hasattr(types, name):
+                with self.subTest(name=name):
+                    self.assertIs(getattr(session, name), getattr(types, name))
 
     def test_the_only_concrete_classes_are_the_helpers_and_exceptions(self):
         concrete = {
@@ -115,7 +138,7 @@ class SessionClassMethods(Case):
             Session.configure(adapters={}, hosts=1, default_host="fake")
 
     def test_each_but_configure_raises_on_the_bare_abc_naming_task_365(self):
-        spec = api.Spec(workdir=self.home)
+        spec = Spec(workdir=self.home)
         calls = {
             "start": (("fake", "headless", "hi", spec), {"resume": None, "display": None}),
             "attach": (("w1",), {"idle_timeout": None}),

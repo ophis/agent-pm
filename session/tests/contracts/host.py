@@ -11,7 +11,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host
-from agent_pm.session.engine.api import Key, Paste
+from agent_pm.session.engine.types import Key, Paste
 from agent_pm.utils.record import Record
 
 from session.tests.case import PY, REPO, child_env

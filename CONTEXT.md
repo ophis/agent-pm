@@ -1,8 +1,12 @@
 # Agent PM
 
-An unattended pipeline that runs role agents on tasks, split into a core pack that turns free text into Markdown and an orchestration layer that connects it to Linear and the docs repo.
+An unattended pipeline that runs role agents on tasks, in five layers (README › Core architecture).
 
 ## Language
+
+**Layer**:
+One project of the stack and its package, `<project>/src/agent_pm/<package>/`; it calls only the next lower layer.
+_Avoid_: level (a config override level)
 
 **Role**:
 A persona with standards and boundaries (researcher, pm, engineer, dummy-tester), defined by a charter plus config.
@@ -45,8 +49,15 @@ The code that wraps one agent runtime (Claude Code, Codex) for the driver: its l
 _Avoid_: client, backend, vehicle
 
 **Mode**:
-How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `--runner` (renamed by TASK-310).
+How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: the Delegate CLI's `--mode`.
 _Avoid_: runner
+
+**Session**:
+One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: `session/src/agent_pm/session/engine/base.py`.
+_Avoid_: agent run (a role's run, in a session)
+
+**Spec**:
+What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
 Where the session layer runs processes by name (e.g. in tmux sessions), keeping each one's Record and display; only a Displayable Host can show them. In code: `session/src/agent_pm/session/hosts/base.py`.
@@ -72,12 +83,25 @@ Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull
 The Markdown an agent run delivers to its destination (report, PRD, PR description): returned in its outcome or published by the agent run, per the destination.
 _Avoid_: document, result, report
 
-**Orchestration layer**:
-The code that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear (the Linear orchestrator); the orchestrator of the pipeline's agent runs. Elsewhere: a control plane.
-_Avoid_: runner
+**Linear orchestrator**:
+The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/`.
+_Avoid_: orchestration layer, runner
 
 **Write-back**:
-The orchestration layer's mapping of an agent run's start and progress marks and its outcome to Linear.
+The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear.
 
 **Overlay**:
 The core run keys the Linear orchestrator adds to its own agent runs, in `linear-orchestrator/config.toml`'s `[core]` table (its comment).
+
+**Manager**:
+The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.
+
+**Crew**:
+A manager's workers and the commands that start, show, follow and stop them. In code: `manager/src/agent_pm/manager/crew.py`.
+
+**Roster**:
+A manager's list of what it started (workers, role runs, pipelines), with its events cursor: `~/.agent-pm/managers/<name>/roster.json`. In code: `manager/src/agent_pm/manager/roster.py`.
+
+**Worker**:
+A plain tui session a manager starts through its crew, in its own `~/.agent-pm/workers/<sid>/`; no role, no task.
+_Avoid_: subagent

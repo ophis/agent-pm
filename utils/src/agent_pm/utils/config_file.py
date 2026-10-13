@@ -13,9 +13,9 @@ import os
 import tomllib
 from collections.abc import Iterator, Mapping
 
-from agent_pm.utils.paths import ROOT
+from agent_pm.utils.paths import ROOT, STATE
 
-LOCAL = "~/.agent-pm/config.local.toml"
+LOCAL = f"{STATE}/config.local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
 UNCONFIGURED = ("utils", "manager")  # no own file
 
@@ -27,14 +27,9 @@ def merge(base: dict, over: dict) -> dict:
     return out
 
 
-def read_config(path: str, local: str) -> dict:
+def load(path: str) -> dict:
     with open(path, "rb") as f:
-        cfg = tomllib.load(f)
-    local = os.path.expanduser(local)
-    if os.path.isfile(local):
-        with open(local, "rb") as f:
-            cfg = merge(cfg, tomllib.load(f))
-    return cfg
+        return tomllib.load(f)
 
 
 def read_project(

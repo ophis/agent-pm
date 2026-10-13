@@ -23,7 +23,7 @@ from agent_pm.delegate import Begun, Outcome, Result, cli, composer
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import api
+from agent_pm.session import ConfigError, DriverError, api
 from agent_pm.session.adapters import registry
 
 from delegate.tests.case import PY, Case, child_env, committed
@@ -65,7 +65,7 @@ class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
 
 class RefusingRun(fake_adapter.FakeInProcess):
     def check(self, prompt, spec, resume):
-        raise api.ConfigError("refused by check")
+        raise ConfigError("refused by check")
 
 
 class Base(Case):
@@ -243,7 +243,7 @@ class Configures(Base):
         with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
             code, _, err = self.cli("--list")
         self.assertEqual((code, err), (0, ""))
-        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+        with self.assertRaisesRegex(ConfigError, "not configured"):
             registry.configured()
 
 
@@ -743,7 +743,7 @@ class Detach(Base):
         self.assertIn("--input=-x\nUse B.\n", self.started.call_args.args[1])
 
     def test_a_driver_failure_exits_3(self):
-        self.started.side_effect = api.DriverError(f"detach {DRIVER}: duplicate session")
+        self.started.side_effect = DriverError(f"detach {DRIVER}: duplicate session")
         code, out, err = self.detaches()
         self.assertEqual(
             (code, out, err.splitlines()[1:]),
@@ -892,13 +892,13 @@ class DriverForm(Base):
             (
                 "a DriverError",
                 None,
-                api.DriverError("no tmux session x"),
+                DriverError("no tmux session x"),
                 [f"delegate: show {TUI}: no tmux session x"],
             ),
             (
                 "a ConfigError",
                 None,
-                api.ConfigError("bad opener"),
+                ConfigError("bad opener"),
                 [f"delegate: show {TUI}: bad opener"],
             ),
         ):

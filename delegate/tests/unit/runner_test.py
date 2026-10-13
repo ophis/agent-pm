@@ -35,7 +35,16 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from agent_pm.session import Session, api
+from agent_pm.session import (
+    Activity,
+    Blocked,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    LimitHit,
+    Session,
+    api,
+)
 from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
 from agent_pm.utils.files import save
@@ -900,13 +909,13 @@ class TuiPolicy(Base):
         r = self.faked(turn(START, block(INVALID)), turn(block(INVALID)))
         self.assertEqual(r, Result(0, None, f"invalid outcome: {INVALID_ERROR}"))
         self.assertEqual(self.handle.calls, [("send", FIX.format(error=INVALID_ERROR))])
-        r = self.faked(turn(START, block(INVALID)), fail=api.DriverError("gone"))
+        r = self.faked(turn(START, block(INVALID)), fail=DriverError("gone"))
         self.assertEqual(
             r, Result(1, None, f"invalid outcome: {INVALID_ERROR}; resume failed: gone")
         )
 
     def test_an_idle_timeout_gives_up_and_leaves_the_session(self):
-        r = self.faked(turn(START), api.IdleTimeout(IDLE_TIMEOUT))
+        r = self.faked(turn(START), IdleTimeout(IDLE_TIMEOUT))
         self.assertEqual((r, self.handle.calls), (GAVE_UP, [("send", NUDGE)]))
         self.assertIn(f"delegate: no event for 2 h; {LEFT_OPEN}", self.err)
         self.assertEqual(
@@ -927,10 +936,10 @@ class TuiPolicy(Base):
 
         handle = FakeHandle(
             hours_apart(
-                api.Activity("Bash"),
-                api.Blocked("permission"),
-                api.Activity(""),
-                api.Blocked("question"),
+                Activity("Bash"),
+                Blocked("permission"),
+                Activity(""),
+                Blocked("question"),
                 turn(START, block(DONE)),
             )
         )
@@ -943,14 +952,14 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "progress", "result", "end"])
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
-        r = self.faked(*[STOP] * (1 + STOP_LIMIT), fail=api.DriverError("no pane"))
+        r = self.faked(*[STOP] * (1 + STOP_LIMIT), fail=DriverError("no pane"))
         self.assertEqual((r, self.handle.calls), (GAVE_UP, [("send", NUDGE)]))
         self.assertIn("delegate: tui: no pane\n", self.err)
         self.assertIn("nudge", self.kinds())
 
     def test_a_usage_limit_stops_the_session_without_a_nudge(self):
         at = 1767225600.0
-        r = self.faked(api.LimitHit(at), STOP, api.Exited(-signal.SIGHUP))
+        r = self.faked(LimitHit(at), STOP, Exited(-signal.SIGHUP))
         when = datetime.fromtimestamp(at).astimezone().isoformat(timespec="seconds")
         self.assertEqual(
             r, Result(-signal.SIGHUP, None, f"usage limit; resets at {when}", Limit(at))
@@ -961,8 +970,8 @@ class TuiPolicy(Base):
 
     def test_a_session_exiting_without_an_outcome_is_the_error(self):
         for events, result in (
-            ([STOP, api.Exited(3)], Result(3, None, "the client exited 3")),
-            ([api.Exited(0)], GAVE_UP),
+            ([STOP, Exited(3)], Result(3, None, "the client exited 3")),
+            ([Exited(0)], GAVE_UP),
         ):
             with self.subTest(events=events):
                 self.fresh()
@@ -989,7 +998,7 @@ class TuiPolicy(Base):
             with self.subTest(error=error):
                 self.fresh()
                 with self.assertRaises(type(error)) as cm:
-                    self.faked(turn(START), on_event=raise_, stop_fail=api.DriverError("gone"))
+                    self.faked(turn(START), on_event=raise_, stop_fail=DriverError("gone"))
                 self.assertIs(cm.exception, error)
                 self.assertEqual(
                     (self.handle.calls, self.err.count("delegate: tui: gone\n")), ([("stop",)], 1)
@@ -999,8 +1008,8 @@ class TuiPolicy(Base):
                 )
 
     def test_a_failed_stop_is_printed_and_never_replaces_the_limit_or_stale_out_result(self):
-        gone = api.DriverError("gone")
-        r = self.faked(api.LimitHit(None), stop_fail=gone)
+        gone = DriverError("gone")
+        r = self.faked(LimitHit(None), stop_fail=gone)
         self.assertEqual(r, Result(0, None, "usage limit; reset time unknown", Limit(None)))
         self.assertEqual(
             (self.handle.calls, self.err.count("delegate: tui: gone\n")), ([("stop",)], 1)
@@ -1020,7 +1029,7 @@ class TuiPolicy(Base):
 
     def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
         os.makedirs(self.work)
-        with mock.patch.object(runner.api, "start", side_effect=api.DriverError("no tmux")):
+        with mock.patch.object(runner.api, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
         with self.assertRaises(ConfigError) as cm:
@@ -1033,9 +1042,9 @@ class TuiPolicy(Base):
     def test_headless_turn_ends_never_nudge_and_an_idle_timeout_is_only_recorded(self):
         r = self.faked(
             *[STOP] * (2 + STOP_LIMIT),
-            api.IdleTimeout(IDLE_TIMEOUT),
+            IdleTimeout(IDLE_TIMEOUT),
             turn(START, block(DONE)),
-            api.Exited(0),
+            Exited(0),
             mode="headless",
         )
         self.assertEqual((r.outcome.status, self.handle.calls), ("done", []))

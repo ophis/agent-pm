@@ -27,8 +27,9 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui_hook
 from agent_pm.utils.files import read_regular
+from agent_pm.utils.paths import STATE
 
-TUI_DIR = "~/.agent-pm/tui"
+TUI_DIR = f"{STATE}/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
 SLICE = 0.1
 

@@ -20,12 +20,12 @@ PROJECTS = ("session", "utils")
 # The child: configures the session from the copy's session config, starts runtime argv[2] headless in workdir argv[1]
 # and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Session, api
+from agent_pm.session import Session, api, ConfigError, Spec
 from agent_pm.utils.config_file import read_project
 try:
     Session.configure_from(read_project("session"))
-    handle = api.start(sys.argv[2], "headless", "hello", api.Spec(workdir=sys.argv[1]))
-except api.ConfigError as e:
+    handle = api.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
+except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
@@ -113,7 +113,11 @@ class ExtensionAdapterIntegration(Case):
 
     def test_a_table_without_its_package_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "adapters.absent:AbsentAdapter"\n')
-        self.refused("absent", "adapter 'absent' has no package adapters.absent")
+        self.refused(
+            "absent",
+            "adapter 'absent': agent_pm.session.adapters.absent:AbsentAdapter: cannot import "
+            "agent_pm.session.adapters.absent: No module named 'agent_pm.session.adapters.absent'",
+        )
 
     def test_a_package_without_its_table_fails_before_launch(self):
         self.package("untabled")

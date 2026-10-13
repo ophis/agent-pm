@@ -5,7 +5,7 @@ import os
 from unittest import mock
 
 from agent_pm.delegate import Result
-from agent_pm.session import api
+from agent_pm.session import Exited, TurnEnd
 
 from session.tests.unit.api_test import SPAWNS
 
@@ -37,8 +37,8 @@ def no_child():
         spawn.assert_not_called()
 
 
-def turn(*lines, pending=0) -> api.TurnEnd:
-    return api.TurnEnd("\n".join(lines), pending)
+def turn(*lines, pending=0) -> TurnEnd:
+    return TurnEnd("\n".join(lines), pending)
 
 
 STOP = turn("Working.")
@@ -61,7 +61,7 @@ class FakeHandle:
     def events(self):
         for event in self.left:
             yield event
-            if isinstance(event, api.Exited):
+            if isinstance(event, Exited):
                 return
         raise AssertionError("no event left")
 

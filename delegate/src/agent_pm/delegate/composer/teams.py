@@ -11,7 +11,7 @@ from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text
 from agent_pm.delegate.composer.types import ConfigError, Team
 from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils.config_file import LOCAL, read_config, read_project
+from agent_pm.utils.config_file import LOCAL, load, read_project
 from agent_pm.utils.markdown import unfenced
 from agent_pm.utils.paths import temp_dirs, under
 
@@ -106,7 +106,7 @@ def check_all(team: Team, cfg: Mapping) -> None:
 def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
     try:
         own, value = (
-            read_config(config, os.devnull).get("team_dirs"),
+            load(config).get("team_dirs"),
             read_project("delegate", path=config, local=local).get("team_dirs"),
         )
     except (OSError, ValueError) as e:

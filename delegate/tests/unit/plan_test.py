@@ -20,7 +20,8 @@ from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Session, api
+from agent_pm.session import Access, Session, api
+from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import temp_dirs, under
 
@@ -63,7 +64,7 @@ class Configures(Base):
             got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
         configure.assert_not_called()
-        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+        with self.assertRaisesRegex(SessionConfigError, "not configured"):
             registry.configured()
 
 
@@ -149,8 +150,8 @@ class Cwd(Base):
 
     def test_a_resume_runs_in_the_cwd_and_project_of_its_session_record(self):
         os.makedirs(self.work)
-        api.records.note(
-            api.records.path(self.work),
+        api.note(
+            self.work,
             "session",
             sid=SID,
             cwd=self.trusted,
@@ -254,7 +255,7 @@ class Planned(Base):
                 got, _ = self.planned(keys=keys)
                 self.assertEqual(
                     got.session.access,
-                    api.Access(
+                    Access(
                         dirs=(),
                         commands=commands,
                         cwd=self.work,

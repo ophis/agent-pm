@@ -1,10 +1,12 @@
-"""Path normalization, containment, writable temp roots and the projects' import roots."""
+"""The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and the projects' import
+roots."""
 
 import os
 import subprocess
 import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
+STATE = "~/.agent-pm"
 
 
 def real_dirs(paths, label: str) -> frozenset[str]:

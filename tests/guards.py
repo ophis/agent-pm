@@ -1,9 +1,9 @@
 """The repo's rules: each guard takes a root, returns its sorted violations; str constants include docstrings.
 Only a TREES walk enters a project's tests/.
 
-layer_imports(repo)   imports go one way (CLAUDE.md › Import rules), a layer imports no package module outside LAYERS, SESSION
-                      and SHARED, a session layer no delegate module, none imports TOOLS, ORCH or a BARE
-                      name, nested, relative or import_module'd
+layer_imports(repo)   imports go one way (CLAUDE.md › Import rules), a unit imports no package module outside UNITS, SESSION
+                      and SHARED, a session unit no delegate module, none imports TOOLS, ORCH or a BARE
+                      name, nested, relative or import_module'd; SESSION_INTERNAL only from session/
 delegate_session(repo) delegate/ imports SESSION only by an __all__ name
 layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND, SESSION_SRC's but SESSION_COMMAND
 standalone(repo)      no file names LINEAR but CONFIG_LEVELS' LEVELS line (the config override order)
@@ -21,15 +21,17 @@ status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
 namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
+package_top(repo)     a LAYERS package but utils' holds only TOP, SUBPACKAGES and TOP_EXCEPTIONS
+session_api_uses(repo) UPPER uses api.X only for an api __all__ name not session's
 shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
                       is in a *.types module or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, `from session import api`, EXPORTERS' __all__
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, session's __all__ (until TASK-372), EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
-test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in TEST_ORDER
-config_levels(repo)   CONFIG_LEVELS' LEVELS, the config override order (TEST_ORDER flattens it), holds each project once
+test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in LAYERS
+config_levels(repo)   CONFIG_LEVELS' LEVELS holds each project once
 explicit_keys(repo)   each `# local:` example key in a <project>/config.toml has a real line in one: the same dotted key,
                       the same table, depth and last key, a suffix of it, or a key of an empty real table
 
@@ -43,16 +45,14 @@ import sys
 import tokenize
 import tomllib
 
-from agent_pm.utils.config_file import LEVELS
-
 GROUPS = ("session", "delegate", "manager")
 SESSION_API = "session.engine.api"
 SESSION_TYPES = "session.engine.types"
 MODES = "session.modes"
 RECORDS = "session.engine.records"
 HOSTS = "session.hosts"
-HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the layers, in unit SESSION
-LAYERS = (
+HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the units, in unit SESSION
+UNITS = (
     "session.adapters",
     SESSION_API,
     SESSION_TYPES,
@@ -63,12 +63,11 @@ LAYERS = (
     "delegate",
 )
 SESSION = "session"
-OUTSIDE = "outside the layers"
+OUTSIDE = "outside the units"
 CONFIG = "delegate.engine.config"
 ALLOWED = {
     ("delegate", "delegate.composer"),
     ("delegate", SESSION),
-    ("delegate", SESSION_API),
     *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     ("session.adapters", SESSION_TYPES),
@@ -76,14 +75,13 @@ ALLOWED = {
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
     ("session.engine.base", HOSTS),  # Session.parse_hosts
     (OUTSIDE, SESSION),
-    (OUTSIDE, SESSION_API),
-    (OUTSIDE, SESSION_TYPES),
     ("manager.crew", "delegate"),  # IMPORT_ROOTS, PYTHONPATH: until TASK-371
 }
+SESSION_INTERNAL = (SESSION_API, SESSION_TYPES)
 SHARED = ("utils", CONFIG, "delegate.event")
 TOOLS = "delegate.team.tools"
 ORCH = "linear_orchestrator"
-UNITS = (*LAYERS, *SHARED, TOOLS)
+ALL_UNITS = (*UNITS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
     CONFIG: ("utils", CONFIG),
@@ -92,7 +90,7 @@ PURE = {
 }
 BARE = (
     *GROUPS,
-    *(n for n in (u.rpartition(".")[2] for u in LAYERS) if n not in sys.stdlib_module_names),
+    *(n for n in (u.rpartition(".")[2] for u in UNITS) if n not in sys.stdlib_module_names),
     "utils",
     TOOLS.rpartition(".")[2],
     "repo",
@@ -140,10 +138,23 @@ PROJECTS = {
     "manager": "manager",
     ORCH_PROJECT: ORCH,
 }
+LAYERS = ("utils", SESSION, "delegate", ORCH_PROJECT, "manager")
+TOP = {"__init__.py", "cli.py", "engine"}
+SUBPACKAGES = {
+    SESSION: {"adapters", "hosts", "modes"},
+    "delegate": {"composer", "event", "team"},
+}
+TOP_EXCEPTIONS = {
+    SESSION: {"cli.py"},  # until TASK-369
+    ORCH_PROJECT: {"cli.py", "linear"},  # until TASK-372
+    "manager": {"cli.py", "crew.py", "roster.py"},  # until TASK-371
+}
+UPPER = LAYERS[LAYERS.index(SESSION) + 1 :]
+SESSION_PKG = f"{PKG}.{SESSION}"
+API_PATHS = (f"{SESSION_PKG}.api", f"{SESSION_PKG}.engine.api")
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 TREES = (*PROJECTS, "tests")
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
-TEST_ORDER = tuple(p for level in LEVELS for p in level)
 CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
@@ -164,13 +175,9 @@ MANAGER_ALLOWED = {
     "manager.roster": ("utils", "manager.engine.types"),
 }
 MANAGER_EXCEPTIONS = {
-    "manager.crew": (
-        *(f"{PKG}.delegate.{n}" for n in ("IMPORT_ROOTS", "PYTHONPATH")),  # until TASK-371
-        f"{PKG}.session.Session",  # until TASK-371
-        f"{PKG}.session.api",  # until TASK-371
-    ),
-    "manager.roster": (f"{PKG}.session.api",),  # until TASK-371
-}
+    "manager.crew": tuple(f"{PKG}.delegate.{n}" for n in ("IMPORT_ROOTS", "PYTHONPATH"))
+}  # until TASK-371
+MANAGER_SESSION = ("manager.crew", "manager.roster")  # session names, until TASK-371
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
 SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
@@ -182,7 +189,7 @@ TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
 ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
-LOAD_HELPERS = ("runnable", "run_config", "docs")
+LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
 COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
@@ -198,24 +205,29 @@ def layer_imports(repo: str) -> list[str]:
     found = set()
     for rel, names, imports in _modules(repo):
         name = ".".join(names or ())
-        layer = _unit(name)
-        layer = layer if layer in LAYERS else OUTSIDE
+        own = _unit(name)
+        own = own if own in UNITS else OUTSIDE
         for module, inner in imports:
             unit = _unit(inner) if inner else module.split(".")[0]
             if module.split(".")[0] in BARE:
                 found.add(f"{rel}: bare import {module}")
             elif (
                 unit in (TOOLS, ORCH)
-                or (layer != OUTSIDE and inner and unit not in (*LAYERS, SESSION, *SHARED))
-                or (_within(layer, "session") and _within(unit, "delegate"))
+                or (own != OUTSIDE and inner and unit not in (*UNITS, SESSION, *SHARED))
+                or (_within(own, "session") and _within(unit, "delegate"))
                 or (
-                    unit in (*LAYERS, SESSION)
-                    and unit != layer
-                    and (layer, unit) not in ALLOWED
+                    unit in (*UNITS, SESSION)
+                    and unit != own
+                    and (own, unit) not in ALLOWED
                     and (name, unit) not in ALLOWED
+                    and not (
+                        own == OUTSIDE
+                        and unit in SESSION_INTERNAL
+                        and (names is None or _within(name, SESSION))
+                    )
                 )
             ):
-                found.add(f"{rel}: {layer} imports {module}")
+                found.add(f"{rel}: {own} imports {module}")
     return sorted(found)
 
 
@@ -299,8 +311,43 @@ def manager_imports(repo: str) -> list[str]:
                 m.split(".")[0] in sys.stdlib_module_names
                 or any(_within(inner, u) for u in allowed)
                 or m in MANAGER_EXCEPTIONS.get(name, ())
+                or (name in MANAGER_SESSION and m.rpartition(".")[0] == f"{PKG}.{SESSION}")
             ):
                 found.add(f"{rel}: {name} imports {m}")
+    return sorted(found)
+
+
+def package_top(repo: str) -> list[str]:
+    found = set()
+    for project in LAYERS[1:]:
+        rel = f"{project}/src/{PKG}/{PROJECTS[project]}"
+        path = os.path.join(repo, rel)
+        have = {e for e in (os.listdir(path) if os.path.isdir(path) else ()) if e not in LEFTOVERS}
+        exempt = TOP_EXCEPTIONS.get(project, set())
+        found.update(f"{rel}/{e}: missing" for e in TOP - have - exempt)
+        found.update(
+            f"{rel}/{e}: not __init__.py, cli.py, engine/ or a listed subpackage"
+            for e in have - TOP - SUBPACKAGES.get(project, set()) - exempt
+        )
+    return sorted(found)
+
+
+def session_api_uses(repo: str) -> list[str]:
+    exported = _all(os.path.join(repo, SESSION, "src", PKG, SESSION, "engine", "api.py"))
+    public = _all(os.path.join(repo, SESSION, "src", PKG, SESSION, "__init__.py"))
+    found = set()
+    for project in UPPER:
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            found.update(
+                f"{project}/src/{rel}:{n.lineno}: uses api.{n.attr}"
+                + (f", not agent_pm.session.{n.attr}" if n.attr in public else "")
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Attribute)
+                and _dotted(n.value, bound) in API_PATHS
+                and (n.attr not in exported or n.attr in public)
+            )
     return sorted(found)
 
 
@@ -709,7 +756,7 @@ def _denied(rel, module, name, exported):
         )
     return not (
         _shared(target)
-        or (module, name) == (f"{PKG}.{SESSION}", "api")
+        or (module == f"{PKG}.{SESSION}" and name != "Session")  # both until TASK-372
         or (module, name, rel) == (f"{PKG}.{SESSION}", "Session", CONFIG_PY)
     )
 
@@ -781,10 +828,10 @@ def _dotted(node, bound):
 
 
 def test_layers(repo: str) -> list[str]:
-    rank = {p: i for i, p in enumerate(TEST_ORDER)}
+    rank = {p: i for i, p in enumerate(LAYERS)}
     owner = {sub: project for project, sub in PROJECTS.items()}
     found = set()
-    for project in TEST_ORDER:
+    for project in LAYERS:
         for rel, text in _files(os.path.join(repo, project, "tests"), ".py"):
             rel = f"{project}/tests/{rel}"
             package = rel.split("/")[:-1]
@@ -878,7 +925,7 @@ def _modules(repo, projects=LOWER):
 def _unit(inner):
     if _within(inner, HOST_ABC):
         return SESSION
-    return max((u for u in UNITS if _within(inner, u)), key=len, default=inner.split(".")[0])
+    return max((u for u in ALL_UNITS if _within(inner, u)), key=len, default=inner.split(".")[0])
 
 
 def _within(name, unit):

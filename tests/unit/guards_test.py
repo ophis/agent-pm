@@ -40,8 +40,8 @@ def flat(suite):
 
 
 def own_case(test, top):
-    """A Case of the test's own tests/case.py, or a lower project's (guards.TEST_ORDER)."""
-    order = guards.TEST_ORDER
+    """A Case of the test's own tests/case.py, or a lower project's (guards.LAYERS)."""
+    order = guards.LAYERS
     project = top.split("/")[0]
     trees = [top] if project not in order else order[: order.index(project) + 1]
     modules = {f"{t}.tests.case" if t in order else f"{t}.case" for t in trees}
@@ -78,6 +78,8 @@ class RealTree(Case):
             (guards.syntax_39, REPO),
             (guards.import_hygiene, REPO),
             (guards.namespace_package, REPO),
+            (guards.package_top, REPO),
+            (guards.session_api_uses, REPO),
             (guards.shared_types, REPO),
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
@@ -228,9 +230,9 @@ class LayerImports(Sample):
                 f"session/{PKG}/session/modes/x.py": "from ..adapters.base import Event\n"
                 "from agent_pm.session.engine.types import DriverError\nfrom ..hosts.tmux import tmux_host\n",
                 f"session/{PKG}/session/adapters/x.py": "from agent_pm.session.engine.types import Spec\n",
-                f"delegate/{PKG}/x.py": "from agent_pm.session import api\nimport agent_pm.session.engine.api\n"
-                "from agent_pm.session.engine.api import start\nfrom .session import api\nimport agent_pm\n"
-                "from agent_pm.session.engine.types import Spec\n",
+                f"delegate/{PKG}/x.py": "from agent_pm.session import api\nfrom .session import api\nimport agent_pm\n",
+                f"session/{PKG}/session/engine/base.py": "import agent_pm.session.engine.api\n"
+                "from agent_pm.session.engine.api import start\nfrom agent_pm.session.engine.types import Spec\n",
             }
         )
         self.assertEqual(guards.layer_imports(root), [])
@@ -238,7 +240,8 @@ class LayerImports(Sample):
     def test_a_delegate_module_reaches_the_session_layer_only_through_its_package(self):
         root = self.tree(
             {
-                f"delegate/{PKG}/delegate/x.py": "from agent_pm.session.engine.types import Usage\n",
+                f"delegate/{PKG}/delegate/x.py": "from agent_pm.session.engine.types import Usage\n"
+                "import agent_pm.session.engine.api\n",
                 f"delegate/{PKG}/delegate/composer/x.py": "from agent_pm.session import api\n",
                 f"session/{PKG}/session/engine/api.py": "from agent_pm.session import Session\n",
             }
@@ -247,16 +250,19 @@ class LayerImports(Sample):
             guards.layer_imports(root),
             [
                 f"delegate/{PKG}/delegate/composer/x.py: delegate.composer imports agent_pm.session.api",
+                f"delegate/{PKG}/delegate/x.py: delegate imports agent_pm.session.engine.api",
                 f"delegate/{PKG}/delegate/x.py: delegate imports agent_pm.session.engine.types",
                 f"session/{PKG}/session/engine/api.py: session.engine.api imports agent_pm.session.Session",
             ],
         )
 
-    def test_outside_the_layers_reaches_only_api_and_types(self):
+    def test_outside_the_units_only_session_reaches_api_and_types(self):
         root = self.tree(
             {
                 f"delegate/{PKG}/x.py": "import agent_pm.session.adapters\n",
                 f"delegate/{PKG}/y.py": "from agent_pm.session.engine import records\n",
+                f"manager/{PKG}/manager/z.py": "import agent_pm.session.engine.api\n"
+                "from agent_pm.session.engine.types import Spec\n",
                 f"session/{PKG}/session/engine/base.py": "from agent_pm.session.engine.types import Spec\n"
                 "from agent_pm.session.modes import tui\nfrom agent_pm.session.adapters import registry\n",
             }
@@ -265,14 +271,16 @@ class LayerImports(Sample):
             guards.layer_imports(root),
             sorted(
                 [
-                    f"session/{PKG}/session/engine/base.py: outside the layers imports agent_pm.session.modes.tui",
-                    f"delegate/{PKG}/x.py: outside the layers imports agent_pm.session.adapters",
-                    f"delegate/{PKG}/y.py: outside the layers imports agent_pm.session.engine.records",
+                    f"session/{PKG}/session/engine/base.py: outside the units imports agent_pm.session.modes.tui",
+                    f"delegate/{PKG}/x.py: outside the units imports agent_pm.session.adapters",
+                    f"delegate/{PKG}/y.py: outside the units imports agent_pm.session.engine.records",
+                    f"manager/{PKG}/manager/z.py: outside the units imports agent_pm.session.engine.api",
+                    f"manager/{PKG}/manager/z.py: outside the units imports agent_pm.session.engine.types",
                 ]
             ),
         )
 
-    def test_the_host_abc_is_outside_the_layers(self):
+    def test_the_host_abc_is_outside_the_units(self):
         sample = "from agent_pm.session.engine.types import Key\n"
         root = self.tree(
             {
@@ -288,7 +296,7 @@ class LayerImports(Sample):
             ],
         )
 
-    def test_a_layer_reaches_outside_the_layers_only_utils(self):
+    def test_a_unit_reaches_outside_the_units_only_utils(self):
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/x.py": "from agent_pm.manager import roster\n",
@@ -358,9 +366,9 @@ class LayerImports(Sample):
                 [
                     f"delegate/{PKG}/delegate/x.py: delegate imports agent_pm.linear_orchestrator.engine.config",
                     f"session/{PKG}/session/modes/x.py: session.modes imports agent_pm.linear_orchestrator",
-                    f"utils/{PKG}/utils/x.py: outside the layers imports agent_pm.linear_orchestrator",
+                    f"utils/{PKG}/utils/x.py: outside the units imports agent_pm.linear_orchestrator",
                     f"delegate/{PKG}/x.py: bare import linear_orchestrator",
-                    f"delegate/{PKG}/x.py: outside the layers imports agent_pm.linear_orchestrator.engine.run",
+                    f"delegate/{PKG}/x.py: outside the units imports agent_pm.linear_orchestrator.engine.run",
                 ]
             ),
         )
@@ -399,7 +407,7 @@ class LayerImports(Sample):
             [
                 f"delegate/{PKG}/delegate/composer/teams.py: delegate.composer imports agent_pm.delegate.engine.plan",
                 f"delegate/{PKG}/delegate/engine/plan.py: delegate imports agent_pm.manager.roster",
-                f"delegate/{PKG}/delegate/event/reply.py: outside the layers imports agent_pm.delegate.composer.RunConfig",
+                f"delegate/{PKG}/delegate/event/reply.py: outside the units imports agent_pm.delegate.composer.RunConfig",
                 f"session/{PKG}/session/adapters/print_prompt/in_process.py: session.adapters imports agent_pm.delegate.event.reply",
                 f"session/{PKG}/session/adapters/x.py: session.adapters imports agent_pm.delegate.event.PROGRESS",
             ],
@@ -583,7 +591,6 @@ class ManagerImports(Sample):
                 f"{crew} agent_pm.linear_orchestrator",
                 f"{crew} agent_pm.session.engine.types",
                 f"{roster} agent_pm.manager.crew",
-                f"{roster} agent_pm.session.Session",
                 f"{x} agent_pm.delegate.engine.config",
                 f"{x} agent_pm.manager.roster",
                 f"{x} agent_pm.session.api",
@@ -1370,23 +1377,28 @@ class ConfigOnce(Sample):
     def test_load_helpers_outside_config_py(self):
         root = self.tree(
             {
-                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nconfig.runnable(1)\n",
-                f"{OPKG}/engine/config.py": "def runnable():\n    pass\n\ndef load():\n    runnable()\n"
-                "    docs()\n",
+                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nconfig._runnable(1)\n",
+                f"{OPKG}/engine/config.py": "def _runnable():\n    pass\n\ndef load():\n    _runnable()\n"
+                "    _docs()\n    _load_config()\n",
                 f"{OPKG}/engine/promote.py": "from agent_pm.linear_orchestrator.engine import config\n"
                 "from agent_pm.linear_orchestrator.linear import linear\n"
                 "def main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n"
                 "        linear.use_logs(None)\n",
-                "src/config.py": "def load():\n    runnable()\n",
+                "src/config.py": "def load():\n    _runnable()\n",
             }
         )
         self.assertEqual(
             guards.config_once(root),
             [
-                f"{OPKG}/engine/run.py:2: calls agent_pm.linear_orchestrator.engine.config.runnable",
-                "src/config.py:2: calls runnable",
+                f"{OPKG}/engine/run.py:2: calls agent_pm.linear_orchestrator.engine.config._runnable",
+                "src/config.py:2: calls _runnable",
             ],
         )
+
+    def test_the_load_helpers_are_config_py_functions(self):
+        with open(os.path.join(ORCH, guards.CONFIG_PY), encoding="utf-8") as f:
+            defined = {n.name for n in ast.parse(f.read()).body if isinstance(n, ast.FunctionDef)}
+        self.assertLessEqual(set(guards.LOAD_HELPERS), defined)
 
 
 class OrchestratorAbsent(Sample):
@@ -1442,9 +1454,9 @@ class ConfigLevels(Sample):
     def levels(self, text):
         return guards.config_levels(self.tree({guards.CONFIG_LEVELS: text}))
 
-    def test_the_order_is_one_constant_test_order_flattens(self):
+    def test_the_layer_order_and_the_config_levels(self):
         self.assertEqual(
-            guards.TEST_ORDER, ("utils", "session", "delegate", guards.ORCH_PROJECT, "manager")
+            guards.LAYERS, ("utils", "session", "delegate", guards.ORCH_PROJECT, "manager")
         )
         self.assertEqual(
             self.levels(
@@ -1503,6 +1515,65 @@ class ExplicitKeys(Sample):
             ],
         )
         self.assertEqual(len([f for f in found if f.startswith("manager/config.toml: ")]), 1)
+
+
+class PackageTop(Sample):
+    def package(self, project, *entries):
+        sub = guards.PROJECTS[project]
+        return {f"{project}/{PKG}/{sub}/{e}": "" for e in entries}
+
+    def test_only_init_cli_engine_and_listed_subpackages(self):
+        files = {
+            **self.package("utils", "__init__.py", "x.py"),
+            **self.package("session", "__init__.py", "engine/x.py", "modes/x.py", "extra.py"),
+            **self.package(
+                "delegate", "__init__.py", "cli.py", "engine/x.py", "team/x.py", "misc/x.py"
+            ),
+            **self.package(guards.ORCH_PROJECT, "__init__.py", "engine/x.py", "linear/x.py"),
+            **self.package("manager", "__init__.py", "crew.py", "roster.py", "engine/x.py", "y.py"),
+        }
+        self.assertEqual(
+            guards.package_top(self.tree(files)),
+            [
+                f"delegate/{PKG}/delegate/misc: not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"manager/{PKG}/manager/y.py: not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"session/{PKG}/session/extra.py: not __init__.py, cli.py, engine/ or a listed subpackage",
+            ],
+        )
+
+    def test_a_missing_entry(self):
+        files = self.package("delegate", "__init__.py", "cli.py")
+        self.assertIn(
+            f"delegate/{PKG}/delegate/engine: missing", guards.package_top(self.tree(files))
+        )
+
+
+class SessionApiUses(Sample):
+    API = f"session/{PKG}/session/engine/api.py"
+    PUBLIC = f"session/{PKG}/session/__init__.py"
+
+    def test_only_api_names_with_no_public_session_path(self):
+        root = self.tree(
+            {
+                self.API: '__all__ = ["start", "Spec", "Handle"]\n',
+                self.PUBLIC: '__all__ = ["api", "Spec"]\n',
+                f"delegate/{PKG}/delegate/x.py": "from agent_pm.session import api\n"
+                "api.start()\napi.Handle\napi.records.path()\napi.Spec\n",
+                f"manager/{PKG}/manager/x.py": "import agent_pm.session.api as a\na.session()\n",
+                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py": "import agent_pm.session\n"
+                "agent_pm.session.api.session_info()\n",
+                f"session/{PKG}/session/x.py": "from agent_pm.session import api\napi.records\n",
+            }
+        )
+        self.assertEqual(
+            guards.session_api_uses(root),
+            [
+                f"delegate/{PKG}/delegate/x.py:4: uses api.records",
+                f"delegate/{PKG}/delegate/x.py:5: uses api.Spec, not agent_pm.session.Spec",
+                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py:2: uses api.session_info",
+                f"manager/{PKG}/manager/x.py:2: uses api.session",
+            ],
+        )
 
 
 if __name__ == "__main__":

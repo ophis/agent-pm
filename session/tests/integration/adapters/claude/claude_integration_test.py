@@ -1,6 +1,6 @@
 """session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
 Session.configure, runs session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
-api.session_info; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
+api.session_status; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
 CLAUDE_CONFIG_DIR are temp dirs."""
 
 import json
@@ -17,13 +17,18 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import api
+from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
+    Access,
     Activity,
+    ConfigError,
     Exited,
+    IdleTimeout,
     LimitHit,
     Reply,
     SessionBound,
     SessionStatus,
+    Spec,
     Stderr,
     TurnEnd,
     Usage,
@@ -59,10 +64,10 @@ PROBE = [
 # (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
 from agent_pm.session import api
-from agent_pm.session import Session
+from agent_pm.session import Session, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
 Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
-handle = api.start("claude", "headless", "hello", api.Spec(workdir=sys.argv[2]))
+handle = api.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
 try:
     for event in handle.events():
         print(type(event).__name__, flush=True)
@@ -116,7 +121,7 @@ class Base(Case):
             json.dump({"log": self.log, **fields}, f)
 
     def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> api.Handle:
-        spec = spec or api.Spec(workdir=self.workdir, sid=sid)
+        spec = spec or Spec(workdir=self.workdir, sid=sid)
         handle = api.start("claude", "headless", prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
@@ -151,7 +156,7 @@ class Base(Case):
     def written(self) -> list[dict]:
         return [
             {k: v for k, v in e.items() if k != "ts"}
-            for e in api.records.read(api.records.path(self.workdir))
+            for e in records.read(records.path(self.workdir))
         ]
 
     def resume_command(self, sid: str) -> str:
@@ -164,7 +169,7 @@ class RunTest(Base):
             steps=["one", {"kind": "tool", "name": "Read"}, "two", "three"],
             rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.1}}},
         )
-        handle = self.start(spec=api.Spec(workdir=self.workdir, tier=4, effort="low"))
+        handle = self.start(spec=Spec(workdir=self.workdir, tier=4, effort="low"))
         sid = handle.sid
         self.assertEqual(
             self.drain(handle),
@@ -201,7 +206,7 @@ class RunTest(Base):
             self.written(), [session, {"kind": "client_session", "sid": sid, "client_id": sid}]
         )
         self.assertEqual(
-            {k: v for k, v in api.session(self.workdir, sid).items() if k != "ts"}, session
+            {k: v for k, v in api.session_record(self.workdir, sid).items() if k != "ts"}, session
         )
 
     def test_resume_continues_the_transcript(self):
@@ -234,8 +239,8 @@ class RunTest(Base):
     def test_a_run_in_its_own_cwd_is_recorded_there_and_resumes_there(self):
         proj = os.path.join(self.dir, "proj")
         os.mkdir(proj)
-        access = api.Access(cwd=proj, dirs=(self.workdir,))
-        first = self.start(spec=api.Spec(workdir=self.workdir, access=access))
+        access = Access(cwd=proj, dirs=(self.workdir,))
+        first = self.start(spec=Spec(workdir=self.workdir, access=access))
         sid, transcript = first.sid, first.info().transcript
         self.assertEqual(self.drain(first)[-1], Exited(0))
         self.assertTrue(os.path.isfile(transcript))
@@ -243,7 +248,7 @@ class RunTest(Base):
         resume = (
             f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
         )
-        recorded = api.session(self.workdir, sid)
+        recorded = api.session_record(self.workdir, sid)
         self.assertEqual(
             {k: v for k, v in recorded.items() if k != "ts"},
             {
@@ -258,7 +263,7 @@ class RunTest(Base):
 
         again = self.start(
             "more",
-            api.Spec(workdir=self.workdir, access=api.Access(cwd=recorded["cwd"])),
+            Spec(workdir=self.workdir, access=Access(cwd=recorded["cwd"])),
             resume=sid,
         )
         self.assertEqual(self.drain(again)[-1], Exited(0))
@@ -283,7 +288,7 @@ class RunTest(Base):
         self.assertEqual(
             self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)]
         )
-        self.assertEqual(api.session_info("claude", sid, self.workdir).resumable, "yes")
+        self.assertEqual(api.session_status("claude", sid, self.workdir).resumable, "yes")
         self.scenario(steps=["second"])
         again = self.start("more", resume=sid)
         self.assertEqual(
@@ -300,7 +305,7 @@ class RunTest(Base):
         self.assertTrue(os.path.isfile(handle.info().transcript))
 
     def test_a_sid_that_is_no_uuid_starts_nothing(self):
-        with self.assertRaisesRegex(api.ConfigError, "session ids are UUIDs"):
+        with self.assertRaisesRegex(ConfigError, "session ids are UUIDs"):
             self.start(sid="not-a-uuid")
         self.assertFalse(os.path.exists(self.log))
         self.assertEqual(self.written(), [])
@@ -344,15 +349,15 @@ class RunTest(Base):
         def on(event):
             if isinstance(event, Reply):
                 replied.append(event)
-            elif isinstance(event, api.IdleTimeout) and replied:
+            elif isinstance(event, IdleTimeout) and replied:
                 handle.stop()
 
         found = self.drain(handle, on)
         self.assertEqual(
-            [e for e in found if not isinstance(e, api.IdleTimeout)],
+            [e for e in found if not isinstance(e, IdleTimeout)],
             [SessionBound(handle.sid), Reply("working"), Exited(-signal.SIGKILL)],
         )
-        self.assertEqual(found[-2], api.IdleTimeout(IDLE))
+        self.assertEqual(found[-2], IdleTimeout(IDLE))
 
 
 class InterruptTest(Base):
@@ -437,14 +442,14 @@ class SessionInfoTest(Base):
         handle = self.start(sid=SID)
         self.assertEqual(self.drain(handle)[-1], Exited(0))
         self.assertEqual(
-            api.session_info("claude", SID, self.workdir),
+            api.session_status("claude", SID, self.workdir),
             SessionStatus(
                 "yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)
             ),
         )
         other = str(uuid.uuid4())
         self.assertEqual(
-            api.session_info("claude", other, self.workdir),
+            api.session_status("claude", other, self.workdir),
             SessionStatus("no", None, self.resume_command(other)),
         )
 

@@ -21,7 +21,8 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, target
 from agent_pm.linear_orchestrator.engine import run as run_py
 from agent_pm.linear_orchestrator.linear import issues, linear
-from agent_pm.session import api
+from agent_pm.session import ConfigError, DriverError, SessionStatus, Window, api
+from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.shell import SHORT
 
@@ -90,7 +91,7 @@ RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-NO = api.SessionStatus("no", None, "")
+NO = SessionStatus("no", None, "")
 
 
 def ago(**kw):
@@ -102,9 +103,9 @@ def who(role):
 
 
 def reading(five=10.0, weekly=10.0):
-    return api.Usage(
-        None if five is None else api.Window(five, None),
-        None if weekly is None else api.Window(weekly, None),
+    return SessionUsage(
+        None if five is None else Window(five, None),
+        None if weekly is None else Window(weekly, None),
     )
 
 
@@ -358,7 +359,7 @@ class Base(run_fixtures.Base):
     def touch(self, sid, minutes_ago):
         # the session's transcript, last written minutes_ago
         at = (NOW - timedelta(minutes=minutes_ago)).timestamp()
-        self.api.statuses[self.sid(sid)] = api.SessionStatus("yes", at, f"resume {sid}")
+        self.api.statuses[self.sid(sid)] = SessionStatus("yes", at, f"resume {sid}")
 
     def write_runs(self):
         self.write(self.runs, "".join(f"{line}\n" for line in self.lines))
@@ -835,7 +836,7 @@ class Recover(Base):
                 fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
                 self.moved("TASK-1", minutes + 1)
                 self.add("start", "TASK-1", "a", minutes)
-                self.api.statuses[self.sid("a")] = api.SessionStatus("no", None, "")
+                self.api.statuses[self.sid("a")] = SessionStatus("no", None, "")
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
@@ -848,9 +849,9 @@ class Recover(Base):
 
     def test_an_unknown_session_changes_nothing_and_is_said_once_a_day(self):
         statuses = (
-            api.SessionStatus("unknown", None, ""),
-            api.DriverError("boom"),
-            api.ConfigError("no runtime a"),
+            SessionStatus("unknown", None, ""),
+            DriverError("boom"),
+            ConfigError("no runtime a"),
             OSError("gone"),
         )
         for st in statuses:
@@ -874,7 +875,7 @@ class Recover(Base):
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
         self.resumable("TASK-1", "a", 300)
-        self.api.statuses[self.sid("a")] = api.DriverError("boom")
+        self.api.statuses[self.sid("a")] = DriverError("boom")
 
         def use(b):
             (found,) = b.issues("in_progress")
@@ -1614,7 +1615,7 @@ class Gate(Base):
             (reading(89, None), None),
             (reading(None, None), None),
             (None, "reason=usage unknown"),
-            (api.ConfigError("no runtime a"), "reason=usage unknown"),
+            (ConfigError("no runtime a"), "reason=usage unknown"),
             (RuntimeError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
@@ -1653,7 +1654,7 @@ class UsageGate(Base):
             (reading(95, 10), "reason=usage usage=five_hour=95% weekly=10%"),
             (reading(10, 100), "reason=usage usage=five_hour=10% weekly=100%"),
             (None, "reason=usage unknown"),
-            (api.ConfigError("no runtime a"), "reason=usage unknown"),
+            (ConfigError("no runtime a"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(why=why):
@@ -2469,7 +2470,7 @@ class TickGate(TickBase):
         self.assertEqual(self.last_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
-        self.api.statuses[claimed.sid] = api.SessionStatus(
+        self.api.statuses[claimed.sid] = SessionStatus(
             "yes", (NOW - timedelta(minutes=40)).timestamp(), ""
         )
         self.write_config(CONFIG.replace(OVERLAY, '[core]\nruntime = "b"\n'))
@@ -3350,7 +3351,7 @@ class Outer(OuterBase):
     def test_a_resume_not_resumable_starts_nothing(self):
         for value, why in (
             (NO, "no"),
-            (api.SessionStatus("unknown", None, ""), "unknown"),
+            (SessionStatus("unknown", None, ""), "unknown"),
             (RuntimeError("boom"), "RuntimeError: boom"),
         ):
             with self.subTest(why=why):
@@ -3505,8 +3506,8 @@ class Outer(OuterBase):
 
     def test_a_driver_session_that_cannot_start_exits_1(self):
         for error in (
-            api.DriverError("detach agent-pm-engineer-TASK-7: duplicate session"),
-            api.ConfigError("cwd must be an existing directory"),
+            DriverError("detach agent-pm-engineer-TASK-7: duplicate session"),
+            ConfigError("cwd must be an existing directory"),
         ):
             with self.subTest(error=error):
                 self.api.detach_error = error
@@ -3580,9 +3581,7 @@ class Entry(OuterBase):
         sid = self.last_run()[2]
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
-        self.api.statuses[sid] = api.SessionStatus(
-            "yes", (NOW - timedelta(minutes=40)).timestamp(), ""
-        )
+        self.api.statuses[sid] = SessionStatus("yes", (NOW - timedelta(minutes=40)).timestamp(), "")
         self.write_config(OUTER.replace(OVERLAY, '[core]\nruntime = "b"\n'))
         self.assertEqual(self.entry(), 0)
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
@@ -3770,7 +3769,7 @@ class Brake(Base):
             (reading(10, 100), 1, "five_hour=10% weekly=100%"),
             (reading(None, None), 0, "five_hour=none weekly=none"),
             (None, 1, "unknown"),
-            (api.ConfigError("no runtime a"), 1, "unknown"),
+            (ConfigError("no runtime a"), 1, "unknown"),
             (RuntimeError("boom"), 1, "unknown"),
         )
         for value, rc, out in rows:

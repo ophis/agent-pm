@@ -30,7 +30,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     one_line,
 )
-from agent_pm.session import api
+from agent_pm.session import ConfigError, DriverError, api
 from agent_pm.utils.git import GUARD, common_dir, git
 from agent_pm.utils.paths import under
 from agent_pm.utils.shell import SHORT
@@ -204,7 +204,7 @@ class Pruner:
     def live_tuis(self):
         try:
             names = [row.name for row in api.sessions()]
-        except api.DriverError:
+        except DriverError:
             return None
         roles, found = set(self.roles.values()), {}
         for name in names:
@@ -219,7 +219,7 @@ class Pruner:
                 continue
             try:
                 api.close(name)
-            except (api.ConfigError, api.DriverError) as e:
+            except (ConfigError, DriverError) as e:
                 self.error(ident, session=name, error=one_line(e))
             else:
                 self.say("prune-closed", ident, session=name)
