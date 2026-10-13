@@ -1,7 +1,8 @@
-import functools
 import re
 
 from agent_pm.session.engine.types import ConfigError
+
+UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 def select(
@@ -11,7 +12,7 @@ def select(
     *,
     uuid: bool = False,
 ) -> tuple[str, ...]:
-    if uuid and not re.fullmatch(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}", native):
+    if uuid and not UUID.fullmatch(native):
         raise ConfigError(f"session ids are UUIDs, got {native!r:.80}")
     prefix = syntax[int(resume)]
     return (*prefix, native) if prefix else ()
@@ -25,10 +26,3 @@ def check(flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str,
         if flag in forbidden or word in forbidden:
             raise ConfigError(f"{flag}: picks the session; use sid= or resume=")
         i += 2 if word in valued and not eq else 1
-
-
-def configure(adapter):
-    adapter.configure_selector(
-        functools.partial(select, syntax=adapter.selection, uuid=adapter.selection_uuid)
-    )
-    return adapter

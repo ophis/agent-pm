@@ -10,7 +10,6 @@ from unittest import mock
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
 
-from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -69,8 +68,7 @@ class CommonTest(Base):
         saved = self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        other = configured(
-            CodexAdapter,
+        other = CodexAdapter(
             {
                 "tiers": {"1": "changed"},
                 "efforts": {"low": "high"},
@@ -92,9 +90,7 @@ class CommonTest(Base):
         self.spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, env=env)
         )
-        adapter = configured(
-            CodexAdapter, {**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}}
-        )
+        adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
         launch = adapter.headless().launch("hi", self.spec, False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
@@ -270,9 +266,7 @@ class CommonTest(Base):
                 self.common.load(str(self.work), self.spec.sid)
 
     def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
-        adapter = configured(
-            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
-        )
+        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
         with self.assertRaisesRegex(ConfigError, "writable"):
             adapter.common.prepare(self.spec, False)
         self.assertFalse((self.home / ".agent-pm").exists())
@@ -282,9 +276,7 @@ class CommonTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         saved = self.record().read_bytes()
-        adapter = configured(
-            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.home)}}
-        )
+        adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
         self.assertEqual(adapter.common.prepare(self.spec, True).native_id, NATIVE)
         self.assertEqual(self.record().read_bytes(), saved)
 
@@ -336,7 +328,7 @@ class CommonTest(Base):
         for key, value in cases:
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    configured(CodexAdapter, self.adapter.config | {key: value})
+                    CodexAdapter(self.adapter.config | {key: value})
                 self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -347,11 +339,9 @@ class CommonTest(Base):
         ):
             for source, target in values.items():
                 with self.subTest(key=key, source=source):
-                    adapter = configured(
-                        CodexAdapter, self.adapter.config | {key: {source: target}}
-                    )
+                    adapter = CodexAdapter(self.adapter.config | {key: {source: target}})
                     self.assertEqual(adapter.common._mapped(key, source), target)
-        configured(CodexAdapter, self.adapter.config | {"tiers": {}, "efforts": {}})
+        CodexAdapter(self.adapter.config | {"tiers": {}, "efforts": {}})
 
     def test_invalid_environment_names_and_values_fail_before_launch(self):
         for key, value in (
@@ -364,7 +354,7 @@ class CommonTest(Base):
         ):
             with self.subTest(key=key, value=value):
                 with self.assertRaises(ConfigError) as caught:
-                    configured(CodexAdapter, self.adapter.config | {"env": {key: value}})
+                    CodexAdapter(self.adapter.config | {"env": {key: value}})
                 self.assertIn("[adapters.codex].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
@@ -376,8 +366,8 @@ class CommonTest(Base):
             {"env": {"A": 1}},
         ):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
-                configured(CodexAdapter, {"tiers": {}, "efforts": {}, **cfg})
-        adapter = configured(CodexAdapter, {"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
+                CodexAdapter({"tiers": {}, "efforts": {}, **cfg})
+        adapter = CodexAdapter({"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
         launch = adapter.headless().launch(
             "hi", dataclasses.replace(self.spec, tier=None, effort=None), False
         )
@@ -394,7 +384,7 @@ class CommonTest(Base):
             ("efforts", dataclasses.replace(self.spec, tier=None)),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
-                configured(CodexAdapter, {}).headless().launch("hi", spec, False)
+                CodexAdapter({}).headless().launch("hi", spec, False)
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
@@ -412,7 +402,7 @@ class WritableDirsTest(Base):
     def test_config_codex_home(self):
         home = self.root / "config-codex"
         self.new_launch(
-            configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
+            CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": str(home)}}), home
         )
 
     def test_environment_codex_home_real_path(self):
@@ -430,7 +420,7 @@ class WritableDirsTest(Base):
         saved = self.prepare().writable_roots
         record = self.record().read_bytes()
         elsewhere = str(self.root / "elsewhere")
-        other = configured(CodexAdapter, self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
+        other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
         spec = dataclasses.replace(self.spec, access=Access(project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec, False))
         dirs = other.writable_dirs(spec, True)
@@ -441,7 +431,7 @@ class WritableDirsTest(Base):
     def test_read_dirs_are_never_added_saved_or_writable(self):
         read = self.root / "read"
         read.mkdir()
-        adapter = configured(CodexAdapter, self.adapter.config)
+        adapter = CodexAdapter(self.adapter.config)
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
         argv = adapter.headless().launch("hi", spec, False).argv
@@ -481,8 +471,8 @@ class WritableDirsTest(Base):
         target = self.root / "config-tmp"
         target.mkdir()
         (self.root / "tmp-link").symlink_to(target)
-        adapter = configured(
-            CodexAdapter, self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
+        adapter = CodexAdapter(
+            self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
         )
         self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, False))
         self.assertIn(str(target), adapter.writable_dirs(self.spec, False))
@@ -496,7 +486,7 @@ class WritableDirsTest(Base):
         self.assertFalse((self.home / ".agent-pm").exists())
 
 
-class InspectionTest(Base):
+class SessionStatusTest(Base):
     def bound(self):
         state = self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
@@ -505,31 +495,32 @@ class InspectionTest(Base):
     def test_inspection_queries_saved_cwd_in_one_store(self):
         self.bound()
         path = self.rollout()
-        info = self.common.inspect(self.spec.sid, str(self.cwd))
-        self.assertEqual(
-            (info.resumable, info.native_id, info.transcript, info.last_active),
-            ("yes", NATIVE, str(path), 100),
-        )
-        command = shlex.split(info.resume)
+        info = self.common.session_status(self.spec.sid, str(self.cwd))
+        self.assertEqual((info.resumable, info.last_active), ("yes", 100))
+        command = shlex.split(info.resume_command)
         self.assertIn(NATIVE, command)
         self.assertIn(str(self.cwd), command)
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.work)).resumable, "no")
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.work)).resumable, "no")
         path.unlink()
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
     def test_inspection_missing_malformed_unsafe_and_ambiguous(self):
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
         self.bound()
         self.rollout()
         path = self.record()
         path.write_text("not json")
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+        self.assertEqual(
+            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+        )
 
     def test_unreadable_store_and_session_are_unknown(self):
         self.bound()
         self.rollout()
         with mock.patch("os.scandir", side_effect=PermissionError("denied")):
-            self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+            self.assertEqual(
+                self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+            )
         path = self.rollout()
         original = os.open
 
@@ -539,7 +530,9 @@ class InspectionTest(Base):
             return original(location, *args, **kwargs)
 
         with mock.patch("os.open", side_effect=opening):
-            self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+            self.assertEqual(
+                self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+            )
 
     def test_transcript_fifo_mismatch_duplicate_and_symlink(self):
         self.bound()
@@ -562,7 +555,9 @@ class InspectionTest(Base):
         duplicate.unlink()
         path.unlink()
         path.symlink_to(self.root / "absent")
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+        self.assertEqual(
+            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+        )
 
     def test_last_activity_includes_validated_descendants(self):
         self.bound()
@@ -570,7 +565,7 @@ class InspectionTest(Base):
         self.rollout(CHILD, parent=NATIVE, stamp=200)
         self.rollout("bbbbbbbb-2222-3333-4444-555555555555", parent=CHILD, stamp=300)
         self.rollout("cccccccc-2222-3333-4444-555555555555", stamp=999)
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).last_active, 300)
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).last_active, 300)
 
     def test_duplicate_descendant_is_not_validated_activity(self):
         self.bound()
@@ -578,7 +573,9 @@ class InspectionTest(Base):
         child = self.rollout(CHILD, parent=NATIVE, stamp=200)
         duplicate = child.with_name("rollout-copy-" + CHILD + ".jsonl")
         duplicate.write_text(child.read_text())
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+        self.assertEqual(
+            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+        )
 
     def test_ambiguous_sid_and_cwd_is_unknown(self):
         self.bound()
@@ -591,7 +588,9 @@ class InspectionTest(Base):
             ),
             False,
         )
-        self.assertEqual(self.common.inspect(self.spec.sid, str(self.cwd)).resumable, "unknown")
+        self.assertEqual(
+            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+        )
 
 
 class GrantTest(Base):

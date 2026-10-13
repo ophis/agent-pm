@@ -43,6 +43,7 @@ from agent_pm.session.engine.types import (
     Usage,
     sid_error,
 )
+from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils.paths import STATE, printable_abs
@@ -517,7 +518,7 @@ def _row(found: Mapping, own: str | None) -> SessionRow:
     return SessionRow(
         name=found["name"],
         sid=None if sid_error(sid) else sid,
-        runtime=runtime if isinstance(runtime, str) and registry.NAME.match(runtime) else None,
+        runtime=runtime if isinstance(runtime, str) and NAME.match(runtime) else None,
         state="dead" if found["dead"] else state if state in ("done", "blocked") else "working",
         pane=found["pane"],
         opener=found["opener"],

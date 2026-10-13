@@ -10,13 +10,12 @@ from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import Launch, SessionStatus, Usage, Window
 
 from session.tests.case import Case
-from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
-class InspectionTest(Base):
+class SessionStatusTest(Base):
     def test_adapter_inspects_binding_session_and_descendant_by_cwd(self):
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
@@ -55,7 +54,7 @@ class UsageTest(Case):
                 "subprocess.Popen", side_effect=AssertionError("usage parser started a process")
             )
         )
-        self.adapter = configured(CodexAdapter, {"env": {"PAGER": "configured", "ADDED": "value"}})
+        self.adapter = CodexAdapter({"env": {"PAGER": "configured", "ADDED": "value"}})
         self.five = {"usedPercent": 62, "windowDurationMins": 300, "resetsAt": 2000}
         self.weekly = {"usedPercent": 41, "windowDurationMins": 10080, "resetsAt": 4000}
 

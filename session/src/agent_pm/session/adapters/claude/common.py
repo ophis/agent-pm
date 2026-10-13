@@ -9,6 +9,7 @@ import stat
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
+from agent_pm.session.adapters.selection import UUID
 from agent_pm.session.engine.types import (
     EFFORTS,
     ConfigError,
@@ -22,7 +23,6 @@ from agent_pm.utils.paths import printable_abs
 
 TABLE = "[adapters.claude]"
 TIERS = ("1", "2", "3", "4")
-UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 NOT_LITERAL = "*?[]{}()\\,"
 
 

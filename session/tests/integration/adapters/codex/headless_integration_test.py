@@ -31,7 +31,6 @@ from agent_pm.session.engine.types import (
 
 from session.tests.case import REPO, Case, settings
 from session.tests.integration.adapters.codex import fake_codex
-from session.tests.selection import configured
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -60,8 +59,7 @@ class HeadlessIntegrationTest(Case):
         executable.chmod(0o755)
         self.log, self.scenario = self.root / "exec.jsonl", self.root / "scenario.json"
         self.scene()
-        self.adapter = configured(
-            CodexAdapter,
+        self.adapter = CodexAdapter(
             {
                 "tiers": {"1": "gpt-test"},
                 "efforts": {"low": "low"},
@@ -277,8 +275,7 @@ class HeadlessIntegrationTest(Case):
         self.assertEqual(second["snapshot"]["snapshot"]["flags"][1], "workspace-write")
 
     def direct_launch(self, prompt, resume=False):
-        adapter = configured(
-            CodexAdapter,
+        adapter = CodexAdapter(
             {
                 key: value
                 for key, value in self.config["adapters"]["codex"].items()

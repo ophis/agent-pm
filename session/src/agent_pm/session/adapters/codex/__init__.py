@@ -1,7 +1,6 @@
 """Codex's abstract factory."""
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.types import SessionStatus
 
 from .common import CodexCommon
 from .headless import CodexHeadless
@@ -51,8 +50,7 @@ class CodexAdapter(Adapter):
         return self.common.session_metadata(info)
 
     def session_status(self, sid, cwd):
-        found = self.common.inspect(sid, cwd)
-        return SessionStatus(found.resumable, found.last_active, found.resume)
+        return self.common.session_status(sid, cwd)
 
     def writable_dirs(self, spec, resume):
         return self.common.writable_dirs(spec, resume)

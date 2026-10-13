@@ -41,6 +41,8 @@ from agent_pm.session.engine.types import (
 
 from session.tests.case import Case
 
+UUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
 
 class StubAdapter(Adapter):
     keys = frozenset({"model", "flags"})
@@ -465,15 +467,13 @@ class AdapterTest(Refusals):
             "unknown key 'alpha' in StubAdapter's config",
         )
 
-    def test_selects_a_session_only_through_the_selector_the_driver_configured(self):
+    def test_selects_a_session_through_its_selection_syntax(self):
         adapter = StubAdapter({})
-        for resume in (False, True):
-            self.refused(
-                lambda: adapter.select_session("n", resume),
-                "session selector is not configured by Driver",
-            )
-        adapter.configure_selector(lambda native, resume: ("--pick", native, str(resume)))
-        self.assertEqual(adapter.select_session("n", True), ("--pick", "n", "True"))
+        self.assertEqual(adapter.select_session("n", True), ())
+        adapter.selection, adapter.selection_uuid = (("--new",), ("--pick",)), True
+        self.assertEqual(adapter.select_session(UUID, False), ("--new", UUID))
+        self.assertEqual(adapter.select_session(UUID, True), ("--pick", UUID))
+        self.refused(lambda: adapter.select_session("n", True), "session ids are UUIDs, got 'n'")
 
     def test_keeps_a_copy_of_its_config(self):
         config = {"model": "m", "flags": ["-x"]}

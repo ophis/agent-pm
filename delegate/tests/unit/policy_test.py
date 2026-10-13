@@ -9,7 +9,6 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 
 from delegate.tests.case import REPO
-from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 
@@ -48,7 +47,7 @@ class PolicyTest(Base):
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
-        adapter = configured(CodexAdapter, {**self.adapter.config, "env": {"K": "config"}})
+        adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
         resumed = adapter.headless().launch("two", changed, True)
         self.assertEqual(state.snapshot["flags"], list(flags))
         self.assertEqual(first.env["K"], "saved")
@@ -75,7 +74,7 @@ class PolicyTest(Base):
                     'approvals_reviewer="auto_review"',
                 )
             else:
-                adapter = configured(ClaudeAdapter, {})
+                adapter = ClaudeAdapter({})
                 spec = Spec(workdir=str(self.work), sid=NATIVE, flags=flags, env=env)
                 expected = ("--permission-mode", "auto", "--strict-mcp-config")
             launch = adapter.headless().launch("hi", spec, False)

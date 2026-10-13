@@ -15,7 +15,6 @@ from agent_pm.session.engine.types import Usage, Window
 
 from session.tests.case import REPO, Case
 from session.tests.integration.adapters.codex import fake_app_server
-from session.tests.selection import configured
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
@@ -32,7 +31,7 @@ class UsageIntegrationTest(Case):
         self.codex_home = self.home / ".codex"
         for path in (self.work, self.codex_home):
             path.mkdir(parents=True, exist_ok=True)
-        self.common = configured(CodexAdapter, {}).common
+        self.common = CodexAdapter({}).common
         self.bin = self.root / "bin"
         self.bin.mkdir()
         executable = self.bin / "codex"

@@ -8,7 +8,6 @@ from unittest import mock
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import ConfigError
 
-from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
@@ -56,7 +55,7 @@ class SandboxTest(Base):
     def test_adapter_has_no_policy_configuration(self):
         for key in ("sandbox", "shell_network"):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, "unknown key"):
-                configured(CodexAdapter, self.adapter.config | {key: "workspace-write"})
+                CodexAdapter(self.adapter.config | {key: "workspace-write"})
 
     def test_invalid_saved_flags_fail_closed(self):
         state = self.prepare()

@@ -6,12 +6,20 @@ import os
 import re
 import shlex
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.engine.types import EFFORTS, ConfigError, Launch, SessionInfo, Usage, Window
+from agent_pm.session.engine.types import (
+    EFFORTS,
+    ConfigError,
+    Launch,
+    SessionInfo,
+    SessionStatus,
+    Usage,
+    Window,
+)
 
 from .sessions import (
     RecoveryError,
@@ -183,18 +191,6 @@ def flags(snapshot: dict, *, interactive: bool) -> list[str]:
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result
-
-
-@dataclass(frozen=True)
-class Inspection:
-    sid: str
-    native_id: str = ""
-    cwd: str = ""
-    project: bool = False
-    transcript: str = ""
-    resume: str = ""
-    resumable: str = "no"
-    last_active: float | None = None
 
 
 def _number(value) -> bool:
@@ -490,29 +486,16 @@ class CodexCommon:
         found = session_file(state.snapshot, state.native_id) if state.native_id else None
         return found.path if found is not None else ""
 
-    def inspect(self, sid: str, cwd: str) -> Inspection:
-        result = Inspection(sid, cwd=cwd)
+    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+        resume = ""
         try:
             state = self.lookup(sid, cwd)
-            if state is None:
-                return result
-            result = replace(
-                result,
-                native_id=state.native_id or "",
-                cwd=state.snapshot["cwd"],
-                project=state.snapshot["project"],
-            )
-            if state.native_id is None:
-                return result
-            result = replace(result, resume=self.resume_command(state))
+            if state is None or state.native_id is None:
+                return SessionStatus("no", None, "")
+            resume = self.resume_command(state)
             found = session_file(state.snapshot, state.native_id)
             if found is None:
-                return result
-            return replace(
-                result,
-                transcript=found.path,
-                resumable="yes",
-                last_active=self.last_active(state, found),
-            )
+                return SessionStatus("no", None, resume)
+            return SessionStatus("yes", self.last_active(state, found), resume)
         except (ConfigError, RecoveryError, OSError):
-            return replace(result, resumable="unknown")
+            return SessionStatus("unknown", None, resume)

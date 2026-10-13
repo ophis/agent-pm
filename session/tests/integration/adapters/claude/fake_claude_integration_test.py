@@ -19,7 +19,6 @@ from agent_pm.session.engine.types import Access, Spec
 
 from session.tests import case, live_tmux
 from session.tests.integration.adapters.claude import fake_claude
-from session.tests.selection import configured
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"
@@ -363,7 +362,7 @@ class Gate(Case):
         gate = os.path.join(self.root, "gate")
         self.scene(steps=["OK"], gate=gate)
         self.assertEqual(
-            self.result(self.run_fake(*configured(ClaudeAdapter, {}).usage_probe().argv[1:])), "OK"
+            self.result(self.run_fake(*ClaudeAdapter({}).usage_probe().argv[1:])), "OK"
         )
         self.assertFalse(os.path.exists(gate))
 
@@ -648,8 +647,7 @@ class ClaudeTuiLaunch(Case):
         patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config})
         patch.start()
         self.addCleanup(patch.stop)
-        tui = configured(
-            ClaudeAdapter,
+        tui = ClaudeAdapter(
             {
                 "allow": ["Read"],
                 "tiers": {"1": "m"},

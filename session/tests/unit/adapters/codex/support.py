@@ -11,7 +11,6 @@ from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine.types import Access, Spec
 
 from session.tests.case import REPO, Case
-from session.tests.selection import configured
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
@@ -44,9 +43,7 @@ class Base(Case):
                 ),
             )
         )
-        self.adapter = configured(
-            CodexAdapter, {"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}}
-        )
+        self.adapter = CodexAdapter({"tiers": {"1": "gpt-test"}, "efforts": {"low": "low"}})
         self.common = self.adapter.common
         self.spec = Spec(
             workdir=str(self.work),

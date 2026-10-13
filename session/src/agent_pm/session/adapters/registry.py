@@ -11,17 +11,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.selection import configure as configure_selection
 from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
+from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils.registry import load
 
 PACKAGE = __package__.rpartition(".")[0]
-NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
-IMPLEMENTATION = re.compile(
-    r"adapters\.(?P<name>[a-z][a-z0-9_]*):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z"
-)
+IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[^:]+):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
 TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 _lock = threading.Lock()
 
@@ -123,4 +120,4 @@ def adapter(name: str) -> Adapter:
         cls = load(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
     except ValueError as e:
         raise ConfigError(f"adapter {name!r}: {e}") from e
-    return configure_selection(cls(config))
+    return cls(config)

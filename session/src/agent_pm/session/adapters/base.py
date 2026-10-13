@@ -3,12 +3,13 @@ Its Headless (fresh per session: launch may keep state for parse) or Tui turns a
 whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and the runtime's output into
 Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at
 its next yield, changing no global state (cwd, environ, signals): it applies spec.access.cwd, not its env.
-select_session is the Driver's selector (registry); unset, it refuses. Starts no process."""
+Starts no process."""
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 
+from agent_pm.session.adapters.selection import select
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -50,12 +51,7 @@ class Adapter(ABC):
         self.config = dict(config)
 
     def select_session(self, native: str, resume: bool) -> tuple[str, ...]:
-        if not hasattr(self, "_selector"):
-            raise ConfigError("session selector is not configured by Driver")
-        return self._selector(native, resume)
-
-    def configure_selector(self, selector: Callable[[str, bool], tuple[str, ...]]) -> None:
-        self._selector = selector
+        return select(native, resume, self.selection, uuid=self.selection_uuid)
 
     @abstractmethod
     def headless(self) -> "Headless | None":
