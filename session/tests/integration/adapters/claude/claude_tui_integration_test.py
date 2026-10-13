@@ -32,7 +32,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.modes import tui
+from agent_pm.session.modes.tui import types as tui
 
 from session.tests import detach_support as detach_live
 from session.tests import live_tmux

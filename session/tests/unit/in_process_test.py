@@ -10,7 +10,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.types import InProcess
 from agent_pm.session.engine.types import DriverError, Reply, SessionRequest, Spec, Stderr
-from agent_pm.session.modes.in_process import InProcessMode
+from agent_pm.session.modes.in_process.types import InProcessMode
 
 from session.tests.case import Case
 

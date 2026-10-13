@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.adapters.claude.common.types import ClaudeCommon
 from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import LimitHit, SessionRequest

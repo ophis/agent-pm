@@ -1,6 +1,6 @@
 """Codex's abstract factory."""
 
-from agent_pm.session.adapters.codex.common import CodexCommon
+from agent_pm.session.adapters.codex.common.types import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
 from agent_pm.session.adapters.codex.tui import CodexTui
 from agent_pm.session.adapters.types import Adapter

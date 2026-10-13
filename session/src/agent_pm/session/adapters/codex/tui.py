@@ -6,7 +6,7 @@ import shutil
 import sys
 
 from agent_pm.session.adapters.codex import sessions
-from agent_pm.session.adapters.codex.common import (
+from agent_pm.session.adapters.codex.common.types import (
     LIMIT_PREFIXES,
     CodexCommon,
     added_dirs,

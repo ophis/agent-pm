@@ -53,7 +53,9 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.modes import headless, in_process, tui
+from agent_pm.session.modes.headless import types as headless
+from agent_pm.session.modes.in_process import types as in_process
+from agent_pm.session.modes.tui import types as tui
 
 from session.tests import fake_adapter
 from session.tests.case import SPAWNS, Case

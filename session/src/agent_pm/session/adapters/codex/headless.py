@@ -2,7 +2,7 @@
 
 import json
 
-from agent_pm.session.adapters.codex.common import (
+from agent_pm.session.adapters.codex.common.types import (
     LIMIT_PREFIXES,
     CodexCommon,
     flags,
