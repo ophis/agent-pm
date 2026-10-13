@@ -420,6 +420,14 @@ class StandaloneImports(Sample):
 
 
 class UnitTestModules(Sample):
+    def test_empty_name_does_not_match_the_containing_source_directory(self):
+        test = "session/tests/unit/_test.py"
+        root = self.tree({test: "", "session/src/agent_pm/session/__init__.py": ""})
+        self.assertEqual(
+            guards.unit_test_modules(root),
+            [f"{test}: missing source module session/src/agent_pm/session/.py"],
+        )
+
     def test_matching_modules_in_every_project_are_accepted(self):
         files = {}
         for project, layer in guards.PROJECTS.items():

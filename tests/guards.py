@@ -811,7 +811,7 @@ def unit_test_modules(repo: str) -> list[str]:
                         )
                     )
                 )
-                if stem == "__init__" or not matches:
+                if not stem or stem == "__init__" or not matches:
                     test = os.path.relpath(os.path.join(top, name), repo)
                     found.append(f"{test}: missing source module {source}.py")
     return sorted(found)
