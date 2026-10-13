@@ -79,7 +79,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Unit tests
-        run: python3 -m unittest discover -s '${{ matrix.tests }}/unit' -t . -p "*_test.py"
+        run: python3 -X faulthandler .github/run_tests.py 'Unit ${{ matrix.project }}' '${{ matrix.tests }}/unit'
 
   integration:
     name: Integration ${{ matrix.job }} v2.0 (Python 3.11)
@@ -105,4 +105,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
       - name: Integration tests
-        run: python3 .github/integration_jobs.py '${{ matrix.job }}'
+        run: python3 -X faulthandler .github/integration_jobs.py '${{ matrix.job }}'

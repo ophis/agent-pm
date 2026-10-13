@@ -177,8 +177,13 @@ class Assignment(Tree):
         split = gate.check(self.root, (self.package,), self.at(JOBS), WORKFLOW)
         for job, other, code in (("a", "b", 0), ("b", "a", 1)):
             err = io.StringIO()
-            with self.subTest(job=job), contextlib.redirect_stderr(err):
-                self.assertEqual(gate.run(split[job]), code)
+            with (
+                self.subTest(job=job),
+                contextlib.redirect_stderr(err),
+                contextlib.redirect_stdout(io.StringIO()),
+                mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": "", "RUN_TESTS_STATE": ""}),
+            ):
+                self.assertEqual(gate.run(split[job], job), code)
             self.assertIn(f"test_a ({self.package}.{job}.", err.getvalue())
             self.assertNotIn(f"{self.package}.{other}.", err.getvalue())
             self.assertIn("Ran 1 test", err.getvalue())
