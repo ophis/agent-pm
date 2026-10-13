@@ -41,6 +41,7 @@ from agent_pm.session import (
     Handle,
     IdleTimeout,
     SessionRow,
+    StartOptions,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import printable_abs, read_project, save
@@ -258,9 +259,7 @@ def _launch(
             "tui",
             prompt,
             spec,
-            resume=resume,
-            idle_timeout=EARLY,
-            events=record["events"],
+            options=StartOptions(resume=resume, idle_timeout=EARLY, events=record["events"]),
         )
     path = os.path.join(spec.workdir, RECORD)
     try:

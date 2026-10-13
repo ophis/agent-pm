@@ -64,7 +64,7 @@ class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
 
 
 class RefusingRun(fake_adapter.FakeInProcess):
-    def check(self, prompt, spec, resume):
+    def check(self, _request, /):
         raise ConfigError("refused by check")
 
 
@@ -634,7 +634,7 @@ class Tui(Base):
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 kw = start.call_args.kwargs
                 self.assertEqual(
-                    (start.call_args.args[:2], start.call_args.args[3].name, kw["events"]),
+                    (start.call_args.args[:2], start.call_args.args[3].name, kw["options"].events),
                     (("fake", "tui"), None, None),
                 )
 
@@ -889,7 +889,7 @@ class DriverForm(Base):
             (1, "", "delegate: the agent run returned no outcome"),
         )
         spec, kw = start.call_args.args[3], start.call_args.kwargs
-        self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
+        self.assertEqual((spec.name, kw["options"].events, spec.sid), (TUI, self.events, SID))
         self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")

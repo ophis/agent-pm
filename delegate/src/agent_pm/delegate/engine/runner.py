@@ -24,9 +24,10 @@ from agent_pm.delegate.engine.types import (
     Result,
     Spec,
 )
-from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
+from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
+from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
     Driver,
@@ -36,6 +37,7 @@ from agent_pm.session import (
     IdleTimeout,
     LimitHit,
     Reply,
+    StartOptions,
     Stderr,
     TurnEnd,
     holds,
@@ -72,15 +74,21 @@ class Headless:
             s.mode,
             p.prompt,
             replace(p.session, sid=s.sid, name=name),
-            resume=s.sid if s.resume else None,
-            idle_timeout=IDLE_TIMEOUT,
-            events=events,
+            options=StartOptions(
+                resume=s.sid if s.resume else None,
+                idle_timeout=IDLE_TIMEOUT,
+                events=events,
+            ),
         )
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
         return p.driver.start(
-            s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT
+            s.runtime,
+            s.mode,
+            text,
+            p.session,
+            options=StartOptions(resume=s.sid, idle_timeout=IDLE_TIMEOUT),
         )
 
     def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:

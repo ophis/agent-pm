@@ -37,6 +37,7 @@ from agent_pm.session import (
     IdleTimeout,
     SessionBound,
     SessionRow,
+    StartOptions,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL
@@ -162,8 +163,15 @@ class Api:
             if match is None or re.fullmatch(match, n)
         ]
 
-    def start(self, runtime, mode, prompt, spec, resume=None, **kw):
-        kw = {"name": spec.name, "sid": spec.sid, **kw}
+    def start(self, runtime, mode, prompt, spec, *, options=None):
+        options = StartOptions() if options is None else options
+        resume = options.resume
+        kw = {
+            "name": spec.name,
+            "sid": spec.sid,
+            "idle_timeout": options.idle_timeout,
+            "events": options.events,
+        }
         self.calls.append(("start", kw["name"]))
         self.starts.append(
             dict(runtime=runtime, mode=mode, prompt=prompt, spec=spec, resume=resume, **kw)
@@ -243,8 +251,7 @@ class Runs:
 
 
 class CrewCase(Case):
-    """A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured.
-    """
+    """A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

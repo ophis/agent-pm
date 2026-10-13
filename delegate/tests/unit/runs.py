@@ -7,7 +7,7 @@ import os
 from unittest import mock
 
 from agent_pm.delegate import Result
-from agent_pm.session import Exited, TurnEnd
+from agent_pm.session import Exited, StartOptions, TurnEnd
 
 from session.tests.case import SPAWNS
 
@@ -56,9 +56,10 @@ class FakeHandle:
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
         self.name, self.sid = NAME, None
 
-    def start(self, runtime, mode, prompt, spec, **kw):
+    def start(self, _runtime, _mode, _prompt, spec, *, options=None):
+        options = StartOptions() if options is None else options
         os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = spec.name or NAME, kw["resume"] or spec.sid
+        self.name, self.sid = spec.name or NAME, options.resume or spec.sid
         return self
 
     def events(self):

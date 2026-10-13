@@ -45,6 +45,7 @@ from agent_pm.session import (
     Exited,
     IdleTimeout,
     LimitHit,
+    StartOptions,
 )
 from agent_pm.utils import printable
 
@@ -300,7 +301,9 @@ class Idle(Base):
         with mock.patch.object(
             self.driver,
             "start",
-            side_effect=lambda *a, **kw: start(*a, **(kw | {"idle_timeout": 0.3})),
+            side_effect=lambda *a, **kw: start(
+                *a, options=replace(kw["options"], idle_timeout=0.3)
+            ),
         ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
@@ -749,7 +752,9 @@ class InProcess(Base):
         with mock.patch.object(
             self.driver,
             "start",
-            side_effect=lambda *a, **kw: start(*a, **(kw | {"idle_timeout": 0.3})),
+            side_effect=lambda *a, **kw: start(
+                *a, options=replace(kw["options"], idle_timeout=0.3)
+            ),
         ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
@@ -845,7 +850,11 @@ class TuiPolicy(Base):
                 self.assertEqual((args[:2], r.outcome.status), (("fake", "tui"), "done"))
                 self.assertEqual(
                     (given, args[3].sid, args[3].name),
-                    ({"idle_timeout": IDLE_TIMEOUT, **want[0]}, self.events[0].sid, want[1]),
+                    (
+                        {"options": StartOptions(idle_timeout=IDLE_TIMEOUT, **want[0])},
+                        self.events[0].sid,
+                        want[1],
+                    ),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
 
@@ -1070,7 +1079,7 @@ class TuiPolicy(Base):
         args, given = self.started.call_args
         self.assertEqual(
             (given, args[3].sid),
-            ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
+            ({"options": StartOptions(idle_timeout=IDLE_TIMEOUT)}, self.events[0].sid),
         )
 
 
