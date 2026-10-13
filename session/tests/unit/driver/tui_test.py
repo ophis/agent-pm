@@ -7,7 +7,8 @@ import os
 import stat
 from unittest import mock
 
-from agent_pm.session.engine import api, records
+from agent_pm.session.engine import records
+from agent_pm.session.engine.launch.types import _identity_drop
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -278,7 +279,7 @@ class EnvironmentTest(TuiBase):
         ):
             with self.subTest(environ=environ):
                 self.environ(**environ)
-                self.assertEqual(set(environ) & api._identity_drop(self.driver.registry), dropped)
+                self.assertEqual(set(environ) & _identity_drop(self.driver.registry), dropped)
 
     def test_session_env_keys_need_no_adapter_allowlist(self):
         self.environ(KEEP="k")

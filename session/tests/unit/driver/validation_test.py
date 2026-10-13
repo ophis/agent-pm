@@ -296,8 +296,8 @@ class ExportsTest(Case):
 
     def test_constants(self):
         self.assertEqual(
-            (api.MODES, api.STATES, api.POLL),
-            (("headless", "tui", "in_process"), ("live", "absent", "unknown"), 0.5),
+            api.MODES,
+            ("headless", "tui", "in_process"),
         )
         self.assertEqual((api.PROBE_DIR, api.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
         self.assertEqual(api.SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))

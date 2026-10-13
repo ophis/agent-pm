@@ -9,6 +9,7 @@ import threading
 from unittest import mock
 
 from agent_pm.session.engine import api
+from agent_pm.session.engine.lifecycle.types import Mode
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -296,12 +297,10 @@ class ModeTest(Case):
                 for p in inspect.signature(function).parameters.values()
             ]
 
-        members = sorted(
-            n for n, v in vars(api.Mode).items() if callable(v) and not n.startswith("_")
-        )
+        members = sorted(n for n, v in vars(Mode).items() if callable(v) and not n.startswith("_"))
         self.assertEqual(members, ["poll", "returncode", "screen", "send", "state", "stop"])
         for mode, name in itertools.product(
             (headless.HeadlessMode, in_process.InProcessMode), members
         ):
             with self.subTest(mode=mode.__name__, name=name):
-                self.assertEqual(params(getattr(mode, name)), params(getattr(api.Mode, name)))
+                self.assertEqual(params(getattr(mode, name)), params(getattr(Mode, name)))

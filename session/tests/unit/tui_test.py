@@ -20,7 +20,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END
-from agent_pm.session.engine import api
+from agent_pm.session.engine.lifecycle.types import Mode
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -1287,9 +1287,7 @@ class ModeTest(Case):
 
         for name in ("poll", "returncode", "state", "send", "screen", "stop"):
             with self.subTest(name=name):
-                self.assertEqual(
-                    params(getattr(tui.TuiMode, name)), params(getattr(api.Mode, name))
-                )
+                self.assertEqual(params(getattr(tui.TuiMode, name)), params(getattr(Mode, name)))
 
 
 if __name__ == "__main__":

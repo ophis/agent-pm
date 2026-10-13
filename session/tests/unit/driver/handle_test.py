@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
+from agent_pm.session.engine.lifecycle.types import POLL, HandleServices, HandleState
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -54,10 +55,10 @@ class HandleOverAModeTest(Case):
             "fake",
             "tui",
             Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
-            host=self.mode,
-            idle_timeout=idle_timeout,
-            info=SessionInfo("s1", "", self.dir, False, "", ""),
-            **kwargs,
+            state=HandleState(
+                info=SessionInfo("s1", "", self.dir, False, "", ""), idle_timeout=idle_timeout
+            ),
+            services=HandleServices(host=self.mode, **kwargs),
         )
 
     def events(self, handle) -> list:
@@ -116,8 +117,8 @@ class HandleOverAModeTest(Case):
         )
         self.assertEqual(self.events(handle), [])
         self.assertEqual(handle.reply, "done")
-        self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {api.POLL})
-        self.assertEqual(self.mode.calls[-1], ("returncode", api.POLL))
+        self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {POLL})
+        self.assertEqual(self.mode.calls[-1], ("returncode", POLL))
 
     def test_each_idle_span_yields_idle_timeout(self):
         handle = self.handle(

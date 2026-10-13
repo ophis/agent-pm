@@ -8,51 +8,36 @@ grants itself write to under a Spec. attach(), sessions(), show() and close() re
 name; detach() runs a command in a tmux session of its own.
 """
 
-import contextlib
 import logging
 import os
 import re
 import signal
 import stat
-import time
 import uuid
-from abc import ABC, abstractmethod
-from collections import deque
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Protocol
 
 from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.selection import check as check_selection
-from agent_pm.session.adapters.types import Adapter, Headless, InProcess, Tui
 from agent_pm.session.engine import records
+from agent_pm.session.engine.launch.types import STEPS, LaunchContext, _child_env
+from agent_pm.session.engine.lifecycle.types import Handle, HandleServices, HandleState
 from agent_pm.session.engine.records import holds, session_record
 from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
+from agent_pm.session.engine.runtime.validation import _idle, _name, _placement
 from agent_pm.session.engine.types import (
-    Blocked,
     ConfigError,
     DriverError,
-    Event,
-    Exited,
-    IdleTimeout,
-    Launch,
-    Reply,
-    SessionBound,
     SessionInfo,
     SessionRequest,
     SessionRow,
     SessionStatus,
     Spec,
-    Stderr,
-    TurnEnd,
     Usage,
     sid_error,
 )
 from agent_pm.session.hosts.tables import NAME
-from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.errors.types import TuiError
-from agent_pm.session.modes.headless import types as headless
-from agent_pm.session.modes.in_process import types as in_process
 from agent_pm.session.modes.tui import types as tui
 from agent_pm.utils import STATE, printable_abs
 
@@ -67,396 +52,10 @@ __all__ = [
 ]
 
 MODES = ("headless", "tui", "in_process")
-STATES = ("live", "absent", "unknown")
-POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
 PROBE_TIMEOUT = 120
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 LOG = logging.getLogger("driver")
-
-
-class Mode(Protocol):
-    """A running session as one mode hosts it; a Handle's only way to it. Its own failure raises
-    from poll (headless: its parse); the session's is its returncode (an in_process run that raised:
-    1).
-    """
-
-    def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
-        ...
-
-    def returncode(self, timeout: float) -> int | None:
-        """The exit status, waiting at most `timeout` s; None while it runs; negative: killed by
-        that signal.
-        """
-        ...
-
-    def state(self) -> str:
-        """One of STATES."""
-        ...
-
-    def send(self, text: str, /) -> None:
-        """Submits `text` to the session."""
-        ...
-
-    def screen(self, lines: int | None = None, /) -> str:
-        """The session's visible text."""
-        ...
-
-    def stop(self) -> None:
-        """Ends the session; idempotent."""
-        ...
-
-
-class Handle:
-    def __init__(
-        self,
-        runtime: str,
-        mode: str,
-        spec: Spec,
-        *,
-        host: Mode,
-        info: SessionInfo,
-        idle_timeout: float | None,
-        reply: str | None = None,
-        blocked: bool = False,
-        adapter: Adapter | None = None,
-        driver: "Driver | None" = None,
-        clock=None,
-    ):
-        """spec: its sid, name (a tui session's) and workdir."""
-        self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
-        self._host, self._info, self._idle = host, info, idle_timeout
-        self._adapter = adapter
-        self._driver = driver
-        self.clock = time.monotonic if clock is None else clock
-        self._channel = records.path(spec.workdir)
-        self._reply = reply
-        self._queue: deque = deque()
-        self._closed = False
-        self._ended = False
-        self._blocked = blocked
-
-    def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
-        last = self.clock()
-        try:
-            while not self._ended:
-                if self._queue:
-                    event = self._queue.popleft()
-                    self._record(event)
-                    last = self.clock()
-                    self._blocked = (
-                        isinstance(event, Blocked) or self._blocked and isinstance(event, Stderr)
-                    )
-                    yield event
-                    continue
-                wait = POLL
-                if self._idle is not None and not self._blocked:
-                    wait = min(POLL, last + self._idle - self.clock())
-                if self._closed:
-                    code = self._host.returncode(max(wait, 0))
-                    if code is not None:
-                        self._ended = True
-                        yield Exited(code)
-                        continue
-                elif wait > 0:
-                    found, self._closed = self._host.poll(wait)
-                    self._queue.extend(e for e in found if not isinstance(e, Exited))
-                    continue
-                if wait <= 0 and self._idle is not None:
-                    last = self.clock()
-                    yield IdleTimeout(self._idle)
-        except GeneratorExit:  # the caller closed this iterator; the session goes on
-            raise
-        except BaseException:
-            self._ended = True
-            self._host.stop()
-            raise
-
-    def _record(self, event: Event | Stderr) -> None:
-        if isinstance(event, SessionBound):
-            records.note(
-                self._channel,
-                "client_session",
-                sid=self.sid,
-                client_id=event.native_id,
-                durable=True,
-            )
-            self._info = replace(self._info, native_id=event.native_id)
-            self._refresh_metadata()
-        elif isinstance(event, Stderr):
-            records.note(self._channel, "stderr", best_effort=True, text=event.text)
-        elif isinstance(event, Reply):
-            self._reply = event.text
-        elif isinstance(event, TurnEnd) and event.reply:
-            self._reply = event.reply
-
-    def send(self, text: str) -> None:
-        self._host.send(text)
-
-    def state(self) -> str:
-        return self._host.state()
-
-    def screen(self, lines: int | None = None) -> str:
-        return self._host.screen(lines)
-
-    def stop(self) -> None:
-        self._host.stop()
-
-    def _refresh_metadata(self) -> None:
-        if self._adapter is None or not self._info.native_id:
-            return
-        try:
-            resolved = self._adapter.session_metadata(self._info)
-            info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
-        except Exception:
-            return
-        if info != self._info:
-            self._info = info
-            records.note(
-                self._channel,
-                "session_metadata",
-                best_effort=True,
-                sid=self.sid,
-                transcript=info.transcript,
-                resume=info.resume,
-            )
-
-    def info(self) -> SessionInfo:
-        self._refresh_metadata()
-        return self._info
-
-    @property
-    def reply(self) -> str | None:
-        return self._reply
-
-    def usage(self) -> Usage | None:
-        return self._driver.usage(self.runtime) if self._driver is not None else None
-
-
-def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
-    return {**env, **launch.env, "PWD": cwd}
-
-
-def _identity_drop(registry: registry.Registry) -> frozenset[str]:
-    """Each Adapter's identity_env, and its child_defaults at their value inside it."""
-    adapters = [registry.adapter(name) for name in registry.configured()]
-    drop = {key for a in adapters for key in a.identity_env}
-    for a in adapters:
-        if a.session_env and a.session_env in os.environ:
-            drop.update(k for k, v in a.child_defaults.items() if os.environ.get(k) == v)
-    return frozenset(drop)
-
-
-def _no_tui_keys(name, events) -> None:
-    for key, value in (("name", name), ("events", events)):
-        if value is not None:
-            raise ConfigError.tui_option(key)
-
-
-def _no_tui_fields(spec: Spec) -> Spec:
-    if spec.protect:
-        raise ConfigError.protect_mode()
-    return spec
-
-
-class _LaunchSteps(ABC):
-    """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd
-    for begin().
-    """
-
-    runtime: str
-
-    @abstractmethod
-    def launch(self, prompt: str, request: SessionRequest) -> Launch: ...
-
-    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
-        spec = request.spec
-        assert spec.sid is not None
-        self.command = launch = self.launch(prompt, request)
-        if not launch.argv:
-            raise ConfigError.empty_command(self.runtime)
-        self.cwd = launch.cwd or spec.access.cwd or spec.workdir
-        return SessionInfo(
-            spec.sid,
-            "",
-            self.cwd,
-            spec.access.project if launch.project is None else launch.project,
-            launch.transcript,
-            launch.resume,
-        )
-
-
-class _HeadlessSteps(_LaunchSteps):
-    name = None
-
-    def specced(self, spec: Spec) -> Spec:
-        self.drop = _identity_drop(self.registry)
-        return _no_tui_fields(spec)
-
-    @staticmethod
-    def run_of(adapter: Adapter) -> Headless | None:
-        return adapter.headless()
-
-    def __init__(
-        self,
-        run: Headless,
-        runtime: str,
-        spec: Spec,
-        events,
-        *,
-        registry: registry.Registry,
-        host=tmux_host,
-    ):
-        self.registry = registry
-        _no_tui_keys(spec.name, events)
-        self.run, self.runtime = run, runtime
-
-    def launch(self, prompt: str, request: SessionRequest) -> Launch:
-        return self.run.launch(prompt, request)
-
-    def prepared(
-        self, info: SessionInfo, workdir: str
-    ) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
-        return contextlib.nullcontext(headless.HeadlessMode(self.run))
-
-    def begin(self, host: headless.HeadlessMode) -> None:
-        launch = self.command
-        try:
-            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd, self.drop))
-        except (OSError, ValueError) as e:
-            raise DriverError.start_command(launch.argv[0], e) from e
-
-
-class _TuiSteps(_LaunchSteps):
-    @staticmethod
-    def run_of(adapter: Adapter) -> Tui | None:
-        return adapter.tui()
-
-    def __init__(
-        self,
-        run: Tui,
-        runtime: str,
-        spec: Spec,
-        events,
-        *,
-        registry: registry.Registry,
-        host=tmux_host,
-    ):
-        self.registry = registry
-        self.run, self.runtime, self.settings = run, runtime, registry.tui()
-        self.host = host
-        assert spec.sid is not None
-        self.name = _name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
-        self.events = _events(events, host=self.host)
-        self.tmux = self.host.tmux_path()
-        if self.tmux is None:
-            raise DriverError.missing_tmux()
-
-    def specced(self, spec: Spec) -> Spec:
-        self.drop = _identity_drop(self.registry)
-        hooks = (
-            self.tmux,
-            *([self.events] if self.events else []),
-            os.path.expanduser(tui.TUI_DIR),
-        )
-        return replace(spec, name=self.name, protect=(*spec.protect, *hooks))
-
-    def launch(self, prompt: str, request: SessionRequest) -> Launch:
-        return self.run.launch(prompt, request, tui.hook_argv(tui.session_dir(self.name)))
-
-    @contextlib.contextmanager
-    def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
-        with tui.lock(self.name):
-            yield tui.TuiMode.prepare(
-                self.name,
-                self.run,
-                info,
-                self.events,
-                runtime=self.runtime,
-                workdir=workdir,
-                tmux=self.tmux,
-                host=self.host,
-            )
-
-    def begin(self, host: tui.TuiMode) -> None:
-        launch = self.command
-        host.begin(
-            launch.argv,
-            cwd=self.cwd,
-            env=_child_env(launch, self.cwd, self.drop),
-            status_line=self.settings.status_line,
-        )
-
-
-class _InProcessSteps:
-    name = None
-    specced = staticmethod(_no_tui_fields)
-
-    @staticmethod
-    def run_of(adapter: Adapter) -> InProcess | None:
-        return adapter.in_process()
-
-    def __init__(
-        self,
-        run: InProcess,
-        runtime: str,
-        spec: Spec,
-        events,
-        *,
-        registry: registry.Registry,
-        host=tmux_host,
-    ):
-        self.registry = registry
-        _no_tui_keys(spec.name, events)
-        self.run = run
-
-    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
-        spec = request.spec
-        assert spec.sid is not None
-        self.run.check(request)
-        self.args = prompt, request
-        return SessionInfo(
-            spec.sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", ""
-        )
-
-    def prepared(
-        self, info: SessionInfo, workdir: str
-    ) -> contextlib.AbstractContextManager[in_process.InProcessMode]:
-        return contextlib.nullcontext(in_process.InProcessMode(self.run))
-
-    def begin(self, host: in_process.InProcessMode) -> None:
-        host.begin(*self.args)
-
-
-_STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
-
-
-def _idle(idle_timeout) -> None:
-    if idle_timeout is not None and (
-        isinstance(idle_timeout, bool)
-        or not isinstance(idle_timeout, (int, float))
-        or not idle_timeout > 0
-    ):
-        raise ConfigError.idle_timeout(idle_timeout)
-
-
-def _name(name) -> str:
-    if not isinstance(name, str) or not tmux_host.NAME.fullmatch(name):
-        raise ConfigError.session_name(name)
-    return name
-
-
-def _events(events, *, host=tmux_host) -> str | None:
-    if events is None:
-        return None
-    if not isinstance(events, str) or not events.isprintable():
-        raise ConfigError.events_path(events)
-    try:
-        return host.events_file(events)
-    except TuiError as e:
-        raise ConfigError(str(e)) from None
 
 
 def _row(found: Mapping, own: str | None) -> SessionRow:
@@ -472,17 +71,6 @@ def _row(found: Mapping, own: str | None) -> SessionRow:
         last_lines=found["last_lines"],
         own=found["name"] == own,
     )
-
-
-def _placement(split, split_from, opener=None) -> None:
-    if split is not None and split not in tmux_host.SPLITS:
-        raise ConfigError.split_direction(split)
-    if split_from is not None and not (
-        isinstance(split_from, str) and tmux_host.NAME.fullmatch(split_from)
-    ):
-        raise ConfigError.split_source(split_from)
-    if opener is not None and not (isinstance(opener, str) and tmux_host.OPENER.fullmatch(opener)):
-        raise ConfigError.opener(opener)
 
 
 def _probe_dir() -> str | None:
@@ -544,12 +132,17 @@ class Driver:
         if spec.sid is not None and resume is not None and spec.sid != resume:
             raise ConfigError.resume_mismatch(spec.sid, resume)
         adapter = self.registry.adapter(runtime)
-        kind = _STEPS[mode]
+        kind = STEPS[mode]
         run = kind.run_of(adapter)
         if run is None:
             raise ConfigError.runtime_mode(runtime, mode)
         spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
-        steps = kind(run, runtime, spec, events, registry=self.registry, host=self.host)
+        steps = kind(
+            run,
+            LaunchContext(
+                runtime=runtime, spec=spec, events=events, registry=self.registry, host=self.host
+            ),
+        )
         check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
         spec = steps.specced(spec)
         if spec.access.commands and adapter.runtime_note:
@@ -571,12 +164,10 @@ class Driver:
             runtime,
             mode,
             replace(spec, name=steps.name),
-            host=host,
-            idle_timeout=idle_timeout,
-            info=info,
-            adapter=adapter,
-            driver=self,
-            clock=self.clock,
+            state=HandleState(info=info, idle_timeout=idle_timeout),
+            services=HandleServices(
+                host=host, adapter=adapter, usage=lambda: self.usage(runtime), clock=self.clock
+            ),
         )
 
     def attach(self, name: str, idle_timeout: float | None = None) -> Handle:
@@ -606,14 +197,15 @@ class Driver:
             state["runtime"],
             "tui",
             Spec(workdir=state["workdir"], sid=state["sid"], name=name),
-            host=host,
-            info=info,
-            idle_timeout=idle_timeout,
-            reply=host.reply,
-            blocked=host.blocked,
-            adapter=adapter,
-            driver=self,
-            clock=self.clock,
+            state=HandleState(
+                info=info, idle_timeout=idle_timeout, reply=host.reply, blocked=host.blocked
+            ),
+            services=HandleServices(
+                host=host,
+                adapter=adapter,
+                usage=lambda: self.usage(state["runtime"]),
+                clock=self.clock,
+            ),
         )
         handle.info()
         return handle
