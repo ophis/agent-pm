@@ -20,6 +20,7 @@ import unittest
 import unittest.mock
 
 from agent_pm.manager.engine import roster
+from agent_pm.manager.engine.types import Entry
 from agent_pm.session import DriverError, SessionRow
 from agent_pm.utils import LOCAL, read_project
 
@@ -319,8 +320,10 @@ class ManagerTest(Base):
 CHILD = """
 import sys
 from agent_pm.manager.engine import roster
+from agent_pm.manager.engine.types import Entry
 for i in range(15):
-    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
+    spec = Entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"])
+    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry(spec))
 """
 
 LEASE_CHILD = """
@@ -381,7 +384,9 @@ VALID = {
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
-RESUME_1 = "-P -m agent_pm.manager.engine.crew or an absolute path named crew.py, drive.py or router.py"
+RESUME_1 = (
+    "-P -m agent_pm.manager.engine.crew or an absolute path named crew.py, drive.py or router.py"
+)
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 ID = "null or a printable string of 1–200 characters without whitespace"
@@ -412,7 +417,11 @@ INVALID = [
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
     ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
     ("resume", ["/p", "-P", "-m"], f"resume[1]: '-P': want {RESUME_1}"),
-    ("resume", ["/p", "-P", "-m", "agent_pm.manager.engine.roster"], f"resume[1]: '-P': want {RESUME_1}"),
+    (
+        "resume",
+        ["/p", "-P", "-m", "agent_pm.manager.engine.roster"],
+        f"resume[1]: '-P': want {RESUME_1}",
+    ),
     ("resume", ["/p", "-m", "agent_pm.manager.engine.crew"], f"resume[1]: '-m': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"),
     ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
@@ -856,24 +865,26 @@ class RosterTest(Base):
         self.assertEqual(os.listdir(os.path.join(target, "m1")), [])
 
     def test_entry_defaults_and_validity(self):
-        e = roster.entry("worker", sid=SID, cwd="/w", resume=good()["resume"])
+        e = roster.entry(Entry("worker", sid=SID, cwd="/w", resume=good()["resume"]))
         self.assertEqual(sorted(e), sorted(good()))
         self.assertEqual({**e, "started": WHEN}, good())
         self.assertEqual(e["state"], "working")
         self.assertIsNotNone(datetime.datetime.fromisoformat(e["started"]).tzinfo)
         full = roster.entry(
-            "role",
-            sid=None,
-            cwd="/w",
-            resume=["/p", "/x/drive.py"],
-            note="n",
-            opener="mgr",
-            pane="%3",
-            split="right",
-            split_from="a",
-            tui="t",
-            state="done",
-            started=WHEN,
+            Entry(
+                "role",
+                sid=None,
+                cwd="/w",
+                resume=["/p", "/x/drive.py"],
+                note="n",
+                opener="mgr",
+                pane="%3",
+                split="right",
+                split_from="a",
+                tui="t",
+                state="done",
+                started=WHEN,
+            )
         )
         self.assertEqual(
             full,
@@ -891,10 +902,10 @@ class RosterTest(Base):
             ),
         )
         with self.assertRaises(roster.RosterError) as cm:
-            roster.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
+            roster.entry(Entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"]))
         self.assertEqual(str(cm.exception), "entry: " + KIND.format("boss"))
         with self.assertRaisesRegex(roster.RosterError, "^entry: cwd: 'rel': want"):
-            roster.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"])
+            roster.entry(Entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"]))
 
     def test_set_entry_and_record_validate_replace_and_leave_the_dict_on_a_fault(self):
         for setter in (roster.set_entry, roster.record):
@@ -988,7 +999,9 @@ class RosterTest(Base):
     def test_recovery_runs_the_crew_module_for_a_crew_py_or_legacy_workers_py_entry(self):
         self.assertEqual(
             roster.CREW,
-            os.path.realpath(os.path.join(SRC["manager"], "agent_pm", "manager", "engine", "crew.py")),
+            os.path.realpath(
+                os.path.join(SRC["manager"], "agent_pm", "manager", "engine", "crew.py")
+            ),
         )
         self.assertTrue(os.path.isfile(roster.CREW))
         for script in ("/old/version/workers.py", "/old/skills/tmux/scripts/crew.py"):

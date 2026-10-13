@@ -22,6 +22,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.manager.engine import crew, roster
+from agent_pm.manager.engine.types import Entry
 from agent_pm.utils import LOCAL
 
 from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
@@ -325,8 +326,7 @@ class Live(Case):
         return not any(self.live(n) for n in names)
 
     def dumping(self, runtime: str, fake: str) -> str:
-        """Puts a `runtime` on PATH that logs its argv and env, then runs `fake`; returns that log.
-        """
+        """Puts a `runtime` on PATH that logs its argv and env, then runs `fake`; returns that log."""
         path = os.path.join(self.root, f"{runtime}.env.jsonl")
         q = shlex.quote
         with open(os.path.join(self.server.bin, runtime), "w") as f:
@@ -347,7 +347,7 @@ class Live(Case):
         for session in sessions:
             self.ok(self.server.tmux("new-session", "-d", "-s", session, *live_tmux.IDLE))
         resume = [sys.executable, os.path.join(self.root, "drive.py"), f"--role={ROLE}"]
-        e = roster.entry("role", sid=ROLE_SID, cwd=work, resume=resume, tui=ROLE_TUI)
+        e = roster.entry(Entry("role", sid=ROLE_SID, cwd=work, resume=resume, tui=ROLE_TUI))
         roster.put(self.directory, ROLE_DRIVER, e)
         return e
 

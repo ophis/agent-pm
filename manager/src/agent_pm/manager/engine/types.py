@@ -20,6 +20,24 @@ class Spec:
     client: str | None = None
     overrides: tuple[str, ...] = ()
     resume: str | None = None
+    split: str | None = None
+    split_from: str | None = None
+
+
+@dataclass(frozen=True)
+class Entry:
+    kind: str
+    sid: str | None
+    cwd: str
+    resume: list[str]
+    note: str | None = None
+    opener: str | None = None
+    pane: str | None = None
+    split: str | None = None
+    split_from: str | None = None
+    tui: str | None = None
+    state: str = "working"
+    started: str | None = None
 
 
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"

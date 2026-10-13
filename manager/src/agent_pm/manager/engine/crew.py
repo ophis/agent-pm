@@ -32,6 +32,7 @@ from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import (
     CommandArgumentError,
+    Entry,
     NotAWorker,
     Refused,
     RosterError,
@@ -199,13 +200,15 @@ def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> 
     try:
         with _leased(directory, own, driver=driver) as r:
             value = roster.entry(
-                "worker",
-                sid=record["sid"],
-                cwd=record["cwd"],
-                resume=resume,
-                note=note,
-                split=split,
-                split_from=split_from,
+                Entry(
+                    "worker",
+                    sid=record["sid"],
+                    cwd=record["cwd"],
+                    resume=resume,
+                    note=note,
+                    split=split,
+                    split_from=split_from,
+                )
             )
             roster.record(r, name, value if row is None else _placed(value, row))
     except WorkersError as e:
@@ -239,10 +242,8 @@ def _launch(
     record: dict,
     spec: SessionSpec,
     own: str | None,
+    worker: Spec,
     *,
-    prompt: str,
-    resume: str | None,
-    note,
     driver=None,
 ) -> None:
     driver = _configure() if driver is None else driver
@@ -251,9 +252,9 @@ def _launch(
         handle = driver.start(
             record["runtime"],
             "tui",
-            prompt,
+            worker.prompt or "",
             spec,
-            options=StartOptions(resume=resume, idle_timeout=EARLY, events=record["events"]),
+            options=StartOptions(resume=worker.resume, idle_timeout=EARLY, events=record["events"]),
         )
     path = os.path.join(spec.workdir, RECORD)
     try:
@@ -265,7 +266,7 @@ def _launch(
     print(f"tui: session {name}: {driver.attach_command(name)}", file=sys.stderr)
     with _driver():
         driver.show(name, split=record["split"], split_from=record["split_from"])
-    _enroll(record, own, note, driver=driver)
+    _enroll(record, own, None if worker.note is None else _note_text(worker.note), driver=driver)
     _early(name, record["runtime"], handle, driver=driver)
 
 
@@ -275,16 +276,15 @@ def start(
     directory: str,
     own: str | None,
     own_runtime: str | None = None,
-    split: str | None = None,
-    split_from: str | None = None,
     driver=None,
 ) -> str:
     _check(spec.name)
-    if split_from is not None:
-        _check(split_from)
+    if spec.split_from is not None:
+        _check(spec.split_from)
     if spec.resume is not None and not roster.SID.fullmatch(spec.resume):
         raise WorkersError.resume_sid(spec.resume)
-    note = None if spec.note is None else _note_text(spec.note)
+    if spec.note is not None:
+        _note_text(spec.note)
     env = dict(_override(item) for item in spec.overrides)
     with _leased(directory, own, write=False, driver=driver):
         pass
@@ -301,17 +301,15 @@ def start(
         "env": env,
         "events": roster.events(directory, create=False),
         "manager": os.path.abspath(directory),
-        "split": split,
-        "split_from": split_from,
+        "split": spec.split,
+        "split_from": spec.split_from,
     }
     workdir = _worker_dir(record["sid"])
     _launch(
         record,
         _spec(record, workdir),
         own,
-        prompt=spec.prompt or "",
-        resume=spec.resume,
-        note=note,
+        spec,
         driver=driver,
     )
     return record["sid"]
@@ -377,7 +375,7 @@ def restart(name: str, *, own: str | None, driver=None) -> None:
     spec = _spec(record, workdir)
     with _driver():
         driver.close(name)
-    _launch(record, spec, own, prompt="", resume=row.sid, note=None, driver=driver)
+    _launch(record, spec, own, Spec(name, record["cwd"], resume=row.sid), driver=driver)
 
 
 def reply(name: str, *, driver=None) -> str | None:
@@ -477,7 +475,7 @@ def _placed(e: dict, row: SessionRow) -> dict:
     for key in ("pane", "opener"):
         if getattr(row, key) is not None:
             with contextlib.suppress(RosterError):
-                e = roster.entry(**{**e, key: getattr(row, key)})
+                e = roster.entry(Entry(**{**e, key: getattr(row, key)}))
     return e
 
 
@@ -648,7 +646,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             yield False, f"resumed {name}: not run: {err.strerror or err}"
             continue
         # e.g. Popen's ValueError for an argv item (a NUL, a lone surrogate)
-        except Exception as err:
+        except (ValueError, TypeError) as err:
             yield False, f"resumed {name}: not run: {type(err).__name__}: {err}"
             continue
         last = next(
@@ -689,7 +687,7 @@ def stop(directory: str, own: str | None, name: str, *, driver=None) -> None:
         roster.stop(r, name, driver=driver)
 
 
-def opened(own: str, live: dict[str, SessionRow], entries=lambda session: {}) -> list[str]:
+def opened(own: str, live: dict[str, SessionRow], entries=lambda _session: {}) -> list[str]:
     depth, level, todo = {}, 0, {own}
     while todo:
         level += 1
@@ -952,14 +950,14 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
                 client=a.client,
                 overrides=tuple(a.env),
                 resume=a.resume,
+                split=a.split,
+                split_from=a.split_from,
             )
             sid = start(
                 spec,
                 directory=directory,
                 own=None if caller is None else caller.name,
                 own_runtime=None if caller is None else caller.runtime,
-                split=a.split,
-                split_from=a.split_from,
                 driver=driver,
             )
             print(f"{a.name} {sid}")
