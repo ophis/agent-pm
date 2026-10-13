@@ -9,7 +9,7 @@ from types import ModuleType
 
 from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.types import Adapter, Headless, InProcess, Tui
-from agent_pm.session.engine.runtime.validation import _events, _name
+from agent_pm.session.engine.runtime.validation import validate_events, validate_name
 from agent_pm.session.engine.types import (
     ConfigError,
     DriverError,
@@ -33,7 +33,7 @@ class LaunchContext:
     host: ModuleType = tmux_host
 
 
-def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
+def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
     return {**env, **launch.env, "PWD": cwd}
 
@@ -114,7 +114,7 @@ class _HeadlessSteps(_LaunchSteps):
     def begin(self, host: headless.HeadlessMode) -> None:
         launch = self.command
         try:
-            host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd, self.drop))
+            host.begin(launch.argv, cwd=self.cwd, env=child_env(launch, self.cwd, self.drop))
         except (OSError, ValueError) as e:
             raise DriverError.start_command(launch.argv[0], e) from e
 
@@ -130,8 +130,10 @@ class _TuiSteps(_LaunchSteps):
         self.host = context.host
         spec = context.spec
         assert spec.sid is not None
-        self.name = _name(f"{context.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
-        self.events = _events(context.events, host=self.host)
+        self.name = validate_name(
+            f"{context.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name
+        )
+        self.events = validate_events(context.events, host=self.host)
         self.tmux = self.host.tmux_path()
         if self.tmux is None:
             raise DriverError.missing_tmux()
@@ -155,10 +157,9 @@ class _TuiSteps(_LaunchSteps):
                 self.name,
                 self.run,
                 info,
-                self.events,
-                runtime=self.runtime,
-                workdir=workdir,
-                tmux=self.tmux,
+                setup=tui.TuiSetup(
+                    events=self.events, runtime=self.runtime, workdir=workdir, tmux=self.tmux
+                ),
                 host=self.host,
             )
 
@@ -167,7 +168,7 @@ class _TuiSteps(_LaunchSteps):
         host.begin(
             launch.argv,
             cwd=self.cwd,
-            env=_child_env(launch, self.cwd, self.drop),
+            env=child_env(launch, self.cwd, self.drop),
             status_line=self.settings.status_line,
         )
 

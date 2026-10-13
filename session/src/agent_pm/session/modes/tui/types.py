@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 
 from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import (
@@ -29,7 +30,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.errors.types import TuiError
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.hooks.types import HookError
-from agent_pm.utils import STATE, read_regular
+from agent_pm.utils import STATE, json_records, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
@@ -116,16 +117,8 @@ def _tui_dir() -> None:
 
 
 def _records(data: bytes) -> Iterator[tuple[str, dict]]:
-    for line in data.split(b"\n"):
-        try:
-            record = json.loads(line)
-        except (ValueError, RecursionError):
-            continue
-        label, payload = (
-            (record.get("label"), record.get("payload"))
-            if isinstance(record, dict)
-            else (None, None)
-        )
+    for record in json_records(data.split(b"\n")):
+        label, payload = record.get("label"), record.get("payload")
         if isinstance(label, str) and isinstance(payload, dict):
             yield label, payload
 
@@ -134,14 +127,21 @@ def _exit(status) -> int | None:
     return -signal.SIGHUP if status is None else status if isinstance(status, int) else None
 
 
+@dataclass(frozen=True, kw_only=True)
+class TuiSetup:
+    runtime: str
+    workdir: str
+    tmux: str
+    events: str | None = None
+
+
 class TuiMode:
     """One tui session, api.py's Mode, acting on its session's pane by id."""
 
-    def __init__(
-        self, name: str, run: Tui, sid: str, events: str | None, runtime: str, *, host=tmux_host
-    ):
+    def __init__(self, name: str, run: Tui, sid: str, setup: TuiSetup, *, host=tmux_host):
         self.host = host
-        self.name, self.run, self.sid, self.events, self.runtime = name, run, sid, events, runtime
+        self.name, self.run, self.sid = name, run, sid
+        self.events, self.runtime = setup.events, setup.runtime
         self.dir = session_dir(name)
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
         self.bound, self.reply, self.blocked = "", None, False
@@ -154,25 +154,22 @@ class TuiMode:
         name: str,
         run: Tui,
         info: SessionInfo,
-        events: str | None,
         *,
-        runtime: str,
-        workdir: str,
-        tmux: str,
+        setup: TuiSetup,
         host=tmux_host,
     ) -> "TuiMode":
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
-            "runtime": runtime,
+            "runtime": setup.runtime,
             "sid": info.sid,
-            "workdir": workdir,
+            "workdir": setup.workdir,
             "cwd": info.cwd,
             "project": info.project,
             "transcript": info.transcript,
             "resume": info.resume,
-            "events": events,
+            "events": setup.events,
             "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
-            "tmux_path": tmux,
+            "tmux_path": setup.tmux,
             **run.hook_state(),
         }
         for field, check in tui_hook.SESSION_STATE.items():
@@ -184,7 +181,7 @@ class TuiMode:
         if status == tmux_host.UNKNOWN:
             raise DriverError.unknown_tui(name)
         _tui_dir()
-        mode = cls(name, run, info.sid, events, runtime, host=host)
+        mode = cls(name, run, info.sid, setup, host=host)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
@@ -248,7 +245,18 @@ class TuiMode:
             tagged = pane = None
         if tagged != state["sid"]:
             raise DriverError.no_tui_session(name)
-        mode = cls(name, run, state["sid"], state["events"], state["runtime"], host=host)
+        mode = cls(
+            name,
+            run,
+            state["sid"],
+            TuiSetup(
+                runtime=state["runtime"],
+                workdir=state["workdir"],
+                tmux=state["tmux_path"],
+                events=state["events"],
+            ),
+            host=host,
+        )
         mode._pane = pane
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1

@@ -11,7 +11,7 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 if TYPE_CHECKING:
     from agent_pm.session.hosts.tmux.commands import (
-        _name,
+        session_name,
     )
     from agent_pm.session.hosts.tmux.errors.types import (
         TuiError,
@@ -26,7 +26,7 @@ else:
     _commands = _load_file(
         "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
     )
-    _name = _commands._name
+    session_name = _commands.session_name
     _errors_types = _load_file(
         "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
     )
@@ -39,16 +39,16 @@ else:
     SPLITS = _model_types.SPLITS
 
 
-def _layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:
+def validate_layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:
     if split is not None and split not in SPLITS:
         raise TuiError.invalid_split(split, SPLITS)
     if split_from is not None:
-        _name(split_from)
+        session_name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError.invalid_opener(opener)
 
 
-def _per_column(per_column: int | None) -> None:
+def validate_per_column(per_column: int | None) -> None:
     if per_column is not None and (
         isinstance(per_column, bool)
         or not isinstance(per_column, int)
@@ -57,6 +57,6 @@ def _per_column(per_column: int | None) -> None:
         raise TuiError.invalid_per_column(per_column)
 
 
-def _retile(retile: str | None) -> None:
+def validate_retile(retile: str | None) -> None:
     if retile is not None and retile not in RETILES:
         raise TuiError.invalid_retile(retile, RETILES)

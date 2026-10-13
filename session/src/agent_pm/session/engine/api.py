@@ -20,16 +20,21 @@ from dataclasses import replace
 from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.selection import check as check_selection
 from agent_pm.session.engine import records
-from agent_pm.session.engine.launch.types import STEPS, LaunchContext, _child_env
+from agent_pm.session.engine.launch.types import STEPS, LaunchContext, child_env
 from agent_pm.session.engine.lifecycle.types import (
     Handle,
     HandleServices,
     HandleState,
-    _diagnostics,
+    diagnostics,
 )
-from agent_pm.session.engine.records import holds, session_record
+from agent_pm.session.engine.records import holds as holds
+from agent_pm.session.engine.records import session_record as session_record
 from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
-from agent_pm.session.engine.runtime.validation import _idle, _name, _placement
+from agent_pm.session.engine.runtime.validation import (
+    validate_idle_timeout,
+    validate_name,
+    validate_placement,
+)
 from agent_pm.session.engine.types import (
     ConfigError,
     DriverError,
@@ -46,16 +51,6 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.errors.types import TuiError
 from agent_pm.session.modes.tui import types as tui
 from agent_pm.utils import STATE, printable_abs
-
-__all__ = [
-    "Driver",
-    "Handle",
-    "MODES",
-    "SIGNALS",
-    "holds",
-    "note",
-    "session_record",
-]
 
 MODES = ("headless", "tui", "in_process")
 PROBE_DIR = f"{STATE}/probe"
@@ -105,7 +100,7 @@ class Driver:
         services: DriverServices | None = None,
     ):
         services = DriverServices() if services is None else services
-        self._logger = _diagnostics()
+        self._logger = diagnostics()
         self.host, self.probe, self.clock = services.host, services.probe, services.clock
         self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
 
@@ -133,7 +128,7 @@ class Driver:
         resume, idle_timeout, events = options.resume, options.idle_timeout, options.events
         if mode not in MODES:
             raise ConfigError.mode(MODES, mode)
-        _idle(idle_timeout)
+        validate_idle_timeout(idle_timeout)
         if resume is not None and not (isinstance(resume, str) and resume):
             raise ConfigError.resume(resume)
         if spec.sid is not None and resume is not None and spec.sid != resume:
@@ -185,8 +180,8 @@ class Driver:
         """Tui session `name`'s Handle from any process: its reply the last turn's, its events from
         the next hook record.
         """
-        _name(name)
-        _idle(idle_timeout)
+        validate_name(name)
+        validate_idle_timeout(idle_timeout)
         state = tui.read_state(name)
         try:
             adapter = self.registry.adapter(state["runtime"])
@@ -231,8 +226,8 @@ class Driver:
         """Opens a pane on session `name` per the tui settings; None, else logs the reason and
         returns attach_command(name).
         """
-        _name(name)
-        _placement(split, split_from, opener)
+        validate_name(name)
+        validate_placement(split, split_from, opener)
         settings = self.registry.tui()
         if self.host.status(name) is None:
             raise DriverError.no_tmux_session(name)
@@ -262,9 +257,7 @@ class Driver:
         cwd = launch.cwd or _probe_dir()
         if cwd is None:
             return None
-        output = self.probe(
-            launch.argv, cwd=cwd, env=_child_env(launch, cwd), timeout=PROBE_TIMEOUT
-        )
+        output = self.probe(launch.argv, cwd=cwd, env=child_env(launch, cwd), timeout=PROBE_TIMEOUT)
         if output is None:
             return None
         try:
@@ -327,13 +320,13 @@ class Driver:
 
     def close(self, name: str) -> None:
         """Kills tui session `name` (absent is fine), then removes its session dir."""
-        tui.close(_name(name), host=self.host)
+        tui.close(validate_name(name), host=self.host)
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
         """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found;
         None only with split_from.
         """
-        _placement(split, split_from)
+        validate_placement(split, split_from)
         if split_from is not None and self.host.status(split_from) is None:
             raise ConfigError.missing_tmux_session(split_from)
         try:
@@ -348,7 +341,7 @@ class Driver:
             raise DriverError.no_anchor(e, split_from) from None
 
     def attach_command(self, name: str) -> str:
-        return self.host.attach_command(_name(name))
+        return self.host.attach_command(validate_name(name))
 
     def detach(
         self,
@@ -362,7 +355,7 @@ class Driver:
         """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns
         once argv has exec'd.
         """
-        _name(name)
+        validate_name(name)
         if (
             not isinstance(argv, (list, tuple))
             or not argv
@@ -373,7 +366,7 @@ class Driver:
             raise ConfigError.cwd(cwd)
         if not os.path.isdir(cwd):
             raise ConfigError.cwd_directory(cwd)
-        _placement(None, None, opener)
+        validate_placement(None, None, opener)
         try:
             self.host.detach(
                 name,

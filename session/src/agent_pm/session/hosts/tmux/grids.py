@@ -17,25 +17,25 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 if TYPE_CHECKING:
     from agent_pm.session.hosts.tmux.anchors import (
-        _clients,
-        _window,
+        list_clients,
         own_session,
+        pane_window,
     )
     from agent_pm.session.hosts.tmux.commands import (
-        _tmux,
-        _tmux_ok,
+        call_tmux,
+        checked_tmux,
     )
     from agent_pm.session.hosts.tmux.errors.types import (
         TuiError,
     )
     from agent_pm.session.hosts.tmux.layout import (
-        _grid_layout,
-        _grid_tree,
-        _leaf_pane,
-        _leaves,
-        _parse_layout,
-        _render_layout,
-        _swaps,
+        grid_layout,
+        grid_tree,
+        layout_leaves,
+        leaf_pane,
+        pane_swaps,
+        parse_layout,
+        render_layout,
     )
     from agent_pm.session.hosts.tmux.model.types import (
         GRID_BUSY,
@@ -67,33 +67,33 @@ if TYPE_CHECKING:
         PaneServices,
     )
     from agent_pm.session.hosts.tmux.validation import (
-        _per_column,
+        validate_per_column,
     )
 else:
     _load_file = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["load_file"]
     _anchors = _load_file(
         "agent_pm.session.hosts.tmux.anchors", os.path.join(DIRECTORY, "anchors.py")
     )
-    _clients = _anchors._clients
-    _window = _anchors._window
+    list_clients = _anchors.list_clients
     own_session = _anchors.own_session
+    pane_window = _anchors.pane_window
     _commands = _load_file(
         "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
     )
-    _tmux = _commands._tmux
-    _tmux_ok = _commands._tmux_ok
+    call_tmux = _commands.call_tmux
+    checked_tmux = _commands.checked_tmux
     _errors_types = _load_file(
         "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
     )
     TuiError = _errors_types.TuiError
     _layout = _load_file("agent_pm.session.hosts.tmux.layout", os.path.join(DIRECTORY, "layout.py"))
-    _grid_layout = _layout._grid_layout
-    _grid_tree = _layout._grid_tree
-    _leaf_pane = _layout._leaf_pane
-    _leaves = _layout._leaves
-    _parse_layout = _layout._parse_layout
-    _render_layout = _layout._render_layout
-    _swaps = _layout._swaps
+    grid_layout = _layout.grid_layout
+    grid_tree = _layout.grid_tree
+    layout_leaves = _layout.layout_leaves
+    leaf_pane = _layout.leaf_pane
+    pane_swaps = _layout.pane_swaps
+    parse_layout = _layout.parse_layout
+    render_layout = _layout.render_layout
     _model_types = _load_file(
         "agent_pm.session.hosts.tmux.model.types", os.path.join(DIRECTORY, "model/types.py")
     )
@@ -127,10 +127,10 @@ else:
     _validation = _load_file(
         "agent_pm.session.hosts.tmux.validation", os.path.join(DIRECTORY, "validation.py")
     )
-    _per_column = _validation._per_column
+    validate_per_column = _validation.validate_per_column
 
 
-def _grid(
+def find_grid(
     opener: str, sessions: list[list[str]], proc, *, own: bool | None
 ) -> tuple[str, str, Anchor, str] | None:
     """(grid window, manager, pane to split, side) when the opener is in a grid or a root a client
@@ -141,15 +141,15 @@ def _grid(
     if row is None:
         return None
     try:
-        found = _window(row[3], None, proc) if PANE.fullmatch(row[3]) else None
+        found = pane_window(row[3], None, proc) if PANE.fullmatch(row[3]) else None
         if found is None or found[1] is None:
-            clients = [] if OPENER.fullmatch(row[2]) else _clients(opener, proc)
+            clients = [] if OPENER.fullmatch(row[2]) else list_clients(opener, proc)
             if not clients:
                 return None
             if own is None:
                 own = own_session(proc=proc) == opener
             pane = os.environ["TMUX_PANE"] if own else clients[0][2]
-            found = _window(pane, pane, proc)
+            found = pane_window(pane, pane, proc)
     except TuiError:
         return None
     if found is None:
@@ -167,7 +167,7 @@ def _grid(
     )
 
 
-def _grid_up(
+def open_grid(
     window: str, manager: str, settings: GridSettings, services: PaneServices
 ) -> str | None:
     """Sets the grid options and retile's hooks (none when tmux would misread a path), then tiles
@@ -212,7 +212,7 @@ def _grid_up(
         elif not bad:
             args += [";", "set-hook", "-w", "-t", window, name, hook]
     try:
-        _tmux_ok(args, proc)
+        checked_tmux(args, proc)
         if mode:
             (tile if services.tile_window is None else services.tile_window)(
                 window, per_column=per_column, proc=proc
@@ -222,7 +222,7 @@ def _grid_up(
     return None
 
 
-def _grid_down(window: str, proc) -> None:
+def remove_grid(window: str, proc) -> None:
     options = (GRID_MANAGER, GRID_PER_COLUMN, GRID_TILES, GRID_BUSY, GRID_PANES_SET)
     args = [
         a
@@ -230,7 +230,7 @@ def _grid_down(window: str, proc) -> None:
         for name in names
         for a in (";", command, "-u", "-w", "-t", window, name)
     ]
-    _tmux_ok(args[1:], proc)
+    checked_tmux(args[1:], proc)
 
 
 def tile(
@@ -247,21 +247,19 @@ def tile(
     """
     if not WINDOW.fullmatch(window):
         raise TuiError.invalid_window(window, WINDOW.pattern)
-    _per_column(per_column)
-    socket = _tmux_ok(
+    validate_per_column(per_column)
+    socket = checked_tmux(
         ["display-message", "-p", "-t", window, "#{socket_path}"], proc
     ).stdout.rstrip("\n")
-    with _grid_lock(socket, window, wait=wait) as held:
+    with grid_lock(socket, window, wait=wait) as held:
         found = (
-            _grid_pass(window, per_column, proc, if_panes_changed=if_panes_changed)
-            if held
-            else None
+            grid_pass(window, per_column, proc, if_panes_changed=if_panes_changed) if held else None
         )
         if found is None:
             return
         swaps, layout, tiles, panes = found
         if layout is None:
-            _tmux_ok(["set-option", "-w", "-t", window, GRID_PANES_SET, panes], proc)
+            checked_tmux(["set-option", "-w", "-t", window, GRID_PANES_SET, panes], proc)
             return
         now = int(time.monotonic() * 1000)
         times = [
@@ -270,17 +268,23 @@ def tile(
             if now - TILE_WINDOW * 1000 < t <= now
         ] + [now]
         if len(times) > TILE_LIMIT:
-            _grid_down(window, proc)
+            remove_grid(window, proc)
             line = (
-                f"tui: grid {window}: auto re-tiling stopped: {len(times)} re-tiles in {TILE_WINDOW} s; the next "
-                "worker that opens rebuilds it"
+                f"tui: grid "
+                f"{window}"
+                f": auto re-tiling stopped: "
+                f"{len(times)}"
+                f" re-tiles in "
+                f"{TILE_WINDOW}"
+                f" s; the next worker that opens rebuilds "
+                f"it"
             )
             with contextlib.suppress(TuiError):
-                _tmux(["display-message", "-d", "10000", "-t", window, line], proc)
+                call_tmux(["display-message", "-d", "10000", "-t", window, line], proc)
             print(line, file=sys.stderr)
             return
         try:
-            _tmux_ok(
+            checked_tmux(
                 [
                     "set-option",
                     "-w",
@@ -311,16 +315,16 @@ def tile(
                     "select-layout",
                     "-t",
                     window,
-                    _render_layout(layout),
+                    render_layout(layout),
                 ],
                 proc,
             )
         finally:
             with contextlib.suppress(TuiError):
-                _tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
+                call_tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
 
 
-def _grid_pass(
+def grid_pass(
     window: str, per_column: int | None, proc, *, if_panes_changed: bool
 ) -> tuple[list[tuple[str, str]], Cell | None, str, str] | None:
     """tile's pass: (swaps, layout, @grid-tiles, pane set) or None (zoomed, no grid, unreadable
@@ -328,63 +332,50 @@ def _grid_pass(
     hooks are muted.
     """
     fields = (
-        _tmux_ok(["display-message", "-p", "-t", window, GRID_WINDOW], proc)
+        checked_tmux(["display-message", "-p", "-t", window, GRID_WINDOW], proc)
         .stdout.rstrip("\n")
         .split("\t", 7)
     )
     if len(fields) != 8 or fields[2] != "0" or not fields[4]:
         return None
     width, height, _, layout, manager, n, recorded, tiles = fields
-    panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
-    current = _parse_layout(layout)
-    leaves = [] if current is None else _leaves(current)
-    if current is None or sorted(_leaf_pane(leaf) for leaf in leaves) != sorted(panes):
+    panes = checked_tmux(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
+    current = parse_layout(layout)
+    leaves = [] if current is None else layout_leaves(current)
+    if current is None or sorted(leaf_pane(leaf) for leaf in leaves) != sorted(panes):
         return None
     if manager not in panes or len(panes) == 1:
-        _grid_down(window, proc)
+        remove_grid(window, proc)
         return None
     pane_set = " ".join(sorted(panes, key=lambda p: int(p[1:])))
     recorded = recorded if PANE_SET.fullmatch(recorded) else ""
     if if_panes_changed and recorded == pane_set:
         return None
-    sessions = []
-    for f in (
-        line.split("\t")
-        for line in _tmux_ok(["list-sessions", "-F", SESSIONS], proc).stdout.split("\n")
-    ):
-        if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
-            sessions.append(
-                (
-                    int(f[0][1:]),
-                    f[1],
-                    f[2] if OPENER.fullmatch(f[2]) else "",
-                    f[3] if PANE.fullmatch(f[3]) else "",
-                )
-            )
+    sessions = grid_sessions(proc)
     if per_column is None:
         per_column = int(n) if re.fullmatch(r"[1-9][0-9]{0,3}", n) else PER_COLUMN
     order, at = panes, current
     for _ in range(1 + SETTLE_ITERATIONS):
-        want = _grid_layout(
-            _grid_tree(manager, order, sessions, at),
+        want = grid_layout(
+            grid_tree(manager, order, sessions, at),
             manager,
             geometry=GridGeometry(
                 width=int(width),
                 height=int(height),
-                manager_width=next(c.w for c in _leaves(at) if c.pane == manager),
+                manager_width=next(c.w for c in layout_leaves(at) if c.pane == manager),
                 per_column=per_column,
             ),
         )
-        if want is None or _leaves(want) == _leaves(at):
+        if want is None or layout_leaves(want) == layout_leaves(at):
             break
-        order, at = [_leaf_pane(c) for c in _leaves(want)], want
-    if _leaves(at) == leaves:
+        order, at = [leaf_pane(c) for c in layout_leaves(want)], want
+    if layout_leaves(at) == leaves:
         return None if recorded == pane_set else ([], None, tiles, pane_set)
-    return _swaps(panes, order), at, tiles, pane_set
+    return pane_swaps(panes, order), at, tiles, pane_set
 
 
 @contextlib.contextmanager
-def _grid_lock(socket: str, window: str, *, wait: bool):
+def grid_lock(socket: str, window: str, *, wait: bool):
     """Yields whether it holds the window's flock (<socket>-<n>.lock); wait: retries every TILE_POLL
     s, TuiError after TILE_WAIT s.
     """
@@ -415,3 +406,21 @@ def _grid_lock(socket: str, window: str, *, wait: bool):
         yield held
     finally:
         os.close(fd)
+
+
+def grid_sessions(proc):
+    sessions = []
+    for f in (
+        line.split("\t")
+        for line in checked_tmux(["list-sessions", "-F", SESSIONS], proc).stdout.split("\n")
+    ):
+        if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
+            sessions.append(
+                (
+                    int(f[0][1:]),
+                    f[1],
+                    f[2] if OPENER.fullmatch(f[2]) else "",
+                    f[3] if PANE.fullmatch(f[3]) else "",
+                )
+            )
+    return sessions

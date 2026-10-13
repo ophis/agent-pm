@@ -33,7 +33,9 @@ class Mode(Protocol):
     """
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
+        """
+        The events that came, waiting up to `timeout` s for one, and whether no more will come.
+        """
         ...
 
     def returncode(self, timeout: float) -> int | None:
@@ -67,7 +69,7 @@ class HandleState:
     blocked: bool = False
 
 
-def _diagnostics() -> logging.Logger:
+def diagnostics() -> logging.Logger:
     logger = logging.Logger("driver")
     logger.parent = logging.getLogger()
     return logger
@@ -79,7 +81,7 @@ class HandleServices:
     adapter: Adapter | None = None
     usage: Callable[[], Usage | None] | None = None
     clock: Callable[[], float] | None = None
-    logger: logging.Logger = field(default_factory=_diagnostics)
+    logger: logging.Logger = field(default_factory=diagnostics)
 
 
 class Handle:
@@ -88,7 +90,11 @@ class Handle:
     ):
         """spec: its sid, name (a tui session's) and workdir."""
         self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
-        self._host, self._info, self._idle = services.host, state.info, state.idle_timeout
+        self._host, self._info, self.validate_idle_timeout = (
+            services.host,
+            state.info,
+            state.idle_timeout,
+        )
         self._adapter = services.adapter
         self._usage = services.usage
         self._logger = services.logger
@@ -114,8 +120,8 @@ class Handle:
                     yield event
                     continue
                 wait = POLL
-                if self._idle is not None and not self._blocked:
-                    wait = min(POLL, last + self._idle - self.clock())
+                if self.validate_idle_timeout is not None and not self._blocked:
+                    wait = min(POLL, last + self.validate_idle_timeout - self.clock())
                 if self._closed:
                     code = self._host.returncode(max(wait, 0))
                     if code is not None:
@@ -126,9 +132,9 @@ class Handle:
                     found, self._closed = self._host.poll(wait)
                     self._queue.extend(e for e in found if not isinstance(e, Exited))
                     continue
-                if wait <= 0 and self._idle is not None:
+                if wait <= 0 and self.validate_idle_timeout is not None:
                     last = self.clock()
-                    yield IdleTimeout(self._idle)
+                    yield IdleTimeout(self.validate_idle_timeout)
         except GeneratorExit:  # the caller closed this iterator; the session goes on
             raise
         except BaseException:

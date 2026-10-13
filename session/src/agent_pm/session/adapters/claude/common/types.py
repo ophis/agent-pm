@@ -1,5 +1,6 @@
 """Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
 
+import contextlib
 import json
 import os
 import re
@@ -111,8 +112,9 @@ class ClaudeCommon:
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
     NOTE = (
-        "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
-        "on a permission prompt."
+        "Pre-approved commands match on their exact text and each shell call starts "
+        "fresh, so anything else waits on a permission "
+        "prompt."
     )
     PROBE = (
         "claude",
@@ -291,8 +293,6 @@ class ClaudeCommon:
             paths += (os.path.join(top, name) for name in files)
         times = []
         for each in paths:
-            try:
+            with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-            except OSError:
-                pass
         return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))

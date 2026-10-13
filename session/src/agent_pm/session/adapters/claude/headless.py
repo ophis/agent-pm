@@ -52,22 +52,7 @@ class ClaudeHeadless(Headless):
         elif kind == "assistant":
             if record.get("error") == "rate_limit":
                 yield from self._limit()
-            message = record.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            blocks = (
-                [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-            )
-            text = "\n".join(
-                b["text"]
-                for b in blocks
-                if b.get("type") == "text" and isinstance(b.get("text"), str)
-            )
-            if text.strip():
-                yield Reply(text)
-            for block in blocks:
-                if block.get("type") == "tool_use":
-                    name = block.get("name")
-                    yield Activity(name if isinstance(name, str) else "")
+            yield from self._assistant(record)
         elif kind == "result":
             result = record.get("result")
             yield TurnEnd(result if isinstance(result, str) else "", 0)
@@ -76,3 +61,17 @@ class ClaudeHeadless(Headless):
         if not self.limit_sent:
             self.limit_sent = True
             yield LimitHit(self.resets_at)
+
+    def _assistant(self, record):
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        text = "\n".join(
+            b["text"] for b in blocks if b.get("type") == "text" and isinstance(b.get("text"), str)
+        )
+        if text.strip():
+            yield Reply(text)
+        for block in blocks:
+            if block.get("type") == "tool_use":
+                name = block.get("name")
+                yield Activity(name if isinstance(name, str) else "")

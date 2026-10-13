@@ -12,8 +12,8 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 if TYPE_CHECKING:
     from agent_pm.session.hosts.tmux.commands import (
-        _tmux,
-        _tmux_ok,
+        call_tmux,
+        checked_tmux,
     )
     from agent_pm.session.hosts.tmux.errors.types import (
         TuiError,
@@ -35,8 +35,8 @@ else:
     _commands = _load_file(
         "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
     )
-    _tmux = _commands._tmux
-    _tmux_ok = _commands._tmux_ok
+    call_tmux = _commands.call_tmux
+    checked_tmux = _commands.checked_tmux
     _errors_types = _load_file(
         "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
     )
@@ -56,8 +56,8 @@ else:
     SESSION_ID = _model_types.SESSION_ID
 
 
-def _sessions(proc) -> list[list[str]]:
-    res = _tmux(["list-sessions", "-F", SESSIONS], proc)
+def list_sessions(proc) -> list[list[str]]:
+    res = call_tmux(["list-sessions", "-F", SESSIONS], proc)
     lines = res.stdout.split("\n") if res.returncode == 0 else []
     return [
         f
@@ -66,11 +66,11 @@ def _sessions(proc) -> list[list[str]]:
     ]
 
 
-def _window(
+def pane_window(
     pane: str, manager: str | None, proc
 ) -> tuple[str, str | None, dict[str, int], str] | None:
     """pane's window id, manager, pane areas and socket; None when tmux fails."""
-    res = _tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
+    res = call_tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
     rows = []
     if res.returncode:
         return None
@@ -93,7 +93,9 @@ def own_session(*, proc=subprocess.run) -> str | None:
     pane = os.environ.get("TMUX_PANE", "")
     if not PANE.fullmatch(pane):
         raise TuiError.invalid_own_pane(pane)
-    name = _tmux_ok(["display-message", "-p", "-t", pane, "#{session_name}"], proc).stdout.strip()
+    name = checked_tmux(
+        ["display-message", "-p", "-t", pane, "#{session_name}"], proc
+    ).stdout.strip()
     if not NAME.fullmatch(name):
         raise TuiError.invalid_own_session(name)
     return name
@@ -103,10 +105,10 @@ def opener(*, proc=subprocess.run) -> str:
     """The caller's tmux session, else (iTerm.app) its full $ITERM_SESSION_ID; TuiError when neither
     matches OPENER.
     """
-    return _opener(proc)
+    return find_opener(proc)
 
 
-def _opener(proc) -> str:
+def find_opener(proc) -> str:
     own = own_session(proc=proc)
     if own is not None:
         return own
@@ -123,27 +125,29 @@ def anchor(split_from: str | None = None, *, proc=subprocess.run) -> Anchor:
     $ITERM_SESSION_ID's; TuiError when none.
     """
     if split_from is not None:
-        found = _shown(split_from, proc, own=False)
+        found = shown_pane(split_from, proc, own=False)
         if found is None:
             raise TuiError.unshown_session(split_from)
         return found
     own = own_session(proc=proc)
-    return _iterm_pane("not in tmux") if own is None else _opener_pane(own, proc, own=True)
+    return iterm_pane("not in tmux") if own is None else opener_pane(own, proc, own=True)
 
 
-def _opener_pane(opener: str, proc, *, own: bool | None) -> Anchor:
+def opener_pane(opener: str, proc, *, own: bool | None) -> Anchor:
     if ":" in opener:
         return Anchor(("id", [opener.partition(":")[2]]))
     if own is None:
         own = own_session(proc=proc) == opener
-    return _shown(opener, proc, own=own) or _iterm_pane(f"no terminal shows tmux session {opener}")
+    return shown_pane(opener, proc, own=own) or iterm_pane(
+        f"no terminal shows tmux session {opener}"
+    )
 
 
-def _shown(session: str, proc, *, own: bool) -> Anchor | None:
+def shown_pane(session: str, proc, *, own: bool) -> Anchor | None:
     """The pane the most recent client shows the session in: a nested client's host pane, $TMUX_PANE
     when own, else the client's; a control-mode client gets its tmux pane only.
     """
-    clients = _clients(session, proc)
+    clients = list_clients(session, proc)
     if not clients:
         return None
     _, tty, pane, control, socket = clients[0]
@@ -154,7 +158,7 @@ def _shown(session: str, proc, *, own: bool) -> Anchor | None:
         f[1]: f[2]
         for f in (
             line.split(" ", 2)
-            for line in _tmux_ok(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines()
+            for line in checked_tmux(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines()
         )
         if len(f) == 3 and f[0] != "1"
     }
@@ -163,8 +167,8 @@ def _shown(session: str, proc, *, own: bool) -> Anchor | None:
     return Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
 
 
-def _clients(session: str, proc) -> list[list[str]]:
-    out = _tmux_ok(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
+def list_clients(session: str, proc) -> list[list[str]]:
+    out = checked_tmux(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
     return sorted(
         (
             c
@@ -181,7 +185,7 @@ def _clients(session: str, proc) -> list[list[str]]:
     )
 
 
-def _iterm_pane(why: str) -> Anchor:
+def iterm_pane(why: str) -> Anchor:
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
         raise TuiError.no_anchor(why)

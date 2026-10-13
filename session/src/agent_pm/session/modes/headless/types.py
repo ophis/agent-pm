@@ -4,6 +4,7 @@ EOF. stop() kills the whole group, so a grandchild holding the pipes dies too; e
 bounded. probe() runs a short command for its stdout.
 """
 
+import contextlib
 import os
 import queue
 import signal
@@ -25,14 +26,10 @@ def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STO
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=wait)
-    except subprocess.TimeoutExpired:
-        pass
 
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:

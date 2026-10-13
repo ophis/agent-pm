@@ -32,7 +32,7 @@ option = _commands.option
 pane = _commands.pane
 read = _commands.read
 attach_command = _commands.attach_command
-_name = _commands._name
+session_name = _commands.session_name
 
 _errors_types = _load_file(
     "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
@@ -133,8 +133,11 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
     p.add_argument(
         "--if-panes-changed",
         action="store_true",
-        help="lay out only when the window's panes are not those of its last tile (open-close's hooks "
-        "pass it: a drag or resize keeps the layout)",
+        help=(
+            "lay out only when the window's panes are not those of its last tile "
+            "(open-close's hooks pass it: a drag or resize keeps the "
+            "layout)"
+        ),
     )
     p.add_argument("window", help="its id, @N")
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -210,14 +213,18 @@ def _show_options(p: argparse.ArgumentParser) -> None:
         metavar="M",
         choices=RETILES,
         default=RETILE,
-        help=f"when the grid re-tiles by itself: {RETILE} (default) when a pane opens or closes; all also "
-        "on a drag or a window resize; off never (tile @N)",
+        help=(
+            f"when the grid re-tiles by itself: "
+            f"{RETILE}"
+            f" (default) when a pane opens or closes; all also on a drag or a window "
+            f"resize; off never (tile @N)"
+        ),
     )
 
 
 def _session_arg(value: str) -> str:
     try:
-        return _name(value)
+        return session_name(value)
     except TuiError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
 

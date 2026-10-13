@@ -7,6 +7,7 @@ from agent_pm.utils.confined import read_confined
 from agent_pm.utils.files import append_line, read_regular, save
 from agent_pm.utils.git import GUARD, common_dir
 from agent_pm.utils.git import git as run_git
+from agent_pm.utils.json_lines import json_records
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import STATE, import_roots, printable_abs, real_dirs, temp_dirs, under
 from agent_pm.utils.registry import PATH as CLASS_PATH
@@ -40,6 +41,7 @@ __all__ = [
     "run_git",
     "import_roots",
     "load_config",
+    "json_records",
     "load_class",
     "origin",
     "printable",

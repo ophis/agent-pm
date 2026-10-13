@@ -16,7 +16,10 @@ from agent_pm.utils import read_regular
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
 WHEN = re.compile(
-    r"(?:([A-Za-z]+)(?: (\d{1,2})(?:, (\d{4}))?)?,? )?(\d{1,2})(?::([0-5]\d))?([ap]m)(?: \(([^)]*)\))?",
+    (
+        "(?:([A-Za-z]+)(?: (\\d{1,2})(?:, (\\d{4}))?)?,? "
+        ")?(\\d{1,2})(?::([0-5]\\d))?([ap]m)(?: \\(([^)]*)\\))?"
+    ),
     re.I,
 )
 ZONE = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")

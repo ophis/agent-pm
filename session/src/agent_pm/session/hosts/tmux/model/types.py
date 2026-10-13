@@ -148,7 +148,11 @@ GRID_WINDOW = (
 )
 
 
-GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
+GRID_PANES = (
+    f"#{{window_id}}\t#{{"
+    f"{GRID_MANAGER}"
+    f"}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
+)
 
 
 GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
@@ -181,33 +185,26 @@ LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]
 PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 
 
-APPLESCRIPT = """on run argv
-  set {splitDir, anchorKind, tmuxPath, sessionName} to items 1 thru 4 of argv
-  set paneCommand to (quoted form of tmuxPath) & " attach -t " & (quoted form of ("=" & sessionName))
-  if application "iTerm2" is running then
-    tell application "iTerm2"
-      repeat with i from 5 to count of argv
-        set anchorValue to item i of argv
-        repeat with w in windows
-          repeat with t in tabs of w
-            repeat with s in sessions of t
-              if (anchorKind is "id" and unique id of s is anchorValue) or (anchorKind is "tty" and tty of s is anchorValue) then
-                if splitDir is "right" then
-                  tell s to set newSession to split vertically with default profile command paneCommand
-                else
-                  tell s to set newSession to split horizontally with default profile command paneCommand
-                end if
-                return "ok " & (unique id of newSession)
-              end if
-            end repeat
-          end repeat
-        end repeat
-      end repeat
-    end tell
-    return "no iTerm2 pane shows the anchor"
-  end if
-  return "iTerm2 is not running"
-end run"""
+APPLESCRIPT = (
+    "on run argv\n  set {splitDir, anchorKind, tmuxPath, sessionName} to "
+    "items 1 thru 4 of argv\n  set paneCommand to (quoted form of tmuxPath) "
+    '& " attach -t " & (quoted form of ("=" & sessionName))\n  if '
+    'application "iTerm2" is running then\n    tell application "iTerm2"\n   '
+    "   repeat with i from 5 to count of argv\n        set anchorValue to "
+    "item i of argv\n        repeat with w in windows\n          repeat with "
+    "t in tabs of w\n            repeat with s in sessions of t\n            "
+    '  if (anchorKind is "id" and unique id of s is anchorValue) or '
+    '(anchorKind is "tty" and tty of s is anchorValue) then\n                '
+    'if splitDir is "right" then\n                  tell s to set newSession '
+    "to split vertically with default profile command paneCommand\n          "
+    "      else\n                  tell s to set newSession to split "
+    "horizontally with default profile command paneCommand\n                "
+    'end if\n                return "ok " & (unique id of newSession)\n      '
+    "        end if\n            end repeat\n          end repeat\n        "
+    'end repeat\n      end repeat\n    end tell\n    return "no iTerm2 pane '
+    'shows the anchor"\n  end if\n  return "iTerm2 is not running"\nend '
+    "run"
+)
 
 
 TERMINAL_KEYS = (
@@ -328,3 +325,10 @@ class Rectangle:
     h: int
     x: int
     y: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class GridFrame:
+    manager: str
+    panes: list[str]
+    layout: Cell

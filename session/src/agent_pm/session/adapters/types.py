@@ -7,7 +7,6 @@ signals): it applies spec.access.cwd, not its env. Starts no process.
 """
 
 import copy
-import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -35,12 +34,12 @@ from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.types import HostsError
+from agent_pm.utils import json_records
 from agent_pm.utils import load_class as load
 
 TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
-RESUMABLE = ("yes", "no", "unknown")
 
 
 class Adapter(ABC):
@@ -100,13 +99,8 @@ class Headless(ABC):
     def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
 
     def events(self, lines: Iterable[str]) -> Iterator[Event | Stderr]:
-        for line in lines:
-            try:
-                record = json.loads(line)
-            except (ValueError, RecursionError):
-                continue
-            if isinstance(record, dict):
-                yield from self.parse(record)
+        for record in json_records(lines):
+            yield from self.parse(record)
 
 
 class Tui(ABC):

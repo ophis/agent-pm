@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.utils import append_line, printable_abs, read_regular
+from agent_pm.utils import append_line, json_records, printable_abs, read_regular
 
 CHANNEL = "run.jsonl"
 
@@ -46,15 +46,7 @@ def read(path: str) -> list[dict]:
     data = read_regular(path)
     if data is None:
         return []
-    found = []
-    for line in data.split(b"\n"):
-        try:
-            record = json.loads(line)
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(record, dict):
-            found.append(record)
-    return found
+    return list(json_records(data.split(b"\n")))
 
 
 def session_record(workdir: str, sid: str) -> dict | None:

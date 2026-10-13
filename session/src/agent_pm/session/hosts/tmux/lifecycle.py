@@ -19,14 +19,14 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 if TYPE_CHECKING:
     from agent_pm.session.hosts.tmux.commands import (
-        _decorations,
-        _err,
-        _name,
-        _tmux,
         attach_command,
+        call_tmux,
         events_file,
         kill,
+        session_decorations,
+        session_name,
         status,
+        tmux_error,
     )
     from agent_pm.session.hosts.tmux.errors.types import (
         TuiError,
@@ -50,14 +50,14 @@ else:
     _commands = _load_file(
         "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
     )
-    _decorations = _commands._decorations
-    _err = _commands._err
-    _name = _commands._name
-    _tmux = _commands._tmux
     attach_command = _commands.attach_command
+    call_tmux = _commands.call_tmux
     events_file = _commands.events_file
     kill = _commands.kill
+    session_decorations = _commands.session_decorations
+    session_name = _commands.session_name
     status = _commands.status
+    tmux_error = _commands.tmux_error
     _errors_types = _load_file(
         "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
     )
@@ -97,31 +97,31 @@ def start(
     settings = StartOptions() if options is None else options
     argv, cwd, env = command.argv, command.cwd, command.env
     events, status_line, tags = settings.events, settings.status_line, settings.tags
-    _name(session)
-    tag_options = _tags(session, tags or {})
-    argv = _command(argv, env)
+    session_name(session)
+    tag_options = session_tags(session, tags or {})
+    argv = prepare_command(argv, env)
     if events is not None:
         events = events_file(events)
     tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
-        path, wrapper = _wrapper(tmp)
+        path, wrapper = write_wrapper(tmp)
         state = status(session, proc=proc)
         if state == RUNNING:
             raise TuiError.session_running(session, attach_command(session))
         if isinstance(state, int):
             kill(session, proc=proc)
-        pipe = _handover(path, argv, cwd, env)
+        pipe = handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
         decorations = [
             arg
-            for args in _decorations(session, events, status_line=status_line)
+            for args in session_decorations(session, events, status_line=status_line)
             for arg in (";", *args)
         ]
         # new-session may have run even when the tmux call fails
         may_run = True
-        res = _tmux(
+        res = call_tmux(
             [
                 "new-session",
                 "-d",
@@ -145,24 +145,18 @@ def start(
             proc,
         )
         if res.returncode:
-            if _err(res).startswith(
+            if tmux_error(res).startswith(
                 "duplicate session:"
             ):  # another start took the name: not ours to kill
                 may_run = False
-            raise TuiError.command_failed(_err(res))
-        if not _started(path, pipe, argv[0], sleep):
+            raise TuiError.command_failed(tmux_error(res))
+        if not wait_started(path, pipe, argv[0], sleep):
             raise TuiError.session_not_started()
         may_run = False
     except OSError as e:
         raise TuiError.handover_failed(e) from e
     finally:
-        if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
-        if pipe is not None:
-            os.close(pipe)
-        if may_run:
-            with contextlib.suppress(TuiError):
-                kill(session, proc=proc)
+        cleanup_launch(tmp, pipe, session, proc, may_run=may_run)
 
 
 def detach(
@@ -180,27 +174,21 @@ def detach(
     settings = DetachOptions() if options is None else options
     argv, cwd, env = command.argv, command.cwd, command.env
     block, opener = settings.block, settings.opener
-    _name(session)
+    session_name(session)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError.invalid_opener(opener)
-    for arg in argv:
-        if "\0" in arg:
-            raise TuiError.nul_argument()
-        try:
-            os.fsencode(arg)
-        except UnicodeEncodeError:
-            raise TuiError.unencodable_argument() from None
-    argv = _command(argv, env)
+    validate_detach_arguments(argv)
+    argv = prepare_command(argv, env)
     iterm = env.get("ITERM_SESSION_ID", "")
     terminal = ["-e", f"ITERM_SESSION_ID={iterm}"] if ITERM_OPENER.fullmatch(iterm) else []
     tmp = pipe = None
     may_run = False
     try:
         tmp = tempfile.mkdtemp()
-        path, wrapper = _wrapper(tmp)
-        pipe = _handover(path, argv, cwd, env, block=[int(s) for s in block])
+        path, wrapper = write_wrapper(tmp)
+        pipe = handover(path, argv, cwd, env, block=[int(s) for s in block])
         may_run = True
-        res = _tmux(
+        res = call_tmux(
             [
                 "new-session",
                 "-d",
@@ -217,26 +205,20 @@ def detach(
             proc,
         )
         if res.returncode:
-            if _err(res).startswith("duplicate session:"):
+            if tmux_error(res).startswith("duplicate session:"):
                 may_run = False
                 raise TuiError.existing_session(session)
-            raise TuiError.command_failed(_err(res))
-        if not _started(path, pipe, argv[0], sleep):
+            raise TuiError.command_failed(tmux_error(res))
+        if not wait_started(path, pipe, argv[0], sleep):
             raise TuiError.session_not_started(session)
         may_run = False
     except OSError as e:
         raise TuiError.handover_failed(e) from e
     finally:
-        if tmp:
-            shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
-        if pipe is not None:
-            os.close(pipe)
-        if may_run:
-            with contextlib.suppress(TuiError):
-                kill(session, proc=proc)
+        cleanup_launch(tmp, pipe, session, proc, may_run=may_run)
 
 
-def _command(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
+def prepare_command(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
     if not argv:
         raise TuiError.empty_command()
     exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
@@ -245,7 +227,7 @@ def _command(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
     return [os.path.abspath(exe), *argv[1:]]
 
 
-def _wrapper(tmp: str) -> tuple[str, list[str]]:
+def write_wrapper(tmp: str) -> tuple[str, list[str]]:
     path, fifo = os.path.join(tmp, "handover.json"), os.path.join(tmp, ERRPIPE)
     for arg in (sys.executable, path, fifo):
         if "#" in arg or arg.endswith(";"):
@@ -253,7 +235,7 @@ def _wrapper(tmp: str) -> tuple[str, list[str]]:
     return path, [sys.executable, "-I", "-c", EXEC, path, fifo]
 
 
-def _handover(
+def handover(
     path: str,
     argv: list[str],
     cwd: str,
@@ -277,7 +259,7 @@ def _handover(
     return os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
 
 
-def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
+def session_tags(session: str, tags: Mapping[str, str]) -> list[str]:
     args = []
     for key, value in tags.items():
         if not USER_OPTION.fullmatch(key) or not isinstance(value, str) or value.endswith(";"):
@@ -286,8 +268,10 @@ def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
     return args
 
 
-def _started(path: str, pipe: int, command: str, sleep) -> bool:
-    """Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises."""
+def wait_started(path: str, pipe: int, command: str, sleep) -> bool:
+    """
+    Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises.
+    """
     polls, out = 0, b""
     while os.path.exists(path):
         if polls == round(HANDOVER_TIMEOUT / POLL):
@@ -314,3 +298,23 @@ def _started(path: str, pipe: int, command: str, sleep) -> bool:
             reason = "bad errpipe data"
         raise TuiError.failed_exec(command, reason)
     return True
+
+
+def validate_detach_arguments(argv):
+    for arg in argv:
+        if "\0" in arg:
+            raise TuiError.nul_argument()
+        try:
+            os.fsencode(arg)
+        except UnicodeEncodeError:
+            raise TuiError.unencodable_argument() from None
+
+
+def cleanup_launch(tmp, pipe, session, proc, *, may_run: bool):
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
+    if pipe is not None:
+        os.close(pipe)
+    if may_run:
+        with contextlib.suppress(TuiError):
+            kill(session, proc=proc)

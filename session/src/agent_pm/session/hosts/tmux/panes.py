@@ -17,23 +17,23 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 if TYPE_CHECKING:
     from agent_pm.session.hosts.tmux.anchors import (
-        _opener,
-        _opener_pane,
-        _sessions,
         anchor,
+        find_opener,
+        list_sessions,
+        opener_pane,
     )
     from agent_pm.session.hosts.tmux.commands import (
-        _err,
-        _tmux,
-        _tmux_ok,
         attach_command,
+        call_tmux,
+        checked_tmux,
+        tmux_error,
     )
     from agent_pm.session.hosts.tmux.errors.types import (
         TuiError,
     )
     from agent_pm.session.hosts.tmux.grids import (
-        _grid,
-        _grid_up,
+        find_grid,
+        open_grid,
     )
     from agent_pm.session.hosts.tmux.model.types import (
         APPLESCRIPT,
@@ -52,33 +52,33 @@ if TYPE_CHECKING:
         PaneServices,
     )
     from agent_pm.session.hosts.tmux.validation import (
-        _layout,
-        _per_column,
-        _retile,
+        validate_layout,
+        validate_per_column,
+        validate_retile,
     )
 else:
     _load_file = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["load_file"]
     _anchors = _load_file(
         "agent_pm.session.hosts.tmux.anchors", os.path.join(DIRECTORY, "anchors.py")
     )
-    _opener = _anchors._opener
-    _opener_pane = _anchors._opener_pane
-    _sessions = _anchors._sessions
     anchor = _anchors.anchor
+    find_opener = _anchors.find_opener
+    list_sessions = _anchors.list_sessions
+    opener_pane = _anchors.opener_pane
     _commands = _load_file(
         "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
     )
-    _err = _commands._err
-    _tmux = _commands._tmux
-    _tmux_ok = _commands._tmux_ok
     attach_command = _commands.attach_command
+    call_tmux = _commands.call_tmux
+    checked_tmux = _commands.checked_tmux
+    tmux_error = _commands.tmux_error
     _errors_types = _load_file(
         "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
     )
     TuiError = _errors_types.TuiError
     _grids = _load_file("agent_pm.session.hosts.tmux.grids", os.path.join(DIRECTORY, "grids.py"))
-    _grid = _grids._grid
-    _grid_up = _grids._grid_up
+    find_grid = _grids.find_grid
+    open_grid = _grids.open_grid
     _model_types = _load_file(
         "agent_pm.session.hosts.tmux.model.types", os.path.join(DIRECTORY, "model/types.py")
     )
@@ -99,9 +99,9 @@ else:
     _validation = _load_file(
         "agent_pm.session.hosts.tmux.validation", os.path.join(DIRECTORY, "validation.py")
     )
-    _layout = _validation._layout
-    _per_column = _validation._per_column
-    _retile = _validation._retile
+    validate_layout = _validation.validate_layout
+    validate_per_column = _validation.validate_per_column
+    validate_retile = _validation.validate_retile
 
 
 ENTRY_PATH = os.path.join(DIRECTORY, "tmux_host.py")
@@ -119,14 +119,12 @@ def show(
     """
     options = PaneOptions() if options is None else options
     services = PaneServices(script=ENTRY_PATH) if services is None else services
-    split, split_from, opener = options.split, options.split_from, options.opener
-    per_column, retile = options.per_column, options.retile
     proc = services.proc
     print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
     if template is None:
         why = open_pane(session, options=options, services=services)
     else:
-        why = _run(session, template, proc) if template else None
+        why = run_template(session, template, proc) if template else None
     if why:
         print(f"tui: show: {why}", file=sys.stderr)
     return why
@@ -148,54 +146,48 @@ def open_pane(
     split, split_from, opener = options.split, options.split_from, options.opener
     per_column, retile = options.per_column, options.retile
     proc = services.proc
-    _layout(split, split_from, opener)
-    _per_column(per_column)
-    _retile(retile)
+    validate_layout(split, split_from, opener)
+    validate_per_column(per_column)
+    validate_retile(retile)
     tmux = shutil.which("tmux")
     if tmux is None:
         return "tmux not found"
     tmux = os.path.abspath(tmux)
     own = grid = new = None
     try:
-        if opener is None:
-            try:
-                opener, own = _opener(proc), True
-            except TuiError:
-                if split_from is None:
-                    raise
-        in_tmux = opener is not None and ":" not in opener
-        sessions = _sessions(proc) if in_tmux or (split is None and split_from is None) else []
-        grid = _grid(opener, sessions, proc, own=own) if opener is not None and in_tmux else None
+        opener, own, sessions, grid = pane_context(options, proc)
         if grid is not None:
             window, manager, at, side = grid
             if split is not None or split_from is not None:
                 print("tui: show: grid: --split/--split-from ignored", file=sys.stderr)
             # muted: an old mode's hook tile could land after a later drag; _grid_up unmutes
-            _tmux(["set-option", "-w", "-t", window, GRID_BUSY, window], proc)
+            call_tmux(["set-option", "-w", "-t", window, GRID_BUSY, window], proc)
             try:
-                new, why = _split(session, side, at, tmux, proc)
+                new, why = split_pane(session, side, at, tmux, proc)
             finally:
                 if new is None:
                     with contextlib.suppress(TuiError):
-                        _tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
+                        call_tmux(["set-option", "-u", "-w", "-t", window, GRID_BUSY], proc)
         elif split_from is not None:
-            new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
+            new, why = split_pane(
+                session, split or "right", anchor(split_from, proc=proc), tmux, proc
+            )
         elif split is not None:
             assert opener is not None
-            new, why = _split(session, split, _opener_pane(opener, proc, own=own), tmux, proc)
+            new, why = split_pane(session, split, opener_pane(opener, proc, own=own), tmux, proc)
         else:
             assert opener is not None
-            new, why = _stack(session, opener, sessions, tmux, proc) or _split(
-                session, "right", _opener_pane(opener, proc, own=own), tmux, proc
+            new, why = stacked_pane(session, opener, sessions, tmux, proc) or split_pane(
+                session, "right", opener_pane(opener, proc, own=own), tmux, proc
             )
     except TuiError as e:
         return f"{e}; watch it with {attach_command(session)}"
     if new is None:
         return why
-    _record(session, opener, new, proc)
+    record_pane(session, opener, new, proc)
     if grid is None:
         return None
-    return _grid_up(
+    return open_grid(
         window,
         manager,
         GridSettings(
@@ -206,7 +198,7 @@ def open_pane(
     )
 
 
-def _stack(
+def stacked_pane(
     session: str, opener: str, sessions: list[list[str]], tmux: str, proc
 ) -> tuple[str | None, str | None] | None:
     """None when no @pane of the opener's other sessions is open."""
@@ -222,24 +214,28 @@ def _stack(
         group = list(group)
         if not is_tmux:  # open iff the AppleScript finds it: one try covers them, newest first
             with contextlib.suppress(TuiError):
-                return _split(session, "below", Anchor(("id", [r[1] for r in group])), tmux, proc)
+                return split_pane(
+                    session, "below", Anchor(("id", [r[1] for r in group])), tmux, proc
+                )
             continue
         if live is None:
-            res = _tmux(["list-panes", "-a", "-F", "#{pane_id}"], proc)
+            res = call_tmux(["list-panes", "-a", "-F", "#{pane_id}"], proc)
             live = set(res.stdout.split("\n")) if res.returncode == 0 else set()
         for _, pane, socket in group:
             if pane in live:
-                return _split(session, "below", Anchor(None, pane, socket), tmux, proc)
+                return split_pane(session, "below", Anchor(None, pane, socket), tmux, proc)
     return None
 
 
-def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | None, str | None]:
+def split_pane(
+    session: str, side: str, a: Anchor, tmux: str, proc
+) -> tuple[str | None, str | None]:
     """(new pane, None) or (None, tmux's failure), in iTerm2 when one shows a's pane; TuiError with
     no pane.
     """
     if a.iterm:
         try:
-            return _iterm(session, side, tmux, a.iterm, proc), None
+            return split_iterm(session, side, tmux, a.iterm, proc), None
         except TuiError:
             if a.pane is None:
                 raise
@@ -259,7 +255,7 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
         if "#" in arg or arg.endswith(";"):
             raise TuiError.misread_argument(arg)
     try:
-        res = _tmux(
+        res = call_tmux(
             [
                 "split-window",
                 "-d",
@@ -275,10 +271,10 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
         )
     except TuiError as e:
         return None, str(e)
-    return (None, f"tmux: {_err(res)}") if res.returncode else (res.stdout.strip(), None)
+    return (None, f"tmux: {tmux_error(res)}") if res.returncode else (res.stdout.strip(), None)
 
 
-def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], proc) -> str:
+def split_iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], proc) -> str:
     try:
         running = (
             proc(PGREP, capture_output=True, text=True, stdin=subprocess.DEVNULL).returncode == 0
@@ -301,14 +297,14 @@ def _iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], pr
     except OSError as e:
         raise TuiError.osascript_failed(e) from e
     if res.returncode:
-        raise TuiError.osascript_failed(_err(res))
+        raise TuiError.osascript_failed(tmux_error(res))
     out = res.stdout.strip()
     if out.startswith("ok ") and ITERM_ID.fullmatch(out[3:]):
         return out[3:]
     raise TuiError.osascript_output(out)
 
 
-def _record(session: str, opener: str | None, pane: str, proc) -> None:
+def record_pane(session: str, opener: str | None, pane: str, proc) -> None:
     """For the next placement; a failure is only printed."""
     if not (PANE.fullmatch(pane) or ITERM_ID.fullmatch(pane)):
         print(f"tui: show: @pane: not a pane id: {pane!r}", file=sys.stderr)
@@ -317,19 +313,19 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
         if value is None:
             continue
         try:
-            _tmux_ok(["set-option", "-t", f"={session}:", key, value], proc)
+            checked_tmux(["set-option", "-t", f"={session}:", key, value], proc)
         except TuiError as e:
             print(f"tui: show: {key}: {e}", file=sys.stderr)
             return
 
 
-def _run(session: str, template: str, proc) -> str | None:
+def run_template(session: str, template: str, proc) -> str | None:
     unknown = [m.group(0) for m in SLOT.finditer(template) if m.group(1) not in PLACEHOLDERS]
     if unknown:
         return f"unknown placeholder {unknown[0]}"
     try:
         res = proc(
-            ["/bin/sh", "-c", SLOT.sub(lambda m: shlex.quote(session), template)],
+            ["/bin/sh", "-c", SLOT.sub(lambda _match: shlex.quote(session), template)],
             stdin=subprocess.DEVNULL,
             timeout=SHOW_TIMEOUT,
         )
@@ -338,3 +334,18 @@ def _run(session: str, template: str, proc) -> str | None:
     except OSError as e:
         return str(e)
     return f"exit status {res.returncode}" if res.returncode else None
+
+
+def pane_context(options: PaneOptions, proc):
+    split, split_from, opener = options.split, options.split_from, options.opener
+    own = None
+    if opener is None:
+        try:
+            opener, own = find_opener(proc), True
+        except TuiError:
+            if split_from is None:
+                raise
+    in_tmux = opener is not None and ":" not in opener
+    sessions = list_sessions(proc) if in_tmux or (split is None and split_from is None) else []
+    grid = find_grid(opener, sessions, proc, own=own) if opener is not None and in_tmux else None
+    return opener, own, sessions, grid
