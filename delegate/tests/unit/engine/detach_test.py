@@ -1,9 +1,10 @@
-"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its
-refusals with nothing started and the Driver's errors; outcome's line and its write errors.
+"""delegate/engine/detach.py: names, harness argv and invocation state, env, cwd and opener;
+refusals before starting, session failures, outcome lines and write errors.
 """
 
 import errno
 import io
+import json
 import os
 import sys
 import tempfile
@@ -11,9 +12,10 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import ConfigError
+from agent_pm.delegate import ConfigError, Spec, composer, plan
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
 
@@ -51,28 +53,16 @@ class Detach(Base):
     def detached(self, p, events=None, **kw):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            got = detach.detach(p, events=events or self.events, **kw)
+            got = detach.detach(p, driver=self.driver, events=events or self.events, **kw)
         self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
         return got
 
-    def argv(self, mode, *extra, task="echo"):
-        return [
-            sys.executable,
-            "-P",
-            "-m",
-            "agent_pm.delegate.cli",
-            f"--driver={DRIVER}",
-            "--role=dummy-tester",
-            f"--input={INPUT}",
-            f"--out={self.out}",
-            f"--workdir={self.work}",
-            "--runtime=fake",
-            f"--mode={mode}",
-            f"--sid={SID}",
-            f"--events={self.events}",
-            *((f"--task={task}",) if task else ()),
-            *extra,
-        ]
+    def argv(self):
+        return [sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness", self.work]
+
+    def invocation(self):
+        with open(os.path.join(self.work, "harness.json")) as stream:
+            return json.load(stream)
 
     def refusal(self, p, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -85,30 +75,41 @@ class Detach(Base):
         self.layout.assert_not_called()
         self.started.assert_called_once_with(
             DRIVER,
-            self.argv("headless"),
+            self.argv(),
             cwd=self.tmp,
             env={**os.environ, "PYTHONPATH": PYTHONPATH},
             opener=None,
         )
         with open(self.events, "rb") as f:
             self.assertEqual(f.read(), b"")
+        self.assertEqual(self.invocation()["input"], INPUT)
+        self.assertEqual(os.stat(os.path.join(self.work, "harness.json")).st_mode & 0o777, 0o600)
 
     def test_tui_passes_each_option_given_and_the_layouts_opener(self):
         got = self.detached(self.plan("tui", repo="-r"), split="right", split_from="mgr")
         self.assertEqual(got, detach.Detached(DRIVER, TUI))
         self.layout.assert_called_once_with("right", "mgr")
+        self.assertEqual(self.started.call_args.args[1], self.argv())
+        invocation = self.invocation()
         self.assertEqual(
-            self.started.call_args.args[1],
-            self.argv("tui", "--repo=-r", "--split=right", "--split-from=mgr", "--opener=mgr"),
+            (
+                invocation["repo"],
+                invocation["split"],
+                invocation["split_from"],
+                invocation["opener"],
+            ),
+            ("-r", "right", "mgr", "mgr"),
         )
         self.assertEqual(self.started.call_args.kwargs["opener"], "mgr")
 
     def test_task_only_when_set_resume_only_on_a_resume(self):
         self.detached(self.plan(task=None))
+        self.assertIsNone(self.invocation()["task"])
+        self.assertFalse(self.invocation()["resume"])
         self.detached(self.plan(resume=True))
+        self.assertTrue(self.invocation()["resume"])
         self.assertEqual(
-            [c.args[1] for c in self.started.call_args_list],
-            [self.argv("headless", task=None), self.argv("headless", "--resume")],
+            [c.args[1] for c in self.started.call_args_list], [self.argv(), self.argv()]
         )
 
     def test_no_pane_without_split_from_is_no_opener(self):
@@ -116,7 +117,7 @@ class Detach(Base):
         self.assertEqual(
             self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI)
         )
-        self.assertEqual(self.started.call_args.args[1], self.argv("tui", "--split=below"))
+        self.assertEqual(self.started.call_args.args[1], self.argv())
         self.assertIsNone(self.started.call_args.kwargs["opener"])
 
     def test_layout_errors_with_split_from_are_refusals(self):
@@ -139,6 +140,18 @@ class Detach(Base):
                 self.assertEqual(self.refusal(p, **kw), want)
         self.layout.assert_not_called()
         self.assertFalse(os.path.exists(self.events))
+
+    def test_instruction_cannot_detach_before_any_file_is_created(self):
+        instruction = InstructionDriver(self.out)
+        prepared = plan(
+            composer.resolve("dummy-tester", "echo"),
+            Spec(INPUT, self.work, task="echo", out=self.out, cwd=self.tmp),
+            driver=instruction,
+        )
+        with self.assertRaisesRegex(ConfigError, "instruction cannot detach"):
+            detach.detach(prepared, driver=instruction, events=self.events)
+        self.assertEqual((os.path.exists(self.work), os.path.exists(self.events)), (False, False))
+        self.started.assert_not_called()
 
     def test_an_unusable_events_file_is_refused(self):
         target, link, folder, theirs = (

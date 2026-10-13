@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""The Delegate's command line: one role's run in a Driver Mode (--mode: headless, the default, tui
-or in_process), its plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in one
-and the core config's team_dirs). All but --list first configure the session from the session
-config. --task unset: the agent run picks one from its index. --out -: a valid outcome's deliverable
-goes to stdout, control characters dropped but newlines and tabs; --out PATH: stderr names it once
-it holds the deliverable. A run's stdout is otherwise empty. --detach --events FILE: the run goes on
-in Driver session `<role>-<sid8>-drive` as this CLI's driver form (--driver), which appends
-`HH:MM:SS <that session> outcome <status>` to FILE as it ends, `error` without a valid outcome.
-Exits 0 on a valid outcome, even when the client exited non-zero, or once detached; 1 on none, the
-client exiting 0 or its tui session left open; 2 on a config or usage error (nothing started, stdout
-empty); 3 when the client exited non-zero (an in_process run that raised: 1) or failed to start
-without a valid outcome, on a usage limit, or when the Driver session did not start; the driver form
-128 + signum on a signal.
+"""The Delegate command line: run a role, deliver its instruction with prompt, inspect a plan with
+--dry-run, or list the team with --list. Legacy invocation without run remains accepted. Prompt
+uses InstructionDriver and leaves session configuration untouched. Runs configure their session;
+--out - prints a valid deliverable, otherwise stderr names its file. --detach --events FILE starts
+engine.harness in `<role>-<sid8>-drive`, which appends its outcome line when it ends.
+Exits 0 on an instruction, valid outcome or detach; 1 without an outcome; 2 on configuration or
+usage errors; 3 on client/start failure or usage limit. The harness exits 128 + signum on a signal.
 """
 
 import argparse
 import functools
 import json
 import os
-import signal
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -26,6 +19,7 @@ from dataclasses import replace
 from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, configure, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
+from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import Stopped
 from agent_pm.session import SIGNALS, DriverError, Mode
@@ -38,8 +32,14 @@ LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/ag
 class Application:
     """The configured session owner for command-line planning and execution."""
 
-    def __init__(self, driver):
-        self.driver = driver
+    def __init__(self, driver=None):
+        self._driver = driver
+
+    @property
+    def driver(self):
+        if self._driver is None:
+            self._driver = configure()
+        return self._driver
 
     def plan(self, config, spec):
         return plan(config, spec, driver=self.driver)
@@ -47,9 +47,63 @@ class Application:
     def run(self, config, spec, *, on_event):
         return run(config, spec, driver=self.driver, on_event=on_event)
 
+    def run_cli(self, a: argparse.Namespace) -> tuple[int, str | None]:
+        """(exit code, the valid outcome's status)."""
+        try:
+            if not a.list and None in (a.input, a.out, a.workdir):
+                raise ConfigError("--input, --out and --workdir are required")
+            if a.resume and a.sid is None:
+                raise ConfigError("--resume needs --sid")
+            _check_detach(a)
+            team = composer.team(composer.TEAM, composer.team_dirs())
+            if a.list:
+                print(listing(team), end="")
+                return 0, None
+            config = composer.resolve(a.role, a.task, team=team)
+            driver = self.driver
+            text = sys.stdin.read() if a.input == "-" and a.harness is None else a.input
+            spec = Spec(
+                text,
+                a.workdir,
+                task=a.task,
+                mode=a.mode,
+                runtime=a.runtime,
+                sid=a.sid,
+                resume=a.resume,
+                events=a.events if a.mode == "tui" else None,
+                out=None if a.out == "-" else a.out,
+                repo=a.repo,
+                team=team,
+            )
+            if a.detach:
+                return _detach(a, self.plan(config, spec), driver), None
+            if a.dry_run:
+                print(json.dumps(_shown(self.plan(config, spec)), ensure_ascii=False, indent=1))
+                return 0, None
+            tui = detach.names(config.role, a.sid, a.mode)[0] if a.harness else None
+            spec = replace(spec, name=tui)
+            result = self.run(config, spec, on_event=functools.partial(_begun, a, tui, driver))
+        except ConfigError as e:
+            say(f"delegate: {e}")
+            return 2, None
+        if result.outcome is None:
+            say(f"delegate: {result.error}")
+            return (3 if result.returncode or result.limit else 1), None
+        text = result.outcome.deliverable
+        if text:
+            if a.out == "-":
+                print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
+            elif holds(path := os.path.abspath(a.out), text):
+                say(f"delegate: deliverable {path}")
+        say(f"delegate: status {result.outcome.status}")
+        return 0, result.outcome.status
+
 
 def main(argv: list[str], *, application=None) -> int:
-    ap = argparse.ArgumentParser(prog="delegate")
+    command = argv[0] if argv and argv[0] in ("prompt", "run") else "run"
+    if argv and argv[0] in ("prompt", "run"):
+        argv = argv[1:]
+    ap = argparse.ArgumentParser(prog=f"delegate {command}")
     ap.add_argument(
         "--list",
         action="store_true",
@@ -65,6 +119,11 @@ def main(argv: list[str], *, application=None) -> int:
     )
     ap.add_argument("--workdir", action=Once)
     ap.add_argument("--repo")
+    if command == "prompt":
+        a = ap.parse_args(argv)
+        if a.role is None:
+            ap.error("the following arguments are required: --role")
+        return _prompt(a, application=application)
     ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
@@ -73,89 +132,46 @@ def main(argv: list[str], *, application=None) -> int:
     ap.add_argument("--events", metavar="FILE", help="--detach: the outcome line's file")
     ap.add_argument("--split", choices=("right", "below"))
     ap.add_argument("--split-from", metavar="SESSION")
-    ap.add_argument("--driver", help=argparse.SUPPRESS)
-    ap.add_argument("--opener", help=argparse.SUPPRESS)
+    ap.set_defaults(harness=None, opener=None)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.list and (extra := _list_extra(argv)):
         ap.error(f"--list takes no other option, not {extra}")
     if not a.list and a.role is None:
         ap.error("the following arguments are required: --role")
-    if a.driver is None:
-        return _main(a, application=application)[0]
-    if None in (a.events, a.sid):
-        ap.error("--driver needs --events and --sid")
-    status = None
-    try:
-        for s in SIGNALS:
-            signal.signal(s, _stop)
-        try:
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # detach blocked them
-            code, status = _main(a, application=application)
-            return code
-        finally:
-            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
-    except Stopped as stopped:
-        return stopped.code
-    finally:
-        detach.outcome(a.events, a.driver, status)
+    return (Application() if application is None else application).run_cli(a)[0]
 
 
-def _main(a: argparse.Namespace, *, application=None) -> tuple[int, str | None]:
-    """(exit code, the valid outcome's status)."""
+def _prompt(a: argparse.Namespace, *, application=None) -> int:
     try:
-        if not a.list and None in (a.input, a.out, a.workdir):
+        if None in (a.input, a.out, a.workdir):
             raise ConfigError("--input, --out and --workdir are required")
-        if a.resume and a.sid is None:
-            raise ConfigError("--resume needs --sid")
-        _check_detach(a)
+        if a.out == "-":
+            raise ConfigError("prompt needs --out PATH")
         team = composer.team(composer.TEAM, composer.team_dirs())
-        if a.list:
-            print(listing(team), end="")
-            return 0, None
         config = composer.resolve(a.role, a.task, team=team)
-        application = Application(configure()) if application is None else application
-        driver = application.driver
-        text = sys.stdin.read() if a.input == "-" and a.driver is None else a.input
+        application = Application(InstructionDriver(a.out)) if application is None else application
         spec = Spec(
-            text,
+            sys.stdin.read() if a.input == "-" else a.input,
             a.workdir,
             task=a.task,
-            mode=a.mode,
-            runtime=a.runtime,
-            sid=a.sid,
-            resume=a.resume,
-            events=a.events if a.mode == "tui" else None,
-            out=None if a.out == "-" else a.out,
+            out=a.out,
             repo=a.repo,
             team=team,
         )
-        if a.detach:
-            return _detach(a, application.plan(config, spec)), None
-        if a.dry_run:
-            print(json.dumps(_shown(application.plan(config, spec)), ensure_ascii=False, indent=1))
-            return 0, None
-        tui = detach.names(config.role, a.sid, a.mode)[0] if a.driver else None
-        spec = replace(spec, name=tui)
-        result = application.run(config, spec, on_event=functools.partial(_begun, a, tui, driver))
-    except ConfigError as e:
-        say(f"delegate: {e}")
-        return 2, None
-    if result.outcome is None:
+        result = application.run(config, spec, on_event=None)
+    except ConfigError as error:
+        say(f"delegate: {error}")
+        return 2
+    if result.instruction is None:
         say(f"delegate: {result.error}")
-        return (3 if result.returncode or result.limit else 1), None
-    text = result.outcome.deliverable
-    if text:
-        if a.out == "-":
-            print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
-        elif holds(path := os.path.abspath(a.out), text):
-            say(f"delegate: deliverable {path}")
-    say(f"delegate: status {result.outcome.status}")
-    return 0, result.outcome.status
+        return 1
+    say(f"delegate: instruction delivered: {result.instruction}")
+    return 0
 
 
 def _check_detach(a: argparse.Namespace) -> None:
-    detached = a.detach or a.driver is not None
+    detached = a.detach or a.harness is not None
     if a.events is not None and not detached:
         raise ConfigError("--events needs --detach")
     if a.detach and a.events is None:
@@ -166,27 +182,22 @@ def _check_detach(a: argparse.Namespace) -> None:
         raise ConfigError("--detach needs --out PATH")
 
 
-def _detach(a: argparse.Namespace, p: Plan) -> int:
-    tui, driver = detach.names(p.run.role, p.sid, p.spec.mode)
+def _detach(a: argparse.Namespace, p: Plan, driver) -> int:
+    tui, harness = detach.names(p.run.role, p.sid, p.spec.mode)
     if a.dry_run:
-        shown = {**_shown(p), "driver": driver, "tui": tui, "events": os.path.abspath(a.events)}
+        shown = {**_shown(p), "driver": harness, "tui": tui, "events": os.path.abspath(a.events)}
         print(json.dumps(shown, ensure_ascii=False, indent=1))
         return 0
     try:
-        d = detach.detach(p, events=a.events, split=a.split, split_from=a.split_from)
+        d = detach.detach(p, driver=driver, events=a.events, split=a.split, split_from=a.split_from)
     except DriverError as e:
         say(f"delegate: {e}")
         return 3
     say(f"delegate: session {p.spec.sid}")
-    say(f"delegate: driver session {d.driver}: {p.driver.attach_command(d.driver)}")
+    say(f"delegate: driver session {d.driver}: {driver.attach_command(d.driver)}")
     if d.tui is not None:
-        say(f"delegate: tui session {d.tui}: {p.driver.attach_command(d.tui)}")
+        say(f"delegate: tui session {d.tui}: {driver.attach_command(d.tui)}")
     return 0
-
-
-def _stop(signum, _frame):
-    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)  # one exit: one outcome line
-    raise Stopped(128 + signum)
 
 
 def listing(team: Team) -> str:
