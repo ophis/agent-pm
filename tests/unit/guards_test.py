@@ -584,6 +584,66 @@ class StandaloneImports(Sample):
         root = self.tree({path: "" for path in guards.STANDALONE if path != missing})
         self.assertEqual(guards.standalone_imports(root), [f"{missing}: missing standalone script"])
 
+    def test_top_level_package_branch_is_skipped_and_standalone_fallback_is_checked(self):
+        source = """if __package__:
+    from agent_pm.session.adapters import flags
+else:
+    import runpy
+    import requests
+import agent_pm.utils
+"""
+        self.assertEqual(
+            self.found(source),
+            sorted(
+                f"{path}:{line}: non-stdlib import {name}"
+                for path in guards.STANDALONE
+                for line, name in ((5, "requests"), (6, "agent_pm.utils"))
+            ),
+        )
+
+    def test_nested_or_other_conditions_do_not_hide_standalone_imports(self):
+        source = """def load():
+    if __package__:
+        import agent_pm.utils
+if __package__ is not None:
+    import requests
+if not __package__:
+    import other
+"""
+        self.assertEqual(
+            self.found(source),
+            sorted(
+                f"{path}:{line}: non-stdlib import {name}"
+                for path in guards.STANDALONE
+                for line, name in ((3, "agent_pm.utils"), (5, "requests"), (7, "other"))
+            ),
+        )
+
+    def test_rebinding_package_metadata_rejects_the_binding_and_checks_both_branches(self):
+        for binding in (
+            '__package__ = "foreign"',
+            '__package__ += "foreign"',
+            '(__package__ := "foreign")',
+            "del __package__",
+            "import os as __package__",
+            "from os import path as __package__",
+            "def __package__(): pass",
+            "class __package__: pass",
+        ):
+            with self.subTest(binding=binding):
+                source = binding + "\nif __package__:\n    import requests\nelse:\n    import os\n"
+                self.assertEqual(
+                    self.found(source),
+                    sorted(
+                        violation
+                        for path in guards.STANDALONE
+                        for violation in (
+                            f"{path}:1: rebinds __package__",
+                            f"{path}:3: non-stdlib import requests",
+                        )
+                    ),
+                )
+
     def test_unlisted_module_is_not_a_standalone_script(self):
         files = dict.fromkeys(guards.STANDALONE, "")
         files[f"{guards.SESSION_SRC}engine/ordinary.py"] = "import agent_pm.utils\n"

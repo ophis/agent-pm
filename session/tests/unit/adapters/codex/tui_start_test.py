@@ -12,7 +12,7 @@ import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex import tui_hook, tui_start
+from agent_pm.session.adapters.codex import sessions, tui_hook, tui_start
 
 from session.tests import case
 from session.tests.case import Case
@@ -67,6 +67,30 @@ except ImportError as error:
         for script in (tui_start, tui_hook):
             self.assertEqual(script.sessions.__file__, str(DIRECTORY / "sessions.py"))
         self.assertIs(tui_start.sessions, tui_hook.sessions)
+        self.assertIs(tui_start.sessions, sessions)
+
+    def test_package_imports_share_canonical_modules_and_flag_type(self):
+        code = """import json, sys
+from agent_pm.session.adapters import flags
+from agent_pm.session.adapters.codex import app_server, hook_schema, sessions, tui_hook, tui_start
+print(json.dumps([
+    sessions.argv_flags is flags,
+    type(next(sessions.argv_flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
+    tui_start.sessions is sessions,
+    tui_hook.sessions is sessions,
+    tui_start.app_server is app_server,
+    tui_start.HOOKS is hook_schema.HOOKS,
+    tui_hook.HOOKS is hook_schema.HOOKS,
+    sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),
+]))
+"""
+        result = subprocess.run(
+            [sys.executable, "-P", "-s", "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(json.loads(result.stdout), [True, True, True, True, True, True, True, []])
 
     def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(

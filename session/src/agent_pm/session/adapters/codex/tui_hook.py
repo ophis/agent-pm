@@ -1,4 +1,4 @@
-"""Codex binding callback loaded by the standalone Driver hook."""
+"""Codex binding callback path-loaded by the Driver hook running with Python -I."""
 
 from __future__ import annotations
 
@@ -9,10 +9,13 @@ import sys
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
-_sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
-
-sessions = _sibling("sessions")
-HOOKS = _sibling("hook_schema").HOOKS
+if __package__:
+    from agent_pm.session.adapters.codex import sessions
+    from agent_pm.session.adapters.codex.hook_schema import HOOKS
+else:
+    _sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
+    sessions = _sibling(DIRECTORY, "sessions")
+    HOOKS = _sibling(DIRECTORY, "hook_schema").HOOKS
 
 
 LABELS = {label for label, _, _ in HOOKS}

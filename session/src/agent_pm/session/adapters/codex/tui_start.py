@@ -1,3 +1,5 @@
+"""Codex startup run with Python -I, which excludes the adapter package's import roots."""
+
 from __future__ import annotations
 
 import fcntl
@@ -13,11 +15,14 @@ import time
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
-_sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
-
-sessions = _sibling("sessions")
-app_server = _sibling("app_server")
-HOOKS = _sibling("hook_schema").HOOKS
+if __package__:
+    from agent_pm.session.adapters.codex import app_server, sessions
+    from agent_pm.session.adapters.codex.hook_schema import HOOKS
+else:
+    _sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
+    sessions = _sibling(DIRECTORY, "sessions")
+    app_server = _sibling(DIRECTORY, "app_server")
+    HOOKS = _sibling(DIRECTORY, "hook_schema").HOOKS
 
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")

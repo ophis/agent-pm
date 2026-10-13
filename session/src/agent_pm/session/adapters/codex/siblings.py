@@ -4,11 +4,8 @@ import importlib.util
 import os
 import sys
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-
-def load(name):
-    directory = os.path.dirname(DIRECTORY) if name == "flags" else DIRECTORY
+def load(directory, name):
     key, path = "_agent_pm_codex_" + name, os.path.join(directory, name + ".py")
     if key in sys.modules:
         found = getattr(sys.modules[key], "__file__", None)

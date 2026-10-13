@@ -1,4 +1,4 @@
-"""Codex recovery records, persistence and snapshot validation; standard library only."""
+"""Codex recovery records and snapshots; path-loaded by isolated startup and hook scripts."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Literal, overload
+
+if __package__:
+    from agent_pm.session.adapters import flags as argv_flags
+else:
+    _directory = os.path.dirname(os.path.abspath(__file__))
+    _sibling = runpy.run_path(os.path.join(_directory, "siblings.py"))["load"]
+    argv_flags = _sibling(os.path.dirname(_directory), "flags")
 
 
 class RecoveryError(Exception):
@@ -45,10 +52,6 @@ def private_file(info: os.stat_result) -> bool:
         and info.st_uid == os.getuid()
         and stat.S_IMODE(info.st_mode) == 0o600
     )
-
-
-_sibling = runpy.run_path(os.path.join(os.path.dirname(__file__), "siblings.py"))["load"]
-argv_flags = _sibling("flags")
 
 
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

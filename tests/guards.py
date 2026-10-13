@@ -684,6 +684,7 @@ def standalone(repo: str) -> list[str]:
 
 
 def standalone_imports(repo: str) -> list[str]:
+    """Skip only top-level `if __package__:` bodies with unrebound interpreter metadata."""
     found = []
     standard = sys.stdlib_module_names | {"__future__", "builtins"}
     for rel in sorted(STANDALONE):
@@ -693,7 +694,36 @@ def standalone_imports(repo: str) -> list[str]:
             continue
         with open(path, encoding="utf-8") as file:
             tree = ast.parse(file.read(), rel)
-        for node in ast.walk(tree):
+        rebound = [
+            node
+            for node in ast.walk(tree)
+            if (
+                isinstance(node, ast.Name)
+                and node.id == "__package__"
+                and isinstance(node.ctx, ast.Store | ast.Del)
+            )
+            or (
+                isinstance(node, ast.alias)
+                and (node.asname or node.name.split(".")[0]) == "__package__"
+            )
+            or (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                and node.name == "__package__"
+            )
+        ]
+        found.extend(f"{rel}:{node.lineno}: rebinds __package__" for node in rebound)
+        nodes = []
+        for statement in tree.body:
+            roots = (
+                statement.orelse
+                if not rebound
+                and isinstance(statement, ast.If)
+                and isinstance(statement.test, ast.Name)
+                and statement.test.id == "__package__"
+                else [statement]
+            )
+            nodes.extend(node for root in roots for node in ast.walk(root))
+        for node in nodes:
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
