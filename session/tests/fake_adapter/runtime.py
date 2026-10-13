@@ -42,6 +42,10 @@ def main() -> int:
     steps = (
         scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
     )
+    return execute(steps, args.hook)
+
+
+def execute(steps, hook):
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
@@ -55,7 +59,7 @@ def main() -> int:
             return step["exit"]
         elif "hook" in step:
             subprocess.run(
-                [*args.hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True
+                [*hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True
             )
         elif "read" in step:
             sys.stdin.readline()

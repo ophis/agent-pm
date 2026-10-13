@@ -2,6 +2,7 @@
 waits, send and screen refused, and probe(), over real Python children.
 """
 
+import contextlib
 import io
 import json
 import logging
@@ -45,10 +46,8 @@ def spawning(then: str = "") -> str:
 
 def kill(pid: int) -> None:
     """SIGKILL to a test's stray process, if it still runs."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 def gone(pid: int) -> bool:
@@ -76,7 +75,7 @@ def until(check) -> bool:
 class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
-    def launch(self, prompt, request: SessionRequest):
+    def launch(self, _prompt, _request: SessionRequest):
         return Launch((sys.executable,))
 
     def parse(self, record):
@@ -132,6 +131,7 @@ class Base(Case):
             try:
                 out["value"] = call()
             except BaseException as e:
+                logging.exception("Test worker failed")
                 out["error"] = e
 
         thread = threading.Thread(target=run, daemon=True)
@@ -145,7 +145,7 @@ class Base(Case):
 
 
 class Streams(Base):
-    def test_stdout_lines_become_the_runs_events_and_stderr_lines_stderr_ended_after_stdout_then_stderr(
+    def test_stdout_and_stderr_lines_become_events_before_both_pipes_end(
         self,
     ):
         calls = []

@@ -43,9 +43,11 @@ class Line(Case):
             ("w1", "done", (), "12:00\n"),
         ]
         for name, word, fields, at in cases:
-            with self.subTest(name=name, word=word, fields=fields, at=at):
-                with self.assertRaises(ValueError):
-                    SessionStatusLog.line(name, word, *fields, at=at)
+            with (
+                self.subTest(name=name, word=word, fields=fields, at=at),
+                self.assertRaises(ValueError),
+            ):
+                SessionStatusLog.line(name, word, *fields, at=at)
 
     def test_refuses_an_empty_field_naming_it(self):
         for fields in (("",), ("ok", "")):

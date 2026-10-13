@@ -1,5 +1,5 @@
-"""adapters/types.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the
-hosts' tables and the default host), settings() from a read session config, the tui settings from
+"""adapters/types.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts'
+tables and the default host), settings() from a read session config, the tui settings from
 [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the import
 system only for the test's span; the registry itself is never patched. Each test constructs fresh
 settings.
@@ -29,8 +29,9 @@ from session.tests.modules import module_slot
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 MISSING = (
-    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
-    "No module named 'agent_pm.session.adapters.{n}'"
+    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import "
+    "agent_pm.session.adapters.{n}: No module named "
+    "'agent_pm.session.adapters.{n}'"
 )
 
 
@@ -60,10 +61,10 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def __init__(self, name, source):
         self.name, self.source = name, source
 
-    def find_spec(self, fullname, path, target=None):
+    def find_spec(self, fullname, _path, _target=None):
         return importlib.util.spec_from_loader(fullname, self) if fullname == self.name else None
 
-    def create_module(self, spec):
+    def create_module(self, _spec):
         return None
 
     def exec_module(self, module):
@@ -72,7 +73,7 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 class Base(Case):
     def configure(self, text, tmux=None):
-        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through Driver."""
+        """Construct Driver from TOML adapters, HOSTS and supplied tmux settings."""
         self.driver = Driver(**settings(tomllib.loads(text).get("adapters", {}), tmux))
 
     def register(self, **modules):
@@ -95,7 +96,10 @@ class ConfigureTest(Base):
             self.configure(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n', {"status_line": True})
             self.assertEqual(self.driver.registry.configured(), ["a", "fake"])
             self.assertEqual(self.driver.registry.adapter("fake").config, {"scenario": "/s"})
-            self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(True, None, None))
+            self.assertEqual(
+                self.driver.registry.tui(),
+                registry.TuiSettings(status_line=True, per_column=None, retile=None),
+            )
         opened.assert_not_called()
 
     def test_independent_drivers_keep_their_own_configuration(self):
@@ -147,13 +151,20 @@ class ConfigureTest(Base):
             mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
         ):
             self.driver = Driver(**settings({}, {"workers_per_column": 4}))
-            self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(False, 4, None))
+            self.assertEqual(
+                self.driver.registry.tui(),
+                registry.TuiSettings(status_line=False, per_column=4, retile=None),
+            )
         imp.assert_not_called()
         self.assertFalse(hasattr(agent_pm.session.hosts.tmux, "TmuxHost"))
 
 
 class SettingsTest(Base):
-    TWO = '[hosts]\ndefault = "a"\n[hosts.a]\nimplementation = "pkg.mod:AHost"\n[hosts.b]\nimplementation = "p.b:B"\n'
+    TWO = (
+        '[hosts]\ndefault = "a"\n[hosts.a]\nimplementation = '
+        '"pkg.mod:AHost"\n[hosts.b]\nimplementation = '
+        '"p.b:B"\n'
+    )
 
     def test_the_adapters_hosts_and_default_of_a_read_config(self):
         config = tomllib.loads(self.TWO + FAKE)
@@ -194,14 +205,23 @@ class SettingsTest(Base):
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
         self.assertEqual(found["default_host"], "tmux")
         self.driver = Driver(**found)
-        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(True, 3, "open-close"))
+        self.assertEqual(
+            self.driver.registry.tui(),
+            registry.TuiSettings(status_line=True, per_column=3, retile="open-close"),
+        )
 
 
 class TuiTest(Base):
     def test_defaults_when_unset(self):
         self.configure(FAKE)
-        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(False, None, None))
-        self.assertEqual(registry.TuiSettings(), registry.TuiSettings(False, None, None))
+        self.assertEqual(
+            self.driver.registry.tui(),
+            registry.TuiSettings(status_line=False, per_column=None, retile=None),
+        )
+        self.assertEqual(
+            registry.TuiSettings(),
+            registry.TuiSettings(status_line=False, per_column=None, retile=None),
+        )
         self.driver = Driver(adapters={}, hosts={"other": HOSTS["tmux"]}, default_host="other")
         self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
 
@@ -319,8 +339,8 @@ class AdapterTest(Base):
                     self.driver.registry.adapter("broken")
                 self.assertTrue(
                     str(caught.exception).startswith(
-                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
-                        f"agent_pm.session.adapters.broken: {shown}"
+                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: "
+                        f"cannot import agent_pm.session.adapters.broken: {shown}"
                     ),
                     caught.exception,
                 )
@@ -329,8 +349,10 @@ class AdapterTest(Base):
         self.register(empty=package("empty"))
         self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
         self.refused(
-            "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
-            "no EmptyAdapter",
+            (
+                "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: "
+                "agent_pm.session.adapters.empty has no EmptyAdapter"
+            ),
             lambda: self.driver.registry.adapter("empty"),
         )
 
@@ -340,7 +362,10 @@ class AdapterTest(Base):
                 self.register(odd=package("odd", OddAdapter=value))
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused(
-                    "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass",
+                    (
+                        "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a "
+                        "concrete Adapter subclass"
+                    ),
                     lambda: self.driver.registry.adapter("odd"),
                 )
 

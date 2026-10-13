@@ -2,9 +2,11 @@
 inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
 """
 
+import contextlib
 import dataclasses
 import io
 import json
+import logging
 import os
 import re
 import signal
@@ -80,7 +82,7 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
 
 
 class ScriptRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, request: SessionRequest):
+    def launch(self, _prompt, _request: SessionRequest):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 
@@ -103,10 +105,8 @@ def running(pid: int) -> bool:
 
 def kill(pid: int) -> None:
     """SIGKILL to a test's stray process, if it still runs."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 class Base(Case):
@@ -153,7 +153,7 @@ class Base(Case):
         self.addCleanup(handle.stop)
         return handle
 
-    def drain(self, handle, on=lambda event: None) -> list:
+    def drain(self, handle, on=lambda _event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
         the handle, instead of hanging past WAIT.
         """
@@ -165,6 +165,7 @@ class Base(Case):
                     found.append(event)
                     on(event)
             except BaseException as e:
+                logging.exception("Test worker failed")
                 errors.append(e)
 
         thread = threading.Thread(target=run, daemon=True)
@@ -353,7 +354,9 @@ class ProcessGroupTest(Base):
     def test_stop_kills_a_grandchild_holding_the_pipes_so_events_end_with_exited(self):
         handle = self.script("""
             import json, subprocess, sys, time
-            grandchild = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
+            grandchild = subprocess.Popen(
+                [sys.executable, "-I", "-c", "import time; time.sleep(60)"]
+            )
             print(json.dumps({"type": "message", "text": str(grandchild.pid)}), flush=True)
             time.sleep(60)
         """)

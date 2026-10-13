@@ -38,7 +38,7 @@ def ended(*_):
 
 
 class Base(Case):
-    def begin(self, script, resume=False):
+    def begin(self, script, *, resume=False):
         self.mode = InProcessMode(StubRun(script))
         self.mode.begin("hi", SessionRequest(SPEC, resumed=resume))
         self.addCleanup(self.mode.stop)
@@ -168,7 +168,7 @@ class Raises(Base):
 
 
 class Stop(Base):
-    def test_while_live_drains_what_came_ends_at_once_minus_sigkill_and_closes_the_run_at_its_next_yield(
+    def test_live_stop_drains_events_and_closes_run_at_next_yield(
         self,
     ):
         script, reached, release, closed = self.held()

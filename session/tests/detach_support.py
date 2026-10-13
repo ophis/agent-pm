@@ -2,7 +2,9 @@
 
 CHILD = """import json, os, signal, sys, time
 report, go = sys.argv[1:]
-with open(report + ".tmp", "w") as f: json.dump(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])), f)
+with open(report + ".tmp", "w") as f:
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    json.dump(sorted(int(s) for s in blocked), f)
 os.replace(report + ".tmp", report)
 signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
 for _ in range(600):

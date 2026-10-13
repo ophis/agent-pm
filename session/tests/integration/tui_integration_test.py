@@ -50,7 +50,11 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import Driver; Driver(adapters={}, hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, default_host='tmux').close(sys.argv[1])"
+CLOSE = (
+    "import sys; from agent_pm.session import Driver; Driver(adapters={}, "
+    "hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, "
+    "default_host='tmux').close(sys.argv[1])"
+)
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
 from agent_pm.session import Driver
@@ -60,7 +64,12 @@ def slow(*args, **kwargs):
     time.sleep(1)
     remove(*args, **kwargs)
 with mock.patch("shutil.rmtree", slow):
-    Driver(adapters={}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux").close(sys.argv[1])
+    driver = Driver(
+        adapters={},
+        hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}},
+        default_host="tmux",
+    )
+    driver.close(sys.argv[1])
 """
 
 
@@ -205,7 +214,7 @@ class SameNameTest(Live):
                 results.append(
                     self.driver.start("fake", "tui", "hello", Spec(workdir=self.workdir, name="w6"))
                 )
-            except Exception as e:
+            except DriverError as e:
                 results.append(e)
 
         def start(*args, **kwargs):
