@@ -16,8 +16,9 @@ from urllib.parse import quote
 
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.integration import fake_gh, fake_linear
-from orchestrator_tests.unit import board_ids, run_fixtures
-from orchestrator_tests.unit.run_fixtures import ID, SID
+from orchestrator_tests.unit import board_ids
+from orchestrator_tests.unit.run import support as run_fixtures
+from orchestrator_tests.unit.run.support import ID, SID
 
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
