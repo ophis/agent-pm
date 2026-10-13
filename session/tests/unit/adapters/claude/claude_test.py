@@ -1635,7 +1635,7 @@ class AdapterTest(Base):
             with self.subTest(kind=kind):
                 self.assertIs(type(mode()), kind)
                 self.assertIsNot(mode(), mode())
-                self.assertIs(mode().adapter, adapter)
+                self.assertIs(mode().common, adapter.common)
 
     def test_the_usage_probe_and_its_reading(self):
         self.assertEqual(ClaudeCommon.PROBE, PROBE)

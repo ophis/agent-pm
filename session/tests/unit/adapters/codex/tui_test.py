@@ -193,7 +193,7 @@ class TuiTest(Base):
 
     def test_limit_screen_official_variants_and_reset(self):
         run = self.adapter.tui()
-        run.adapter.common.config["env"] = {"TZ": "UTC"}
+        run.common.config["env"] = {"TZ": "UTC"}
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
         for prefix in (
             "You’ve hit your usage limit.",
@@ -308,7 +308,7 @@ class TuiTest(Base):
         run = adapter.tui()
         expected = [str(p) for p in (self.cwd, home, self.extra)]
         with mock.patch("subprocess.Popen") as proc:
-            roots = run.adapter.writable_dirs(self.spec, False)
+            roots = run.common.writable_dirs(self.spec, False)
             self.assertEqual(list(roots[:3]), expected)
             self.assertIn(str(temporary), roots)
             self.assertEqual(len(roots), len(set(roots)))
@@ -326,7 +326,7 @@ class TuiTest(Base):
                 access=dataclasses.replace(self.spec.access, cwd=str(self.extra), dirs=()),
             )
             before = self.record().read_bytes()
-            resumed = changed.adapter.writable_dirs(spec, True)
+            resumed = changed.common.writable_dirs(spec, True)
             self.assertEqual(list(resumed[: len(saved)]), saved)
             self.assertNotIn(str(changed_tmp), resumed)
             self.assertNotIn(str(changed_home), resumed)

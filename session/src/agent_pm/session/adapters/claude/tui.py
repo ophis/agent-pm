@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import LimitHit
 from agent_pm.utils import read_regular
@@ -49,8 +50,11 @@ class ClaudeTui(Tui):
     )
     dialogs = ("Quick safety check",)
 
+    def __init__(self, common: ClaudeCommon):
+        self.common = common
+
     def launch(self, prompt, spec, resume, hook):
-        common = self.adapter.common
+        common = self.common
         hooks = {
             label: [
                 {
@@ -116,7 +120,7 @@ def _last_text(data: bytes) -> str:
             else None
         )
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
+        if not isinstance(message, dict) or not isinstance(content, list):
             continue
         blocks = [
             b["text"]

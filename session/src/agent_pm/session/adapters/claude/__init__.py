@@ -42,10 +42,10 @@ class ClaudeAdapter(Adapter):
         self.common = ClaudeCommon(self.config, selector=self.select_session)
 
     def headless(self):
-        return ClaudeHeadless(self)
+        return ClaudeHeadless(self.common)
 
     def tui(self):
-        return ClaudeTui(self)
+        return ClaudeTui(self.common)
 
     def usage_probe(self):
         return self.common.probe()

@@ -3,19 +3,20 @@ the prompt last after "--" so a leading "-" stays the prompt. parse turns init, 
 and rate-limit records into events, one LimitHit per run.
 """
 
+from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.adapters.common import number
 from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import Activity, LimitHit, Reply, SessionBound, TurnEnd
 
 
 class ClaudeHeadless(Headless):
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, common: ClaudeCommon):
+        self.common = common
         self.limit_sent = False
         self.resets_at = None
 
     def launch(self, prompt, spec, resume):
-        common = self.adapter.common
+        common = self.common
         return common.launch(
             spec,
             resume,

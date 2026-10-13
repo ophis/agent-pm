@@ -2,8 +2,14 @@
 
 import json
 
-from agent_pm.session.adapters.codex.common import LIMIT_PREFIXES, flags, native_id, reset_at
-from agent_pm.session.adapters.codex.sessions import split_flags
+from agent_pm.session.adapters.codex.common import (
+    LIMIT_PREFIXES,
+    CodexCommon,
+    flags,
+    native_id,
+    reset_at,
+)
+from agent_pm.session.adapters.codex.sessions import SessionState, split_flags
 from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import (
     Activity,
@@ -17,29 +23,29 @@ from agent_pm.session.engine.types import (
 
 
 class CodexHeadless(Headless):
-    def __init__(self, adapter):
-        super().__init__(adapter)
-        self.state = None
+    def __init__(self, common: CodexCommon):
+        self.common = common
+        self.state: SessionState | None = None
         self.last_reply = ""
         self.limit_sent = False
 
     def launch(self, prompt, spec, resume):
-        self.state = self.adapter.common.prepare(spec, resume)
+        self.state = self.common.prepare(spec, resume)
         self.limit_sent = False
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]
         if resume:
-            argv.extend(self.adapter.select_session(self.state.native_id, True))
+            argv.extend(self.common.selector(self.state.native_id, True))
         _, literal = split_flags(snapshot["flags"])
         argv.extend((*literal, prompt) if literal else ("--", prompt))
         return Launch(
             tuple(argv),
-            env=self.adapter.common.environment(snapshot),
-            unset=self.adapter.common.UNSET,
+            env=self.common.environment(snapshot),
+            unset=self.common.UNSET,
             cwd=snapshot["cwd"],
             project=snapshot["project"],
-            transcript=self.adapter.common.transcript(self.state) if resume else "",
-            resume=self.adapter.common.resume_command(self.state) if resume else "",
+            transcript=self.common.transcript(self.state) if resume else "",
+            resume=self.common.resume_command(self.state) if resume else "",
         )
 
     def events(self, lines):
@@ -56,10 +62,13 @@ class CodexHeadless(Headless):
         kind = record.get("type")
         if kind == "thread.started":
             found = record.get("thread_id")
-            if not native_id(found):
+            if not isinstance(found, str) or not native_id(found):
                 yield Stderr("codex: invalid thread.started ID")
                 return
-            self.state = self.adapter.common.bind(self.state.workdir, self.state.sid, found)
+            if self.state is None:
+                yield Stderr("codex: thread.started before launch")
+                return
+            self.state = self.common.bind(self.state.workdir, self.state.sid, found)
             yield SessionBound(found)
         elif kind == "item.completed":
             item = record.get("item")
@@ -82,6 +91,6 @@ class CodexHeadless(Headless):
                 yield Stderr(error)
                 if not self.limit_sent and error.replace("’", "'").startswith(LIMIT_PREFIXES):
                     self.limit_sent = True
-                    yield LimitHit(reset_at(error, self.adapter.common.config.get("env", {})))
+                    yield LimitHit(reset_at(error, self.common.config.get("env", {})))
         elif isinstance(kind, str):
             yield Activity(kind)

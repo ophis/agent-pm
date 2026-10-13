@@ -8,6 +8,7 @@ import sys
 from agent_pm.session.adapters.codex import sessions
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
+    CodexCommon,
     added_dirs,
     flags,
     native_id,
@@ -34,15 +35,15 @@ class CodexTui(Tui):
         "Sign in with ChatGPT to use Codex",
     )
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, common: CodexCommon):
+        self.common = common
         self.state = None
         self.last_reply = ""
         self.native = ""
         self.store = ""
 
     def launch(self, prompt, spec, resume, hook):
-        common = self.adapter.common
+        common = self.common
         self.state = common.prepare(spec, resume, persist=False)
         snapshot = self.state.snapshot
         saved_flags = tuple(snapshot["flags"])
@@ -90,7 +91,7 @@ class CodexTui(Tui):
         _, literal = sessions.split_flags(saved_flags)
         argv = [
             exe,
-            *self.adapter.select_session(self.native, resume),
+            *self.common.selector(self.native, resume),
             "--no-daemon",
             "-C",
             snapshot["cwd"],
@@ -192,7 +193,7 @@ class CodexTui(Tui):
                 return LimitHit(
                     reset_at(
                         reset.group() if reset else message,
-                        self.adapter.common.config.get("env", {}),
+                        self.common.config.get("env", {}),
                     )
                 )
         return None

@@ -45,7 +45,11 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
         except (ValueError, RecursionError):
             settings = None
         own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
-        if not isinstance(own, dict) or not all(isinstance(own.get(e, []), list) for e in hooks):
+        if (
+            not isinstance(settings, dict)
+            or not isinstance(own, dict)
+            or not all(isinstance(own.get(e, []), list) for e in hooks)
+        ):
             raise ConfigError.claude_settings(value)
         for event, entries in hooks.items():
             own[event] = [*own.get(event, []), *entries]
@@ -204,10 +208,13 @@ class ClaudeCommon:
             *self.allow,
         )
         strict = "--strict-mcp-config" in _before_end(spec.flags)
+        selection = self.selector(sid, resume)
+        if not isinstance(sid, str):
+            raise ConfigError.session_uuid(sid)
         argv = (
             "claude",
             *head,
-            *self.selector(sid, resume),
+            *selection,
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *(("--name", spec.name) if spec.name is not None else ()),

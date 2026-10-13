@@ -34,10 +34,10 @@ class CodexAdapter(Adapter):
         self.common = CodexCommon(self.config, selector=self.select_session)
 
     def headless(self):
-        return CodexHeadless(self)
+        return CodexHeadless(self.common)
 
     def tui(self):
-        return CodexTui(self)
+        return CodexTui(self.common)
 
     def usage_probe(self):
         return self.common.probe()
