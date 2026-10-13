@@ -2,6 +2,7 @@
 
 import ast
 import builtins
+import fnmatch
 import importlib
 import io
 import os
@@ -11,6 +12,8 @@ import tokenize
 import tomllib
 
 from agent_pm.utils.config_file import LEVELS
+
+from tests.import_contracts import violation
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
@@ -514,6 +517,75 @@ def _prose_pairs(block):
         if previous and previous[1] and body and not re.match(r"(?:[-*]|\d+[.)])\s", body):
             yield previous, entry
         previous = entry if body else None
+
+
+def session_names(repo: str) -> list[str]:
+    """Session owns no config reader, reply-protocol tag or team text."""
+    forbidden = (
+        "config_file",
+        "tomllib",
+        "agent_pm.delegate.engine.config",
+        "read_project",
+        "agent-pm-progress",
+        "agent-pm-outcome",
+        "team/",
+    )
+    return sorted(
+        f"{SESSION_SRC}{rel}: names {word}"
+        for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
+        for word in forbidden
+        if word in text
+    )
+
+
+def literal_imports(repo: str) -> list[str]:
+    """Literal dynamic imports obey the same contracts as normal imports."""
+    config = os.path.join(repo, "pyproject.toml")
+    if not os.path.isfile(config):
+        return []
+    with open(config, "rb") as file:
+        contracts = tomllib.load(file)["tool"]["importlinter"]["contracts"]
+    found = set()
+    for project in PROJECTS:
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            tree = ast.parse(text)
+            bound = _bindings(tree)
+            for call in ast.walk(tree):
+                if (
+                    not isinstance(call, ast.Call)
+                    or not call.args
+                    or _dotted(call.func, bound)
+                    not in {"importlib.import_module", "__import__", "builtins.__import__"}
+                ):
+                    continue
+                if any(isinstance(node, ast.Name) for node in ast.walk(call.args[0])):
+                    continue
+                target = _boundary_name(call.args[0], {})
+                if target and any(
+                    _literal_violation(module, target, contract) for contract in contracts
+                ):
+                    found.add(f"{project}/src/{rel}:{call.lineno}: imports {target}")
+    return sorted(found)
+
+
+def _literal_violation(source, target, contract):
+    if contract["type"] == "units":
+        return violation(source, target, contract)
+    if contract["type"] == "forbidden":
+        return any(_within(source, module) for module in contract["source_modules"]) and any(
+            fnmatch.fnmatchcase(target, module) if "*" in module else _within(target, module)
+            for module in contract["forbidden_modules"]
+        )
+    if contract["type"] == "layers":
+        own = next(
+            (i for i, layer in enumerate(contract["layers"]) if _within(source, layer)), None
+        )
+        lower = next(
+            (i for i, layer in enumerate(contract["layers"]) if _within(target, layer)), None
+        )
+        return own is not None and lower is not None and lower < own
+    return False
 
 
 def layer_commands(repo: str) -> list[str]:

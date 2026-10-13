@@ -200,6 +200,7 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
+Root unit checks require Import Linter, pinned in `.github/workflows/test.yml`.
 Run Lint checks with the pinned tool versions in `.github/workflows/test.yml`:
 
 ```bash

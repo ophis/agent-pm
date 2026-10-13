@@ -23,6 +23,8 @@ include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/sr
 extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
 
 [tool.importlinter]
+include_external_packages = true
+contract_types = ["units: tests.import_contracts.UnitsContract"]
 root_packages = ["agent_pm", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests", "utils.tests", "tests"]
 
 [[tool.importlinter.contracts]]
@@ -93,6 +95,45 @@ name = "Modes do not import the session API"
 type = "forbidden"
 source_modules = ["agent_pm.session.modes"]
 forbidden_modules = ["agent_pm.session.engine.api"]
+
+[[tool.importlinter.contracts]]
+name = "Session units follow the main import rules"
+type = "units"
+container = "agent_pm.session"
+units = ["agent_pm.session.engine.api", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.modes", "agent_pm.session.adapters", "agent_pm.session.hosts", "agent_pm.session.hosts.base"]
+dependencies = [
+    "agent_pm.session.engine.api -> agent_pm.session.adapters agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.session.engine.records agent_pm.utils",
+    "agent_pm.session.modes -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.adapters -> agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.adapters.registry -> agent_pm.session.hosts agent_pm.session.hosts.base",
+    "agent_pm.session.engine.base -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base",
+    "agent_pm.session.engine.types -> agent_pm.utils",
+    "agent_pm.session.engine.records -> agent_pm.utils",
+    "agent_pm.session.hosts -> agent_pm.utils",
+    "agent_pm.session.hosts.base -> agent_pm.session.engine.types agent_pm.utils",
+    "outside -> agent_pm.session.engine.api agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "Delegate units and shared modules follow the main import rules"
+type = "units"
+container = "agent_pm.delegate"
+units = ["agent_pm.delegate", "agent_pm.delegate.composer", "agent_pm.delegate.event", "agent_pm.delegate.engine.config", "agent_pm.delegate.team.tools"]
+unimported_units = ["agent_pm.delegate.team.tools"]
+dependencies = [
+    "agent_pm.delegate -> agent_pm.delegate.composer agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
+    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.event -> agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.engine.config -> agent_pm.utils",
+    "agent_pm.delegate.team.tools -> agent_pm.delegate.engine.config agent_pm.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "Utils imports only itself and the standard library"
+type = "units"
+container = "agent_pm.utils"
+units = ["agent_pm.utils"]
+dependencies = []
 
 [tool.typos.files]
 ignore-hidden = false

@@ -124,6 +124,85 @@ class EveryTest(Sample):
         )
 
 
+class SessionNames(Sample):
+    def test_config_readers_protocol_and_team_names_are_rejected(self):
+        root = self.tree(
+            {
+                guards.SESSION_SRC
+                + "engine/probe.py": "import tomllib\nfrom agent_pm.utils import read_project\nTAG = 'agent-pm-progress'\nTEAM = 'team/'\n"
+            }
+        )
+        self.assertEqual(
+            guards.session_names(root),
+            [
+                guards.SESSION_SRC + "engine/probe.py: names agent-pm-progress",
+                guards.SESSION_SRC + "engine/probe.py: names read_project",
+                guards.SESSION_SRC + "engine/probe.py: names team/",
+                guards.SESSION_SRC + "engine/probe.py: names tomllib",
+            ],
+        )
+
+    def test_runtime_state_json_and_other_layers_are_clean(self):
+        root = self.tree(
+            {
+                guards.SESSION_SRC + "engine/probe.py": "import json\n",
+                "delegate/src/agent_pm/delegate/probe.py": "import tomllib\n",
+            }
+        )
+        self.assertEqual(guards.session_names(root), [])
+
+
+class LiteralImports(Sample):
+    def check(self, sample, project="session", module="adapters/probe.py"):
+        config = Path(REPO, "pyproject.toml").read_text()
+        root = self.tree(
+            {
+                "pyproject.toml": config,
+                f"{project}/src/agent_pm/{guards.PROJECTS[project]}/{module}": sample,
+            }
+        )
+        return guards.literal_imports(root)
+
+    def test_dynamic_calls_cannot_bypass_unit_contracts(self):
+        for sample in (
+            "import importlib\nimportlib.import_module('agent_pm.session.hosts.tables')",
+            "from importlib import import_module as load\nload('agent_pm.session.modes.tui')",
+            "__import__('agent_pm.manager')",
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(len(self.check(sample)), 1)
+
+    def test_lower_public_packages_and_variable_adapter_names_are_allowed(self):
+        self.assertEqual(
+            self.check(
+                "import importlib\nimportlib.import_module('agent_pm.utils')\nimportlib.import_module(implementation)"
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.check(
+                "importlib.import_module('agent_pm.session')", "delegate", "engine/probe.py"
+            ),
+            [],
+        )
+
+    def test_lower_internals_and_pure_config_imports_are_rejected(self):
+        self.assertEqual(
+            self.check("__import__('agent_pm.session.engine.api')", "delegate", "engine/probe.py"),
+            [
+                "delegate/src/agent_pm/delegate/engine/probe.py:1: imports agent_pm.session.engine.api"
+            ],
+        )
+        self.assertEqual(
+            self.check(
+                "__import__('agent_pm.delegate.engine.future')", "delegate", "engine/config.py"
+            ),
+            [
+                "delegate/src/agent_pm/delegate/engine/config.py:1: imports agent_pm.delegate.engine.future"
+            ],
+        )
+
+
 class SourceSuppressions(Sample):
     def scoped(self, scope, comments, *, comment_only=False):
         lines = []

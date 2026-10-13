@@ -1,0 +1,94 @@
+"""Nested unit contracts preserve main's allowed edges and reject future-module escapes."""
+
+import tomllib
+from pathlib import Path
+
+import grimp
+
+from tests.case import REPO, Case
+from tests.import_contracts import UnitsContract, violation
+
+
+class Units(Case):
+    def setUp(self):
+        config = tomllib.loads(Path(REPO, "pyproject.toml").read_text())
+        self.policies = [
+            c for c in config["tool"]["importlinter"]["contracts"] if c["type"] == "units"
+        ]
+
+    def rejected(self, source, target):
+        return any(violation(source, target, policy) for policy in self.policies)
+
+    def test_main_session_edges_are_kept(self):
+        pairs = (
+            ("engine.api", "adapters.codex"),
+            ("engine.api", "modes.tui"),
+            ("engine.api", "hosts.tmux.tmux_host"),
+            ("engine.api", "engine.records"),
+            ("modes.tui", "hosts.tmux.tmux_host"),
+            ("modes.headless", "adapters.base"),
+            ("adapters.codex", "engine.types"),
+            ("adapters.registry", "hosts.tables"),
+            ("engine.base", "adapters.registry"),
+            ("engine.base", "hosts.tables"),
+            ("hosts.base", "engine.types"),
+            ("__init__", "engine.base"),
+        )
+        for source, target in pairs:
+            with self.subTest(source=source, target=target):
+                self.assertFalse(
+                    self.rejected("agent_pm.session." + source, "agent_pm.session." + target)
+                )
+
+    def test_lower_units_cannot_reach_api_or_hosts(self):
+        for source, target in (
+            ("adapters.codex", "hosts.tables"),
+            ("adapters.base", "modes.tui"),
+            ("modes.tui", "engine.api"),
+            ("engine.types", "adapters.base"),
+        ):
+            with self.subTest(source=source, target=target):
+                self.assertTrue(
+                    self.rejected("agent_pm.session." + source, "agent_pm.session." + target)
+                )
+
+    def test_shared_modules_cannot_reach_future_engine_modules(self):
+        for source in ("engine.config", "event.reply", "team.tools.repo"):
+            with self.subTest(source=source):
+                self.assertTrue(
+                    self.rejected("agent_pm.delegate." + source, "agent_pm.delegate.engine.future")
+                )
+                self.assertFalse(self.rejected("agent_pm.delegate." + source, "agent_pm.utils"))
+        self.assertFalse(
+            self.rejected("agent_pm.delegate.event.reply", "agent_pm.delegate.engine.config")
+        )
+        self.assertFalse(
+            self.rejected("agent_pm.delegate.team.tools.repo", "agent_pm.delegate.engine.config")
+        )
+        self.assertTrue(self.rejected("agent_pm.delegate.engine.config", "agent_pm.delegate.event"))
+
+    def test_tools_are_not_imported_by_production_modules(self):
+        self.assertTrue(
+            self.rejected("agent_pm.delegate.engine.plan", "agent_pm.delegate.team.tools.repo")
+        )
+        self.assertFalse(
+            self.rejected(
+                "delegate.tests.unit.team.tools.repo_test", "agent_pm.delegate.team.tools.repo"
+            )
+        )
+
+    def test_contract_reports_real_graph_edges_and_line_numbers(self):
+        source, target = "agent_pm.session.adapters.codex", "agent_pm.session.hosts.tables"
+        graph = grimp.ImportGraph()
+        for module in (source, target):
+            graph.add_module(module)
+        graph.add_import(
+            importer=source, imported=target, line_number=7, line_contents="import " + target
+        )
+        policy = self.policies[0]
+        check = UnitsContract(policy["name"], {}, policy).check(graph, verbose=False)
+        self.assertFalse(check.kept)
+        self.assertEqual(
+            [(e["importer"], e["imported"], e["line_number"]) for e in check.metadata["broken"]],
+            [(source, target, 7)],
+        )

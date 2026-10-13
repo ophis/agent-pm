@@ -10,13 +10,15 @@
 - A project's `config.toml` holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guards.py` `explicit_keys`). Levels, merge and ownership: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
-- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/`. `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/tmux_host.py`. `/agent-pm:tmux`: removed, rebuilt by TASK-356.
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
 ## Import rules
 
 Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Cross-layer imports use the lower layer's public package. Layer skipping remains permitted until TASK-371 and TASK-372. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+
+Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guards.py` enforces those names and literal dynamic imports.
 
 Repository design rules live in `tests/guards.py`: namespace and subsystem placement, unit test placement, shared types, runtime ownership, configuration and import side effects. A helper used by one file stays there as a private function; otherwise, a helper independent of its layer's own classes goes in `utils/`. Shared data types live in their layer's types module; standalone scripts keep theirs local. The `standalone_imports` guard owns their inventory and enforces standard-library-only imports.
 
