@@ -1,4 +1,4 @@
-"""delegate/engine/detach.py: names; detach's call of api.detach (argv, env, cwd, opener), its refusals with nothing started
+"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its refusals with nothing started
 and the Driver's errors; outcome's line and its write errors."""
 
 import errno
@@ -14,7 +14,7 @@ from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, api
+from agent_pm.session import DriverError
 
 from delegate.tests.case import Case
 from delegate.tests.unit.engine.plans import SID, Base
@@ -32,15 +32,15 @@ class Names(Case):
 
 
 class Detach(Base):
-    """api.detach and api.layout patched (the opener `mgr`); the cwd self.tmp."""
+    """detach_session and layout patched (the opener `mgr`); the cwd self.tmp."""
 
     def setUp(self):
         super().setUp()
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(api, "detach"))
-        self.layout = self.enterContext(mock.patch.object(api, "layout", return_value="mgr"))
+        self.started = self.enterContext(mock.patch.object(detach, "detach_session"))
+        self.layout = self.enterContext(mock.patch.object(detach, "layout", return_value="mgr"))
 
     def plan(self, mode="headless", task="echo", **kw):
         return self.planned("dummy-tester", task, mode=mode, input=INPUT, sid=SID, **kw)[0]

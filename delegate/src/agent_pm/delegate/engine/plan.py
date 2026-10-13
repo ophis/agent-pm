@@ -14,7 +14,7 @@ from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Session, api
+from agent_pm.session import MODES, Access, Session, session_record, writable_dirs
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import config_file
@@ -70,7 +70,7 @@ def place(
     workdir, trusted = os.path.abspath(workdir), composer.trusted_dirs()
     if resume_sid is not None:
         # The agent run can append to run.jsonl: this re-check limits a forged record.
-        entry = api.session_record(workdir, resume_sid)
+        entry = session_record(workdir, resume_sid)
         here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
         if project and not under(os.path.realpath(here), trusted):
             raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
@@ -95,8 +95,8 @@ def place(
 @_own
 def plan(run: RunConfig, spec: Spec) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
-    if spec.mode not in api.MODES:
-        raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {spec.mode!r}")
+    if spec.mode not in MODES:
+        raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {spec.mode!r}")
     if spec.mode != "tui" and spec.name is not None:
         raise ConfigError("name: tui mode only")
     if spec.mode != "tui" and spec.events is not None:
@@ -168,14 +168,14 @@ def _check_team_dirs(
     spec: SessionSpec,
     resume: str | None,
 ) -> None:
-    """Every dir the run can write counts, those `runtime` can write itself (api.writable_dirs) last; spec.access.reads,
+    """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last; spec.access.reads,
     read only, do not."""
     if not team.dirs and not guarded:
         return
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    writes += [(f"a dir {runtime} can write", p) for p in api.writable_dirs(runtime, spec, resume)]
+    writes += [(f"a dir {runtime} can write", p) for p in writable_dirs(runtime, spec, resume)]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

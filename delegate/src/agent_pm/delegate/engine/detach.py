@@ -10,7 +10,8 @@ from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, SessionStatusLog, api
+from agent_pm.session import DriverError, SessionStatusLog, layout
+from agent_pm.session import detach as detach_session
 from agent_pm.utils.files import append_line
 
 MODES = ("headless", "tui")
@@ -35,8 +36,8 @@ def detach(
     split: str | None = None,
     split_from: str | None = None,
 ) -> Detached:
-    """The events file must be one you own (created if missing); a tui run's pane opener from api.layout, None when
-    the caller has no pane and split_from is None. DriverError from api.detach propagates."""
+    """The events file must be one you own (created if missing); a tui run's pane opener from layout, None when
+    the caller has no pane and split_from is None. DriverError from detach_session propagates."""
     mode = p.spec.mode
     if mode not in MODES:
         raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
@@ -51,7 +52,7 @@ def detach(
     opener = None
     if tui is not None:
         try:
-            opener = api.layout(split, split_from)
+            opener = layout(split, split_from)
         except DriverError as e:
             if split_from is not None:
                 raise ConfigError(str(e)) from None
@@ -86,7 +87,7 @@ def detach(
         *(["--resume"] if p.spec.resume else []),
     ]
     try:
-        api.detach(
+        detach_session(
             driver,
             argv,
             cwd=os.getcwd(),

@@ -45,9 +45,9 @@ STOP = turn("Working.")
 
 
 class FakeHandle:
-    """session.engine.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
+    """agent_pm.session.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
     left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
-    session.engine.api.start's stand-in."""
+    agent_pm.session.start's stand-in."""
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []

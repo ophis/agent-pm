@@ -36,6 +36,7 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.session import (
+    MODES,
     Activity,
     Blocked,
     DriverError,
@@ -43,7 +44,6 @@ from agent_pm.session import (
     IdleTimeout,
     LimitHit,
     Session,
-    api,
 )
 from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
@@ -705,7 +705,7 @@ class InProcess(Base):
             return super().go(*steps, mode="in_process", **kw)
 
     def test_a_policy_for_each_mode_in_process_the_headless_one(self):
-        self.assertEqual(set(POLICIES), set(api.MODES))
+        self.assertEqual(set(POLICIES), set(MODES))
         self.assertIs(POLICIES["in_process"], POLICIES["headless"])
 
     def test_a_done_run(self):
@@ -789,7 +789,7 @@ LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 
 class TuiPolicy(Base):
-    """The tui policy over a FakeHandle (session.engine.api.start patched as delegate.engine.runner sees it)."""
+    """The tui policy over a FakeHandle (start patched as delegate.engine.runner sees it)."""
 
     def setUp(self):
         super().setUp()
@@ -798,7 +798,7 @@ class TuiPolicy(Base):
 
     def faked(self, *events, fail=None, stop_fail=None, mode="tui", **kw) -> Result:
         self.handle = FakeHandle(events, fail, stop_fail)
-        with mock.patch.object(runner.api, "start", side_effect=self.handle.start) as self.started:
+        with mock.patch.object(runner, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
     def test_the_policys_values(self):
@@ -945,7 +945,7 @@ class TuiPolicy(Base):
         )
         with (
             mock.patch("time.monotonic", lambda: now[0]),
-            mock.patch.object(runner.api, "start", side_effect=handle.start),
+            mock.patch.object(runner, "start", side_effect=handle.start),
         ):
             r = self.go(mode="tui")
         self.assertEqual((r.outcome.status, handle.calls, now[0]), ("done", [], 15 * 60 * 60))
@@ -1029,7 +1029,7 @@ class TuiPolicy(Base):
 
     def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
         os.makedirs(self.work)
-        with mock.patch.object(runner.api, "start", side_effect=DriverError("no tmux")):
+        with mock.patch.object(runner, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
         with self.assertRaises(ConfigError) as cm:

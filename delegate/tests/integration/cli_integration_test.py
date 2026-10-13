@@ -10,7 +10,7 @@ from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Session, api
+from agent_pm.session import Session, session_status
 from agent_pm.utils.config_file import read_project
 
 from delegate.tests.integration.cli import (
@@ -368,7 +368,7 @@ class UsageLimit(Integration):
         self.assertEqual(len(self.calls()), 1)
         Session.configure_from(read_project("session"))
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
-            self.assertEqual(api.session_status("claude", SID, self.proj).resumable, "yes")
+            self.assertEqual(session_status("claude", SID, self.proj).resumable, "yes")
 
 
 class ConfigErrors(Integration):

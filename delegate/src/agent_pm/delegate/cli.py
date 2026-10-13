@@ -24,8 +24,8 @@ from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, configur
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import say
+from agent_pm.session import MODES, SIGNALS, DriverError, attach_command, holds, show
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, api
 from agent_pm.utils.args import Once
 from agent_pm.utils.text import printable
 
@@ -52,7 +52,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--mode", choices=api.MODES, default="headless")
+    ap.add_argument("--mode", choices=MODES, default="headless")
     ap.add_argument("--detach", action="store_true", help="run in a Driver session of its own")
     ap.add_argument("--events", metavar="FILE", help="--detach: the outcome line's file")
     ap.add_argument("--split", choices=("right", "below"))
@@ -71,14 +71,14 @@ def main(argv: list[str]) -> int:
         ap.error("--driver needs --events and --sid")
     status = None
     try:
-        for s in api.SIGNALS:
+        for s in SIGNALS:
             signal.signal(s, _stop)
         try:
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, api.SIGNALS)  # api.detach blocked them
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # detach blocked them
             code, status = _main(a)
             return code
         finally:
-            signal.pthread_sigmask(signal.SIG_BLOCK, api.SIGNALS)
+            signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
     finally:
         detach.outcome(a.events, a.driver, status)
 
@@ -128,7 +128,7 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
     if deliverable := result.outcome.deliverable:
         if a.out == "-":
             print("\n".join(map(printable, deliverable.split("\n"))), end="", flush=True)
-        elif api.holds(out := os.path.abspath(a.out), deliverable):
+        elif holds(out := os.path.abspath(a.out), deliverable):
             say(f"delegate: deliverable {out}")
     say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
@@ -158,14 +158,14 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
         say(f"delegate: {e}")
         return 3
     say(f"delegate: session {p.spec.sid}")
-    say(f"delegate: driver session {d.driver}: {api.attach_command(d.driver)}")
+    say(f"delegate: driver session {d.driver}: {attach_command(d.driver)}")
     if d.tui is not None:
-        say(f"delegate: tui session {d.tui}: {api.attach_command(d.tui)}")
+        say(f"delegate: tui session {d.tui}: {attach_command(d.tui)}")
     return 0
 
 
 def _stop(signum, frame):
-    signal.pthread_sigmask(signal.SIG_BLOCK, api.SIGNALS)  # one exit: one outcome line
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)  # one exit: one outcome line
     raise SystemExit(128 + signum)
 
 
@@ -215,7 +215,7 @@ def _begun(a: argparse.Namespace, tui: str | None, event) -> None:
     say(f"delegate: session {event.sid}")
     if tui is not None and a.opener is not None:
         try:
-            if command := api.show(tui, a.split, a.split_from, a.opener):
+            if command := show(tui, a.split, a.split_from, a.opener):
                 say(command)
         except (SessionConfigError, DriverError) as e:
             say(f"delegate: show {tui}: {e}")

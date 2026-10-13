@@ -1,6 +1,6 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
 drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake;
---detach over a patched api.detach, and the driver form with signal's calls recorded."""
+--detach over a patched detach, and the driver form with signal's calls recorded."""
 
 import errno
 import io
@@ -21,9 +21,9 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, Outcome, Result, cli, composer
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine import runner
+from agent_pm.delegate.engine import detach, runner
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import ConfigError, DriverError, api
+from agent_pm.session import SIGNALS, ConfigError, DriverError, attach_command
 from agent_pm.session.adapters import registry
 
 from delegate.tests.case import PY, Case, child_env, committed
@@ -213,9 +213,9 @@ class List(Base):
 class Configures(Base):
     def test_a_run_configures_the_session_before_starting_it(self):
         registry.reset()
-        seen, start = [], api.start
+        seen, start = [], runner.start
         with mock.patch.object(
-            api, "start", lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
+            runner, "start", lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
         ):
             code, _, err = self.runs()
         self.assertEqual((code, len(seen)), (0, 1), err)
@@ -616,7 +616,7 @@ class Tui(Base):
         ):
             with self.subTest(want=want):
                 handle = FakeHandle(events)
-                with mock.patch.object(runner.api, "start", side_effect=handle.start) as start:
+                with mock.patch.object(runner, "start", side_effect=handle.start) as start:
                     code, out, err = self.runs("--mode", "tui")
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 kw = start.call_args.kwargs
@@ -635,13 +635,13 @@ class Tui(Base):
 
 
 class Detach(Base):
-    """api.detach and api.layout (the opener `mgr`) patched; events file `events`."""
+    """detach_session and layout (the opener `mgr`) patched; events file `events`."""
 
     def setUp(self):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(api, "detach"))
-        self.layout = self.enterContext(mock.patch.object(api, "layout", return_value="mgr"))
+        self.started = self.enterContext(mock.patch.object(detach, "detach_session"))
+        self.layout = self.enterContext(mock.patch.object(detach, "layout", return_value="mgr"))
 
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
@@ -709,8 +709,8 @@ class Detach(Base):
     def test_detach_names_its_sessions_and_exits_0_at_once(self):
         lines = [
             f"delegate: session {SID}",
-            f"delegate: driver session {DRIVER}: {api.attach_command(DRIVER)}",
-            f"delegate: tui session {TUI}: {api.attach_command(TUI)}",
+            f"delegate: driver session {DRIVER}: {attach_command(DRIVER)}",
+            f"delegate: tui session {TUI}: {attach_command(TUI)}",
         ]
         for mode, extra, shown, tail in (
             ("headless", (), lines[:2], [f"--events={self.events}", "--task=echo"]),
@@ -752,14 +752,14 @@ class Detach(Base):
 
 
 class DriverForm(Base):
-    """The driver form (--driver) with events file `events` and api.show patched; signal.signal and
+    """The driver form (--driver) with events file `events` and show patched; signal.signal and
     signal.pthread_sigmask record their calls in self.calls, the handler in self.handler."""
 
     def setUp(self):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
         self.calls, self.handler = [], None
-        self.show = self.enterContext(mock.patch.object(api, "show", return_value=None))
+        self.show = self.enterContext(mock.patch.object(cli, "show", return_value=None))
         self.enterContext(mock.patch.object(signal, "signal", side_effect=self.installed))
         self.enterContext(mock.patch.object(signal, "pthread_sigmask", side_effect=self.masked))
 
@@ -818,9 +818,9 @@ class DriverForm(Base):
                 ("signal", signal.SIGHUP),
                 ("signal", signal.SIGTERM),
                 ("signal", signal.SIGINT),
-                (signal.SIG_UNBLOCK, api.SIGNALS, ""),
+                (signal.SIG_UNBLOCK, SIGNALS, ""),
                 ("run",),
-                (signal.SIG_BLOCK, api.SIGNALS, ""),
+                (signal.SIG_BLOCK, SIGNALS, ""),
             ],
         )
         self.assert_outcome("done")
@@ -850,7 +850,7 @@ class DriverForm(Base):
         with self.ran(effect=lambda: self.handler(signal.SIGTERM, None)):
             code, out, _ = self.drives()
         self.assertEqual((code, out), (128 + signal.SIGTERM, ""))
-        block = (signal.SIG_BLOCK, api.SIGNALS, "")
+        block = (signal.SIG_BLOCK, SIGNALS, "")
         self.assertEqual(self.calls[-3:], [("run",), block, block])
         self.assert_outcome("error")
 
@@ -867,7 +867,7 @@ class DriverForm(Base):
 
     def test_a_tui_run_in_its_named_session_given_up_and_left_open_writes_error_exits_1(self):
         handle = FakeHandle([STOP] * (1 + STOP_LIMIT))
-        with mock.patch.object(runner.api, "start", side_effect=handle.start) as start:
+        with mock.patch.object(runner, "start", side_effect=handle.start) as start:
             code, out, err = self.drives(mode="tui")
         self.assertEqual(
             (code, out, err.splitlines()[-1]),
@@ -875,7 +875,7 @@ class DriverForm(Base):
         )
         spec, kw = start.call_args.args[3], start.call_args.kwargs
         self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
-        self.assertIn(f"delegate: tui session {TUI}: {api.attach_command(TUI)}", err)
+        self.assertIn(f"delegate: tui session {TUI}: {attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")
 

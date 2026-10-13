@@ -15,7 +15,7 @@ from unittest import mock
 
 from agent_pm.delegate import Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.session import Session, api
+from agent_pm.session import Session
 from agent_pm.utils.config_file import read_project
 
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
@@ -188,7 +188,7 @@ class TurnEnds(TuiRun):
 class Idle(TuiRun):
     def test_no_event_for_the_idle_timeout_gives_up_the_session_left_open(self):
         clock = Ahead()
-        self.enterContext(mock.patch.object(api, "time", clock))
+        self.enterContext(mock.patch("agent_pm.session.engine.api.time", clock))
 
         def later(event):
             if isinstance(event, Progress):  # read at turn 1's end, the last event
