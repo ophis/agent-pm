@@ -21,7 +21,7 @@ import threading
 import unittest
 from unittest import mock
 
-from agent_pm.manager.engine import crew, roster
+from agent_pm.manager.engine import monitor, roster, workers
 from agent_pm.manager.engine.types import Entry
 from agent_pm.utils import LOCAL
 
@@ -68,7 +68,7 @@ def codex_session(thread: str = CALLER) -> dict[str, str]:
 
 
 def is_event(line: str, name: str, kind: str) -> bool:
-    return bool(crew.EVENT.fullmatch(line)) and line.split(" ")[1:] == [name, kind]
+    return bool(monitor.EVENT.fullmatch(line)) and line.split(" ")[1:] == [name, kind]
 
 
 def has_pair(argv: list[str], flag: str, value: str) -> bool:
@@ -282,7 +282,7 @@ class Live(Case):
         return live_tmux.wait(check, what=f"{count} `{name} {kind}` events in {path}")
 
     def record(self, sid: str) -> dict:
-        path = os.path.join(self.agent_pm, "workers", sid, crew.RECORD)
+        path = os.path.join(self.agent_pm, "workers", sid, workers.RECORD)
         self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode), 0o600)
         with open(path) as f:
             return json.load(f)
@@ -439,7 +439,7 @@ class ClaudeLifecycleTest(Live):
         n, event, content = self.next_event(0)
         self.assertEqual((n, event), (1, lines[0]))
         self.assertIn("Allow this edit?", content)
-        self.assertEqual(content, self.pane_text("w1", crew.PANE_LINES))
+        self.assertEqual(content, self.pane_text("w1", monitor.PANE_LINES))
 
     def test_dead_then_restart_resumes_the_sid_in_a_new_pane(self):
         sid = self.started("w1")
@@ -451,7 +451,7 @@ class ClaudeLifecycleTest(Live):
         n, event, content = self.next_event(1)
         self.assertEqual((n, event), (2, dead))
         self.assertTrue(content)
-        self.assertEqual(content, self.pane_text("w1", crew.PANE_LINES))
+        self.assertEqual(content, self.pane_text("w1", monitor.PANE_LINES))
         res = self.restart("w1", ["Resumed."])
         self.assertEqual((res.stdout, res.stderr), ("", "tui: session w1: tmux attach -t '=w1'\n"))
         _, again = self.calls("w1")
@@ -705,12 +705,12 @@ class RosterLive(Live):
 
     def taken_over(self) -> None:
         res = self.attach("--manager", MANAGER, inside=SECOND)
-        self.assertEqual(res.stdout, f"{crew.HEADER}\n{tail(self.directory)}")
+        self.assertEqual(res.stdout, f"{monitor.HEADER}\n{tail(self.directory)}")
         self.assertEqual(self.roster()["holder"]["session"], SECOND)
 
     def after_w1(self, out: str, rest: str) -> None:
         self.assertRegex(
-            out, rf"\A{re.escape(crew.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z"
+            out, rf"\A{re.escape(monitor.HEADER)}\nw1\tworker\t[^\n]*\n{re.escape(rest)}\Z"
         )
 
 
@@ -754,7 +754,7 @@ class RosterTest(RosterLive):
         self.assertEqual(len(winners), 1, out)
         (winner,) = winners
         (loser,) = set(procs) - {winner}
-        self.assertEqual(out[winner], (f"{crew.HEADER}\n{tail(self.directory)}", ""))
+        self.assertEqual(out[winner], (f"{monitor.HEADER}\n{tail(self.directory)}", ""))
         self.assertEqual((procs[loser].returncode, out[loser]), (1, ("", self.held(winner))))
 
     def test_a_printed_resume_line_gives_the_recovered_worker_the_callers_pythonpath(self):
@@ -810,7 +810,7 @@ class RosterTest(RosterLive):
         with open(os.path.join(work, "run.jsonl"), "w") as f:
             f.write(json.dumps({"kind": "result", "outcome": {"status": "needs_input"}}) + "\n")
         self.role(work)
-        table = f"{crew.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
+        table = f"{monitor.HEADER}\n{ROLE_DRIVER}\trole\t{ROLE_SID}\twaiting\t-\t{work}\t-\n"
         self.assertEqual(self.attach().stdout, table + tail(self.directory))
         self.assertEqual(self.attach("--resume").stdout, table + tail(self.directory))
         self.assertEqual(self.roster()["entries"][ROLE_DRIVER]["state"], "waiting")
@@ -909,7 +909,7 @@ class RosterRecoveryTest(RosterLive):
         self.kill("w1")
         self.assertEqual(
             self.attach().stdout,
-            f"{crew.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
+            f"{monitor.HEADER}\nw1\tworker\t{sid}\tgone\t-\t{self.cwd}\t{pane}\n"
             f"resume w1: env PYTHONPATH={shlex.quote(PYTHONPATH)} {shlex.join(resume)}\n"
             f"{tail(self.directory, 0, 0, f'1 {done}')}",
         )
@@ -919,7 +919,7 @@ class RosterRecoveryTest(RosterLive):
         self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sid))
         self.grid([["w1"]])
         pane = self.server.pane_of("w1")
-        table = f"{crew.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
+        table = f"{monitor.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
         out = self.attach().stdout
         self.assertEqual(out[: len(table)], table, out)
         self.assertEqual(list(self.roster()["entries"]), ["w1"])
@@ -983,7 +983,7 @@ class RosterRecoveryTest(RosterLive):
         self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
         self.assertEqual(
             res.stdout,
-            f"{crew.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
+            f"{monitor.HEADER}\nw1\tworker\t{sid}\tdone\t-\t{self.cwd}\t{pane}\n"
             f"{tail(self.directory, 0, 0, f'1 {done}')}",
         )
         self.assertEqual(res.stderr, "tui: session w1: tmux attach -t '=w1'\n")

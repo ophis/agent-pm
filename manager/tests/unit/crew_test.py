@@ -25,8 +25,8 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.manager.engine import crew, roster
-from agent_pm.manager.engine.types import Spec
+from agent_pm.manager.engine import controls, crew, monitor, roster, workers
+from agent_pm.manager.engine.types import NotAWorker, Spec
 from agent_pm.session import (
     Access,
     Activity,
@@ -40,7 +40,7 @@ from agent_pm.session import (
     StartOptions,
 )
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import LOCAL
+from agent_pm.utils import LOCAL, save
 
 from manager.tests.case import PYTHONPATH, SRC, Case
 
@@ -149,7 +149,7 @@ class Api:
             self.rows.setdefault(own, row(own, shown="mgr"))
         self.calls, self.starts, self.shows = [], [], []
         self.error, self.error_after, self.start_error = None, 0, None
-        self.events = [IdleTimeout(crew.EARLY)]
+        self.events = [IdleTimeout(workers.EARLY)]
         self.dead = self.placed = self.on_show = self.handle = None
         self.gone, self.tuis, self.stuck = False, {}, set()
 
@@ -359,7 +359,7 @@ class StartTest(WorkerCase):
                     "prompt": "do it",
                     "spec": spec,
                     "resume": None,
-                    "idle_timeout": crew.EARLY,
+                    "idle_timeout": workers.EARLY,
                     "name": "w1",
                     "sid": sid,
                     "events": self.events,
@@ -646,7 +646,7 @@ class RestartTest(WorkerCase):
         self.assertEqual(self.api.calls, [])
 
     def assert_not_a_worker(self):
-        with self.assertRaises(crew.NotAWorker) as cm:
+        with self.assertRaises(NotAWorker) as cm:
             crew.restart("w1", own=None, driver=self.api)
         self.assertEqual(str(cm.exception), "w1: not a worker")
         self.assertEqual(self.api.ran("close"), [])
@@ -720,7 +720,7 @@ class RestartTest(WorkerCase):
             self.assert_not_a_worker()
 
     def test_a_record_the_spec_refuses_closes_nothing(self):
-        self.tamper(lambda path: crew.save(path, json.dumps(self.record(SID, env={"A-B": "x"}))))
+        self.tamper(lambda path: save(path, json.dumps(self.record(SID, env={"A-B": "x"}))))
         with self.assertRaises(crew.WorkersError) as cm:
             crew.restart("w1", own=None, driver=self.api)
         self.assertEqual(str(cm.exception), "env must map variable names to strings without NUL")
@@ -1720,7 +1720,7 @@ class AttachTest(RosterCase):
         done, failed, run_tail = (
             result(outcome={"status": "done"}),
             result(outcome={"status": "failed"}),
-            crew.RUN_TAIL,
+            monitor.RUN_TAIL,
         )
         asking = result(outcome={"status": "needs_input"})
         pad = ("x" * 99 + "\n") * (run_tail // 100 + 1)
@@ -2472,12 +2472,12 @@ class StopAllTest(RosterCase):
         def live(**over):
             return {n: row(n, opener=o) for n, o in {**openers, **over}.items()}
 
-        self.assertEqual(crew.opened("mgr", live()), ["back", "w4", "w3", "w1", "w2"])
-        self.assertEqual(crew.opened("mgr", live(mgr="w1")), ["back", "w4", "w3", "w1", "w2"])
-        self.assertEqual(crew.opened("nobody", live()), [])
+        self.assertEqual(controls.opened("mgr", live()), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(controls.opened("mgr", live(mgr="w1")), ["back", "w4", "w3", "w1", "w2"])
+        self.assertEqual(controls.opened("nobody", live()), [])
         entries = {"mgr": {"x": entry(), "w9": entry(tui="t9"), "w1": entry()}}
         self.assertEqual(
-            crew.opened("mgr", live(w9=None, t9="mgr"), lambda s: entries.get(s, {})),
+            controls.opened("mgr", live(w9=None, t9="mgr"), lambda s: entries.get(s, {})),
             ["back", "w4", "w3", "t9", "w1", "w2", "w9"],
         )
 
