@@ -81,9 +81,8 @@ class Base(Case):
         self.out = os.path.join(self.work, "out.md")
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
-        self.enterContext(
-            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
-        )
+        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
+        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
         self.configure_session(
             {
                 "fake": {
@@ -539,9 +538,8 @@ class InProcess(Base):
         super().setUp()
         refusing = types.ModuleType("agent_pm.session.adapters.refusing")
         refusing.RefusingAdapter = RefusingAdapter
-        self.enterContext(
-            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.refusing": refusing})
-        )
+        sys.modules[refusing.__name__] = refusing
+        self.addCleanup(sys.modules.pop, refusing.__name__, None)
         classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
         self.configure_session(
             {

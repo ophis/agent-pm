@@ -95,9 +95,8 @@ class Base(Case):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
         )
-        patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
-        patch.start()
-        self.addCleanup(patch.stop)
+        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
+        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
         self.configure_session(
             {
                 "fake": {

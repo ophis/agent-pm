@@ -6,7 +6,6 @@ import sys
 import tempfile
 from contextlib import redirect_stderr
 from dataclasses import replace
-from unittest import mock
 
 from agent_pm.delegate import ConfigError, Spec, composer, plan
 
@@ -26,9 +25,8 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.enterContext(
-            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
-        )
+        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
+        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
         self.local("")
 
     def local(self, text):
