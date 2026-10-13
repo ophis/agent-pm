@@ -18,14 +18,13 @@ from agent_pm.session.adapters.codex.sessions import (
     check_writable_roots,
     implicit_writable_roots,
     inside,
-    native_id,
     read_metadata,
     session_file,
     session_identity,
     session_paths,
     validate_snapshot,
 )
-from agent_pm.session.adapters.codex.types import SessionFile, SessionState
+from agent_pm.session.adapters.codex.types import SessionFile, SessionState, Snapshot
 from agent_pm.session.adapters.common import check
 from agent_pm.session.adapters.flags import scan, split_flags
 from agent_pm.session.engine.types import (
@@ -170,20 +169,20 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
     )
 
 
-def launch_flags(snapshot: dict, *, interactive: bool) -> list[str]:
+def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
     model = [
-        *(("-m", snapshot["model"]) if snapshot["model"] is not None else ()),
+        *(("-m", snapshot.model) if snapshot.model is not None else ()),
         *(
-            ("-c", f"model_reasoning_effort={snapshot['effort']}")
-            if snapshot["effort"] is not None
+            ("-c", f"model_reasoning_effort={snapshot.effort}")
+            if snapshot.effort is not None
             else ()
         ),
     ]
-    supplied, _ = split_flags(snapshot["flags"])
+    supplied, _ = split_flags(snapshot.flags)
     result = [*supplied, *model]
-    if not snapshot["project"]:
+    if not snapshot.project:
         result.extend(("-c", "project_doc_max_bytes=0"))
-    for directory in snapshot["dirs"]:
+    for directory in snapshot.dirs:
         result.extend(("--add-dir", directory))
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
@@ -255,14 +254,14 @@ class CodexCommon:
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
             snapshot = self.store.validate_recovery(state)
-            refuse(tuple(snapshot["flags"]))
+            refuse(tuple(snapshot.flags))
             check_writable_roots(
-                self.store.root, implicit_writable_roots({**os.environ, **snapshot["env"]})
+                self.store.root, implicit_writable_roots({**os.environ, **snapshot.env})
             )
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
-            if not snapshot["project"]:
-                _guard_untrusted_project(state.workdir, snapshot["cwd"], snapshot["codex_home"])
+            if not snapshot.project:
+                _guard_untrusted_project(state.workdir, snapshot.cwd, snapshot.codex_home)
             return state
         refuse(spec.flags)
         environment = {
@@ -323,7 +322,7 @@ class CodexCommon:
             **os.environ,
             **self.DEFAULTS,
             **(
-                state.snapshot["env"]
+                state.snapshot.env
                 if resume
                 else {**self.config.get("env", {}), **spec.access.env, **spec.env}
             ),
@@ -343,11 +342,11 @@ class CodexCommon:
     def bind(self, workdir: str, sid: str, identifier: str) -> SessionState:
         return self.store.bind(workdir, sid, identifier)
 
-    def environment(self, snapshot: dict, *, interactive: bool = False) -> dict[str, str]:
+    def environment(self, snapshot: Snapshot, *, interactive: bool = False) -> dict[str, str]:
         return {
             **({} if interactive else self.DEFAULTS),
-            **snapshot["env"],
-            "CODEX_HOME": snapshot["codex_home"],
+            **snapshot.env,
+            "CODEX_HOME": snapshot.codex_home,
         }
 
     def probe(self) -> Launch:
@@ -374,7 +373,7 @@ class CodexCommon:
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
         selection = self.selector(state.native_id, resume=True)
-        _, literal = split_flags(snapshot["flags"])
+        _, literal = split_flags(snapshot.flags)
         argv = [
             "codex",
             *selection[:-1],
@@ -383,10 +382,10 @@ class CodexCommon:
             *literal,
         ]
         env = {
-            "CODEX_HOME": snapshot["codex_home"],
-            **{k: v for k, v in snapshot["env"].items() if k != "CODEX_HOME"},
+            "CODEX_HOME": snapshot.codex_home,
+            **{k: v for k, v in snapshot.env.items() if k != "CODEX_HOME"},
         }
-        return resume_command(snapshot["cwd"], env, argv)
+        return resume_command(snapshot.cwd, env, argv)
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
@@ -401,14 +400,8 @@ class CodexCommon:
             except (ConfigError, RecoveryError, OSError):
                 continue
             payload = metadata.metadata
-            parent = payload.get("parent_thread_id")
-            source = payload.get("source")
-            if parent is None and isinstance(source, dict):
-                agent = source.get("subagent")
-                spawn = agent.get("thread_spawn") if isinstance(agent, dict) else None
-                parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
-            if native_id(parent):
-                candidates.append((payload["id"], parent, metadata.mtime))
+            if payload.parent_thread_id is not None:
+                candidates.append((payload.id, payload.parent_thread_id, metadata.mtime))
         related, newest = {state.native_id}, found.mtime
         while True:
             children = [

@@ -104,7 +104,7 @@ class TuiTest(Base):
         self.assertEqual(data["argv"][:3], ["/protected/codex", "resume", NATIVE])
         self.assertIn("gpt-test", data["argv"])
         self.assertIn("sandbox_workspace_write.network_access=false", data["argv"])
-        self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot["codex_home"])
+        self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot.codex_home)
         self.assertIn(NATIVE, launch.resume)
 
     def test_the_session_env_is_last_in_the_launch_env_and_its_resume(self):
@@ -398,7 +398,7 @@ class TuiTest(Base):
             )
             before = self.record().read_bytes()
             resumed = changed.common.writable_dirs(spec, resume=True)
-            self.assertEqual(list(resumed[: len(saved)]), saved)
+            self.assertEqual(tuple(resumed[: len(saved)]), saved)
             self.assertNotIn(str(changed_tmp), resumed)
             self.assertNotIn(str(changed_home), resumed)
             self.assertEqual(self.record().read_bytes(), before)
@@ -463,7 +463,7 @@ class SuppliedFlagsTest(Base):
         flags = ("--", "resume", "-C", "/x")
         spec = dataclasses.replace(self.spec, flags=flags)
         self.launch(spec)
-        self.assertEqual(self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags))
+        self.assertEqual(self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(flags))
 
     def test_every_grant_source_is_checked_against_protected_paths(self):
         guarded = self.root / "guarded"
@@ -533,7 +533,7 @@ class LaunchPolicy(Base):
                 second = self.argv(self.adapter, changed, resume=True)
                 self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
                 self.assertEqual(
-                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
+                    self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(flags)
                 )
 
     def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
@@ -554,5 +554,5 @@ class LaunchPolicy(Base):
                 self.assertIn("project_doc_max_bytes=0", argv[:boundary])
                 self.assertEqual(sum(word.startswith("hooks.") for word in argv[:boundary]), 6)
             self.assertEqual(
-                self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+                self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(supplied)
             )

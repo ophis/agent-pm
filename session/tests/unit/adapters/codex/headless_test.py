@@ -215,7 +215,7 @@ class LaunchPolicy(Base):
                 second = self.argv(self.adapter, changed, resume=True)
                 self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
                 self.assertEqual(
-                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
+                    self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(flags)
                 )
 
     def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
@@ -235,7 +235,7 @@ class LaunchPolicy(Base):
                 self.assertIn(str(self.extra), argv[:boundary])
                 self.assertIn("project_doc_max_bytes=0", argv[:boundary])
             self.assertEqual(
-                self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+                self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(supplied)
             )
 
 
@@ -258,7 +258,7 @@ class PolicyReplay(Base):
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
         resumed = adapter.headless().launch("two", changed, resume=True)
-        self.assertEqual(state.snapshot["flags"], list(flags))
+        self.assertEqual(state.snapshot.flags, tuple(flags))
         self.assertEqual(first.env["K"], "saved")
         self.assertEqual(resumed.env["K"], "saved")
         self.assertIn("workspace-write", resumed.argv)

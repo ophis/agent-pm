@@ -12,12 +12,18 @@ import stat
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import replace
 from typing import Literal, overload
 
 from agent_pm.session.adapters import flags
-from agent_pm.session.adapters.codex.types import SessionFile, SessionState
+from agent_pm.session.adapters.codex.types import (
+    NativeMetadata,
+    SessionFile,
+    SessionState,
+    Snapshot,
+)
 
 
 class RecoveryError(Exception):
@@ -61,7 +67,7 @@ def absolute_path(path: object, label: str) -> str:
     return os.path.realpath(path)
 
 
-def validate_snapshot(value: dict) -> dict:
+def validate_snapshot(value: dict) -> Snapshot:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
     if set(value) != {
@@ -104,7 +110,31 @@ def validate_snapshot(value: dict) -> dict:
     }
     if validated != value:
         raise RecoveryError("invalid Codex recovery snapshot path")
-    return validated
+    return Snapshot(
+        paths["cwd"],
+        value["project"],
+        tuple(dirs),
+        tuple(commands),
+        value["model"],
+        value["effort"],
+        paths["codex_home"],
+        tuple(flags),
+        env,
+    )
+
+
+def snapshot_data(snapshot: Snapshot) -> dict:
+    return {
+        "cwd": snapshot.cwd,
+        "codex_home": snapshot.codex_home,
+        "project": snapshot.project,
+        "dirs": list(snapshot.dirs),
+        "commands": list(snapshot.commands),
+        "model": snapshot.model,
+        "effort": snapshot.effort,
+        "flags": list(snapshot.flags),
+        "env": dict(snapshot.env),
+    }
 
 
 def _snapshot_inputs(value):
@@ -153,14 +183,27 @@ def read_metadata(path: str) -> SessionFile:
             or absolute_path(payload.get("cwd"), "session cwd") != payload["cwd"]
         ):
             raise RecoveryError(f"mismatched Codex session metadata: {path}")
-        return SessionFile(path, info.st_mtime, metadata["payload"])
+        return SessionFile(
+            path,
+            info.st_mtime,
+            NativeMetadata(payload["id"], payload["cwd"], _parent_identifier(payload)),
+        )
     finally:
         if fd >= 0:
             os.close(fd)
 
 
-def session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
-    root = os.path.join(snapshot["codex_home"], "sessions")
+def _parent_identifier(payload) -> str | None:
+    parent, source = payload.get("parent_thread_id"), payload.get("source")
+    if parent is None and isinstance(source, dict):
+        agent = source.get("subagent")
+        spawn = agent.get("thread_spawn") if isinstance(agent, dict) else None
+        parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    return parent if native_id(parent) else None
+
+
+def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
+    root = os.path.join(snapshot.codex_home, "sessions")
     _check_ancestors(root)
     if not os.path.exists(root):
         return []
@@ -186,7 +229,7 @@ def session_paths(snapshot: dict, identifier: str = "*") -> list[str]:
     return matches
 
 
-def session_file(snapshot: dict, identifier: str) -> SessionFile | None:
+def session_file(snapshot: Snapshot, identifier: str) -> SessionFile | None:
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
     matches = session_paths(snapshot, identifier)
@@ -195,7 +238,7 @@ def session_file(snapshot: dict, identifier: str) -> SessionFile | None:
     if not matches:
         return None
     found = read_metadata(matches[0])
-    if found.metadata["id"] != identifier or found.metadata["cwd"] != snapshot["cwd"]:
+    if found.metadata.id != identifier or found.metadata.cwd != snapshot.cwd:
         raise RecoveryError(
             f"mismatched Codex session metadata for native ID {identifier}: {found.path}"
         )
@@ -269,7 +312,7 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
     ):
         raise RecoveryError("invalid recovery writable roots")
     return SessionState(
-        workdir, sid, validate_snapshot(_copy_snapshot(data["snapshot"])), roots.copy(), native
+        workdir, sid, validate_snapshot(_copy_snapshot(data["snapshot"])), tuple(roots), native
     )
 
 
@@ -322,7 +365,7 @@ def implicit_writable_roots(environment: Mapping[str, str] | None = None) -> lis
     ]
 
 
-def check_writable_roots(root: str, paths: list[str]) -> None:
+def check_writable_roots(root: str, paths: Sequence[str]) -> None:
     actual = os.path.realpath(root)
     for path in paths:
         writable = absolute_path(path, "writable root")
@@ -410,19 +453,16 @@ class SessionStore:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
         return os.path.join(root, digest + ".json")
 
-    def validate_recovery(self, state: SessionState) -> dict:
+    def validate_recovery(self, state: SessionState) -> Snapshot:
         return self._validate_recovery(self._resolve_root(), state)
 
-    def _validate_recovery(self, root: str, state: SessionState) -> dict:
-        snapshot = validate_snapshot(state.snapshot)
+    def _validate_recovery(self, root: str, state: SessionState) -> Snapshot:
+        snapshot = validate_snapshot(snapshot_data(state.snapshot))
         paths = [
-            snapshot["cwd"],
-            snapshot["codex_home"],
-            *snapshot["dirs"],
-            *(
-                absolute_path(path, "dir")
-                for path in added_dirs(snapshot["flags"], snapshot["cwd"])
-            ),
+            snapshot.cwd,
+            snapshot.codex_home,
+            *snapshot.dirs,
+            *(absolute_path(path, "dir") for path in added_dirs(snapshot.flags, snapshot.cwd)),
         ]
         check_writable_roots(root, paths)
         for path in paths:
@@ -480,9 +520,9 @@ class SessionStore:
                 "version": _SESSION_VERSION,
                 "workdir": state.workdir,
                 "sid": state.sid,
-                "snapshot": state.snapshot,
+                "snapshot": snapshot_data(state.snapshot),
                 "native_id": state.native_id,
-                "writable_roots": state.writable_roots,
+                "writable_roots": list(state.writable_roots),
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -521,20 +561,21 @@ class SessionStore:
         self,
         workdir: str,
         sid: str,
-        snapshot: dict,
-        writable_roots: list[str],
+        snapshot: Snapshot,
+        writable_roots: Sequence[str],
         *,
         persist: bool = True,
     ) -> SessionState:
         root = self._resolve_root()
         workdir, sid = session_identity(workdir, sid)
-        validate_snapshot(snapshot)
+        snapshot_value = snapshot_data(snapshot)
+        validate_snapshot(snapshot_value)
         state = _state(
             {
                 "version": _SESSION_VERSION,
                 "workdir": workdir,
                 "sid": sid,
-                "snapshot": snapshot,
+                "snapshot": snapshot_value,
                 "native_id": None,
                 "writable_roots": list(
                     dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)
@@ -592,18 +633,7 @@ class SessionStore:
             existing = self._load(root, workdir, sid)
             if existing is None:
                 raise RecoveryError(f"missing recovery state for run ID {sid!r}")
-            validated = _state(
-                {
-                    "version": _SESSION_VERSION,
-                    "workdir": workdir,
-                    "sid": sid,
-                    "snapshot": existing.snapshot,
-                    "native_id": identifier,
-                    "writable_roots": existing.writable_roots,
-                },
-                workdir,
-                sid,
-            )
+            validated = replace(existing, native_id=identifier)
             if existing.native_id is not None:
                 if existing.native_id != validated.native_id:
                     raise RecoveryError(
@@ -624,7 +654,7 @@ class SessionStore:
             for entry in entries:
                 if entry.name.endswith(".json"):
                     state = self._read(root, entry.path)
-                    if state is not None and state.sid == sid and state.snapshot["cwd"] == cwd:
+                    if state is not None and state.sid == sid and state.snapshot.cwd == cwd:
                         matches.append(state)
         if len(matches) > 1:
             raise RecoveryError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")

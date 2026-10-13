@@ -46,7 +46,7 @@ class CodexTui(Tui):
         common = self.common
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
-        saved_flags = tuple(snapshot["flags"])
+        saved_flags = tuple(snapshot.flags)
         refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
@@ -84,7 +84,7 @@ class CodexTui(Tui):
             *(word for word in hook if os.path.isabs(word)),
             *spec.protect,
         ]
-        added = added_dirs(saved_flags, snapshot["cwd"])
+        added = added_dirs(saved_flags, snapshot.cwd)
         try:
             sessions.protect(self.state, dependencies, effective_env, added)
         except sessions.RecoveryError as exc:
@@ -109,7 +109,7 @@ class CodexTui(Tui):
             *self.common.selector(self.native, resume=resume),
             "--no-daemon",
             "-C",
-            snapshot["cwd"],
+            snapshot.cwd,
             "-c",
             'tui.notification_method="bel"',
             *launch_flags(snapshot, interactive=True),
@@ -141,8 +141,8 @@ class CodexTui(Tui):
             ),
             env=env,
             unset=unset,
-            cwd=snapshot["cwd"],
-            project=snapshot["project"],
+            cwd=snapshot.cwd,
+            project=snapshot.project,
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
@@ -160,7 +160,7 @@ class CodexTui(Tui):
             or self.native
             and native != self.native
             or self.state
-            and not sessions.hook_cwd_matches(payload, self.state.snapshot["cwd"])
+            and not sessions.hook_cwd_matches(payload, self.state.snapshot.cwd)
         ):
             return ""
         self.native = native

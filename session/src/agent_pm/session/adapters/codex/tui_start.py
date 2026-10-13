@@ -252,7 +252,7 @@ def _start(data, termination, trust):
     state = sessions.SessionStore(data["store"]).load(data["workdir"], data["sid"])
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
-    env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
+    env = {**os.environ, "CODEX_HOME": state.snapshot.codex_home}
     sessions.protect(
         state,
         [
@@ -267,7 +267,7 @@ def _start(data, termination, trust):
         env,
         data["add_dirs"],
     )
-    cwd = state.snapshot["cwd"]
+    cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(
         exe=data["argv"][0],

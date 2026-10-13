@@ -42,7 +42,7 @@ print(json.dumps([
     type(next(sessions.flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
     dataclasses.is_dataclass(sessions.SessionState),
     sessions.SessionState is types.SessionState,
-    typing.get_type_hints(sessions.SessionState)["snapshot"] is dict,
+    typing.get_type_hints(sessions.SessionState)["snapshot"] is types.Snapshot,
     tui_start.sessions is sessions,
     tui_hook.sessions is sessions,
     tui_hook.sessions.RecoveryError is sessions.RecoveryError,

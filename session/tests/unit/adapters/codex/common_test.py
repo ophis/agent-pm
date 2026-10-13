@@ -8,6 +8,7 @@ import time
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex.sessions import snapshot_data
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
 from agent_pm.session.modes.tui import hook_argv
 
@@ -43,7 +44,7 @@ class CommonTest(Base):
         with mock.patch("os.fsync", wraps=os.fsync) as sync:
             state = self.prepare()
         self.assertGreaterEqual(sync.call_count, 2)
-        self.assertEqual(state.snapshot["cwd"], str(self.cwd))
+        self.assertEqual(state.snapshot.cwd, str(self.cwd))
         self.assertIsNone(state.native_id)
         path = self.record()
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
@@ -95,7 +96,7 @@ class CommonTest(Base):
         launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
-            self.common.load(str(self.work), self.spec.sid).snapshot["env"], {**env, "K": "v"}
+            self.common.load(str(self.work), self.spec.sid).snapshot.env, {**env, "K": "v"}
         )
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
@@ -185,7 +186,7 @@ class CommonTest(Base):
         launch = self.adapter.headless().launch("hi", spec, resume=False)
         self.assertNotIn("-m", launch.argv)
         self.assertFalse(any(x.startswith("model_reasoning_effort=") for x in launch.argv))
-        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot["model"])
+        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot.model)
 
     def test_missing_recovery_and_session_fail_before_launch(self):
         with self.assertRaisesRegex(ConfigError, "missing.*state"):
@@ -236,10 +237,10 @@ class CommonTest(Base):
         original = self.record().read_text()
         cases = (
             {"sid": "forged"},
-            {"snapshot": {**state.snapshot, "project": "yes"}},
-            {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
+            {"snapshot": {**snapshot_data(state.snapshot), "project": "yes"}},
+            {"snapshot": {**snapshot_data(state.snapshot), "cwd": str(self.work / ".." / "work")}},
             *(
-                {"snapshot": {**state.snapshot, "env": env}}
+                {"snapshot": {**snapshot_data(state.snapshot), "env": env}}
                 for env in (
                     {"X;Y": "1"},
                     {"A=B": "1"},
@@ -250,7 +251,7 @@ class CommonTest(Base):
                     [],
                 )
             ),
-            {"snapshot": {**state.snapshot, "other": 1}},
+            {"snapshot": {**snapshot_data(state.snapshot), "other": 1}},
             {"writable_roots": [str(self.extra)]},
             {"writable_roots": [str(self.home)]},
             {"native_id": "not-a-uuid"},
@@ -406,7 +407,9 @@ class WritableDirsTest(Base):
         self.assertEqual(len(set(dirs)), len(dirs))
         launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
-        self.assertEqual(adapter.common.load(str(self.work), self.spec.sid).writable_roots, roots)
+        self.assertEqual(
+            adapter.common.load(str(self.work), self.spec.sid).writable_roots, tuple(roots)
+        )
 
     def test_config_codex_home(self):
         home = self.root / "config-codex"
@@ -433,7 +436,7 @@ class WritableDirsTest(Base):
         spec = dataclasses.replace(self.spec, access=Access(project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec, resume=False))
         dirs = other.writable_dirs(spec, resume=True)
-        self.assertEqual(list(dirs[: len(saved)]), saved)
+        self.assertEqual(tuple(dirs[: len(saved)]), saved)
         self.assertNotIn(elsewhere, dirs)
         self.assertEqual(self.record().read_bytes(), record)
 
@@ -448,7 +451,7 @@ class WritableDirsTest(Base):
             [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
         )
         self.assertEqual(
-            adapter.common.load(str(self.work), spec.sid).snapshot["dirs"], [str(self.extra)]
+            adapter.common.load(str(self.work), spec.sid).snapshot.dirs, (str(self.extra),)
         )
         for resume in (False, True):
             with self.subTest(resume=resume):
@@ -644,11 +647,11 @@ class GrantTest(Base):
             str(self.extra),
             str(added),
         ]
-        self.assertEqual(state.writable_roots, expected)
+        self.assertEqual(state.writable_roots, tuple(expected))
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(spec, flags=("--add-dir", "/changed"))
-        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, expected)
+        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, tuple(expected))
         self.assertNotIn("/changed", self.adapter.writable_dirs(changed, resume=True))
 
     def test_recovery_needs_roots_covering_cwd_and_home(self):
@@ -671,6 +674,6 @@ class SavedFlags(Base):
     def test_invalid_saved_flags_fail_closed(self):
         state = self.prepare()
         for value in (None, True, 0, {}, "-s", [1], ["bad\0"]):
-            self.edit_record(snapshot=state.snapshot | {"flags": value})
+            self.edit_record(snapshot=snapshot_data(state.snapshot) | {"flags": value})
             with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "snapshot flags"):
                 self.common.load(str(self.work), self.spec.sid)

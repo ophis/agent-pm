@@ -627,7 +627,7 @@ class TuiLaunchIntegrationTest(Live):
         ]
         self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
         self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
-        self.assertEqual(self.bound().snapshot["flags"][1], "workspace-write")
+        self.assertEqual(self.bound().snapshot.flags[1], "workspace-write")
 
     def test_session_start_waits_for_first_submission_fresh_and_resumed(self):
         spec = dataclasses.replace(
@@ -829,7 +829,8 @@ class TuiLaunchIntegrationTest(Live):
         )
         before = self.record().read_bytes()
         resumed = self.driver.writable_dirs("codex", changed_spec, resume=self.sid)
-        self.assertEqual(list(resumed[: len(saved)]), saved)
+        self.assertIsInstance(saved, tuple)
+        self.assertEqual(tuple(resumed[: len(saved)]), saved)
         self.assertNotIn(str(next_tmp), resumed)
         self.assertNotIn(str(ignored_home), resumed)
         self.assertEqual(self.record().read_bytes(), before)
