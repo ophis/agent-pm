@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-import importlib.util
 import json
 import os
 import re
+import runpy
 import signal
 import stat
 import sys
@@ -14,23 +14,7 @@ import time
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
-def _sibling(name):
-    key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
-    if key in sys.modules:
-        found = getattr(sys.modules[key], "__file__", None)
-        if found != path:
-            raise ImportError(f"{key} is {found}, not {path}")
-        return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, path)
-    # registered before it runs: dataclasses with postponed annotations look up their module
-    module = sys.modules[key] = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[key]
-        raise
-    return module
-
+_sibling = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["sibling"]
 
 sessions = _sibling("sessions")
 app_server = _sibling("app_server")

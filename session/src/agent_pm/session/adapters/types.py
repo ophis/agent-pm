@@ -34,6 +34,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.types import HostsError
 from agent_pm.utils import load_class as load
 
 TURN_END = "turn_end"
@@ -200,7 +201,7 @@ class Settings:
 
 def settings(config: Mapping) -> dict:
     if not isinstance(config, Mapping):
-        raise ValueError("session config: want a table")
+        raise HostsError.session_table()
     found = tables.parse(config.get("hosts"))
     return {
         "adapters": config.get("adapters", {}),

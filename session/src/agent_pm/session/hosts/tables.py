@@ -5,40 +5,34 @@ module.path:Class form, never imported.
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.hosts.types import Hosts, HostsError
 from agent_pm.utils import CLASS_PATH
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 
-@dataclass(frozen=True)
-class Hosts:
-    default: str
-    tables: dict[str, dict]
-
-
 def parse(table) -> Hosts:
     if not isinstance(table, Mapping):
-        raise ValueError("[hosts]: missing")
+        raise HostsError.missing()
     tables = {}
     for key, value in table.items():
         if key == "default":
             continue
         if not isinstance(key, str):
-            raise ValueError(f"[hosts] {key!r}: want a string key")
+            raise HostsError.key_type(key)
         if not isinstance(value, Mapping):
-            raise ValueError(f"[hosts] {key}: want default or a [hosts.<name>] table")
+            raise HostsError.table(key)
         if not NAME.match(key):
-            raise ValueError(f"[hosts.{key}]: want a name matching [a-z][a-z0-9_]*")
+            raise HostsError.name(key)
         implementation = value.get("implementation")
         if not isinstance(implementation, str) or not CLASS_PATH.fullmatch(implementation):
-            raise ValueError(f"[hosts.{key}].implementation: want module.path:Class")
+            raise HostsError.implementation(key)
         tables[key] = dict(value)
     default = table.get("default")
     if not isinstance(default, str) or default not in tables:
-        raise ValueError(f"[hosts] default: want one of {', '.join(sorted(tables))}")
+        raise HostsError.default(tables)
     return Hosts(default, tables)
 
 

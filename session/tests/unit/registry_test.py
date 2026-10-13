@@ -1,4 +1,4 @@
-"""adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the
+"""adapters/types.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the
 hosts' tables and the default host), settings() from a read session config, the tui settings from
 [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the import
 system only for the test's span; the registry itself is never patched. Each test constructs fresh

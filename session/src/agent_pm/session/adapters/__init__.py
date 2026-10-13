@@ -1,1 +1,1 @@
-"""Adapters: one subpackage per agent runtime, built by types.py; types.py holds their interface."""
+"""Runtime subpackages instantiated by the caller-owned Registry in types.py."""
