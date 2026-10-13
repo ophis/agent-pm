@@ -891,7 +891,7 @@ class HookTrustIntegrationTest(Live):
                     lambda: (
                         "codex tui:"
                         in self.server.tmux(
-                            "capture-pane", "-p", "-S", "-1000", "-t", f"=bad{index}:"
+                            "capture-pane", "-p", "-J", "-S", "-1000", "-t", f"=bad{index}:"
                         ).stdout
                     ),
                     WAIT,
@@ -917,7 +917,7 @@ class HookTrustIntegrationTest(Live):
                         lambda: (
                             "review it"
                             in self.server.tmux(
-                                "capture-pane", "-p", "-S", "-1000", "-t", f"=u{index}:"
+                                "capture-pane", "-p", "-J", "-S", "-1000", "-t", f"=u{index}:"
                             ).stdout
                         ),
                         WAIT,
@@ -946,7 +946,7 @@ class HookTrustIntegrationTest(Live):
         live_tmux.wait(
             lambda: (
                 "app-server exited"
-                in self.server.tmux("capture-pane", "-p", "-S", "-1000", "-t", "=w1:").stdout
+                in self.server.tmux("capture-pane", "-p", "-J", "-S", "-1000", "-t", "=w1:").stdout
             ),
             WAIT,
             what="bounded retry diagnostic",
