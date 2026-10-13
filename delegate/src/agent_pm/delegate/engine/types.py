@@ -81,6 +81,7 @@ class Result:
     outcome: Outcome | None
     error: str = ""
     limit: Limit | None = None
+    instruction: str | None = None
 
 
 @dataclass(frozen=True)
