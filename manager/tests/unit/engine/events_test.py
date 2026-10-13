@@ -3,6 +3,7 @@
 import errno
 import json
 import os
+import stat
 import subprocess
 import threading
 import time
@@ -201,6 +202,56 @@ class EventsTest(Case):
             self.events.recover(0)
         self.assertEqual(Path(self.events.path).read_bytes(), self.original)
         self.assertFalse(Path(self.events.journal).exists())
+
+    def test_rotation_reprivatizes_fresh_0644_events_and_preserves_both_tails(self):
+        def create_fresh(_seconds):
+            self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
+            Path(self.events.path).unlink()
+            Path(self.events.path).write_bytes(b"fresh\n")
+            Path(self.events.path).chmod(0o644)
+            self.assertEqual(stat.S_IMODE(os.stat(self.events.path).st_mode), 0o644)
+
+        with file_lock(self.events.path, own=True), mock.patch("time.sleep", create_fresh):
+            self.assertTrue(self.events.rotate(1, 0))
+            save(self.ledger, '{"gen":1,"cursor":0}\n', own=True, durable=True)
+            self.events.finish(1)
+        self.assertEqual(Path(self.events.path).read_bytes(), b"old\nfresh\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self.events.path).st_mode), 0o600)
+        self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
+        self.assertEqual(self.generation(), 1)
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_hostile_events_during_settlement_refuse_without_losing_unread_archive(self):
+        outside = Path(self.directory, "outside")
+        outside.write_bytes(b"keep\n")
+        ledger = self.ledger.read_bytes()
+        for kind in ("symlink", "fifo"):
+            with self.subTest(kind=kind):
+
+                def plant(_seconds, kind=kind):
+                    self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
+                    Path(self.events.path).unlink()
+                    if kind == "symlink":
+                        Path(self.events.path).symlink_to(outside)
+                    else:
+                        os.mkfifo(self.events.path)
+
+                with file_lock(self.events.path, own=True):
+                    with mock.patch("time.sleep", plant), self.assertRaises(OSError):
+                        self.events.rotate(1, 0)
+                    self.assertEqual(self.ledger.read_bytes(), ledger)
+                    self.assertEqual(self.generation(), 0)
+                    self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
+                    self.assertEqual(outside.read_bytes(), b"keep\n")
+                    mode = os.stat(self.events.path, follow_symlinks=False).st_mode
+                    self.assertTrue(
+                        stat.S_ISLNK(mode) if kind == "symlink" else stat.S_ISFIFO(mode)
+                    )
+                    self.assertTrue(Path(self.events.journal).exists())
+                    self.assertFalse(Path(self.events.candidate).exists())
+                    Path(self.events.path).unlink()
+                    self.events.recover(0)
+                self.assertEqual(Path(self.events.path).read_bytes(), self.original)
 
     def test_legacy_settlement_prepends_old_tail_before_fresh_arrivals(self):
         fd = os.open(self.events.path, os.O_WRONLY | os.O_APPEND)
