@@ -260,6 +260,17 @@ def no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) 
     return ConfigError.no_charter(role)
 
 
+def _team_file_owner(path: str, shown: str, me: int) -> None:
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        raise ConfigError.file_io(path, e.strerror) from None
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise ConfigError.team_dir_writable(shown)
+    if st.st_uid != me:
+        raise ConfigError.team_dir_owner(shown, st.st_uid, me)
+
+
 def check_team_dirs(
     dirs: Sequence[str], *, writes: Sequence[tuple[str, str]], temp: Sequence[str] | None = None
 ) -> None:
@@ -273,14 +284,7 @@ def check_team_dirs(
             if t := under(real, temps):
                 raise ConfigError.team_dir_temp(shown, t)
             check_overlap(shown, real, writes)
-            try:
-                st = os.stat(path)
-            except OSError as e:
-                raise ConfigError.file_io(path, e.strerror) from None
-            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-                raise ConfigError.team_dir_writable(shown)
-            if st.st_uid != me:
-                raise ConfigError.team_dir_owner(shown, st.st_uid, me)
+            _team_file_owner(path, shown, me)
         for parent in Path(d).parents:
             try:
                 st = os.stat(parent)

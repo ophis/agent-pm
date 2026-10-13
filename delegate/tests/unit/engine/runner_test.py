@@ -37,6 +37,7 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.delegate.engine.types import Stopped
 from agent_pm.session import (
     MODES,
     Activity,
@@ -645,6 +646,7 @@ class Stops(Base):
 
     def test_an_exception_ends_the_record_stopped(self):
         for error, rc, text in (
+            (Stopped(signal.SIGTERM), 143, "stopped: Stopped: 143"),
             (SystemExit(129), 129, "stopped: SystemExit: 129"),
             (SystemExit("bye"), 1, "stopped: SystemExit: bye"),
             (KeyboardInterrupt(), 1, "stopped: KeyboardInterrupt"),

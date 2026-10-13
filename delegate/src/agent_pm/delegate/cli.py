@@ -144,13 +144,18 @@ def _main(a: argparse.Namespace, *, application=None) -> tuple[int, str | None]:
     if result.outcome is None:
         say(f"delegate: {result.error}")
         return (3 if result.returncode or result.limit else 1), None
-    if deliverable := result.outcome.deliverable:
-        if a.out == "-":
-            print("\n".join(map(printable, deliverable.split("\n"))), end="", flush=True)
-        elif holds(out := os.path.abspath(a.out), deliverable):
-            say(f"delegate: deliverable {out}")
+    _deliverable(a.out, result.outcome.deliverable)
     say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
+
+
+def _deliverable(out: str, text: str) -> None:
+    if not text:
+        return
+    if out == "-":
+        print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
+    elif holds(path := os.path.abspath(out), text):
+        say(f"delegate: deliverable {path}")
 
 
 def _check_detach(a: argparse.Namespace) -> None:
@@ -197,7 +202,12 @@ def listing(team: Team) -> str:
         config = composer.resolve(role, team=team)
         composer.render(config, LIST_PARAMS, team=team)
         lines.append(
-            f"{role}  {config.output['type']}  {team.source(composer.path_for(team, 'roles', role))}\n"
+            f"{role}"
+            f"  "
+            f"{config.output['type']}"
+            f"  "
+            f"{team.source(composer.path_for(team, 'roles', role))}"
+            f"\n"
         )
         lines += [
             f"  {t}: {what}  [{team.source(composer.path_for(team, 'tasks', t))}]\n"

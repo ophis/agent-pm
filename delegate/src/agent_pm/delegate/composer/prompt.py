@@ -36,14 +36,16 @@ from agent_pm.delegate.event import OUTCOME, PROGRESS
 from agent_pm.utils import unfenced
 
 RESUME = (
-    "Resumed agent run after an interruption. These rules are current and may have changed since this session "
-    "started. The input below is current: it adds to this session's earlier input. Continue the task this "
-    "session already picked or was given, following your task file's `## Resume` section; never pick it "
+    "Resumed agent run after an interruption. These rules are current and may have "
+    "changed since this session started. The input below is current: it adds to this "
+    "session's earlier input. Continue the task this session already picked or was "
+    "given, following your task file's `## Resume` section; never pick it "
     "again.\n\n"
 )
 RULE = (
-    "Each name below stands for its value. Run every command with each name, nested ones included, replaced by its "
-    "value and written out in full, no name or shell variable left."
+    "Each name below stands for its value. Run every command with each name, nested "
+    "ones included, replaced by its value and written out in full, no name or shell "
+    "variable left."
 )
 PARAMETERS = {
     "<Workdir>": "workdir",
@@ -56,15 +58,22 @@ PARAMETERS = {
     "<out-host>": "output.host",
 }
 RETURN = (
-    "## Return\n\nYour replies carry your reports:\n\n"
-    f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write "
-    "that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. "
-    f"`[{PROGRESS}:start] <what that line asks you to report>`.\n"
-    "- **Outcome:** once everything else is done and all background work and every agent you spawned have "
-    "finished (wait for each and collect its result), end your last reply with one fenced code block whose info "
-    f"string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. "
-    '`{"status": "done", "title": "<one line>", "summary": "<text>"}`. A long deliverable goes in a file named '
-    "by `deliverable_file` instead.\n"
+    f"## Return\n\nYour replies carry your reports:\n\n- **Progress:** at each "
+    f"`["
+    f"{PROGRESS}"
+    f":<name>] …` line in your steps, before calling the next tool, write that line in "
+    f"a reply as a line of its own, outside any code block: the mark, then your report, "
+    f"e.g. `["
+    f"{PROGRESS}"
+    f":start] <what that line asks you to report>`.\n- **Outcome:** once everything "
+    f"else is done and all background work and every agent you spawned have finished "
+    f"(wait for each and collect its result), end your last reply with one fenced code "
+    f"block whose info string is `"
+    f"{OUTCOME}"
+    f"`, holding the outcome as one JSON object of the fields in [Output](#output), "
+    f'e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`. A long '
+    f"deliverable goes in a file named by `deliverable_file` "
+    f"instead.\n"
 )
 
 
@@ -112,6 +121,19 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     if teams.used(team, run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
     return own + f"\n{params.input.strip()}\n"
+
+
+def _link_errors(label: str, left: str, anchors: set, entries: Mapping) -> list[str]:
+    errors = []
+    for t, target in LINK.findall(left):
+        if target.startswith("#"):
+            if target[1:] not in anchors:
+                errors.append(f"{label}: no such anchor: [{t}]({target})")
+            elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
+                errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
+        elif not SCHEME.match(target):
+            errors.append(f"{label}: relative link target: [{t}]({target})")
+    return errors
 
 
 def reference_errors(
@@ -166,16 +188,7 @@ def reference_errors(
                     break
                 pos += len(best)
             left = "".join(kept) + line[pos:]
-            for t, target in LINK.findall(left):
-                if target.startswith("#"):
-                    if target[1:] not in anchors:
-                        errors.append(f"{label}: no such anchor: [{t}]({target})")
-                    elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
-                        errors.append(
-                            f"{label}: not a path of the prompt at that anchor: [{t}]({target})"
-                        )
-                elif not SCHEME.match(target):
-                    errors.append(f"{label}: relative link target: [{t}]({target})")
+            errors.extend(_link_errors(label, left, anchors, entries))
             plain = LINK.sub(" ", left)
             if "›" in plain or any(name in titles for name in PAREN.findall(plain)):
                 errors.append(f"{label}: bare reference: {line.strip()}")
@@ -271,7 +284,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
 
 
 def _without(text: str, placeholder: str) -> str:
-    return "".join(line for line in text.splitlines(True) if placeholder not in line)
+    return "".join(line for line in text.splitlines(keepends=True) if placeholder not in line)
 
 
 def _fence(text: str, least: int = 3) -> str:
