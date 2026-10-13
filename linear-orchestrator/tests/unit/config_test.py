@@ -62,6 +62,7 @@ GATE = (
     "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 )
 LABEL = ("linear-orchestrator/config.toml", "core")
+CORE = agent_pm.delegate.engine.config.CONFIG
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 
@@ -384,9 +385,23 @@ class Config(ConfigFile, Case):
         core = config_file.read_project("delegate")
         self.assertEqual(
             resolve.call_args_list,
-            [mock.call(r, None, overlays=[overlay], label=LABEL, cfg=core) for r in roles],
+            [
+                mock.call(
+                    r,
+                    None,
+                    overlays=[overlay],
+                    label=LABEL,
+                    config=CORE,
+                    local=config.LOCAL,
+                    cfg=core,
+                )
+                for r in roles
+            ],
         )
-        self.assertEqual(index.call_args_list, [mock.call(r, cfg=core) for r in roles])
+        self.assertEqual(
+            index.call_args_list,
+            [mock.call(r, config=CORE, local=config.LOCAL, cfg=core) for r in roles],
+        )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
             {r: composer.resolve(r, overlays=[overlay], label=LABEL) for r in roles},
@@ -585,14 +600,18 @@ class OtherRoot(ConfigFile, Case):
         with mock.patch.object(
             composer,
             "index",
-            side_effect=lambda r, cfg: (
-                {"deep-research": ""} if r == "researcher" else index(r, cfg=cfg)
+            side_effect=lambda r, cfg, **kw: (
+                {"deep-research": ""} if r == "researcher" else index(r, cfg=cfg, **kw)
             ),
         ) as fake:
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
         core = config_file.read_project("delegate", path=self.core_path)
         self.assertEqual(
-            fake.call_args_list, [mock.call(r, cfg=core) for r in ("researcher", "pm", "engineer")]
+            fake.call_args_list,
+            [
+                mock.call(r, config=self.core_path, local=config.LOCAL, cfg=core)
+                for r in ("researcher", "pm", "engineer")
+            ],
         )
 
     def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
@@ -623,7 +642,10 @@ class OtherRoot(ConfigFile, Case):
         ):
             config.load(self.root, path=path, local=local, core=self.core_path)
         paths = [c.args[0] for c in opened.call_args_list]
-        self.assertEqual([paths.count(p) for p in (path, self.core_path)], [1, 1], paths)
+        session = os.path.join(config_file.ROOT, "session", "config.toml")
+        self.assertEqual(
+            [paths.count(p) for p in (path, self.core_path, session)], [1, 1, 3], paths
+        )
         self.assertEqual(
             sorted(c.args[0] for c in read.call_args_list),
             ["delegate", "linear-orchestrator", "session"],

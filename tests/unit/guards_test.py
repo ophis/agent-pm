@@ -1161,7 +1161,8 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/a.py": "import agent_pm.session.adapters\nfrom agent_pm.session.modes import x\n"
                 "from agent_pm.session.hosts.tmux import tmux_host\nimport agent_pm.delegate.team.tools.repo\n",
                 f"{OPKG}/b.py": "from agent_pm.delegate.engine import runner\n"
-                "from agent_pm.delegate.engine.plan import Plan\nimport core\nimport agent_pm\n",
+                "from agent_pm.delegate.engine.plan import Plan\nimport core\nimport agent_pm\n"
+                "from agent_pm.delegate.engine.config import CONFIG\n",
                 f"{OPKG}/run.py": "from agent_pm.delegate.composer import resolve\nfrom agent_pm.delegate import composer\n",
             }
         )
@@ -1176,6 +1177,7 @@ class OrchestratorImports(Sample):
                 f"{OPKG}/b.py:2: imports agent_pm.delegate.engine.plan.Plan",
                 f"{OPKG}/b.py:3: imports core",
                 f"{OPKG}/b.py:4: imports agent_pm",
+                f"{OPKG}/b.py:5: imports agent_pm.delegate.engine.config.CONFIG",
                 f"{OPKG}/run.py:1: imports agent_pm.delegate.composer.resolve",
                 f"{OPKG}/run.py:2: imports agent_pm.delegate.composer",
             ],
@@ -1237,8 +1239,7 @@ class OrchestratorImports(Sample):
             {
                 f"{OPKG}/engine/config.py": "import os\nfrom agent_pm.delegate.composer import resolve\n"
                 "from agent_pm.delegate import composer\ncomposer.index()\nimport agent_pm.delegate.composer\n"
-                "from agent_pm.utils.files import save\nimport agent_pm.delegate.engine.config\n"
-                "agent_pm.delegate.engine.config.CONFIG\n",
+                "from agent_pm.utils.files import save\nfrom agent_pm.delegate import CONFIG\n",
                 f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\n"
                 "from agent_pm import linear_orchestrator\nfrom agent_pm.delegate import run, Result\nfrom agent_pm import delegate\n"
                 "delegate.Begun\nimport agent_pm.delegate as d\nd.Finished\n"

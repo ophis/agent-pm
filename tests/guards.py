@@ -24,7 +24,7 @@ namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exac
 shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
                       is in a *.types module or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, `from session import api`, EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
@@ -693,6 +693,8 @@ def _denied(rel, module, name, exported):
     joined = f"{module}.{name}" if name else module
     if top in sys.stdlib_module_names or _within(joined, ORCH_PKG):
         return False
+    if _within(joined, f"{PKG}.{CONFIG}"):
+        return True
     packages = (PKG, *(f"{PKG}.{g}" for g in GROUPS))
     target = next(
         (t for t in (joined, module) if t in exported or _shared(t)),

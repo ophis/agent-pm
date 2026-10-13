@@ -29,7 +29,7 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import ConfigError, Invalid, Transient, Unavailable

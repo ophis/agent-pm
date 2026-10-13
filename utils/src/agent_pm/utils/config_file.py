@@ -47,7 +47,7 @@ def read_project(
         raise FileNotFoundError(f"{own_file}: missing")
     configs = _configs(root, name, path)
     known = (
-        {**configs, name: merge(_configs(root, name, None)[name], configs[name])}
+        {**configs, name: merge(_load(os.path.join(root, name, "config.toml")), configs[name])}
         if path
         else configs
     )

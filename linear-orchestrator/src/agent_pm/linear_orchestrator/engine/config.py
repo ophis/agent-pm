@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-import agent_pm.delegate.engine.config
+from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.session import Session, api
@@ -151,7 +151,7 @@ def load(
     *,
     path: str = CONFIG,
     local: str = LOCAL,
-    core: str = agent_pm.delegate.engine.config.CONFIG,
+    core: str = delegate.CONFIG,
 ) -> Config:
     try:
         cfg = config_file.read_project("linear-orchestrator", path=path, local=local, own=True)
@@ -174,7 +174,7 @@ def _configure(local, core_cfg):
     except (OSError, ValueError, api.ConfigError) as e:
         raise ConfigError(f"session: {e}") from None
     try:
-        agent_pm.delegate.engine.config.harness_host(core_cfg, hosts)
+        delegate.harness_host(core_cfg, hosts)
     except ValueError as e:
         raise ConfigError(f"core: {e}") from None
     try:
@@ -289,7 +289,7 @@ def _load(cfg, root, work, local, core):
         core_cfg = config_file.read_project("delegate", path=core, local=local)
     except (OSError, ValueError) as e:
         raise ConfigError(f"core: {e}") from None
-    roles = _runnable(cfg, root, work, core_cfg, local)
+    roles = _runnable(cfg, root, work, core, core_cfg, local)
     docs = _docs(roles, local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
@@ -438,10 +438,10 @@ def _fill_root(value, root):
     return value
 
 
-def _runnable(cfg, root, work, core_cfg, local):
+def _runnable(cfg, root, work, core, core_cfg, local):
     try:
         core_roles = core_cfg.get("roles", {})
-        trusted = composer.trusted_dirs(cfg=core_cfg)
+        trusted = composer.trusted_dirs(core, local, cfg=core_cfg)
     except (OSError, ValueError, composer.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
@@ -463,9 +463,11 @@ def _runnable(cfg, root, work, core_cfg, local):
                 None,
                 overlays=[overlay],
                 label=("linear-orchestrator/config.toml", "core"),
+                config=core,
+                local=local,
                 cfg=core_cfg,
             )
-            tasks = tuple(composer.index(name, cfg=core_cfg))
+            tasks = tuple(composer.index(name, config=core, local=local, cfg=core_cfg))
         except composer.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(

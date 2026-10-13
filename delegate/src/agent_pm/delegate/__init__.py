@@ -3,6 +3,7 @@ Driver, read from its replies' progress marks and outcome block."""
 
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.base import Delegate
+from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH, harness_host
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, run
 from agent_pm.delegate.engine.types import (
@@ -36,4 +37,7 @@ __all__ = [
     "Delegate",
     "RunConfig",
     "DelegateEvent",
+    "CONFIG",
+    "PYTHONPATH",
+    "harness_host",
 ]
