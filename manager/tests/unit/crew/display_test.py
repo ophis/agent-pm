@@ -26,6 +26,7 @@ from manager.tests.unit.crew.data import (
     result,
     row,
     started,
+    stored_entry,
     tail,
 )
 
@@ -77,9 +78,12 @@ class DisplayTest(AttachCase):
 
         cases = {
             "same": (None, {**entry(), "pane": "%9", "opener": "mgr"}),
-            "sid changed": (lambda: roster.put(self.mdir, "w1", entry(sid=SID2)), entry(sid=SID2)),
+            "sid changed": (
+                lambda: stored_entry(self.mdir, "w1", entry(sid=SID2)),
+                entry(sid=SID2),
+            ),
             "kind changed": (
-                lambda: roster.put(self.mdir, "w1", entry("pipeline")),
+                lambda: stored_entry(self.mdir, "w1", entry("pipeline")),
                 entry("pipeline"),
             ),
             "removed": (drop, None),

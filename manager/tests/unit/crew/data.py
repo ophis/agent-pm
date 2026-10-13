@@ -184,3 +184,8 @@ def entry(kind="worker", **over):
 
 def result(**fields):
     return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
+
+
+def stored_entry(directory, name, value):
+    with roster.locked(directory) as record:
+        roster.record(record, name, value)

@@ -22,6 +22,7 @@ from manager.tests.unit.crew.data import (
     nl,
     row,
     started,
+    stored_entry,
 )
 from manager.tests.unit.crew.runtime import Api, Runs
 
@@ -365,7 +366,7 @@ class StopAllTest(RosterCase):
         )
         w1 = os.path.join(self.agent_pm, "managers", "w1")
         roster.ensure(w1)
-        roster.put(w1, "w3", entry())
+        stored_entry(w1, "w3", entry())
         fake = Api(rows=self.rows())
         self.assertEqual(
             self.main_with(fake, "stop-all"),

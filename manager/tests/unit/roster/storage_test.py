@@ -165,7 +165,7 @@ class StorageTest(RosterCase):
         self.assertAlmostEqual(sum(clock.slept), roster.LOCK_TIMEOUT, delta=0.2)
         self.assertFalse(os.path.exists(self.path))
 
-    def test_two_processes_put_concurrently_and_both_entries_land(self):
+    def test_two_processes_record_concurrently_and_both_entries_land(self):
         procs = [
             subprocess.Popen(
                 [*PY, "-c", CHILD, self.dir, tag],
@@ -246,5 +246,6 @@ class StorageTest(RosterCase):
             roster.recovery(r["entries"]["w1"]),
             ["/usr/bin/python3", *MODULE, "start", "w1", "--client", "rt9"],
         )
-        roster.put(self.dir, "w2", good())
+        with roster.locked(self.dir) as record:
+            roster.record(record, "w2", good())
         self.assertEqual(self.entries(), {"w1": good(resume=resume), "w2": good()})

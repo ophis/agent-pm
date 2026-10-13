@@ -75,17 +75,6 @@ class EntriesTest(RosterCase):
                         setter(r, "a b", good())
                 self.assertEqual(self.entries(), {"w1": good(note="n")})
 
-    def test_put_records_one_entry_under_the_lock(self):
-        roster.put(self.dir, "w1", good(note="n"))
-        roster.put(self.dir, "w2", good(state="done"))
-        roster.put(self.dir, "w1", good(state="done"))
-        self.assertEqual(
-            self.entries(), {"w1": good(state="done", note="n"), "w2": good(state="done")}
-        )
-        with self.assertRaises(roster.RosterError):
-            roster.put(self.dir, "w3", good(kind="boss"))
-        self.assertEqual(sorted(self.entries()), ["w1", "w2"])
-
     def test_record_keeps_the_note_of_a_replaced_entry_of_the_same_sid(self):
         cases = {
             "same sid, note None": (

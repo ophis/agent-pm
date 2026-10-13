@@ -61,7 +61,8 @@ from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import Entry
 for i in range(15):
     spec = Entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"])
-    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry(spec))
+    with roster.locked(sys.argv[1]) as record:
+        roster.record(record, sys.argv[2] + str(i), roster.entry(spec))
 """
 
 

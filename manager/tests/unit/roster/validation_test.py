@@ -93,8 +93,8 @@ class ValidationTest(RosterCase):
     def test_later_write_drops_a_skipped_entry(self):
         self.store(self.doc(entries={"bad": good(sid="; rm -rf ~")}))
         err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            roster.put(self.dir, "w1", good())
+        with contextlib.redirect_stderr(err), roster.locked(self.dir) as record:
+            roster.record(record, "w1", good())
         self.assertEqual(list(self.entries()), ["w1"])
         self.assertEqual(err.getvalue().count("\n"), 1)
 
