@@ -21,7 +21,10 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import (
+    CALL_ERRORS,
+    Unavailable,
+)
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
@@ -248,7 +251,7 @@ class Pruner:
                 cursor = end
         except Unavailable:
             raise
-        except (Exception, LinearError) as e:
+        except CALL_ERRORS as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
         for node in nodes:
@@ -265,7 +268,7 @@ class Pruner:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except Unavailable:
                     raise
-                except (Exception, LinearError) as e:
+                except CALL_ERRORS as e:
                     self.error(ident, error=f"archive: {one_line(e)}")
                     continue
                 self.say("prune-archived", ident)
@@ -295,7 +298,7 @@ class Pruner:
             issue = self.gql(Q_ISSUE, i=ident)["issue"]
         except Unavailable:
             raise
-        except (Exception, LinearError) as e:
+        except CALL_ERRORS as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
         if not issue or issue["state"]["id"] not in finished:

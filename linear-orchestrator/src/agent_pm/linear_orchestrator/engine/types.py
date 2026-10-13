@@ -1,5 +1,6 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
+import subprocess
 from dataclasses import dataclass
 
 
@@ -336,3 +337,15 @@ class InputError(RuntimeError):
     @classmethod
     def gh_api_contents_unusable_response(cls, d):
         return cls(f"gh api contents {d}: unusable response")
+
+
+CALL_ERRORS = (
+    LinearError,
+    OSError,
+    ValueError,
+    LookupError,
+    TypeError,
+    RuntimeError,
+    subprocess.SubprocessError,
+)
+SERVICE_ERRORS = (*CALL_ERRORS, Unavailable)

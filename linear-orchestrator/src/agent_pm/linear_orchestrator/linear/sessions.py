@@ -7,8 +7,13 @@ import re
 import threading
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import LinearError
+from agent_pm.linear_orchestrator.engine.types import (
+    SERVICE_ERRORS,
+    LinearError,
+)
 from agent_pm.linear_orchestrator.linear import linear
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
@@ -52,7 +57,7 @@ def status(workdir, runtime, sid, *, driver):
 def command(rec):
     try:
         st = status(rec["workdir"], rec["runtime"], rec["sid"], driver=rec["driver"])
-    except Exception:
+    except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 
@@ -83,7 +88,7 @@ def _bounded(call, limit):
     def run():
         try:
             out["value"] = call()
-        except (Exception, LinearError) as e:
+        except SERVICE_ERRORS as e:
             out["error"] = e
 
     t = threading.Thread(target=run, daemon=True)

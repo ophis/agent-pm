@@ -16,7 +16,11 @@ from datetime import datetime
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.target import MAPPED
-from agent_pm.linear_orchestrator.engine.types import FileError, LinearError, Stopped
+from agent_pm.linear_orchestrator.engine.types import (
+    SERVICE_ERRORS,
+    FileError,
+    Stopped,
+)
 from agent_pm.linear_orchestrator.linear.issues import Issue
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
@@ -150,7 +154,7 @@ def _step(ctx, step, call, cid=None):
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
-    except (Exception, LinearError) as e:
+    except SERVICE_ERRORS as e:
         _error(ctx, step, e)
         return e
     log("writeback", "step", ctx.ident, sid=ctx.sid, step=step, found=found or None)
@@ -173,7 +177,7 @@ def progress(ctx, event: Progress) -> None:
         else:
             digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
             _post(ctx, f"progress:{event.name}:{digest}", f"Progress ({event.name}): {event.text}")
-    except (Exception, LinearError) as e:
+    except SERVICE_ERRORS as e:
         _error(ctx, "sink", e)
 
 
@@ -219,7 +223,7 @@ def finish(ctx, outcome: Outcome) -> bool:
     # the session comment's end
     try:
         return _finish(ctx, outcome)
-    except (Exception, Stopped) as e:
+    except (*SERVICE_ERRORS, Stopped) as e:
         _error(ctx, "finish", e)
         return False
 
@@ -243,7 +247,7 @@ def _finish(ctx, o):
 
     try:
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
-    except (Exception, LinearError) as e:
+    except SERVICE_ERRORS as e:
         _error(ctx, "read", e)
         return False
 
@@ -291,7 +295,7 @@ def _finish(ctx, o):
                 return
             try:
                 call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
-            except (Exception, LinearError) as e:
+            except SERVICE_ERRORS as e:
                 if not any(
                     s in str(e) for s in ATTACHED
                 ):  # the GitHub integration links PRs itself
@@ -311,7 +315,7 @@ def _finish(ctx, o):
 def limit(ctx, resets_at: float | None) -> bool:
     try:
         return _limit(ctx, resets_at)
-    except (Exception, Stopped) as e:
+    except (*SERVICE_ERRORS, Stopped) as e:
         _error(ctx, "limit", e)
         return False
 
@@ -324,7 +328,7 @@ def _limit(ctx, resets_at):
     # not ledgered: a resumed sid that hits the limit again moves again
     try:
         _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")
-    except (Exception, LinearError) as e:
+    except SERVICE_ERRORS as e:
         _error(ctx, "move:in_review", e)
         return False
     return True
@@ -341,7 +345,7 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
         ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        except (Exception, LinearError):
+        except SERVICE_ERRORS:
             pass
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)

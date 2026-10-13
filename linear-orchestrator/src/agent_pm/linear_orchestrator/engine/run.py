@@ -14,7 +14,11 @@ from dataclasses import replace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, runs
-from agent_pm.linear_orchestrator.engine.types import ConfigError, Stopped
+from agent_pm.linear_orchestrator.engine.types import (
+    SERVICE_ERRORS,
+    ConfigError,
+    Stopped,
+)
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
 from agent_pm.session import SIGNALS, DriverError
@@ -119,7 +123,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         )
         result = run(cfg.roles[role].run, spec, driver=cfg.driver, on_event=on_event)
         rc = result.returncode
-    except (Exception, Stopped) as e:
+    except (*SERVICE_ERRORS, delegate.ConfigError, SessionConfigError, DriverError, Stopped) as e:
         if isinstance(e, Stopped):
             rc = e.code
         else:
@@ -137,7 +141,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
                     runtime=a.runtime,
                     resets_at=writeback.local_time(at),
                 )
-            except Exception as e:
+            except SERVICE_ERRORS as e:
                 log("run", "run-error", a.issue, error=one_line(e))
         elif not (result and result.outcome):
             log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")

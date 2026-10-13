@@ -34,6 +34,7 @@ from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
+    SERVICE_ERRORS,
     ConfigError,
     Invalid,
     LinearError,
@@ -140,7 +141,7 @@ def exhausted(usage, max_5h=MAX_5H):
 def read_usage(runtime, *, driver):
     try:
         return driver.usage(runtime)
-    except Exception:
+    except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
         return None
 
 
@@ -328,7 +329,7 @@ class Board:
                     driver=self.cfg.driver,
                 )
                 self.statuses[sid] = None if st.resumable == "unknown" else st
-            except Exception:
+            except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
                 self.statuses[sid] = None
         return self.statuses[sid]
 
@@ -514,13 +515,13 @@ def outer(a, cfg, *, gql, run, keychain):
         try:
             st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
             why = None if st.resumable == "yes" else st.resumable
-        except Exception as e:
+        except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError) as e:
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     try:
         issue = issues.read_issue(gql, a.issue)
-    except (Exception, LinearError) as e:
+    except SERVICE_ERRORS as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     ctx = writeback.context(
         cfg,
@@ -539,14 +540,14 @@ def outer(a, cfg, *, gql, run, keychain):
             repo = target.check(
                 issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
             )
-        except Exception as e:
+        except SERVICE_ERRORS as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, Transient) or isinstance(repo, Invalid) and a.mode == "resume":
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo.reason)
-            except (Exception, LinearError) as e:
+            except SERVICE_ERRORS as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
@@ -557,7 +558,7 @@ def outer(a, cfg, *, gql, run, keychain):
     rd = cfg.run_dir(a.issue)
     try:
         sources = inputs.gather(issue, role, cfg.docs, run=run)
-    except Exception as e:
+    except SERVICE_ERRORS as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
@@ -565,7 +566,7 @@ def outer(a, cfg, *, gql, run, keychain):
             issue, role, sources, humans=ctx.humans, target=repo, docs=cfg.docs
         ).replace("\0", "")
         text = text.encode("utf-8", "replace").decode()  # a lone surrogate would fail execve
-    except Exception as e:
+    except SERVICE_ERRORS as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     try:
@@ -694,7 +695,7 @@ def tick(opts, cfg, gql, now, hour, start):
         if not dry:
             try:
                 trim(runs, now)
-            except Exception as e:
+            except SERVICE_ERRORS as e:
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
             gate = Gate(runs, now, dry, walk, driver=cfg.driver)
@@ -706,7 +707,7 @@ def tick(opts, cfg, gql, now, hour, start):
             walk.write()  # the outer logs past the walk
             try:
                 rc = start(a)
-            except (Exception, LinearError) as e:
+            except SERVICE_ERRORS as e:
                 walk("launch-error", a.issue, error=one_line(e))
                 return 0
             walk("launch", a.issue, exit=rc)

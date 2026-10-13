@@ -19,7 +19,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import (
+    SERVICE_ERRORS,
+    ConfigError,
+    LinearError,
+    Unavailable,
+)
 from agent_pm.utils import append_line, printable
 
 URL = "https://api.linear.app/graphql"
@@ -78,7 +83,7 @@ def _rate_limited(e):
             (x.get("extensions") or {}).get("code") == "RATELIMITED"
             for x in json.loads(e.read())["errors"]
         )
-    except Exception:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
@@ -263,7 +268,7 @@ def subscribe(gql, issue, emails):
     for email in emails:
         try:
             call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except (Exception, LinearError) as e:
+        except SERVICE_ERRORS as e:
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 
