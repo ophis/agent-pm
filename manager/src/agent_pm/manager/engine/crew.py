@@ -110,9 +110,10 @@ class Crew:
             raise
         return record
 
-    def _statuses(self, entries: dict[str, Entry]) -> dict[str, Status]:
+    def _statuses(self, entries: dict[str, Entry]) -> tuple[dict[str, Status], list[str]]:
         groups: dict[tuple[str, ...], dict[str, Record]] = {}
         answers: dict[str, Status] = {}
+        failures: dict[tuple[str, ...], str] = {}
         for name, entry in entries.items():
             record = entry.record
             if record is None:
@@ -122,24 +123,31 @@ class Crew:
                 continue
             group = groups.setdefault(record.ctl, {})
             if record.name in group and group[record.name] != record:
-                raise RuntimeError(f"{name}: ambiguous Record name {record.name!r}")
+                failures[record.ctl] = f"{name}: ambiguous Record name {record.name!r}"
             group[record.name] = record
         for ctl, records in groups.items():
-            raw = self._execute(
-                (*ctl, "status"), "".join(r.to_line() + "\n" for r in records.values())
-            )
+            if ctl in failures:
+                continue
             try:
+                raw = self._execute(
+                    (*ctl, "status"), "".join(r.to_line() + "\n" for r in records.values())
+                )
                 statuses = [Status.parse(line) for line in raw.splitlines()]
             except ValueError as error:
-                raise RuntimeError(f"{shlex.join(ctl)} status: invalid Status: {error}") from error
+                failures[ctl] = f"{shlex.join(ctl)} status: invalid Status: {error}"
+                continue
+            except RuntimeError as error:
+                failures[ctl] = str(error)
+                continue
             returned = {status.name: status for status in statuses}
             if len(returned) != len(statuses) or returned.keys() != records.keys():
-                raise RuntimeError(f"{shlex.join(ctl)} status: expected one Status per Record")
+                failures[ctl] = f"{shlex.join(ctl)} status: expected one Status per Record"
+                continue
             for name, entry in entries.items():
                 record = entry.record
                 if record is not None and record.ctl == ctl:
                     answers[name] = replace(returned[record.name], name=name)
-        return answers
+        return answers, list(failures.values())
 
     def status(self, names: Iterable[str] = ()) -> list[Status]:
         entries = self.roster.entries()
@@ -147,22 +155,33 @@ class Crew:
         missing = set(selected) - entries.keys()
         if missing:
             raise ValueError(f"not in roster: {', '.join(sorted(missing))}")
-        answers = self._statuses({name: entries[name] for name in selected})
+        answers, failures = self._statuses({name: entries[name] for name in selected})
+        if failures:
+            raise RuntimeError("\n".join(failures))
         return [answers[name] for name in selected]
 
-    def _control(self, verb: str, records: Iterable[Record]) -> None:
+    def _control(self, verb: str, records: Iterable[Record]) -> dict[tuple[str, ...], str]:
         groups: dict[tuple[str, ...], list[Record]] = {}
+        failures = {}
         for record in records:
             group = groups.setdefault(record.ctl, [])
             if record not in group:
                 group.append(record)
         for ctl, group in groups.items():
-            self._execute((*ctl, verb), "".join(record.to_line() + "\n" for record in group))
+            try:
+                self._execute((*ctl, verb), "".join(record.to_line() + "\n" for record in group))
+            except RuntimeError as error:
+                failures[ctl] = str(error)
+        return failures
 
     def attach(self, *, after: int | None = None, gen: int | None = None) -> str:
         self._listed = None
-        here = self._here()
         self.roster.check_lease()
+        try:
+            here = self._here()
+        except RuntimeError as error:
+            print(f"crew: {error}", file=sys.stderr)
+            here = None
         if gen is not None:
             self.roster.advance(after, gen)
         instant = datetime.now(UTC)
@@ -172,11 +191,11 @@ class Crew:
                 continue
             if entry.state == State.STARTING:
                 self.roster.mark(name, State.LOST)
-            elif entry.state == State.RESUMING:
+            elif entry.state == State.RESUMING and here is not None:
                 live = entry.sid is not None and any(entry.sid == found.sid for found in here)
                 if not live:
                     self.roster.mark(name, State.GONE)
-        for record in here:
+        for record in here or ():
             try:
                 adopted = self.roster.adopt(record)
                 if adopted is None:
@@ -184,9 +203,13 @@ class Crew:
             except RosterError as error:
                 print(f"crew: adopt {record.name}: {error}", file=sys.stderr)
         entries = self.roster.entries()
-        answers = self._statuses(entries)
+        answers, failures = self._statuses(entries)
+        for failure in failures:
+            print(f"crew: {failure}", file=sys.stderr)
         shown: list[Record] = []
         for name, entry in entries.items():
+            if name not in answers:
+                continue
             status = answers[name]
             state = entry.state
             if state in (State.LIVE, State.GONE):
@@ -203,21 +226,26 @@ class Crew:
             entries[name] = replace(entry, state=state)
             if state == State.LIVE and status.attach is not None and entry.record is not None:
                 shown.append(entry.record)
-        self._control("show", shown)
+        for failure in self._control("show", shown).values():
+            print(f"crew: {failure}", file=sys.stderr)
         self.roster.rotate_events()
         cursor, generation, backlog = self.roster.backlog()
         output = [HEADER]
         for name, entry in sorted(entries.items()):
             record = entry.record
-            status = answers[name]
+            status = answers.get(name)
             fields = (
                 name,
                 "-" if record is None else record.kind,
                 "-" if record is None else record.sid or "-",
-                status.state if entry.state == State.LIVE else entry.state,
+                "unknown"
+                if status is None
+                else status.state
+                if entry.state == State.LIVE
+                else entry.state,
                 entry.note or "-",
                 "-" if record is None else record.workdir or "-",
-                status.attach or "-",
+                "-" if status is None else status.attach or "-",
             )
             output.append("\t".join(printable(field).replace("\t", " ") for field in fields))
             if entry.state == State.GONE and record is not None:
@@ -237,7 +265,7 @@ class Crew:
             return None
         if entry.record is None:
             raise RuntimeError(f"{name}: {entry.state}: no Record to resume")
-        status = self._statuses({name: entry})[name]
+        status = self.status((name,))[0]
         if status.alive:
             return entry.record
         if entry.state != State.GONE:
@@ -276,7 +304,9 @@ class Crew:
             raise ValueError(f"{name}: not in roster")
         record = entries[key].record
         if record is not None:
-            self._control("close", (record,))
+            failures = self._control("close", (record,))
+            if failures:
+                raise RuntimeError("\n".join(failures.values()))
         self.roster.remove(key)
 
     def stop_all(self, *, dry_run: bool = False) -> list[str]:
@@ -287,15 +317,18 @@ class Crew:
         records.extend(self._here())
         names = sorted(set(entries) | {record.name for record in records})
         if not dry_run:
-            self._control("close", records)
-            for name in entries:
-                self.roster.remove(name)
+            failures = self._control("close", records)
+            for name, entry in entries.items():
+                if entry.record is None or entry.record.ctl not in failures:
+                    self.roster.remove(name)
+            if failures:
+                raise RuntimeError("\n".join(failures.values()))
         return names
 
-    def forget(self, name: str) -> None:
+    def forget(self, name: str, *, force: bool = False) -> None:
         self._listed = None
         self.roster.check_lease()
-        if self.status((name,))[0].alive:
+        if not force and self.status((name,))[0].alive:
             raise RuntimeError(f"{name}: still alive; stop it before forgetting")
         self.roster.remove(name)
 

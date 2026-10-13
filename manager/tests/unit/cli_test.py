@@ -6,6 +6,7 @@ import os
 import uuid
 from unittest import mock
 
+from agent_pm.manager import Crew, Spec
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.roster import Roster
 
@@ -90,3 +91,14 @@ class CliTest(Case):
                     main(argv)
                 self.assertEqual(error.exception.code, 2)
         self.assertFalse(os.path.exists(self.directory))
+
+    def test_force_forget_is_explicit_and_needs_no_controller(self):
+        command = self.setup_ctl()
+        Crew(self.roster).run(Spec("worker", (command, "start", "worker")))
+        with mock.patch("subprocess.run", side_effect=FileNotFoundError("missing ctl")):
+            result, _, stderr = self.invoke("forget", "worker", "--manager", "mgr")
+            self.assertEqual(result, 1, stderr)
+            self.assertIn("worker", self.roster.entries())
+            result, _, stderr = self.invoke("forget", "worker", "--manager", "mgr", "--force")
+            self.assertEqual(result, 0, stderr)
+        self.assertEqual(self.roster.entries(), {})

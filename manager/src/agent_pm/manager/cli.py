@@ -108,7 +108,7 @@ def _stop_all(args) -> int:
 
 
 def _forget(args) -> int:
-    _crew(args).forget(args.name)
+    _crew(args).forget(args.name, force=args.force)
     return 0
 
 
@@ -154,6 +154,12 @@ def _parser() -> argparse.ArgumentParser:
     for name, handler in (("stop", _stop), ("forget", _forget)):
         command = subs.add_parser(name, parents=[common])
         command.add_argument("name")
+        if name == "forget":
+            command.add_argument(
+                "--force",
+                action="store_true",
+                help="drop bookkeeping without ctl; work may remain alive",
+            )
         command.set_defaults(func=handler)
     stop_all = subs.add_parser("stop-all", parents=[common])
     stop_all.add_argument("--dry-run", action="store_true")

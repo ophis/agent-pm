@@ -425,6 +425,81 @@ class CrewTest(Case):
             self.crew.stop("worker")
         self.assertIn("worker", self.roster.entries())
 
+    def test_attach_keeps_failed_ctl_unknown_and_processes_healthy_group(self):
+        healthy = self.start("healthy", display="view")
+        ctl.set_session(self.ctl_dir, "healthy", displayable=True)
+        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
+        self.roster.adopt(bad)
+        stderr = io.StringIO()
+        with self.listed((healthy, bad)), contextlib.redirect_stderr(stderr):
+            table = self.crew.attach()
+        self.assertIn("missing-ctl-task371", stderr.getvalue())
+        self.assertIn("broken\tfake\t" + bad.sid + "\tunknown\t", table)
+        self.assertEqual(self.roster.entries()["broken"].state, State.LIVE)
+        self.assertEqual(self.calls("show"), [{"argv": ["show"], "names": ["healthy"]}])
+
+    def test_attach_reports_nonzero_status_and_show_without_aborting_other_groups(self):
+        self.start("healthy", display="view")
+        ctl.set_session(self.ctl_dir, "healthy", displayable=True)
+        bad = replace(self.fake_record("broken"), ctl=("failing-ctl-task371",))
+        command = os.path.join(self.bin_dir, bad.ctl[0])
+        with open(command, "w", encoding="utf-8") as stream:
+            stream.write("#!/bin/sh\necho broken-controller >&2\nexit 7\n")
+        os.chmod(command, 0o700)
+        self.roster.adopt(bad)
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == (self.command, "show"):
+                return subprocess.CompletedProcess(argv, 1, "", "show failed")
+            return real_run(argv, **options)
+
+        stderr = io.StringIO()
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            self.listed(),
+            contextlib.redirect_stderr(stderr),
+        ):
+            table = self.crew.attach()
+        self.assertIn("broken-controller", stderr.getvalue())
+        self.assertIn("show failed", stderr.getvalue())
+        self.assertIn("healthy\t", table)
+        self.assertEqual(self.roster.entries()["broken"].state, State.LIVE)
+
+    def test_force_forget_drops_bookkeeping_without_any_controller_call(self):
+        record = self.start("worker")
+        stderr = io.StringIO()
+        with mock.patch("subprocess.run", side_effect=FileNotFoundError("unavailable")):
+            with self.assertRaises(RuntimeError):
+                self.crew.forget("worker")
+            self.assertIn("worker", self.roster.entries())
+            with contextlib.redirect_stderr(stderr):
+                self.crew.forget("worker", force=True)
+        self.assertEqual(self.roster.entries(), {})
+        self.assertEqual(self.calls("close"), [])
+        with open(os.path.join(self.ctl_dir, ctl.SESSIONS), encoding="utf-8") as stream:
+            self.assertTrue(json.load(stream)[record.name]["alive"])
+
+    def test_failed_orphan_listing_keeps_resume_unknown_and_checks_owned_records(self):
+        self.gone("resuming")
+        self.roster.claim_resume("resuming")
+        self.age("resuming")
+        self.start("healthy")
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == HERE:
+                return subprocess.CompletedProcess(argv, 1, "", "listing unavailable")
+            return real_run(argv, **options)
+
+        stderr = io.StringIO()
+        with mock.patch("subprocess.run", side_effect=run), contextlib.redirect_stderr(stderr):
+            table = self.crew.attach()
+        self.assertIn("listing unavailable", stderr.getvalue())
+        self.assertEqual(self.roster.entries()["resuming"].state, State.RESUMING)
+        self.assertIn("healthy\t", table)
+        self.assertIn("healthy", self.calls("status")[-1]["names"])
+
     def test_stop_all_includes_here_orphans_deduplicates_and_excludes_unlisted_records(self):
         owned = self.start("owned")
         orphan = self.fake_record("orphan")
@@ -437,6 +512,15 @@ class CrewTest(Case):
             self.assertEqual(self.crew.stop_all(), ["orphan", "owned"])
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["owned", "orphan"]}])
+
+    def test_stop_all_closes_healthy_groups_and_retains_failed_groups(self):
+        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
+        self.roster.adopt(bad)
+        self.start("healthy")
+        with self.listed(), self.assertRaisesRegex(RuntimeError, "missing-ctl-task371"):
+            self.crew.stop_all()
+        self.assertEqual(set(self.roster.entries()), {"broken"})
+        self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["healthy"]}])
 
     def test_each_ctl_is_queried_once_and_answers_are_mapped_to_their_names(self):
         self.start("one")
