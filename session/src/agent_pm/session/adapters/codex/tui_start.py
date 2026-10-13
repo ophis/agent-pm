@@ -233,11 +233,9 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
             args,
             "hooks/list",
             {"cwds": [cwd]},
-            env=env,
-            wait=ANSWER_WAIT,
-            limit=ANSWER_MAX,
-            cwd=cwd,
-            termination=termination,
+            options=app_server.RpcOptions(
+                env=env, wait=ANSWER_WAIT, limit=ANSWER_MAX, cwd=cwd, termination=termination
+            ),
         )
     except app_server.Error as e:
         raise StartError.listing_failed(e) from None
