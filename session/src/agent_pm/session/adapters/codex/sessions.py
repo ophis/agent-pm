@@ -10,6 +10,7 @@ import stat
 import tempfile
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -56,11 +57,17 @@ def options(flags):
 
 
 def added_dirs(flags, cwd: str) -> list[str]:
-    return [os.path.join(cwd, value) for name, value, _ in options(flags) if name == "--add-dir"]
+    return [
+        os.path.join(cwd, value)
+        for name, value, _ in options(flags)
+        if name == "--add-dir" and value is not None
+    ]
 
 
 class RecoveryError(Exception):
-    pass
+    @classmethod
+    def identity(cls) -> RecoveryError:
+        return cls("invalid recovery state identity")
 
 
 def absolute_path(path: object, label: str) -> str:
@@ -280,7 +287,7 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
     ):
         raise RecoveryError("malformed recovery state")
     if data["workdir"] != workdir or data["sid"] != sid:
-        raise RecoveryError("invalid recovery state identity")
+        raise RecoveryError.identity()
     native = data["native_id"]
     if native is not None and not native_id(native):
         raise RecoveryError("invalid recovery native ID")
@@ -363,7 +370,7 @@ def _path(root: str, workdir: str, sid: str) -> str:
     return os.path.join(root, digest + ".json")
 
 
-def implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
+def implicit_writable_roots(environment: Mapping[str, str] | None = None) -> list[str]:
     environment = os.environ if environment is None else environment
     return [
         "/tmp",
@@ -418,9 +425,11 @@ def read_state(
         if not isinstance(data, dict):
             raise RecoveryError("malformed recovery state")
         workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
+    if sid is None:
+        raise RecoveryError.identity()
     state = _state(data, workdir, sid)
     if path != _path(root, workdir, sid):
-        raise RecoveryError("invalid recovery state identity")
+        raise RecoveryError.identity()
     recovery_snapshot(state, root=root)
     check_writable_roots(root, state.writable_roots)
     return state
@@ -436,7 +445,7 @@ def _locked(root: str, timeout: float | None = None):
                 fcntl.flock(fd, fcntl.LOCK_EX | (fcntl.LOCK_NB if deadline is not None else 0))
                 break
             except BlockingIOError:
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     raise RecoveryError("Codex recovery state lock timed out") from None
                 time.sleep(0.05)
         yield

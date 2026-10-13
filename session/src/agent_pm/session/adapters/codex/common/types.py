@@ -99,13 +99,22 @@ def reset_at(message, environment):
 
 def refuse(flags) -> None:
     for name, value, text in options(flags):
-        key = value.partition("=")[0].split(".", 1)[0].strip().strip("\"'") if name == "-c" else ""
+        key = (
+            value.partition("=")[0].split(".", 1)[0].strip().strip("\"'")
+            if name == "-c" and value is not None
+            else ""
+        )
         if name in RESERVED or key in RESERVED_KEYS:
             raise ConfigError.codex_reserved_flag(text)
 
 
 def passed(flags) -> list[str]:
-    return [word for name, value, _ in options(flags) if name in PASSED for word in (name, value)]
+    return [
+        word
+        for name, value, _ in options(flags)
+        if name in PASSED and value is not None
+        for word in (name, value)
+    ]
 
 
 def _recover(method):
