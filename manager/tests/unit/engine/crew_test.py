@@ -282,34 +282,37 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["worker"].state, State.LIVE)
         self.assertEqual(self.calls("resume"), [])
 
-    def test_attach_tolerates_concurrent_resume_or_stop_after_status_snapshot(self):
-        for action in ("resume", "stop"):
-            self.gone(action)
-            ctl.set_session(self.ctl_dir, action, alive=True)
-            real_run = subprocess.run
+    def test_attach_tolerates_concurrent_resume_after_status_snapshot(self):
+        self.gone("resume")
+        ctl.set_session(self.ctl_dir, "resume", alive=True)
+        real_run = subprocess.run
 
-            def run(argv, **options):
-                result = real_run(argv, **options)
-                if tuple(argv) == (self.command, "status"):
-                    other = Roster(self.directory)
-                    if action == "resume":
-                        other.claim_resume(action)
-                    else:
-                        other.remove(action)
-                return result
+        def run(argv, **options):
+            result = real_run(argv, **options)
+            if tuple(argv) == (self.command, "status"):
+                Roster(self.directory).claim_resume("resume")
+            return result
 
-            with (
-                self.subTest(action=action),
-                mock.patch("subprocess.run", side_effect=run),
-                self.listed(),
-            ):
-                table = self.crew.attach()
-            if action == "resume":
-                self.assertEqual(self.roster.entries()[action].state, State.RESUMING)
-                self.assertIn(action + "\t", table)
-            else:
-                self.assertNotIn(action, self.roster.entries())
-                self.assertNotIn(action + "\t", table)
+        with mock.patch("subprocess.run", side_effect=run), self.listed():
+            table = self.crew.attach()
+        self.assertEqual(self.roster.entries()["resume"].state, State.RESUMING)
+        self.assertIn("resume\t", table)
+
+    def test_attach_tolerates_concurrent_stop_after_status_snapshot(self):
+        self.gone("stop")
+        ctl.set_session(self.ctl_dir, "stop", alive=True)
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            result = real_run(argv, **options)
+            if tuple(argv) == (self.command, "status"):
+                Roster(self.directory).remove("stop")
+            return result
+
+        with mock.patch("subprocess.run", side_effect=run), self.listed():
+            table = self.crew.attach()
+        self.assertNotIn("stop", self.roster.entries())
+        self.assertNotIn("stop\t", table)
 
     def test_attach_times_out_old_starting_and_resuming_entries_but_leaves_young_ones(self):
         self.roster.begin(Spec("old", (self.command, "start", "old")), sid=str(uuid.uuid4()))

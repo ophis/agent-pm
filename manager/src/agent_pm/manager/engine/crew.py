@@ -221,15 +221,14 @@ class Crew:
                     state = State.WAITING
                 else:
                     state = State.GONE
-                if state != entry.state:
-                    if not self.roster.mark_if(name, entry, state):
-                        current = self.roster.entries().get(name)
-                        if current is None:
-                            entries.pop(name)
-                        else:
-                            entries[name] = current
-                        answers.pop(name)
-                        continue
+                if state != entry.state and not self.roster.mark_if(name, entry, state):
+                    current = self.roster.entries().get(name)
+                    if current is None:
+                        entries.pop(name)
+                    else:
+                        entries[name] = current
+                    answers.pop(name)
+                    continue
             entries[name] = replace(entry, state=state)
             if state == State.LIVE and status.attach is not None and entry.record is not None:
                 shown.append(entry.record)
