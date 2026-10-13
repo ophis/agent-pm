@@ -1,20 +1,20 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-per-file-target-version = { "session/src/agent_pm/session/hosts/tmux/tmux_host.py" = "py39", "session/src/agent_pm/session/modes/tui_hook.py" = "py39" }
 
 [tool.ruff.lint]
-select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
-ignore = [
-    "E501",  # the formatter owns line length (100); the lines it can't wrap (strings, docstrings, comments) are a follow-up
-    "SIM105",  # try/except/pass is the repo's best-effort idiom; contextlib.suppress only adds an import
+select = [
+    "E", "F", "UP", "B", "SIM", "I", "ERA001", "PLR0913", "C901", "PLR0911",
+    "PLR0912", "PLR0915", "ARG", "TID", "BLE", "TRY", "FBT",
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# B023: a test loop's closures (subTest cases, fakes) run within that iteration
-# SIM117: merging nested `with` blocks would only reindent test bodies
-"**/tests/**" = ["B023", "SIM117"]
-# B027: InProcess.check is an optional hook whose default does nothing
-"session/src/agent_pm/session/adapters/base.py" = ["B027"]
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.format]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
