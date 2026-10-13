@@ -989,7 +989,11 @@ class HookTrustIntegrationTest(Live):
         )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}
-        clock, select, wait = time.monotonic, tui_start.select.select, subprocess.Popen.wait
+        clock, select, wait = (
+            time.monotonic,
+            tui_start.app_server.select.select,
+            subprocess.Popen.wait,
+        )
         started = clock()
         with (
             mock.patch.object(
@@ -1000,7 +1004,7 @@ class HookTrustIntegrationTest(Live):
                 ),
             ),
             mock.patch.object(
-                tui_start.select,
+                tui_start.app_server.select,
                 "select",
                 side_effect=lambda r, w, e, t: select(r, w, e, min(t, 0.01)),
             ),

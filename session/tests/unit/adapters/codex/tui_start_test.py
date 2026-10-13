@@ -139,49 +139,15 @@ class StartTest(Base):
         with self.assertRaisesRegex(tui_start.StartError, "review"):
             tui_start.trusted(result, str(self.cwd), commands)
 
-    def test_answer_ignores_notifications_wrong_ids_and_malformed_json(self):
-        lines = iter(
-            [
-                b"not json",
-                b'{"id":true,"result":1}',
-                b'{"method":"event","params":{}}',
-                b'{"id":1,"result":{}}',
-                b'{"id":2,"result":{"data":[]}}',
-            ]
-        )
-        self.assertEqual(tui_start.answer(lines, 2, "hooks/list"), {"data": []})
-        with self.assertRaisesRegex(tui_start.StartError, "denied"):
-            tui_start.answer(iter([b'{"id":2,"error":{"message":"denied"}}']), 2, "hooks/list")
-
-    def test_line_bounds_and_timeout(self):
-        with mock.patch("time.monotonic", return_value=1):
-            with self.assertRaisesRegex(tui_start.StartError, "no answer"):
-                next(tui_start.Lines(42, 0))
-        with (
-            mock.patch("select.select", return_value=([42], [], [])),
-            mock.patch("os.read", return_value=b"x"),
-        ):
-            lines = tui_start.Lines(42, 999999999999)
-            lines.buf = bytearray(tui_start.ANSWER_MAX)
-            with self.assertRaisesRegex(tui_start.StartError, "over"):
-                next(lines)
-
-    def test_process_cleanup_kills_timed_out_group(self):
-        proc = mock.Mock(pid=123)
-        proc.stdout.fileno.return_value = 42
-        proc.wait.side_effect = [tui_start.subprocess.TimeoutExpired("fake", 1), None]
-        with (
-            mock.patch("select.select", return_value=([], [], [])),
-            mock.patch("os.killpg") as kill,
-            mock.patch("time.monotonic", side_effect=[0, 0, 0, 6]),
-        ):
-            tui_start.close(proc)
-        kill.assert_called_once_with(123, tui_start.signal.SIGKILL)
-        proc.stdout.close.assert_called_once()
-
     def test_standalone_dependencies_use_python39_syntax_and_stdlib(self):
         directory = pathlib.Path(tui_start.__file__).parent
-        for name in ("sessions.py", "tui_start.py", "tui_hook.py", "hook_schema.py"):
+        for name in (
+            "sessions.py",
+            "tui_start.py",
+            "tui_hook.py",
+            "hook_schema.py",
+            "app_server.py",
+        ):
             with self.subTest(name=name):
                 tree = ast.parse((directory / name).read_text(), feature_version=(3, 9))
                 for node in ast.walk(tree):
@@ -232,9 +198,9 @@ class StartTest(Base):
         proc = mock.Mock()
         proc.stdout.fileno.return_value = 42
         with (
-            mock.patch.object(tui_start.subprocess, "Popen", return_value=proc) as popen,
-            mock.patch.object(tui_start, "answer", side_effect=[{}, {"data": []}]),
-            mock.patch.object(tui_start, "close") as close,
+            mock.patch.object(tui_start.app_server.subprocess, "Popen", return_value=proc) as popen,
+            mock.patch.object(tui_start.app_server, "answer", side_effect=[{}, {"data": []}]),
+            mock.patch.object(tui_start.app_server, "close") as close,
         ):
             self.assertEqual(
                 tui_start.hooks_list("/protected/fake", ["-c", "hook"], str(self.cwd), {}),
@@ -246,14 +212,14 @@ class StartTest(Base):
             [msg["method"] for msg in sent], ["initialize", "initialized", "hooks/list"]
         )
         self.assertEqual(sent[-1]["params"], {"cwds": [str(self.cwd)]})
-        close.assert_called_once_with(proc)
+        close.assert_called_once_with(proc, None, tui_start.app_server.EXIT_WAIT)
 
     def test_retry_once_after_appserver_exit_and_start_lock_timeout(self):
         self.prepare()
         result, commands = self.catalog()
         with (
             mock.patch.object(
-                tui_start, "hooks_list", side_effect=[tui_start._Exited(1), result]
+                tui_start, "hooks_list", side_effect=[tui_start.app_server.Exited(1), result]
             ) as listing,
             mock.patch("time.sleep"),
         ):
@@ -294,7 +260,7 @@ class StartTest(Base):
             )
 
     def test_bad_launch_data_does_not_spawn(self):
-        with mock.patch.object(tui_start.subprocess, "Popen") as proc:
+        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
             for data in ("null", "not-json", "{}"):
                 with self.assertRaises(tui_start.StartError):
                     tui_start.main([data])
@@ -330,18 +296,6 @@ class StartTest(Base):
                 proc.stdout.close.assert_called_once()
                 execute.assert_not_called()
                 self.assertEqual(tui_start.signal.getsignal(signum), original)
-
-    def test_normal_probe_exit_kills_remaining_owned_group(self):
-        proc = mock.Mock(pid=123)
-        proc.stdout.fileno.return_value = 42
-        proc.wait.return_value = 0
-        with (
-            mock.patch("select.select", return_value=([], [], [])),
-            mock.patch("os.killpg") as kill,
-        ):
-            tui_start.close(proc)
-        kill.assert_called_once_with(123, tui_start.signal.SIGKILL)
-        proc.wait.assert_called()
 
     def test_wrapper_checks_effective_tmpdir_before_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
@@ -401,7 +355,7 @@ class ProtectTest(Base):
 
     def test_bad_protect_launch_data_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
-        with mock.patch.object(tui_start.subprocess, "Popen") as proc:
+        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
             for key in ("protect", "add_dirs"):
                 for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
                     with (

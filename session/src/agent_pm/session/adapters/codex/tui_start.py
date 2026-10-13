@@ -6,10 +6,8 @@ import importlib.util
 import json
 import os
 import re
-import select
 import signal
 import stat
-import subprocess
 import sys
 import time
 
@@ -35,23 +33,18 @@ def _sibling(name):
 
 
 sessions = _sibling("sessions")
+app_server = _sibling("app_server")
 HOOKS = _sibling("hook_schema").HOOKS
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 LOCK_WAIT = 30
 ANSWER_WAIT = 20
-EXIT_WAIT = 5
 RETRY = 1
 POLL = 0.1
-BLOCK = 1 << 16
 ANSWER_MAX = 64 << 20
 
 
 class StartError(Exception):
-    pass
-
-
-class _Exited(Exception):
     pass
 
 
@@ -132,12 +125,12 @@ def hook_trust(
                 time.sleep(POLL)
         try:
             result = hooks_list(exe, args, cwd, env, termination=termination)
-        except _Exited:
+        except app_server.Exited:
             time.sleep(RETRY)
             if termination is not None:
                 termination.check()
             result = hooks_list(exe, args, cwd, env, termination=termination)
-    except _Exited as e:
+    except app_server.Exited as e:
         raise StartError(f"codex hooks/list: app-server exited {e} before answering") from None
     finally:
         os.close(fd)
@@ -145,141 +138,20 @@ def hook_trust(
 
 
 def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, termination=None):
-    proc = None
-    exited = False
     try:
-        if termination is not None:
-            termination.check()
-        try:
-            proc = subprocess.Popen(
-                [exe, "app-server", *args],
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as e:
-            raise StartError(f"codex hooks/list: {exe}: {e.strerror}") from e
-        if termination is not None:
-            termination.check()
-        lines = Lines(proc.stdout.fileno(), time.monotonic() + ANSWER_WAIT, termination)
-        send(
-            proc,
-            {
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "clientInfo": {"name": "agent-pm", "version": "0"},
-                    "capabilities": {"experimentalApi": True},
-                },
-            },
+        return app_server.call(
+            exe,
+            args,
+            "hooks/list",
+            {"cwds": [cwd]},
+            env=env,
+            wait=ANSWER_WAIT,
+            limit=ANSWER_MAX,
+            cwd=cwd,
+            termination=termination,
         )
-        answer(lines, 1, "initialize")
-        send(proc, {"method": "initialized"})
-        send(proc, {"id": 2, "method": "hooks/list", "params": {"cwds": [cwd]}})
-        return answer(lines, 2, "hooks/list")
-    except _Exited:
-        exited = True
-        raise
-    finally:
-        if proc is not None:
-            close(proc) if termination is None else close(proc, termination)
-        if termination is not None:
-            termination.check()
-        if exited:
-            raise _Exited(proc.returncode)
-
-
-def send(proc, message: dict) -> None:
-    try:
-        proc.stdin.write(json.dumps(message).encode() + b"\n")
-        proc.stdin.flush()
-    except BrokenPipeError:
-        raise _Exited from None
-
-
-class Lines:
-    def __init__(self, fd: int, deadline: float, termination=None):
-        self.fd, self.deadline, self.buf, self.seen = fd, deadline, bytearray(), 0
-        self.termination = termination
-
-    def __next__(self) -> bytes:
-        while (end := self.buf.find(b"\n", self.seen)) < 0:
-            if self.termination is not None:
-                self.termination.check()
-            self.seen = len(self.buf)
-            left = self.deadline - time.monotonic()
-            if left <= 0:
-                raise StartError(f"codex hooks/list: no answer in {ANSWER_WAIT} s")
-            if not select.select([self.fd], [], [], min(left, POLL))[0]:
-                continue
-            chunk = os.read(self.fd, BLOCK)
-            if not chunk:
-                raise _Exited
-            if len(self.buf) + len(chunk) > ANSWER_MAX:
-                raise StartError(f"codex hooks/list: an answer over {ANSWER_MAX} bytes")
-            self.buf += chunk
-        line = bytes(self.buf[:end])
-        del self.buf[: end + 1]
-        self.seen = 0
-        return line
-
-
-def answer(lines: Lines, ident: int, method: str):
-    while True:
-        try:
-            message = json.loads(next(lines))
-        except (ValueError, RecursionError):
-            continue
-        if (
-            not isinstance(message, dict)
-            or "method" in message
-            or type(message.get("id")) is not int
-            or message["id"] != ident
-        ):
-            continue
-        if "result" in message:
-            return message["result"]
-        error = message.get("error")
-        raise StartError(
-            f"codex hooks/list: {method} failed: "
-            f"{error.get('message') if isinstance(error, dict) else error}"
-        )
-
-
-def close(proc, termination=None) -> None:
-    deadline = time.monotonic() + EXIT_WAIT
-    try:
-        proc.stdin.close()
-    except OSError:
-        pass
-    fd = proc.stdout.fileno()
-    try:
-        while (left := deadline - time.monotonic()) > 0:
-            if termination is not None and termination.signum:
-                break
-            if select.select([fd], [], [], min(left, POLL))[0]:
-                if not os.read(fd, BLOCK):
-                    break
-            elif proc.poll() is not None:
-                break
-        while (left := deadline - time.monotonic()) > 0:
-            if termination is not None and termination.signum:
-                break
-            try:
-                proc.wait(timeout=min(left, POLL))
-                break
-            except subprocess.TimeoutExpired:
-                pass
-    finally:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.wait()
-        proc.stdout.close()
+    except app_server.Error as e:
+        raise StartError(f"codex hooks/list: {e}") from None
 
 
 def trusted(result, cwd: str, commands: dict[str, str]) -> str:

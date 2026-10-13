@@ -74,7 +74,7 @@ class UsageTest(Case):
         self.assertIsInstance(launch, Launch)
         self.assertEqual(launch.argv[0], os.path.realpath(sys.executable))
         self.assertTrue(all(os.path.isabs(path) for path in launch.argv))
-        self.assertEqual(Path(launch.argv[1]).name, "account_probe.py")
+        self.assertEqual(Path(launch.argv[1]).name, "app_server.py")
         self.assertTrue(Path(launch.argv[1]).is_file())
         self.assertEqual(
             launch.env, {**self.adapter.common.DEFAULTS, "PAGER": "configured", "ADDED": "value"}

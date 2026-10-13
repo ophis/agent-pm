@@ -1,4 +1,4 @@
-"""Codex isolated account queries through a fake native app-server."""
+"""The Codex app-server client run by path as the account probe, through a fake native app-server."""
 
 import json
 import os
@@ -13,7 +13,7 @@ from session.tests.case import REPO, SRC, Case
 from session.tests.integration.adapters.codex import fake_app_server
 
 
-class AccountProbeIntegrationTest(Case):
+class AppServerIntegrationTest(Case):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))).resolve()
         self.home, self.work, self.bin = (self.root / name for name in ("home", "work", "bin"))
@@ -45,12 +45,7 @@ class AccountProbeIntegrationTest(Case):
             FAKE_LOG=str(self.log),
         )
         self.script = (
-            Path(SRC["session"])
-            / "agent_pm"
-            / "session"
-            / "adapters"
-            / "codex"
-            / "account_probe.py"
+            Path(SRC["session"]) / "agent_pm" / "session" / "adapters" / "codex" / "app_server.py"
         )
         self.addCleanup(self.cleanup)
 
@@ -113,7 +108,10 @@ class AccountProbeIntegrationTest(Case):
                 {
                     "id": 1,
                     "method": "initialize",
-                    "params": {"clientInfo": {"name": "agent_pm", "version": "0.1.0"}},
+                    "params": {
+                        "clientInfo": {"name": "agent-pm", "version": "0"},
+                        "capabilities": {"experimentalApi": True},
+                    },
                 },
                 {"method": "initialized"},
                 {"id": 2, "method": "account/rateLimits/read"},
