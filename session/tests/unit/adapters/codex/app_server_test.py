@@ -86,6 +86,43 @@ class ClientTest(Case):
         proc.stdin.write.assert_not_called()
         self.assertEqual(termination.check.call_count, 3)
 
+    def test_spawn_failure_still_checks_termination_without_cleanup(self):
+        termination = mock.Mock(signum=0)
+        with (
+            mock.patch("subprocess.Popen", side_effect=FileNotFoundError(2, "not found")),
+            mock.patch("os.killpg") as kill,
+            self.assertRaisesRegex(app_server.Error, "fake: not found"),
+        ):
+            app_server.AppServer.call(
+                "fake", [], "hooks/list", env={}, wait=1, limit=1024, termination=termination
+            )
+        kill.assert_not_called()
+        self.assertEqual(termination.check.call_count, 2)
+
+    def test_broken_pipe_reports_returncode_after_process_cleanup(self):
+        proc = mock.Mock(pid=123, returncode=None)
+        proc.stdout.fileno.return_value = 42
+        proc.stdin.write.side_effect = BrokenPipeError
+
+        def wait(**_kwargs):
+            proc.returncode = 17
+            return 17
+
+        proc.wait.side_effect = wait
+        with (
+            mock.patch("subprocess.Popen", return_value=proc),
+            mock.patch("select.select", return_value=([42], [], [])),
+            mock.patch("os.read", return_value=b""),
+            mock.patch("os.killpg") as kill,
+            self.assertRaises(app_server.Exited) as caught,
+        ):
+            app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
+        self.assertEqual(caught.exception.args, (17,))
+        kill.assert_called_once_with(123, app_server.signal.SIGKILL)
+        proc.stdin.close.assert_called_once_with()
+        proc.stdout.close.assert_called_once_with()
+        proc.wait.assert_any_call()
+
     def test_line_bounds_and_timeout(self):
         with (
             mock.patch("time.monotonic", return_value=1),

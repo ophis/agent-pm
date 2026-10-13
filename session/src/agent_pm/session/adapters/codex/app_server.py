@@ -53,7 +53,7 @@ class AppServer:
         self._proc = proc
         assert proc.stdin is not None and proc.stdout is not None
         self._stdin, self._stdout = proc.stdin, proc.stdout
-        self.termination, self.exit_wait = termination, exit_wait
+        self._termination, self._exit_wait = termination, exit_wait
         self._lines = Lines(self._stdout.fileno(), wait, limit, termination=termination)
 
     @classmethod
@@ -72,7 +72,7 @@ class AppServer:
         exit_wait: float = EXIT_WAIT,
     ):
         """Own a single initialized request's process from spawning through cleanup."""
-        proc = client = None
+        client = None
         exited = False
         try:
             if termination is not None:
@@ -89,22 +89,20 @@ class AppServer:
                 )
             except OSError as e:
                 raise Error(f"{exe}: {e.strerror}") from e
+            client = cls(proc, wait, limit, termination, exit_wait)
             if termination is not None:
                 termination.check()
-            client = cls(proc, wait, limit, termination, exit_wait)
             return client._request(method, params)
         except Exited:
             exited = True
             raise
         finally:
-            if proc is not None:
-                if client is None:
-                    client = cls(proc, wait, limit, termination, exit_wait)
+            if client is not None:
                 client._close()
             if termination is not None:
                 termination.check()
-            if exited and proc is not None:
-                raise Exited(proc.returncode)
+            if exited and client is not None:
+                raise Exited(client._proc.returncode)
 
     def _request(self, method: str, params: dict | None):
         self._send(
@@ -151,18 +149,18 @@ class AppServer:
             raise Error(f"{method} failed: {detail}")
 
     def _close(self) -> None:
-        deadline = time.monotonic() + self.exit_wait
+        deadline = time.monotonic() + self._exit_wait
         with contextlib.suppress(OSError):
             self._stdin.close()
         fd = self._stdout.fileno()
         try:
-            for interval in _polls(deadline, self.termination):
+            for interval in _polls(deadline, self._termination):
                 if select.select([fd], [], [], interval)[0]:
                     if not os.read(fd, BLOCK):
                         break
                 elif self._proc.poll() is not None:
                     break
-            for interval in _polls(deadline, self.termination):
+            for interval in _polls(deadline, self._termination):
                 try:
                     self._proc.wait(timeout=interval)
                     break
