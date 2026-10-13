@@ -15,7 +15,6 @@ module agent_pm.crew, to that form.
 
 import contextlib
 import datetime
-import errno
 import fcntl
 import json
 import os
@@ -28,7 +27,7 @@ import unicodedata
 from collections.abc import Iterator
 from typing import overload
 
-from agent_pm.manager.engine.types import RosterError, Stale
+from agent_pm.manager.engine.types import Held, RosterError, Stale
 from agent_pm.session import Driver, DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
 
@@ -75,10 +74,6 @@ MANAGER_DIR = "manager directory"
 WORKER_DIR = "worker directory"
 
 
-class Held(RosterError):
-    pass
-
-
 @overload
 def directory(manager: str, *, driver=None) -> str: ...
 
@@ -93,28 +88,28 @@ def directory(manager: str | None = None, *, driver=None) -> str | None:
         try:
             manager = next((row.name for row in driver.sessions() if row.own), None)
         except DriverError as e:
-            raise RosterError(f"{e}; give --manager <name>") from e
+            raise RosterError.caller_unknown(e) from e
         if manager is None:
             return None
     elif not _match(NAME, manager):
-        raise RosterError(f"manager {manager!r}: want {NAME.pattern}")
+        raise RosterError.manager_name(manager)
     return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
 
 
 def _not_attached(directory: str) -> RosterError:
-    return RosterError(f"manager directory {directory} not attached: run crew.py attach first")
+    return RosterError.not_attached(directory)
 
 
 def _checked(path: str, *, private: bool = False, what: str = MANAGER_DIR) -> None:
     try:
         st = os.lstat(path)
     except OSError as e:
-        raise RosterError(f"{what} {path}: {e.strerror}") from e
+        raise RosterError.directory_io(what, path, e) from e
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-        raise RosterError(f"{what} {path}: not a directory owned by you")
+        raise RosterError.directory_owner(what, path)
     if private and st.st_mode & 0o077:
         mode = stat.S_IMODE(st.st_mode)
-        raise RosterError(f"{what} {path}: group or other permission bits set (mode {mode:04o})")
+        raise RosterError.directory_permissions(what, path, mode)
 
 
 def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
@@ -122,7 +117,7 @@ def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
     try:
         os.makedirs(home, mode=0o700, exist_ok=True)
     except OSError as e:
-        raise RosterError(f"{what} {home}: {e.strerror}") from e
+        raise RosterError.directory_io(what, home, e) from e
     # one level at a time, 0700 whatever the umask, each checked: nothing is created through a bad
     # level
     for path in levels:
@@ -133,7 +128,7 @@ def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
             except FileExistsError:
                 pass
         except OSError as e:
-            raise RosterError(f"{what} {path}: {e.strerror}") from e
+            raise RosterError.directory_io(what, path, e) from e
         _checked(path, private=path in private, what=what)
 
 
@@ -143,7 +138,7 @@ def ensure(directory: str) -> None:
 
 def worker_dir(sid) -> str:
     if not _match(SID, sid):
-        raise RosterError(f"worker sid {sid!r}: want a session id")
+        raise RosterError.worker_sid(sid)
     workers = os.path.abspath(os.path.expanduser(WORKERS))
     path = os.path.join(workers, sid)
     _made((workers, path), (workers, path), WORKER_DIR)
@@ -154,9 +149,9 @@ def default_runtime(local: str = LOCAL) -> str:
     try:
         runtime = read_project("manager", local=local).get("runtime")
     except (OSError, ValueError) as e:
-        raise RosterError(f"config: {e}") from e
+        raise RosterError.configuration(e) from e
     if not (isinstance(runtime, str) and runtime):
-        raise RosterError("config: runtime: want a runtime name")
+        raise RosterError.missing_runtime()
     return runtime
 
 
@@ -289,7 +284,7 @@ def _fault(name, value) -> str | None:
 
 def _check(data, path: str, *, strict: bool) -> dict:
     def fail(why: str):
-        raise RosterError(f"{path}: {why}")
+        raise RosterError.schema_fault(path, why)
 
     if not isinstance(data, dict):
         fail("want a JSON object")
@@ -323,24 +318,19 @@ def _check(data, path: str, *, strict: bool) -> dict:
     return {**data, "entries": entries}
 
 
-_NOT_REGULAR = "not a regular file owned by you"
-
-
 def _open(path: str, flags: int) -> int | None:
     try:
         fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
     except FileNotFoundError as e:
         if flags & os.O_CREAT:
-            raise RosterError(f"{path}: {e.strerror}") from e
+            raise RosterError.file_io(path, e) from e
         return None
     except OSError as e:
-        raise RosterError(
-            f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}"
-        ) from e
+        raise RosterError.file_io(path, e) from e
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise RosterError(f"{path}: {_NOT_REGULAR}")
+            raise RosterError.file_owner(path)
     except BaseException:
         os.close(fd)
         raise
@@ -359,10 +349,10 @@ def _locked(path: str) -> Iterator[None]:
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise RosterError(f"{path}: busy") from None
+                    raise RosterError.busy(path) from None
                 time.sleep(POLL)
             except OSError as e:
-                raise RosterError(f"{path}: {e.strerror}") from e
+                raise RosterError.file_io(path, e) from e
         yield
     finally:
         os.close(fd)
@@ -375,13 +365,13 @@ def _read(path: str):
     with os.fdopen(fd, "rb") as f:
         raw = f.read(ROSTER_MAX + 1)
     if len(raw) > ROSTER_MAX:
-        raise RosterError(f"{path}: over {ROSTER_MAX} bytes")
+        raise RosterError.too_large(path, ROSTER_MAX)
     try:
         return json.loads(raw)
     except RecursionError:
-        raise RosterError(f"{path}: invalid JSON: nested too deep") from None
+        raise RosterError.invalid_json(path) from None
     except ValueError as e:
-        raise RosterError(f"{path}: invalid JSON: {e}") from e
+        raise RosterError.invalid_json(path, e) from e
 
 
 def _dump(data: dict) -> str:
@@ -392,7 +382,7 @@ def _write(directory: str, path: str, text: str) -> None:
     try:
         fd, tmp = tempfile.mkstemp(dir=directory, prefix="roster.json.")
     except OSError as e:
-        raise RosterError(f"{path}: {e.strerror}") from e
+        raise RosterError.file_io(path, e) from e
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -402,7 +392,7 @@ def _write(directory: str, path: str, text: str) -> None:
     except OSError as e:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
-        raise RosterError(f"{path}: {e.strerror}") from e
+        raise RosterError.file_io(path, e) from e
 
 
 @contextlib.contextmanager
@@ -449,10 +439,7 @@ def _holds(r: dict, directory: str, own: str | None, *, driver=None) -> bool:
     if holder["session"] == own:
         return True
     if _live(holder["session"], driver=driver):
-        raise Held(
-            f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
-            "ask that manager to run crew.py release, or end that session"
-        )
+        raise Held(directory, holder["session"], holder["since"])
     return False
 
 
@@ -498,13 +485,13 @@ def entry(
         "started": now() if started is None else started,
     }
     if bad := _value_fault(value):
-        raise RosterError(f"entry: {bad}")
+        raise RosterError.invalid_entry(bad)
     return value
 
 
 def set_entry(r: dict, name: str, value: dict) -> None:
     if bad := _fault(name, value):
-        raise RosterError(f"entry {name!r}: {bad}")
+        raise RosterError.invalid_entry(bad, name)
     r["entries"][name] = value
 
 
@@ -533,7 +520,7 @@ def remove(r: dict, name: str) -> dict:
     try:
         return r["entries"].pop(name)
     except KeyError:
-        raise RosterError(f"{name} not in roster") from None
+        raise RosterError.missing_entry(name) from None
 
 
 def stop(r: dict, name: str, *, driver=None) -> str:
@@ -545,14 +532,14 @@ def stop(r: dict, name: str, *, driver=None) -> str:
         else next((k for k in sorted(entries) if entries[k]["tui"] == name), None)
     )
     if key is None:
-        raise RosterError(f"{name} not in roster")
+        raise RosterError.missing_entry(name)
     for session in (key, entries[key]["tui"]):
         if session is None:
             continue
         with contextlib.suppress(DriverError):
             driver.close(session)
         if _live(session, driver=driver):
-            raise RosterError(f"{key}: session {session} still live after tmux kill-session")
+            raise RosterError.kill_failed(key, session)
     remove(r, key)
     return key
 
@@ -585,7 +572,7 @@ def _reading(path: str) -> Iterator:
         try:
             yield f
         except OSError as e:
-            raise RosterError(f"{path}: {e.strerror}") from e
+            raise RosterError.file_io(path, e) from e
 
 
 def _offset(f, n: int) -> int:
@@ -630,19 +617,19 @@ def due(r: dict, directory: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError as e:
-        raise RosterError(f"{path}: {e.strerror}") from e
+        raise RosterError.file_io(path, e) from e
     return size > EVENTS_MAX and offset(path, r["cursor"]) >= EVENTS_MAX // 2
 
 
 def advance(r: dict, directory: str, after: int | None, gen: int | None) -> int:
     if gen != r["gen"]:
-        raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run crew.py attach")
+        raise Stale.generation(gen, r["gen"])
     path = events(directory, create=False)
     n = lines(path)
     if after is None:
         after = n
     elif after > n:
-        raise Stale(f"line {after} is past the end of {path} ({n} lines): run crew.py attach")
+        raise Stale.past_end(after, path, n)
     r["cursor"] = max(r["cursor"], after)
     return after
 
@@ -651,11 +638,11 @@ def advance(r: dict, directory: str, after: int | None, gen: int | None) -> int:
 def _writing(path: str, flags: int) -> Iterator[int]:
     fd = _open(path, flags)
     if fd is None:
-        raise RosterError(f"{path}: {os.strerror(errno.ENOENT)}")
+        raise RosterError.file_missing(path)
     try:
         yield fd
     except OSError as e:
-        raise RosterError(f"{path}: {e.strerror}") from e
+        raise RosterError.file_io(path, e) from e
     finally:
         os.close(fd)
 
@@ -685,13 +672,13 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         except FileNotFoundError:
             continue
         except OSError as e:
-            raise RosterError(f"{p}: {e.strerror}") from e
+            raise RosterError.file_io(p, e) from e
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise RosterError(f"{p}: {_NOT_REGULAR}")
+            raise RosterError.file_owner(p)
     try:
         os.replace(path, old)
     except OSError as e:
-        raise RosterError(f"{path}: {e.strerror}") from e
+        raise RosterError.file_io(path, e) from e
     cursor = r["cursor"]
     # never raises after the rename: cursor and gen still change, so the new file is never numbered
     # by the old
