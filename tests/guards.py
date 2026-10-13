@@ -21,6 +21,7 @@ status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
 namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
+shared_types(repo)    a dataclass another module imports (an __init__ aside) is in a types.py or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
@@ -121,6 +122,10 @@ ORCH_PKG = f"{PKG}.{ORCH}"
 ORCH_SRC = f"src/{PKG}/{ORCH}/"
 ORCH_PROJECT = "linear-orchestrator"
 LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_package entry
+TYPE_HOMES = {
+    "delegate.event.outcome.Outcome": "the event unit sits below the engine",
+    "linear_orchestrator.linear.issues.Issue": "issues.py is its parser",
+}
 PROJECTS = {
     "delegate": "delegate",
     "session": SESSION,
@@ -474,6 +479,38 @@ def namespace_package(repo: str) -> list[str]:
                 for e in have - wanted
             )
             found.update(f"{top}/{rel}/{e}: missing" for e in wanted - have)
+    return sorted(found)
+
+
+def shared_types(repo: str) -> list[str]:
+    found = []
+    for project in PROJECTS:
+        src = os.path.join(repo, project, "src")
+        trees = {
+            rel[:-3].replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text, rel))
+            for rel, text in _files(src, ".py")
+        }
+        data = {
+            f"{module}.{n.name}"
+            for module, (_, tree) in trees.items()
+            for n in tree.body
+            if isinstance(n, ast.ClassDef)
+            and any("dataclass" in ast.unparse(d) for d in n.decorator_list)
+        }
+        for module, (rel, tree) in trees.items():
+            if rel.endswith("__init__.py"):
+                continue
+            for line, source, name in _import_items(tree):
+                key = f"{source}.{name}"
+                if (
+                    key in data
+                    and source != module
+                    and not source.endswith(".types")
+                    and key.removeprefix(f"{PKG}.") not in TYPE_HOMES
+                ):
+                    found.append(
+                        f"{project}/src/{rel}:{line}: {key}: a shared dataclass belongs in a types.py"
+                    )
     return sorted(found)
 
 

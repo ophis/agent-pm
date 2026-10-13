@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests import guards
 from tests.case import ORCH_ROOT, PY, REPO, SRC, Case, child_env
@@ -77,6 +78,7 @@ class RealTree(Case):
             (guards.syntax_39, REPO),
             (guards.import_hygiene, REPO),
             (guards.namespace_package, REPO),
+            (guards.shared_types, REPO),
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
             (guards.config_levels, REPO),
@@ -1000,6 +1002,48 @@ class ImportHygiene(Sample):
                 "tests/a.py:4: comment # isort: skip_file",
                 "tests/a.py:5: comment # ruff: noqa: E402",
             ],
+        )
+
+
+class SharedTypes(Sample):
+    DATA = "from dataclasses import dataclass\n\n\n@dataclass\nclass A:\n    x: int\n"
+    UTILS = f"utils/{PKG}/utils"
+
+    def found(self, home: str, user: str = "b.py", extra=None) -> list[str]:
+        user_text = f"from agent_pm.utils.{home[:-3]} import A\n"
+        return guards.shared_types(
+            self.tree(
+                {
+                    f"{self.UTILS}/{home}": self.DATA,
+                    f"{self.UTILS}/{user}": user_text,
+                    **(extra or {}),
+                }
+            )
+        )
+
+    def test_a_dataclass_another_module_imports_lives_in_a_types_py(self):
+        self.assertEqual(
+            self.found("a.py"),
+            [f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: a shared dataclass belongs in a types.py"],
+        )
+        self.assertEqual(self.found("types.py"), [])
+
+    def test_a_package_re_export_and_a_listed_home_are_clean(self):
+        self.assertEqual(self.found("a.py", "__init__.py"), [])
+        with mock.patch.dict(guards.TYPE_HOMES, {"utils.a.A": "why"}):
+            self.assertEqual(self.found("a.py"), [])
+
+    def test_a_plain_class_is_not_counted(self):
+        self.assertEqual(
+            guards.shared_types(
+                self.tree(
+                    {
+                        f"{self.UTILS}/a.py": "class A:\n    pass\n",
+                        f"{self.UTILS}/b.py": "from agent_pm.utils.a import A\n",
+                    }
+                )
+            ),
+            [],
         )
 
 
