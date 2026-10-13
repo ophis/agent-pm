@@ -221,7 +221,8 @@ class ConfigError(Exception):
     @classmethod
     def codex_untrusted_home(cls, home, workdir) -> "ConfigError":
         return cls(
-            f"CODEX_HOME {home} is inside the untrusted workdir {workdir}; move Codex config outside the workdir"
+            f"CODEX_HOME {home} is inside the untrusted workdir {workdir}; "
+            "move Codex config outside the workdir"
         )
 
     @classmethod
@@ -255,7 +256,8 @@ class ConfigError(Exception):
     @classmethod
     def codex_project_settings(cls, path) -> "ConfigError":
         return cls(
-            f"project Codex settings at {path} may load in an untrusted run; use a clean workdir or trusted_dirs"
+            f"project Codex settings at {path} may load in an untrusted run; "
+            "use a clean workdir or trusted_dirs"
         )
 
     @classmethod

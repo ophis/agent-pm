@@ -11,11 +11,11 @@ DIRECTORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class LoadingError(ImportError):
     @classmethod
-    def collision(cls, key, found, path) -> "LoadingError":
+    def collision(cls, key, found, path) -> LoadingError:
         return cls(f"{key} is {found}, not {path}")
 
     @classmethod
-    def unavailable(cls, path) -> "LoadingError":
+    def unavailable(cls, path) -> LoadingError:
         return cls(f"cannot load Python module {path}")
 
 
