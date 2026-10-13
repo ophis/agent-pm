@@ -23,47 +23,39 @@ import stat
 import sys
 import tempfile
 import time
-import unicodedata
 from collections.abc import Iterator
 from dataclasses import asdict
-from typing import overload
 
+from agent_pm.manager.engine.paths import ROOT as ROOT
+from agent_pm.manager.engine.paths import WORKERS as WORKERS
+from agent_pm.manager.engine.paths import checked
+from agent_pm.manager.engine.paths import default_runtime as default_runtime
+from agent_pm.manager.engine.paths import directory as directory
+from agent_pm.manager.engine.paths import ensure as ensure
+from agent_pm.manager.engine.paths import home as home
+from agent_pm.manager.engine.paths import worker_dir as worker_dir
+from agent_pm.manager.engine.roster_schema import (
+    CREW_MODULE,
+    LEGACY,
+    LEGACY_MODULE,
+    VERSION,
+    entry_fault,
+    validated,
+    value_fault,
+)
+from agent_pm.manager.engine.roster_schema import ID_MAX as ID_MAX
+from agent_pm.manager.engine.roster_schema import KINDS as KINDS
+from agent_pm.manager.engine.roster_schema import NAME as NAME
+from agent_pm.manager.engine.roster_schema import NOTE_MAX as NOTE_MAX
+from agent_pm.manager.engine.roster_schema import SID as SID
+from agent_pm.manager.engine.roster_schema import SPLITS as SPLITS
+from agent_pm.manager.engine.roster_schema import STATES as STATES
+from agent_pm.manager.engine.roster_schema import printable as printable
 from agent_pm.manager.engine.types import Entry, Held, RosterError, Stale
 from agent_pm.session import Driver, DriverError
-from agent_pm.utils import LOCAL, STATE, read_project
+from agent_pm.utils import read_project
 
-ROOT = f"{STATE}/managers"
-WORKERS = f"{STATE}/workers"
-NAME = re.compile(r"[A-Za-z0-9_-]+")
-SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-VERSION = 1
-KINDS = ("worker", "role", "pipeline")
-STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
-SPLITS = ("right", "below")
-SCRIPTS = ("crew.py", "drive.py", "router.py")
-# crew.py's old name and module, so an entry an older version wrote still validates (recovery runs
-# CREW_MODULE)
-LEGACY = "workers.py"
-LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
 CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
-CREW_MODULE = ("-P", "-m", "agent_pm.manager.engine.crew")
-TOP = ("version", "holder", "cursor", "gen", "entries")
-FIELDS = (
-    "kind",
-    "sid",
-    "cwd",
-    "resume",
-    "note",
-    "opener",
-    "pane",
-    "split",
-    "split_from",
-    "tui",
-    "state",
-    "started",
-)
-NOTE_MAX = 500
-ID_MAX = 200
 ROSTER_MAX = 1 << 20
 EVENTS_MAX = 1 << 20
 SETTLE = 1
@@ -71,89 +63,6 @@ BLOCK = 1 << 16
 LOCK_TIMEOUT = 30
 POLL = 0.1
 CONTINUE = "Continue the unfinished task."
-MANAGER_DIR = "manager directory"
-WORKER_DIR = "worker directory"
-
-
-@overload
-def directory(manager: str, *, driver=None) -> str: ...
-
-
-@overload
-def directory(manager: None = None, *, driver=None) -> str | None: ...
-
-
-def directory(manager: str | None = None, *, driver=None) -> str | None:
-    driver = _configure() if driver is None else driver
-    if manager is None:
-        try:
-            manager = next((row.name for row in driver.sessions() if row.own), None)
-        except DriverError as e:
-            raise RosterError.caller_unknown(e) from e
-        if manager is None:
-            return None
-    elif not _match(NAME, manager):
-        raise RosterError.manager_name(manager)
-    return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
-
-
-def _not_attached(directory: str) -> RosterError:
-    return RosterError.not_attached(directory)
-
-
-def _checked(path: str, *, private: bool = False, what: str = MANAGER_DIR) -> None:
-    try:
-        st = os.lstat(path)
-    except OSError as e:
-        raise RosterError.directory_io(what, path, e) from e
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
-        raise RosterError.directory_owner(what, path)
-    if private and st.st_mode & 0o077:
-        mode = stat.S_IMODE(st.st_mode)
-        raise RosterError.directory_permissions(what, path, mode)
-
-
-def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
-    home = os.path.dirname(levels[0])
-    try:
-        os.makedirs(home, mode=0o700, exist_ok=True)
-    except OSError as e:
-        raise RosterError.directory_io(what, home, e) from e
-    # one level at a time, 0700 whatever the umask, each checked: nothing is created through a bad
-    # level
-    for path in levels:
-        try:
-            try:
-                os.mkdir(path, 0o700)
-                os.chmod(path, 0o700)
-            except FileExistsError:
-                pass
-        except OSError as e:
-            raise RosterError.directory_io(what, path, e) from e
-        _checked(path, private=path in private, what=what)
-
-
-def ensure(directory: str) -> None:
-    _made((os.path.dirname(directory), directory), (directory,), MANAGER_DIR)
-
-
-def worker_dir(sid) -> str:
-    if not _match(SID, sid):
-        raise RosterError.worker_sid(sid)
-    workers = os.path.abspath(os.path.expanduser(WORKERS))
-    path = os.path.join(workers, sid)
-    _made((workers, path), (workers, path), WORKER_DIR)
-    return path
-
-
-def default_runtime(local: str = LOCAL) -> str:
-    try:
-        runtime = read_project("manager", local=local).get("runtime")
-    except (OSError, ValueError) as e:
-        raise RosterError.configuration(e) from e
-    if not (isinstance(runtime, str) and runtime):
-        raise RosterError.missing_runtime()
-    return runtime
 
 
 def events(directory: str, *, create: bool = True) -> str:
@@ -166,157 +75,14 @@ def events(directory: str, *, create: bool = True) -> str:
     return path
 
 
-def home(name: str | None, events: str | None, *, driver=None) -> str | None:
-    d = directory(name, driver=driver)
-    if d is None or not os.path.isdir(d) or events is None:
-        return None
-    return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
-
-
-def printable(text: str) -> bool:
-    # so a printed field stays one table cell or one command
-    return not any(unicodedata.category(c) == "Cc" or c in "\u2028\u2029" for c in text)
-
-
 def now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
-def _or(words) -> str:
-    return f"{', '.join(words[:-1])} or {words[-1]}"
-
-
-def _match(pattern: re.Pattern, value) -> bool:
-    return isinstance(value, str) and pattern.fullmatch(value) is not None
-
-
-def _text(value) -> bool:
-    return isinstance(value, str) and printable(value)
-
-
-def _id(value) -> bool:
-    return value is None or (
-        _text(value) and 0 < len(value) <= ID_MAX and not any(c.isspace() for c in value)
-    )
-
-
-_TIME = "an ISO 8601 time with a UTC offset"
-
-
-def _time(value) -> bool:
-    if not _text(value):
-        return False
-    try:
-        return datetime.datetime.fromisoformat(value).utcoffset() is not None
-    except ValueError:
-        return False
-
-
-def _want(field: str, value, want) -> str:
-    return f"{field}: {value!r}: want {want}"
-
-
-def _keys(value: dict, want: tuple) -> str | None:
-    missing, extra = (
-        sorted(set(want) - set(value), key=str),
-        sorted(set(value) - set(want), key=str),
-    )
-    parts = [
-        *([f"missing {missing!r}"] if missing else []),
-        *([f"unexpected {extra!r}"] if extra else []),
-    ]
-    return f"keys: {', '.join(parts)}" if parts else None
-
-
-_NAME_OR_NULL = (lambda v: v is None or _match(NAME, v), "a session name or null")
-_ID = (_id, f"null or a printable string of 1–{ID_MAX} characters without whitespace")
-_CHECKS = {
-    "kind": (lambda v: v in KINDS, _or(KINDS)),
-    "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
-    "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
-    "note": (
-        lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
-        f"null or a printable string of at most {NOTE_MAX} characters",
-    ),
-    "opener": _ID,
-    "pane": _ID,
-    "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
-    "split_from": _NAME_OR_NULL,
-    "tui": _NAME_OR_NULL,
-    "state": (lambda v: v in STATES, _or(STATES)),
-    "started": (_time, _TIME),
-}
-
-
-def _resume_fault(resume) -> str | None:
-    if not (isinstance(resume, list) and len(resume) >= 2 and all(_text(x) for x in resume)):
-        return _want("resume", resume, "a list of 2 or more printable strings")
-    if not os.path.isabs(resume[0]):
-        return _want("resume[0]", resume[0], "an absolute path")
-    if tuple(resume[1:4]) in (CREW_MODULE, LEGACY_MODULE):
-        return None
-    if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
-        want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
-        return _want("resume[1]", resume[1], want)
-    return None
-
-
-def _value_fault(value) -> str | None:
-    if not isinstance(value, dict):
-        return _want("value", value, "an object")
-    if bad := _keys(value, FIELDS):
-        return bad
-    for field in FIELDS:
-        if field == "resume":
-            bad = _resume_fault(value[field])
-        else:
-            ok, want = _CHECKS[field]
-            bad = None if ok(value[field]) else _want(field, value[field], want)
-        if bad:
-            return bad
-    return None
-
-
-def _fault(name, value) -> str | None:
-    if not _match(NAME, name):
-        return f"name: want {NAME.pattern}"
-    return _value_fault(value)
-
-
-def _check(data, path: str, *, strict: bool) -> dict:
-    def fail(why: str):
-        raise RosterError.schema_fault(path, why)
-
-    if not isinstance(data, dict):
-        fail("want a JSON object")
-    if bad := _keys(data, TOP):
-        fail(bad)
-    if type(data["version"]) is not int or data["version"] != VERSION:
-        fail(_want("version", data["version"], VERSION))
-    holder = data["holder"]
-    if holder is not None:
-        if not isinstance(holder, dict):
-            fail("holder: want null or an object with session and since")
-        if bad := _keys(holder, ("session", "since")):
-            fail(f"holder: {bad}")
-        if not _match(NAME, holder["session"]):
-            fail(_want("holder.session", holder["session"], "a session name"))
-        if not _time(holder["since"]):
-            fail(_want("holder.since", holder["since"], _TIME))
-    for field in ("cursor", "gen"):
-        if type(data[field]) is not int or data[field] < 0:
-            fail(_want(field, data[field], "a non-negative integer"))
-    if not isinstance(data["entries"], dict):
-        fail("entries: want an object")
-    entries = {}
-    for name, value in data["entries"].items():
-        if bad := _fault(name, value):
-            if strict:
-                fail(f"entry {name!r}: {bad}")
-            print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
-        else:
-            entries[name] = value
-    return {**data, "entries": entries}
+def _owned_file(fd: int, path: str) -> None:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        raise RosterError.file_owner(path)
 
 
 def _open(path: str, flags: int) -> int | None:
@@ -329,9 +95,7 @@ def _open(path: str, flags: int) -> int | None:
     except OSError as e:
         raise RosterError.file_io(path, e) from e
     try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise RosterError.file_owner(path)
+        _owned_file(fd, path)
     except BaseException:
         os.close(fd)
         raise
@@ -402,14 +166,14 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
     # first)
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
-        raise _not_attached(directory)
-    _checked(os.path.dirname(directory))
-    _checked(directory, private=True)
+        raise RosterError.not_attached(directory)
+    checked(os.path.dirname(directory))
+    checked(directory, private=True)
     path = os.path.join(directory, "roster.json")
     with _locked(os.path.join(directory, "roster.lock")):
         data = _read(path)
         missing = data is None
-        r = _check(
+        r = validated(
             {"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
             if missing
             else data,
@@ -419,7 +183,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
         before = _dump(r)
         yield r
         if write:
-            _check(r, path, strict=True)
+            validated(r, path, strict=True)
             text = _dump(r)
             if missing or text != before:
                 _write(directory, path, text)
@@ -453,20 +217,20 @@ def check(r: dict, directory: str, own: str | None, *, driver=None) -> None:
     # the lease holds only for this block: a take-over can follow, so a later write must not assume
     # it
     if not _holds(r, directory, own, driver=driver) and own is not None:
-        raise _not_attached(directory)
+        raise RosterError.not_attached(directory)
 
 
 def entry(spec: Entry) -> dict:
     value = asdict(spec)
     if spec.started is None:
         value["started"] = now()
-    if bad := _value_fault(value):
+    if bad := value_fault(value):
         raise RosterError.invalid_entry(bad)
     return value
 
 
 def set_entry(r: dict, name: str, value: dict) -> None:
-    if bad := _fault(name, value):
+    if bad := entry_fault(name, value):
         raise RosterError.invalid_entry(bad, name)
     r["entries"][name] = value
 
