@@ -65,8 +65,8 @@ class AnnotatingResult(unittest.TextTestResult):
         annotate(test.id(), line)
 
 
-def run(suite, title, verbosity=1):
-    result = unittest.TextTestRunner(verbosity=verbosity, resultclass=AnnotatingResult).run(suite)
+def run(suite, title):
+    result = unittest.TextTestRunner(verbosity=2, resultclass=AnnotatingResult).run(suite)
     if result.failed:
         cells = [(test, line.replace("|", "\\|")) for test, line in result.failed]
         rows = [f"| `{test}` | {line} |" for test, line in cells]
@@ -92,7 +92,7 @@ def crash(code, lines):
 
 def stack(lines):
     """faulthandler's Python stack (without the C stack 3.14 adds), else the last TAIL lines."""
-    fatal = [i for i, line in enumerate(lines) if line.startswith("Fatal Python error")]
+    fatal = [i for i, line in enumerate(lines) if "Fatal Python error" in line]
     if not fatal:
         return lines[-TAIL:]
     block = lines[fatal[-1] :]

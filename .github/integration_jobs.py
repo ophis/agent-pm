@@ -118,7 +118,7 @@ def check(root, directories, jobs, workflow):
 
 
 def run(suite, title):
-    return run_tests.run(unittest.TestSuite(suite), title, verbosity=2)
+    return run_tests.run(unittest.TestSuite(suite), title)
 
 
 def main(argv):
