@@ -351,6 +351,16 @@ class CommentWrap(Sample):
             with self.subTest(source=source):
                 self.assertEqual(self.check(source), [])
 
+    def test_code_paragraphs_preserve_fences_indent_and_doctests(self):
+        for source in (
+            '"""Example.\n\n```python\nx = 1\ny = 2\n```\n"""\n',
+            '"""Example.\n\n    x = 1\n    y = 2\n"""\n',
+            "# Example.\n#\n#     x = 1\n#     y = 2\n",
+            '"""Example.\n\n>>> x = 1\n>>> y = 2\n"""\n',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.check(source), [])
+
 
 class TestBoundaries(Sample):
     def violations(self, sample, own, *, shipped=False):

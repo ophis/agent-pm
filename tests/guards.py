@@ -4,7 +4,6 @@ import ast
 import os
 import re
 import tomllib
-from itertools import pairwise
 
 from agent_pm.utils.config_file import LEVELS
 
@@ -19,6 +18,7 @@ from tests.guard_ast import (
     _files,
     _is,
     _private,
+    _prose_pairs,
     _source_modules,
     _spellings,
     _strings,
@@ -476,11 +476,10 @@ def comment_wrap(repo: str) -> list[str]:
         lines = text.splitlines()
         blocks = [*_comment_blocks(text), *_doc_blocks(text)]
         for block in blocks:
-            for (line, body, _), (_, following, _) in pairwise(block):
-                if body and following and not re.match(r"(?:[-*]|\d+[.)])\s", following):
-                    word = following.split()[0]
-                    if len(lines[line - 1].rstrip()) + len(word) + 1 <= 100:
-                        found.append(f"{rel}:{line}: next word {word!r} fits within 100 columns")
+            for (line, _, _), (_, following, _) in _prose_pairs(block):
+                word = following.split()[0]
+                if len(lines[line - 1].rstrip()) + len(word) + 1 <= 100:
+                    found.append(f"{rel}:{line}: next word {word!r} fits within 100 columns")
     return sorted(found)
 
 

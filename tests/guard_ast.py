@@ -3,6 +3,7 @@
 import ast
 import io
 import os
+import re
 import tokenize
 
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
@@ -114,10 +115,13 @@ def _comment_blocks(text):
         if token.type != tokenize.COMMENT or lines[token.start[0] - 1][: token.start[1]].strip():
             continue
         line, indent = token.start
-        if current and (line != current[-1][0] + 1 or indent != current[-1][2]):
+        if current and (
+            line != current[-1][0] + 1 or indent != lines[current[-1][0] - 1].index("#")
+        ):
             blocks.append(current)
             current = []
-        current.append((line, token.string[1:].strip(), indent))
+        content = token.string[1:].removeprefix(" ")
+        current.append((line, content.strip(), indent + len(content) - len(content.lstrip())))
     blocks.append(current)
     return blocks
 
@@ -131,11 +135,16 @@ def _doc_blocks(text):
         value = body[0].value
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             entries = [
-                (line, lines[line - 1].strip(), 0)
+                (
+                    line,
+                    lines[line - 1].strip(),
+                    len(lines[line - 1]) - len(lines[line - 1].lstrip()),
+                )
                 for line in range(value.lineno, value.end_lineno + 1)
             ]
-            entries[0] = (entries[0][0], entries[0][1].lstrip("rRuU")[3:], 0)
-            entries[-1] = (entries[-1][0], entries[-1][1][:-3], 0)
+            indent = min((entry[2] for entry in entries[1:] if entry[1]), default=value.col_offset)
+            entries[0] = (entries[0][0], entries[0][1].lstrip("rRuU")[3:], indent)
+            entries[-1] = (entries[-1][0], entries[-1][1][:-3], entries[-1][2])
             blocks.append(entries)
     return blocks
 
@@ -260,3 +269,19 @@ def _source_modules(repo, projects):
         for project in projects
         for rel, text in _files(os.path.join(repo, project, "src"), ".py")
     }
+
+
+def _prose_pairs(block):
+    fenced, previous = False, None
+    indent = min((entry[2] for entry in block), default=0)
+    for entry in block:
+        _, body, column = entry
+        if body.startswith(("```", "~~~")):
+            fenced, previous = not fenced, None
+            continue
+        if fenced or column >= indent + 4 or body.startswith((">>>", "...")):
+            previous = None
+            continue
+        if previous and previous[1] and body and not re.match(r"(?:[-*]|\d+[.)])\s", body):
+            yield previous, entry
+        previous = entry if body else None
