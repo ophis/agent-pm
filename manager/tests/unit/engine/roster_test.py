@@ -51,6 +51,14 @@ class RosterTest(Case):
     def content(self):
         return json.loads(Path(self.roster.path).read_text())
 
+    def _prepare_receipt(self, state):
+        self.begin(note="keep")
+        if state == State.RESUMING:
+            self.roster.commit("x", self.record)
+            self.roster.mark("x", State.GONE)
+            self.roster.claim_resume("x")
+        self.assertIs(self.roster.entries()["x"].state, state)
+
     def test_missing_roster_reads_do_not_create_directories(self):
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.roster.backlog(), (0, 0, []))
@@ -1110,6 +1118,54 @@ print('done', flush=True)
         self.roster.commit("alias", self.record)
         self.assertFalse(receipt.exists())
         self.assertIsNone(self.roster.entries()["alias"].receipt)
+
+    def test_receipt_record_ignores_blank_trailers_for_starting_and_resuming(self):
+        for state in (State.STARTING, State.RESUMING):
+            for trailer in (b"\n\n", b"\n \t\r\n\v\f\n", "\n\u2003\n".encode()):
+                with self.subTest(state=state, trailer=trailer):
+                    self._prepare_receipt(state)
+                    with self.roster.open_receipt("x") as output:
+                        output.write(b"diagnostic\xff\n" + self.record.to_line().encode() + trailer)
+                    before = Path(self.roster.path).read_bytes()
+                    self.assertEqual(self.roster.receipt_record("x"), self.record)
+                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                    self.roster.commit("x", self.roster.receipt_record("x"))
+                    entry = self.roster.entries()["x"]
+                    self.assertEqual(
+                        (entry.record, entry.state, entry.note), (self.record, State.LIVE, "keep")
+                    )
+                    self.assertIsNone(entry.receipt)
+                    self.roster.remove("x")
+
+    def test_receipt_record_refuses_empty_and_all_blank_starting_and_resuming(self):
+        for state in (State.STARTING, State.RESUMING):
+            for contents in (b"", b"\n \t\r\n\v\f\n", "\n\u2003\n".encode()):
+                with self.subTest(state=state, contents=contents):
+                    self._prepare_receipt(state)
+                    with self.roster.open_receipt("x") as output:
+                        output.write(contents)
+                    before = Path(self.roster.path).read_bytes()
+                    entry = self.roster.entries()["x"]
+                    with self.assertRaisesRegex(RosterError, "no Record received"):
+                        self.roster.receipt_record("x")
+                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                    self.assertEqual(self.roster.entries()["x"], entry)
+                    self.roster.remove("x")
+
+    def test_receipt_record_refuses_a_malformed_last_nonblank_line(self):
+        for state in (State.STARTING, State.RESUMING):
+            for prefix in (b"", self.record.to_line().encode() + b"\n"):
+                with self.subTest(state=state, prefix=prefix):
+                    self._prepare_receipt(state)
+                    with self.roster.open_receipt("x") as output:
+                        output.write(prefix + b"not a Record\n \t\n")
+                    before = Path(self.roster.path).read_bytes()
+                    entry = self.roster.entries()["x"]
+                    with self.assertRaisesRegex(RosterError, "invalid final Record"):
+                        self.roster.receipt_record("x")
+                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                    self.assertEqual(self.roster.entries()["x"], entry)
+                    self.roster.remove("x")
 
     def test_commit_rejects_null_different_and_previously_owned_sid(self):
         self.begin()

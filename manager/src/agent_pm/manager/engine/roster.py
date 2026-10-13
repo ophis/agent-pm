@@ -451,7 +451,7 @@ class Roster:
         raw = read_regular(path, limit=ROSTER_MAX, tail=True, own=True)
         if raw is None:
             raise RosterError(f"{path}: not a readable receipt owned by you")
-        lines = raw.splitlines()
+        lines = [line for line in raw.splitlines() if line.decode(errors="replace").strip()]
         if not lines:
             raise RosterError("no Record received")
         try:
