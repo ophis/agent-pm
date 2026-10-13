@@ -6,7 +6,7 @@ module.path:Class form, never imported.
 import re
 from collections.abc import Mapping
 
-from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.hosts.types import Hosts, HostsError
 from agent_pm.utils import CLASS_PATH
 

@@ -20,7 +20,7 @@ import agent_pm.session.hosts.tmux
 from agent_pm.session import Driver
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.utils import read_project
 
 from session.tests import fake_adapter

@@ -17,12 +17,12 @@ from typing import Protocol
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter, Headless, InProcess, Tui
 from agent_pm.session.adapters.selection import check as check_selection
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import records
 from agent_pm.session.engine.records import holds as holds
 from agent_pm.session.engine.records import session_record as session_record
 from agent_pm.session.engine.types import (
     Blocked,
-    ConfigError,
     DriverError,
     Event,
     Exited,

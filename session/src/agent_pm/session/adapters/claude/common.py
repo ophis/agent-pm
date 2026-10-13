@@ -10,8 +10,8 @@ from types import MappingProxyType
 
 from agent_pm.session.adapters import common
 from agent_pm.session.adapters.selection import UUID, scan
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
-    ConfigError,
     Launch,
     SessionRequest,
     SessionStatus,

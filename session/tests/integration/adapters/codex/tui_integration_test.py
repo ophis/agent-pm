@@ -22,12 +22,12 @@ from zoneinfo import ZoneInfo
 from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.adapters.codex.sessions import store_root
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    ConfigError,
     Exited,
     LimitHit,
     SessionBound,

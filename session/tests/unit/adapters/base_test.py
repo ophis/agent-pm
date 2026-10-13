@@ -16,12 +16,12 @@ from agent_pm.session.adapters.base import (
     InProcess,
     Tui,
 )
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    ConfigError,
     Exited,
     Key,
     Launch,

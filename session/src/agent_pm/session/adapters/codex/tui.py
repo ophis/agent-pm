@@ -19,7 +19,8 @@ from agent_pm.session.adapters.codex.common import (
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.codex.sessions import split_flags
-from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, SessionRequest
+from agent_pm.session.adapters.types import ConfigError
+from agent_pm.session.engine.types import Launch, LimitHit, SessionRequest
 from agent_pm.utils import import_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))

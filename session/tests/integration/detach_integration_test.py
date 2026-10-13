@@ -14,8 +14,9 @@ import time
 import unittest
 from unittest import mock
 
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import api
-from agent_pm.session.engine.types import ConfigError, DriverError
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import live_tmux

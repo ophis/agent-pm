@@ -19,6 +19,7 @@ from unittest import mock
 
 import agent_pm.session as session_pkg
 from agent_pm.session.adapters import selection
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.api import POLL, Mode
@@ -26,7 +27,6 @@ from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    ConfigError,
     DriverError,
     Exited,
     IdleTimeout,
@@ -99,7 +99,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
 
     def __init__(self, adapter):
         super().__init__(adapter)
-        self.failure = engine_types.ConfigError("tier 4 is unmapped")
+        self.failure = ConfigError("tier 4 is unmapped")
 
     def check(self, request: SessionRequest):
         self.checked_request = request

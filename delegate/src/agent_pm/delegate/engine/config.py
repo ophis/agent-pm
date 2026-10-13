@@ -6,13 +6,20 @@ harness_host (None unset, else one of `hosts`), policy, trusted_dirs.
 import os
 from collections.abc import Collection, Mapping
 
-from agent_pm.delegate.engine.settings import SettingsError, SettingsTypeError
 from agent_pm.utils import import_roots, read_project, real_dirs
 
 DELEGATE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 IMPORT_ROOTS = import_roots()
 PYTHONPATH = os.pathsep.join(IMPORT_ROOTS)
 CONFIG = os.path.join(DELEGATE, "config.toml")
+
+
+class SettingsError(ValueError):
+    pass
+
+
+class SettingsTypeError(TypeError, SettingsError):
+    pass
 
 
 def harness_host(config: Mapping, hosts: Collection[str]) -> str | None:

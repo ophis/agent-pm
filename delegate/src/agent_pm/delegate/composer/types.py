@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
-from agent_pm.delegate.composer.errors import ConfigError as ConfigError
-
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
+
+
+class ConfigError(Exception):
+    pass
 
 
 @dataclass(frozen=True, kw_only=True)

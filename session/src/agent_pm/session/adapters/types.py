@@ -3,6 +3,10 @@
 from dataclasses import dataclass
 
 
+class ConfigError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class TuiSettings:
     """tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""

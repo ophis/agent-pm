@@ -6,7 +6,8 @@ import sys
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine.types import ConfigError, SessionRequest
+from agent_pm.session.adapters.types import ConfigError
+from agent_pm.session.engine.types import SessionRequest
 
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 

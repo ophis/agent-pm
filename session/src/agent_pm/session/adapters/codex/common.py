@@ -36,8 +36,8 @@ from agent_pm.session.adapters.codex.sessions import (
     validate_snapshot,
 )
 from agent_pm.session.adapters.common import check, number, resume_command
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
-    ConfigError,
     Launch,
     SessionInfo,
     SessionRequest,

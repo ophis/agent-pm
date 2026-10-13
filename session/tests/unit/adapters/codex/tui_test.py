@@ -10,11 +10,11 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    ConfigError,
     Key,
     LimitHit,
     Paste,

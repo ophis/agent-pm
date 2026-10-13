@@ -12,8 +12,8 @@ from unittest import mock
 
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
-    ConfigError,
     Reply,
     SessionRequest,
     SessionStatus,

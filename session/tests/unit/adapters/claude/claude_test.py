@@ -18,11 +18,11 @@ from agent_pm.session.adapters.claude.common import ClaudeCommon as Unconfigured
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.adapters.selection import select
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    ConfigError,
     Launch,
     LimitHit,
     Reply,
