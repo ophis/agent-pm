@@ -1,5 +1,5 @@
-"""adapters/base.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
-Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
+"""engine/types.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
+adapters/base.py: Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
 
 import dataclasses
 import inspect
@@ -13,14 +13,18 @@ from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
+    Adapter,
+    Headless,
+    InProcess,
+    Tui,
+)
+from agent_pm.session.engine import types as engine_types
+from agent_pm.session.engine.types import (
     Access,
     Activity,
-    Adapter,
     Blocked,
     ConfigError,
     Exited,
-    Headless,
-    InProcess,
     Key,
     Launch,
     LimitHit,
@@ -30,7 +34,6 @@ from agent_pm.session.adapters.base import (
     SessionStatus,
     Spec,
     Stderr,
-    Tui,
     TurnEnd,
     Usage,
     Window,
@@ -276,9 +279,9 @@ class SpecTest(Refusals):
             Spec(workdir="/w").sid = "s"
 
     def test_accepts_every_tier_and_effort(self):
-        self.assertEqual(base.EFFORTS, ("low", "medium", "high", "xhigh", "max"))
+        self.assertEqual(engine_types.EFFORTS, ("low", "medium", "high", "xhigh", "max"))
         for tier in (1, 2, 3, 4):
-            for effort in base.EFFORTS:
+            for effort in engine_types.EFFORTS:
                 spec = Spec(
                     workdir="/w", access=Access(cwd="/c"), tier=tier, effort=effort, sid="s-1"
                 )
@@ -349,7 +352,7 @@ class SidErrorTest(Case):
     def test_none_for_a_non_empty_printable_string_without_a_slash(self):
         for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
             with self.subTest(sid=sid):
-                self.assertIsNone(base.sid_error(sid))
+                self.assertIsNone(engine_types.sid_error(sid))
 
     def test_the_error_text_otherwise(self):
         for bad, shown in (
@@ -362,7 +365,7 @@ class SidErrorTest(Case):
         ):
             with self.subTest(bad=bad):
                 self.assertEqual(
-                    base.sid_error(bad),
+                    engine_types.sid_error(bad),
                     f'sid must be a non-empty printable string without "/", got {shown}',
                 )
 
@@ -411,10 +414,10 @@ class LaunchTest(Refusals):
 class EventsTest(Case):
     def test_the_frozen_set_is_the_seven_events(self):
         self.assertEqual(
-            typing.get_args(base.Event),
+            typing.get_args(engine_types.Event),
             (SessionBound, Activity, Reply, TurnEnd, Blocked, LimitHit, Exited),
         )
-        self.assertNotIn(Stderr, typing.get_args(base.Event))
+        self.assertNotIn(Stderr, typing.get_args(engine_types.Event))
 
     def test_defaults(self):
         self.assertEqual(
@@ -491,7 +494,7 @@ class AdapterTest(Refusals):
         self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
 
     def test_session_metadata_preserves_info_by_default(self):
-        info = base.SessionInfo("s", "n", "/c", False, "/t", "resume n")
+        info = engine_types.SessionInfo("s", "n", "/c", False, "/t", "resume n")
         self.assertIs(StubAdapter({}).session_metadata(info), info)
 
     def test_writable_dirs_are_none_unless_overridden(self):

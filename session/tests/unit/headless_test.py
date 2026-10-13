@@ -13,8 +13,8 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter, Headless, Launch, Reply, Stderr
-from agent_pm.session.engine.types import DriverError
+from agent_pm.session.adapters.base import Adapter, Headless
+from agent_pm.session.engine.types import DriverError, Launch, Reply, Stderr
 from agent_pm.session.modes import headless
 from agent_pm.session.modes.headless import HeadlessMode
 

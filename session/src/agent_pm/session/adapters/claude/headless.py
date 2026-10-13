@@ -2,15 +2,9 @@
 after "--" so a leading "-" stays the prompt. parse turns init, assistant, result and rate-limit records into events,
 one LimitHit per run."""
 
-from agent_pm.session.adapters.base import (
-    Activity,
-    Headless,
-    LimitHit,
-    Reply,
-    SessionBound,
-    TurnEnd,
-)
+from agent_pm.session.adapters.base import Headless
 from agent_pm.session.adapters.claude.common import number
+from agent_pm.session.engine.types import Activity, LimitHit, Reply, SessionBound, TurnEnd
 
 
 class ClaudeHeadless(Headless):

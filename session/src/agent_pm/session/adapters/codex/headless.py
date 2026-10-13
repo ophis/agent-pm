@@ -2,9 +2,9 @@
 
 import json
 
-from agent_pm.session.adapters.base import (
+from agent_pm.session.adapters.base import Headless
+from agent_pm.session.engine.types import (
     Activity,
-    Headless,
     Launch,
     LimitHit,
     Reply,

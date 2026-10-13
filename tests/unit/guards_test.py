@@ -225,7 +225,7 @@ class LayerImports(Sample):
                 "from agent_pm.session.engine.types import DriverError\nfrom ..hosts.tmux import tmux_host\n",
                 f"session/{PKG}/session/modes/x.py": "from ..adapters.base import Event\n"
                 "from agent_pm.session.engine.types import DriverError\nfrom ..hosts.tmux import tmux_host\n",
-                f"session/{PKG}/session/engine/types.py": "from agent_pm.session.adapters.base import Spec\n",
+                f"session/{PKG}/session/adapters/x.py": "from agent_pm.session.engine.types import Spec\n",
                 f"delegate/{PKG}/x.py": "from agent_pm.session import api\nimport agent_pm.session.engine.api\n"
                 "from agent_pm.session.engine.api import start\nfrom .session import api\nimport agent_pm\n"
                 "from agent_pm.session.engine.types import Spec\n",

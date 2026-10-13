@@ -18,12 +18,11 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters.base import (
-    ACTIVITY,
-    BLOCKED,
-    TURN_END,
+from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END
+from agent_pm.session.engine.types import (
     Activity,
     Blocked,
+    DriverError,
     Key,
     LimitHit,
     Paste,
@@ -31,7 +30,6 @@ from agent_pm.session.adapters.base import (
     SessionInfo,
     TurnEnd,
 )
-from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 

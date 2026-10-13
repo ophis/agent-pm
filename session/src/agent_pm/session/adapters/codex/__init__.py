@@ -1,6 +1,7 @@
 """Codex's abstract factory."""
 
-from agent_pm.session.adapters.base import Adapter, SessionStatus
+from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.engine.types import SessionStatus
 
 from .common import CodexCommon
 from .headless import CodexHeadless

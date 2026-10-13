@@ -6,7 +6,8 @@ import json
 import os
 import tempfile
 
-from agent_pm.session.adapters.base import ConfigError, InProcess, Reply, TurnEnd
+from agent_pm.session.adapters.base import InProcess
+from agent_pm.session.engine.types import ConfigError, Reply, TurnEnd
 
 START = "the composed prompt is handed to the caller"
 

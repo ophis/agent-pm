@@ -17,7 +17,8 @@ import agent_pm.session
 import agent_pm.session.hosts.tmux
 from agent_pm.session import Session
 from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import Adapter, ConfigError
+from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.engine.types import ConfigError
 from agent_pm.utils import config_file
 from agent_pm.utils import registry as class_registry
 

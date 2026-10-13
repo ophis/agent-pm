@@ -13,7 +13,9 @@ from unittest import mock
 
 from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import (
+from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.engine import records
+from agent_pm.session.engine.types import (
     Access,
     Activity,
     ConfigError,
@@ -25,8 +27,6 @@ from agent_pm.session.adapters.base import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine import records
 
 from session.tests.case import REPO, Case, settings
 from session.tests.integration.adapters.codex import fake_codex

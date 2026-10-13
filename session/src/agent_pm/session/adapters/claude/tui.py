@@ -7,7 +7,8 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, LimitHit, Tui
+from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
+from agent_pm.session.engine.types import LimitHit
 from agent_pm.utils.files import read_regular
 
 TAIL = 4 << 20

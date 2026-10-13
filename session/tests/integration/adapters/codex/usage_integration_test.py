@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters.base import Usage, Window
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.engine.types import Usage, Window
 
 from session.tests.case import REPO, Case
 from session.tests.integration.adapters.codex import fake_app_server
