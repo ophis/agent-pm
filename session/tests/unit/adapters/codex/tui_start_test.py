@@ -14,6 +14,7 @@ from agent_pm.session.adapters.codex import tui_hook, tui_start
 
 from session.tests import case
 from session.tests.case import Case
+from session.tests.source_roots import source_roots_cases
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -134,25 +135,10 @@ print(json.dumps([
         self.assertEqual(json.loads(result.stdout), [True, True, True, True, True, []])
 
     def test_bootstrap_rejects_missing_or_invalid_import_roots_before_package_imports(self):
-        file = pathlib.Path(self.home) / "file"
-        file.write_text("fixture")
-        unprintable = pathlib.Path(self.home) / "unprintable\nroot"
-        unprintable.mkdir()
         data = self.data()
-        invalid = (
-            None,
-            [],
-            data["import_roots"][0],
-            [1],
-            ["relative"],
-            ["/a\0b"],
-            [str(unprintable)],
-            [str(file)],
-            [str(pathlib.Path(self.home) / "missing")],
-            [data["import_roots"][0]] * 2,
-        )
+        _, invalid = source_roots_cases(self.home)
         cases = [({key: value for key, value in data.items() if key != "import_roots"}, "missing")]
-        cases.extend(({**data, "import_roots": value}, value) for value in invalid)
+        cases.extend(({**data, "import_roots": value}, name) for name, value in invalid.items())
         for launch, value in cases:
             with self.subTest(roots=value):
                 result = self.isolated(launch)
@@ -161,6 +147,16 @@ print(json.dumps([
                 self.assertIn("codex tui: Codex tui launch:", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertNotIn("No module named", result.stderr)
+
+    def test_valid_import_roots_reach_launch_validation(self):
+        valid, _ = source_roots_cases(self.home)
+        for name, roots in valid.items():
+            with self.subTest(roots=name):
+                result = self.isolated(self.data(roots))
+                self.assertEqual(
+                    (result.returncode, result.stdout, result.stderr),
+                    (1, "", "codex tui: Codex tui launch: missing recovery state\n"),
+                )
 
     def test_run_by_path_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(
@@ -412,19 +408,12 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             launch = self.adapter.tui().launch("prompt", self.spec, HOOK, resume=False)
         data = json.loads(launch.argv[-1])
         missing = {key: value for key, value in data.items() if key != "import_roots"}
-        invalid = (
-            None,
-            [],
-            "/protected",
-            [1],
-            ["relative"],
-            ["/a\0b"],
-            ["/a\nb"],
-            [str(self.root / "missing")],
-            [case.SRC["session"]] * 2,
-        )
+        _, invalid = source_roots_cases(self.root)
         with mock.patch("subprocess.Popen") as proc, mock.patch("os.execve") as execute:
-            for changed in (missing, *(data | {"import_roots": roots} for roots in invalid)):
+            for changed in (
+                missing,
+                *(data | {"import_roots": roots} for roots in invalid.values()),
+            ):
                 with (
                     self.subTest(roots=changed.get("import_roots")),
                     self.assertRaises(tui_start.StartError),

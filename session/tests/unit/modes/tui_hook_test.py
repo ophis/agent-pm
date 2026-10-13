@@ -19,6 +19,7 @@ from contextlib import redirect_stderr
 from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
+from session.tests.source_roots import source_roots_cases
 
 HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
 SOURCE_ROOTS = json.dumps([SRC["session"], SRC["utils"]])
@@ -622,6 +623,7 @@ class SecurityTest(HookBase):
         self.assertNothingWritten()
 
     def test_bad_source_roots_are_rejected_before_importing_the_callback(self):
+        _, invalid = source_roots_cases(self.root)
         callback, imported = (
             os.path.join(self.root, "adapter.py"),
             os.path.join(self.root, "imported"),
@@ -630,32 +632,32 @@ class SecurityTest(HookBase):
             file.write(f"open({imported!r}, 'w').close()\n")
         self.state["adapter_hook"] = callback
         write_state(self.dir, self.state)
-        for encoded in (
-            "not-json",
-            "[" * 1000 + "]" * 1000,
-            *(
-                json.dumps(roots)
-                for roots in (
-                    None,
-                    {},
-                    [],
-                    [None],
-                    [1],
-                    ["relative"],
-                    ["/invalid\0root"],
-                    [self.root + "\n"],
-                    [os.path.join(self.root, "missing")],
-                    [callback],
-                    [self.root, self.root],
-                )
-            ),
-        ):
-            with self.subTest(encoded=encoded):
+        cases = {
+            "malformed JSON": "not-json",
+            "excessive nesting": "[" * 1000 + "]" * 1000,
+            **{name: json.dumps(roots) for name, roots in invalid.items()},
+        }
+        for name, encoded in cases.items():
+            with self.subTest(roots=name):
                 self.assertError(
                     self.hook("stop", args=[self.dir, encoded, "stop"]), "source roots"
                 )
                 self.assertFalse(os.path.exists(imported))
         self.assertNothingWritten()
+
+    def test_valid_source_roots_reach_the_adapter_callback(self):
+        valid, _ = source_roots_cases(self.root)
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+            )
+        self.state.update(adapter_hook=callback, words={})
+        write_state(self.dir, self.state)
+        for name, roots in valid.items():
+            with self.subTest(roots=name):
+                self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
+                self.assertEqual(self.records()[-1]["payload"], {"callback_imported": True})
 
     def test_supplied_distribution_roots_lead_once_before_callback_imports(self):
         sources = [
