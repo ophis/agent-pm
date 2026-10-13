@@ -2,6 +2,7 @@
 
 import dataclasses
 import itertools
+import logging
 import os
 import stat
 import tempfile
@@ -49,14 +50,15 @@ class HandleOverAModeTest(Case):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def handle(self, *script, code=0, idle_timeout=None, **kwargs) -> api.Handle:
+    def handle(self, *script, code=0, idle_timeout=None, native_id="", **kwargs) -> api.Handle:
         self.mode = StubMode(self.clock, script, code)
         return api.Handle(
             "fake",
             "tui",
             Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
             state=HandleState(
-                info=SessionInfo("s1", "", self.dir, False, "", ""), idle_timeout=idle_timeout
+                info=SessionInfo("s1", native_id, self.dir, False, "", ""),
+                idle_timeout=idle_timeout,
             ),
             services=HandleServices(host=self.mode, **kwargs),
         )
@@ -85,6 +87,22 @@ class HandleOverAModeTest(Case):
         previous = handle.info()
         resolver.side_effect = OSError("metadata unavailable")
         self.assertEqual(handle.info(), previous)
+
+    def test_metadata_failure_is_diagnostic_and_remains_best_effort_with_logging_disabled(self):
+        adapter = fake_adapter.FakeAdapter({})
+        adapter.session_metadata = mock.Mock(side_effect=RuntimeError("metadata unavailable"))
+        handle = self.handle(adapter=adapter, native_id="n1")
+        with self.assertLogs(level="DEBUG") as logs:
+            previous = handle.info()
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].name, "driver")
+        self.assertIsInstance(logs.records[0].exc_info[1], RuntimeError)
+        disabled = logging.root.manager.disable
+        try:
+            logging.disable(logging.CRITICAL)
+            self.assertEqual(handle.info(), previous)
+        finally:
+            logging.disable(disabled)
 
     def test_binding_record_failure_remains_fatal(self):
         adapter = fake_adapter.FakeAdapter({})
@@ -221,6 +239,14 @@ class UsageTest(Base):
         for out in ("", "garbage"):
             with self.subTest(out=out):
                 self.assertIsNone(self.usage(out)[0])
+
+    def test_usage_parse_failure_keeps_its_fallback_with_logging_disabled(self):
+        disabled = logging.root.manager.disable
+        try:
+            logging.disable(logging.CRITICAL)
+            self.assertIsNone(self.usage("garbage")[0])
+        finally:
+            logging.disable(disabled)
 
     def test_a_probe_without_a_command_is_none(self):
         found, probe = self.usage(argv=())

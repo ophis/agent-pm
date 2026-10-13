@@ -21,7 +21,12 @@ from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.selection import check as check_selection
 from agent_pm.session.engine import records
 from agent_pm.session.engine.launch.types import STEPS, LaunchContext, _child_env
-from agent_pm.session.engine.lifecycle.types import Handle, HandleServices, HandleState
+from agent_pm.session.engine.lifecycle.types import (
+    Handle,
+    HandleServices,
+    HandleState,
+    _diagnostics,
+)
 from agent_pm.session.engine.records import holds, session_record
 from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
 from agent_pm.session.engine.runtime.validation import _idle, _name, _placement
@@ -99,6 +104,7 @@ class Driver:
         services: DriverServices | None = None,
     ):
         services = DriverServices() if services is None else services
+        self._logger = _diagnostics()
         self.host, self.probe, self.clock = services.host, services.probe, services.clock
         self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
 
@@ -166,7 +172,11 @@ class Driver:
             replace(spec, name=steps.name),
             state=HandleState(info=info, idle_timeout=idle_timeout),
             services=HandleServices(
-                host=host, adapter=adapter, usage=lambda: self.usage(runtime), clock=self.clock
+                host=host,
+                adapter=adapter,
+                usage=lambda: self.usage(runtime),
+                clock=self.clock,
+                logger=self._logger,
             ),
         )
 
@@ -257,6 +267,7 @@ class Driver:
         try:
             return adapter.usage(output)
         except Exception:
+            self._logger.debug("Usage parsing failed for %s", runtime, exc_info=True)
             return None
 
     @staticmethod

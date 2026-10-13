@@ -60,6 +60,10 @@ HookError = _load_file(
     "agent_pm.session.modes.hooks.types",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks/types.py"),
 ).HookError
+FailureReport = _load_file(
+    "agent_pm.session.modes.reporting.types",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "reporting/types.py"),
+).FailureReport
 
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
@@ -223,9 +227,14 @@ def say(text: str) -> None:
         print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
 
 
+def report_error(error: BaseException) -> None:
+    say(str(error) if isinstance(error, HookError) else f"{type(error).__name__}: {error}")
+
+
 if __name__ == "__main__":
     try:
         main(sys.argv[1:], sys.stdin.buffer)
     except Exception as e:
-        say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
+        with FailureReport("session.tui_hook", e, report_error) as logger:
+            logger.exception("Hook execution failed")
     sys.exit(0)

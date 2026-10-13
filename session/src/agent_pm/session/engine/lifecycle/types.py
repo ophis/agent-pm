@@ -1,9 +1,10 @@
 """A live session handle, its mode protocol and caller-supplied state and services."""
 
+import logging
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from agent_pm.session.adapters.types import Adapter
@@ -66,12 +67,19 @@ class HandleState:
     blocked: bool = False
 
 
+def _diagnostics() -> logging.Logger:
+    logger = logging.Logger("driver")
+    logger.parent = logging.getLogger()
+    return logger
+
+
 @dataclass(frozen=True, kw_only=True)
 class HandleServices:
     host: Mode
     adapter: Adapter | None = None
     usage: Callable[[], Usage | None] | None = None
     clock: Callable[[], float] | None = None
+    logger: logging.Logger = field(default_factory=_diagnostics)
 
 
 class Handle:
@@ -83,6 +91,7 @@ class Handle:
         self._host, self._info, self._idle = services.host, state.info, state.idle_timeout
         self._adapter = services.adapter
         self._usage = services.usage
+        self._logger = services.logger
         self.clock = time.monotonic if services.clock is None else services.clock
         self._channel = records.path(spec.workdir)
         self._reply = state.reply
@@ -164,6 +173,7 @@ class Handle:
             resolved = self._adapter.session_metadata(self._info)
             info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
         except Exception:
+            self._logger.debug("Session metadata resolution failed", exc_info=True)
             return
         if info != self._info:
             self._info = info
