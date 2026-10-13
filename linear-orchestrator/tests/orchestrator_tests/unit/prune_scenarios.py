@@ -26,7 +26,7 @@ from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, logged, show
 
 
 class Git:
-    def __init__(self, real=False):
+    def __init__(self, *, real=False):
         self.real, self.calls = real, []
 
     def __call__(self, argv, timeout):
@@ -66,7 +66,7 @@ class PruneScenario(Case):
     def assertOutsideKept(self):
         self.assertTrue(os.path.isfile(os.path.join(self.outside, "keep")))
 
-    def prune(self, gql, dry=False, git=None, writable=None):
+    def prune(self, gql, git=None, writable=None, *, dry=False):
         before, err, out = (len(logged(self.logs)), io.StringIO(), io.StringIO())
         with redirect_stderr(err), redirect_stdout(out):
             code = prune.Pruner(

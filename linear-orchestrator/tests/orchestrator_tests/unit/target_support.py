@@ -24,7 +24,7 @@ class FakeRun:
         raise CommandAssertion.unexpected(argv)
 
 
-def api(full_name="ophis/agent-pm", default="main", push=True):
+def api(full_name="ophis/agent-pm", default="main", *, push=True):
     return ok(
         json.dumps(
             {"full_name": full_name, "default_branch": default, "permissions": {"push": push}}

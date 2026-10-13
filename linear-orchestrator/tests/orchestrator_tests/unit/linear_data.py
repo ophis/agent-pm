@@ -80,5 +80,5 @@ def comment_gql(node=None, error=None):
     return gql
 
 
-def node(body="Run x", issue=ISSUE, me=True):
+def node(body="Run x", issue=ISSUE, *, me=True):
     return {"id": "c-1", "body": body, "issue": {"id": issue}, "user": {"isMe": me}}

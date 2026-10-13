@@ -144,12 +144,12 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
         pass
 
 
-def config_error(src, e, dry=False):
+def config_error(src, e, *, dry=False):
     reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
     return _stop(src, "config-error", reason, dry, reason=reason)
 
 
-def linear_error(src, e, dry=False):
+def linear_error(src, e, *, dry=False):
     return _stop(
         src,
         "linear-error",

@@ -125,7 +125,7 @@ class Base(run_fixtures.Base):
         for e in runs.parse_log(self.runs):
             self.api.statuses.setdefault(e.sid, NO)
 
-    def log_dir(self, again):
+    def log_dir(self, *, again):
         if not again or self.logs is None:
             self.logs = os.path.join(self.work, "logs")
             path = os.path.join(self.logs, "orchestrator.jsonl")
@@ -134,11 +134,11 @@ class Base(run_fixtures.Base):
         self.mark = len(logged(self.logs))
         return logs_at(self.logs)
 
-    def board(self, fake, use, dry=False, gate=False, again=False):
+    def board(self, fake, use, *, dry=False, gate=False, again=False):
         self.write_runs()
         cfg = replace(config.load(path=self.config_path), driver=self.api)
         err = io.StringIO()
-        with redirect_stderr(err), self.log_dir(again):
+        with redirect_stderr(err), self.log_dir(again=again):
             out = use(
                 router.Board(
                     functools.partial(fake, service=HARNESS),
@@ -146,19 +146,19 @@ class Base(run_fixtures.Base):
                     NOW,
                     dry,
                     cfg,
-                    router.Gate(self.runs, NOW, dry, driver=self.api) if gate else None,
+                    router.Gate(self.runs, NOW, dry=dry, driver=self.api) if gate else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
         return out
 
-    def plan(self, fake, dry=False, again=False):
+    def plan(self, fake, *, dry=False, again=False):
         def use(b):
             if cands := b.recover():
                 return ("resume", *cands[0])
             return ("new",) if b.queue() else None
 
-        run = self.board(fake, use, dry, again=again)
+        run = self.board(fake, use, dry=dry, again=again)
         if run and run[0] == "resume":
             _, issue, sid = run
             return self.unmap(
@@ -166,12 +166,12 @@ class Base(run_fixtures.Base):
             )
         return "new" if run else ""
 
-    def claim(self, fake, dry=False, full=(), recover=False, gate=False, again=False):
+    def claim(self, fake, full=(), *, dry=False, recover=False, gate=False, again=False):
         def use(b):
             recover and b.recover()
             return b.take(full=full)
 
-        self.taken = taken = self.board(fake, use, dry, gate, again)
+        self.taken = taken = self.board(fake, use, dry=dry, gate=gate, again=again)
         return (
             taken
             and f"{taken[0]['identifier']} {taken[0]['url']} {taken[0]['project']['name']}"
@@ -210,11 +210,11 @@ class TickBase(Base):
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
         self.start = None if outer else start or Start()
         self.write_runs()
-        err = Stderr(tty)
+        err = Stderr(tty=tty)
         with (
             redirect_stderr(err),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
-            self.log_dir(again),
+            self.log_dir(again=again),
         ):
             rc = router.main(
                 list(argv),

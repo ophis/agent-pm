@@ -12,7 +12,7 @@ HUMANS = ("ann@example.com", "bob@example.com")
 URL = "https://linear.app/t/issue/ENG-7"
 
 
-def comment(body, at, email="ann@example.com", name="Ann", me=False, user=True):
+def comment(body, at, email="ann@example.com", name="Ann", *, me=False, user=True):
     return {
         "body": body,
         "createdAt": at,

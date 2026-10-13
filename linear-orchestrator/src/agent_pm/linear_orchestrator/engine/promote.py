@@ -87,7 +87,7 @@ def child_title(prefix, src_prefix, title):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, now, dry, wait=True):
+    def __init__(self, gql, cfg, now, dry, *, wait=True):
         self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
         self.team = team(gql, cfg)
         self.states = self.team.states
@@ -298,7 +298,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None, *, driver=None):
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
         pruner(gql, now, dry, work=work, team=team, roles=roles, driver=driver).run()
     except Unavailable as e:
-        linear_error("prune", e, dry)
+        linear_error("prune", e, dry=dry)
     except CALL_ERRORS as e:
         log("prune", "prune-error", dry=dry, error=one_line(e))
 
@@ -316,7 +316,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
             print(e.msg, file=sys.stderr)  # no log dir yet
             return 1
         linear.use_logs(e.logs_dir)
-        return config_error("promote", e, dry)
+        return config_error("promote", e, dry=dry)
     linear.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
@@ -324,7 +324,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
         promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
         promoter.run()
     except Unavailable as e:
-        return linear_error("promote", e, dry)
+        return linear_error("promote", e, dry=dry)
     run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner, driver=cfg.driver)
     return 0
 

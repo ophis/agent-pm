@@ -43,7 +43,7 @@ class PruneACloneAnAgentRun(PruneScenario):
 
     def test_writable_dirs_default_to_work_and_the_temp_dirs(self):
         pruner = prune.Pruner(
-            None, NOW, False, work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES
+            None, NOW, dry=False, work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES
         )
         self.assertEqual(pruner.writable, (self.work, *temp_dirs()))
 

@@ -11,7 +11,7 @@ from orchestrator_tests.unit.linear_scenarios import Logs
 
 class Log(Logs):
     def log(self, *args, tty=False, fail=None, **kw):
-        return self.stderr(lambda: linear.log(*args, **kw), tty, fail)[1]
+        return self.stderr(lambda: linear.log(*args, **kw), tty=tty, fail=fail)[1]
 
     def test_line_shape_and_key_order(self):
         self.assertEqual(self.log("router", "claim", "TASK-1", role="pm", task=None), "")
@@ -209,8 +209,8 @@ class LogsDirDefault(Case):
 
 
 class ApiErrors(Logs):
-    def error(self, e, tty=False, dry=False, src="router"):
-        return self.stderr(lambda: linear.linear_error(src, e, dry), tty)
+    def error(self, e, src="router", *, tty=False, dry=False):
+        return self.stderr(lambda: linear.linear_error(src, e, dry=dry), tty=tty)
 
     def test_once_a_day_per_reason_printed_only_on_a_terminal(self):
         timeout, limit = (
@@ -240,7 +240,7 @@ class ApiErrors(Logs):
         written = []
         for e, tty, err, new in cases:
             with self.subTest(e=str(e), tty=tty):
-                self.assertEqual(self.error(e, tty), (1, err))
+                self.assertEqual(self.error(e, tty=tty), (1, err))
                 written += [{"ts": self.TS, **line, **new}] if new else []
                 self.assertEqual(self.lines(), written)
         self.assertEqual(self.error(timeout, src="promote"), (1, ""))
@@ -260,7 +260,7 @@ class ApiErrors(Logs):
         for tty in (False, True):
             for _ in range(2):
                 self.assertEqual(
-                    self.error(e, tty, dry=True),
+                    self.error(e, tty=tty, dry=True),
                     (1, self.json("router", "linear-error", op="teams", status=503)),
                 )
         self.assertFalse(os.path.exists(self.logs))

@@ -184,7 +184,7 @@ class TestConfigError(Base):
                 self.write_config(text)
                 before = len(logged(self.logs))
                 for tty, printed in ((False, ""), (True, f"promote.py: {reason}\n")):
-                    err, out = Stderr(tty), io.StringIO()
+                    err, out = Stderr(tty=tty), io.StringIO()
                     with redirect_stderr(err), redirect_stdout(out):
                         rc = promote.main(
                             [],

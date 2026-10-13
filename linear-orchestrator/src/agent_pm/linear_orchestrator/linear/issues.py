@@ -113,7 +113,7 @@ def _starts(lines):
     # last after Instructions.
     source, instructions, comments = SECTIONS
 
-    def find(header, after, last=False):
+    def find(header, after, *, last=False):
         found = [i for i, line in enumerate(lines) if line == header and i > after]
         return (found[-1] if last else found[0]) if found else None
 

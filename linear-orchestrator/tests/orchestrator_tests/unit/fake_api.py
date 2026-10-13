@@ -32,7 +32,7 @@ class FakeApi:
         if self.live is None:
             raise DriverError.sessions_unavailable()
         return [
-            SessionRow(n, None, None, "working", None, None, None, None, False)
+            SessionRow(n, None, None, "working", None, None, None, None, own=False)
             for n in self.live
             if match is None or re.fullmatch(match, n)
         ]

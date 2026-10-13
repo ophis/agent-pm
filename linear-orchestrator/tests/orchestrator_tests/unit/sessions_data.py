@@ -30,7 +30,7 @@ def text(line):
     return f"Run {SID} · {line}\n\n```\n{CMD}\n```"
 
 
-def comment(id, body, mine=True, issue=ISSUE_ID):
+def comment(id, body, issue=ISSUE_ID, *, mine=True):
     return {"id": id, "body": body, "mine": mine, "issue": issue}
 
 

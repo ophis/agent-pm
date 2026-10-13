@@ -469,7 +469,7 @@ class FakeLinear:
             },
         }
 
-    def _list(self, caller, flt, first, after=None, archived=False):
+    def _list(self, caller, flt, first, after=None, *, archived=False):
         found = [
             i
             for i in self.issues.values()

@@ -4,7 +4,7 @@ import io
 
 
 class Stderr(io.StringIO):
-    def __init__(self, tty=False, fail=None):
+    def __init__(self, fail=None, *, tty=False):
         super().__init__()
         self.tty, self.fail = tty, fail
 

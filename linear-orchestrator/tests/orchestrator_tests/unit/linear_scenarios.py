@@ -21,8 +21,8 @@ class Logs(Case):
         self.path = os.path.join(self.logs, "orchestrator.jsonl")
         linear.use_logs(self.logs)
 
-    def stderr(self, call, tty=False, fail=None):
-        err = Stderr(tty, fail)
+    def stderr(self, call, fail=None, *, tty=False):
+        err = Stderr(tty=tty, fail=fail)
         with (
             mock.patch.object(sys, "stderr", err),
             frozen(self.TS),

@@ -258,7 +258,7 @@ class Segment(TmuxFlow):
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
         return Script(outcome, [*steps, block(report)], report, {text: TEXT_KINDS[outcome]})
 
-    def launch(self, ident, role, script, resumed):
+    def launch(self, ident, role, script, *, resumed):
         """router.py --issue ident with script behind a new gate, until its fake_claude waits there
         and run.py's session comment says running; returns the runs.jsonl line, fake_claude's call
         and the events since.
@@ -410,7 +410,7 @@ class Segment(TmuxFlow):
 
     def claim(self, ident, role, script, task=None):
         with self.step("router: claim"):
-            line, call, events = self.launch(ident, role, script, False)
+            line, call, events = self.launch(ident, role, script, resumed=False)
             sid = line["sid"]
             self.assertEqual(
                 (line["kind"], line["issue"], line["role"], line["runtime"]),
@@ -434,7 +434,7 @@ class Segment(TmuxFlow):
 
     def resume(self, ident, role, sid, script):
         with self.step("router: resume"):
-            line, call, _ = self.launch(ident, role, script, True)
+            line, call, _ = self.launch(ident, role, script, resumed=True)
             self.assertEqual(
                 tuple(line[k] for k in RUN_KEYS), ("resume", ident, sid, role, RUNTIME)
             )

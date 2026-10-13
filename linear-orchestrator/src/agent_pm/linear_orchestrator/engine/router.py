@@ -147,7 +147,7 @@ def read_usage(runtime, *, driver):
 
 
 class Gate:
-    def __init__(self, runs, now, dry, say=None, *, driver):
+    def __init__(self, runs, now, say=None, *, driver, dry):
         self.driver = driver
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
@@ -282,7 +282,7 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def last_move(self, issue, state, by_user=False):
+    def last_move(self, issue, state, *, by_user=False):
         if issue["id"] not in self.hist:
             self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
         return linear.last_move(
@@ -355,7 +355,7 @@ class Board:
         )
         return [(issue, sid) for issue, sid in mine if self.settle(issue, sid)]
 
-    def settle(self, issue, sid, wait=True):
+    def settle(self, issue, sid, *, wait=True):
         ident = issue["identifier"]
         if wait and (latest := latest_sid(self.entries, ident)):
             st = self.status(ident, latest)
@@ -699,7 +699,7 @@ def tick(opts, cfg, gql, now, hour, start):
             except SERVICE_ERRORS as e:
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
-            gate = Gate(runs, now, dry, walk, driver=cfg.driver)
+            gate = Gate(runs, now, dry=dry, say=walk, driver=cfg.driver)
             board = Board(gql, parse_log(runs), now, dry, cfg, gate, walk)
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
@@ -801,7 +801,7 @@ def main(
             print(e.msg, file=sys.stderr)
             return 1
         linear.use_logs(e.logs_dir)
-        return config_error("router", e, opts["dry"])
+        return config_error("router", e, dry=opts["dry"])
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
     linear.use_logs(cfg.logs_dir)
     if opts["brake"] is not None:
@@ -817,7 +817,7 @@ def main(
             return run_issue(opts, cfg, gql, now, start)
         return tick(opts, cfg, gql, now, datetime.now().hour if hour is None else hour, start)
     except Unavailable as e:
-        return linear_error("router", e, opts["dry"])
+        return linear_error("router", e, dry=opts["dry"])
 
 
 if __name__ == "__main__":

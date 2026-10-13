@@ -251,7 +251,7 @@ class Gate(Base):
 
     def gate(self):
         self.write_runs()
-        return router.Gate(self.runs, NOW, False, driver=self.api)
+        return router.Gate(self.runs, NOW, dry=False, driver=self.api)
 
     def test_thresholds(self):
         self.assertEqual((router.MAX_5H, router.BRAKE_5H, router.MAX_WEEK), (90, 80, 100))
@@ -270,14 +270,14 @@ class Gate(Base):
         for value, why in rows:
             with self.subTest(value=value):
                 self.api.usages = {"a": value}
-                with redirect_stderr(io.StringIO()), self.log_dir(False):
+                with redirect_stderr(io.StringIO()), self.log_dir(again=False):
                     self.assertEqual(self.gate().blocked("a", "TASK-1"), why is not None)
                 self.raw = ""
                 self.assertEqual(self.said(), [f"usage-skip TASK-1 runtime=a {why}"] if why else [])
 
     def test_one_probe_per_runtime(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
-        with redirect_stderr(io.StringIO()), self.log_dir(False):
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
             got = [
                 gate.blocked(r, i) for r, i in (("a", "TASK-1"), ("b", "TASK-2"), ("a", "TASK-3"))

@@ -10,7 +10,7 @@ class FakeRun:
     and returns the result.
     """
 
-    def __init__(self, order, result=NO_OUTCOME, steps=(), error=None, begun=True):
+    def __init__(self, order, result=NO_OUTCOME, steps=(), error=None, *, begun=True):
         self.order, self.result, self.steps, self.error = order, result, steps, error
         self.begun, self.calls, self.dirs = begun, [], []
 
