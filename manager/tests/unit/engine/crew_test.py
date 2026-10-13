@@ -1513,10 +1513,73 @@ class NextEventContentTest(CrewCase):
                     )
                 self.assertEqual((code, out.getvalue(), err.getvalue()), (0, nl(f"1 {event}"), ""))
 
+    def test_dead_and_blocked_events_read_dead_panes_with_invalid_real_configuration(self):
+        for config in ("x = \n", '[hosts]\ndefault = "nope"\n'):
+            self.local(config)
+            for kind in ("dead", "blocked"):
+                with self.subTest(config=config, kind=kind):
+                    event = f"10:00:01 w1 {kind}"
+                    with open(self.path, "w") as file:
+                        file.write(event + "\n")
+                    process = mock.MagicMock()
+                    process.__enter__.return_value = process
+                    process.poll.return_value = process.returncode = 0
+
+                    def spawn(argv, *, process=process, **_kwargs):
+                        text = (
+                            f"w1\t1\t{SID}\trt0\tdead\t%1\t\n"
+                            if "list-sessions" in argv
+                            else "\n".join(self.DEAD)
+                            if "capture-pane" in argv
+                            else ""
+                        )
+                        process.communicate.return_value = (text, "")
+                        return process
+
+                    out, err = io.StringIO(), io.StringIO()
+                    with (
+                        mock.patch.object(subprocess, "Popen", side_effect=spawn),
+                        mock.patch.dict(os.environ, {"TMUX": ""}),
+                        contextlib.redirect_stdout(out),
+                        contextlib.redirect_stderr(err),
+                    ):
+                        code = crew.main(
+                            ["next-event", "--manager", "m1", "--after", "0", "--gen", "0"]
+                        )
+                    self.assertEqual(
+                        (code, out.getvalue(), err.getvalue()),
+                        (0, nl(f"1 {event}", *self.DEAD[-40:]), ""),
+                    )
+
+    def test_missing_rows_precede_configuration_errors_for_dead_and_blocked_events(self):
+        self.local("x = \n")
+        process = mock.MagicMock()
+        process.__enter__.return_value = process
+        process.communicate.return_value = ("", "no server running")
+        process.poll.return_value = process.returncode = 1
+        for kind in ("dead", "blocked"):
+            with self.subTest(kind=kind):
+                event = f"10:00:01 w1 {kind}"
+                with open(self.path, "w") as file:
+                    file.write(event + "\n")
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    mock.patch.object(subprocess, "Popen", return_value=process),
+                    contextlib.redirect_stdout(out),
+                    contextlib.redirect_stderr(err),
+                ):
+                    code = crew.main(
+                        ["next-event", "--manager", "m1", "--after", "0", "--gen", "0"]
+                    )
+                self.assertEqual(
+                    (code, out.getvalue(), err.getvalue()),
+                    (0, nl(f"1 {event}", "workers: w1: no tmux session"), ""),
+                )
+
     def test_done_reply_and_screen_share_one_configured_driver(self):
         self.api.rows["w1"] = self.live(None)
         self.assertEqual(
-            crew.content("w1", "done", driver=self.api),
+            crew.content("10:00:01 w1 done", driver=self.api),
             "\n".join(self.PANE),
         )
         self.assertEqual(self.api.ran("attach"), ["w1", "w1"])

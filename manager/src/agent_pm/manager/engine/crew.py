@@ -429,8 +429,12 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
         time.sleep(0.5)
 
 
-def content(name: str, kind: str, *, driver) -> str:
+def content(event: str, *, driver=None) -> str:
+    name, kind = event.split(" ")[1:3]
+    if kind not in ("done", "blocked", "dead"):
+        return ""
     if kind == "done":
+        driver = _configure() if driver is None else driver
         try:
             text = driver.attach(name).reply
         except (ConfigError, DriverError):
@@ -442,6 +446,7 @@ def content(name: str, kind: str, *, driver) -> str:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
+    driver = _configure() if driver is None else driver
     with _driver():
         return driver.attach(name).screen(PANE_LINES)
 
@@ -942,12 +947,7 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
             line, event = read_event(events, after)
             print(f"{line} {event}")
             try:
-                text = ""
-                name, kind = event.split(" ")[1:3]
-                if kind in ("done", "blocked", "dead"):
-                    if driver is None:
-                        driver = _configure()
-                    text = content(name, kind, driver=driver)
+                text = content(event, driver=driver)
             except WorkersError as e:
                 text = f"workers: {e}"  # stdout: background readers watch only it
             if text:
