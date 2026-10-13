@@ -1299,8 +1299,8 @@ class OrchestratorText(Sample):
     def test_claude_md_and_longer_strings_are_clean(self):
         root = self.tree(
             {
-                f"{OPKG}/a.py": '"""Reads CLAUDE.md."""\nP = "CLAUDE.md"\nH = "tmux attach"\n',
-                "config.toml": '# see CLAUDE.md\nx = "tmux attach"\n',
+                f"{OPKG}/a.py": '"""Reads AGENTS.md."""\nP = "AGENTS.md"\nH = "tmux attach"\n',
+                "config.toml": '# see AGENTS.md\nx = "tmux attach"\n',
             }
         )
         self.assertEqual(guards.orchestrator_text(root), [])

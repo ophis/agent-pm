@@ -2,7 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `CLAUDE.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `AGENTS.md`.
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each calls only the next lower one and imports only lower layers' public packages; the rules and their exceptions: `CLAUDE.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: session and utils < delegate < linear-orchestrator < manager. Cross-layer imports use lower layers' public packages; the rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -59,7 +59,7 @@ flowchart TB
   HU -.-> W
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
-  LC -->|agent_pm.delegate.composer| C
+  LC -->|agent_pm.delegate| C
   LO -->|"agent_pm.session, until TASK-372"| DR
   MG -->|"agent_pm.session, until TASK-371"| DR
   D --> C
@@ -197,9 +197,9 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 ## Tests
 
 ```bash
-export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src   # from the repo root
+export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
-Commands and where a test goes: `CLAUDE.md` › Tests.
+Commands and where a test goes: `AGENTS.md` › Tests.
 
-CI (`.github/workflows/test.yml`) runs Comment budget, Ruff over the whole repo, `Unit <project>` per project (`repo`: the root `tests/`) and `Integration <project> [shard]` per `.github/integration_jobs.py` `JOBS` entry (`--check` validates assignment), both through `.github/run_tests.py`, which annotates each failing test and a crash by test id.
+CI (`.github/workflows/test.yml`) uses Python 3.11 on Ubuntu; local checks use the Mac's own `python3` (3.14). Its checks, test runner and required aggregate `CI` job: `AGENTS.md` › Tests.

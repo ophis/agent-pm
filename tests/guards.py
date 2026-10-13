@@ -1,7 +1,7 @@
 """The repo's rules: each guard takes a root, returns its sorted violations; str constants include docstrings.
 Only a TREES walk enters a project's tests/.
 
-layer_imports(repo)   imports go one way (CLAUDE.md › Import rules), a unit imports no package module outside UNITS, SESSION
+layer_imports(repo)   imports go one way (AGENTS.md › Import rules), a unit imports no package module outside UNITS, SESSION
                       and SHARED, a session unit no delegate module, none imports TOOLS, ORCH or a BARE
                       name, nested, relative or import_module'd; SESSION_INTERNAL only from session/
 delegate_session(repo) delegate/ imports SESSION only by an __all__ name
@@ -27,7 +27,7 @@ shared_types(repo)    a dataclass another module of its project uses, imported o
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, session's __all__ (until TASK-372), EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
-orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
+orchestrator_text(orch) no runtime name but AGENTS.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in LAYERS
 config_levels(repo)   CONFIG_LEVELS' LEVELS holds each project once
@@ -670,7 +670,7 @@ def orchestrator_text(orch: str) -> list[str]:
         for number, line in enumerate(lines, 1):
             found.update(
                 f"{rel}:{number}: runtime name {w}"
-                for w in RUNTIME.findall(line.replace("CLAUDE.md", " "))
+                for w in RUNTIME.findall(line.replace("AGENTS.md", " "))
             )
             if grammar:
                 found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
