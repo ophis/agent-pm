@@ -194,6 +194,24 @@ class CommandFailures(Base):
                 self.assertIs(raised.exception, error)
 
 
+class MalformedGh(Base):
+    def test_malformed_repository_data_gets_one_redacted_command_error_line(self):
+        run = Fake(
+            [
+                (
+                    ["gh", "api"],
+                    ok(json.dumps({"permissions": {"push": []}, "default_branch": "main"})),
+                )
+            ]
+        )
+        code, out, err = self.main(
+            ["worktree", "o/n", "--dir", self.dir, "--branch", "TASK-1-x"], run
+        )
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(err, "repo.py: gh api repos/o/n: invalid repository fields\n")
+        self.assertFalse(run.ran("gh", "repo", "clone"))
+
+
 class Clone(Case):
     """A real clone of a bare repo, its origin reading as github.com/o/n."""
 
@@ -451,6 +469,30 @@ class Status(Base):
                 )
                 self.assertEqual(code, 2, err)
                 self.assertIn("unsafe base branch name", err)
+
+    def test_malformed_pull_requests_are_one_line_command_errors(self):
+        for payload in ({}, [None], [{"author": {"login": 7}, "isCrossRepository": False}]):
+            with self.subTest(payload=payload):
+                code, error, _ = self.status(pr_list(payload))
+                self.assertEqual(code, 1)
+                self.assertTrue(error.startswith("repo.py: gh"), error)
+                self.assertEqual(len(error.splitlines()), 1)
+
+    def test_malformed_comments_are_one_line_command_errors(self):
+        for payload in (
+            [None],
+            [[None]],
+            [[{"created_at": []}]],
+            [[{"created_at": "invalid"}]],
+            [[{"created_at": "2026-01-01"}]],
+        ):
+            with self.subTest(payload=payload):
+                code, error, _ = self.status(
+                    pr_list([pr()]), (lambda a: "--paginate" in a, ok(json.dumps(payload)))
+                )
+                self.assertEqual(code, 1)
+                self.assertTrue(error.startswith("repo.py: gh"), error)
+                self.assertEqual(len(error.splitlines()), 1)
 
 
 class Local(Clone):

@@ -82,9 +82,12 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         raise RepoCommandError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
-        return data["permissions"]["push"] is True, data["default_branch"]
+        push, default = data["permissions"]["push"], data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
         raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
+    if not isinstance(push, bool) or not isinstance(default, str):
+        raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: invalid repository fields")
+    return push, default
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
@@ -287,7 +290,13 @@ def plan_docs(wt: str, branch: str) -> list[dict]:
 
 def _author(row: dict, key: str) -> str | None:
     who = row.get(key)
-    return who.get("login") if isinstance(who, dict) else None
+    if who is None:
+        return None
+    if not isinstance(who, dict) or (
+        who.get("login") is not None and not isinstance(who["login"], str)
+    ):
+        raise RepoCommandError("gh: invalid author login")
+    return who.get("login")
 
 
 def _oldest_first(entries: list[dict]) -> list[dict]:
@@ -315,7 +324,14 @@ def status(
         if docs
         else ""
     )
-    login = gh_json(run, ["api", "--hostname", repo.host, "user"]).get("login")
+    account = gh_json(run, ["api", "--hostname", repo.host, "user"])
+    if (
+        not isinstance(account, dict)
+        or not isinstance(account.get("login"), str)
+        or not account["login"]
+    ):
+        raise RepoCommandError("gh api user: expected a login")
+    login = account["login"]
     rows = gh_json(
         run,
         [
@@ -333,6 +349,8 @@ def status(
             "100",
         ],
     )
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise RepoCommandError("gh pr list: expected pull request objects")
     mine = [
         r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login
     ]
@@ -355,14 +373,27 @@ def status(
             (f"{api}/pulls/{pr['number']}/reviews", "submitted_at", "review"),
             (f"{api}/pulls/{pr['number']}/comments", "created_at", "review_comment"),
         ):
-            for page in gh_json(
-                run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path]
-            ):
+            pages = gh_json(run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path])
+            if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+                raise RepoCommandError("gh api: expected comment or review pages")
+            for page in pages:
                 for c in page:
+                    if not isinstance(c, dict):
+                        raise RepoCommandError("gh api: expected comment or review objects")
                     at = c.get(key)
-                    if at is None or (
-                        since and datetime.fromisoformat(at) <= datetime.fromisoformat(since)
-                    ):
+                    if at is None:
+                        continue
+                    if not isinstance(at, str):
+                        raise RepoCommandError("gh api: invalid comment or review timestamp")
+                    try:
+                        parsed = datetime.fromisoformat(at)
+                    except ValueError:
+                        raise RepoCommandError(
+                            "gh api: invalid comment or review timestamp"
+                        ) from None
+                    if parsed.utcoffset() is None:
+                        raise RepoCommandError("gh api: timestamp has no timezone")
+                    if since and parsed <= datetime.fromisoformat(since):
                         continue
                     e = {
                         "at": at,
