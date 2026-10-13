@@ -530,10 +530,10 @@ class FakeLinear:
             }
         }
 
-    def _teams(self, caller, v):
+    def _teams(self, _caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
-    def _label_group(self, caller, v):
+    def _label_group(self, _caller, v):
         if v["i"] not in self.labels:
             raise Problem("Entity not found: IssueLabel")
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
@@ -599,12 +599,12 @@ class FakeLinear:
         self._move(self._get(v["i"]), v["s"], caller["id"], stamp())
         return {"issueUpdate": {"success": True}}
 
-    def _set_title(self, caller, v):
+    def _set_title(self, _caller, v):
         rec = self._get(v["i"])
         rec["title"], rec["updatedAt"] = v["t"], stamp()
         return {"issueUpdate": {"success": True}}
 
-    def _subscribe(self, caller, v):
+    def _subscribe(self, _caller, v):
         rec = self._get(v["i"])
         user = next((u for u in self.users.values() if u["email"].lower() == v["e"].lower()), None)
         if user is None:
@@ -613,17 +613,17 @@ class FakeLinear:
             rec["subscribers"].append(user["email"])
         return {"issueSubscribe": {"success": True}}
 
-    def _attach(self, caller, v):
+    def _attach(self, _caller, v):
         rec = self._get(v["i"])
         if all(a["url"] != v["u"] for a in rec["attachments"]):
             rec["attachments"].append({"url": v["u"], "title": v.get("t")})
         return {"attachmentLinkURL": {"success": True}}
 
-    def _archive(self, caller, v):
+    def _archive(self, _caller, v):
         self._get(v["i"])["archived"] = True
         return {"issueArchive": {"success": True}}
 
-    def _unarchive(self, caller, v):
+    def _unarchive(self, _caller, v):
         self._get(v["i"])["archived"] = False
         return {"issueUnarchive": {"success": True}}
 
@@ -658,7 +658,7 @@ class FakeLinear:
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
-    def _relate(self, caller, v):
+    def _relate(self, _caller, v):
         new = v["in"]
         self.relations.append(
             (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])

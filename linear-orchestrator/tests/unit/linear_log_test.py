@@ -1,0 +1,199 @@
+import json
+import os
+from datetime import datetime, timedelta
+from unittest import mock
+
+from agent_pm.linear_orchestrator.linear import linear
+from orchestrator_test_helpers.unit.clock import logs_at
+from orchestrator_test_helpers.unit.linear.log_fixtures import Log as LogBase
+
+
+class Log1(LogBase):
+    def test_line_shape_and_key_order(self):
+        self.assertEqual(self.log("router", "claim", "TASK-1", role="pm", task=None), "")
+        self.log("prune", "prune-skip", entry="TASK-1/src/o/n", reason="not a clone é")
+        self.assertEqual(
+            self.text(),
+            f'{{"ts": "{self.TS}", "src": "router", "kind": "claim", "issue": "TASK-1", '
+            '"role": "pm"}\n'
+            f'{{"ts": "{self.TS}", "src": "prune", "kind": "prune-skip", '
+            '"entry": "TASK-1/src/o/n", "reason": "not a clone é"}\n',
+        )
+
+    def test_the_file_is_0600_in_logs_dir_resolved_per_call(self):
+        self.log("run", "end", "TASK-1", sid="s", exit=0)
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+        other = os.path.join(self.tmp, "other")
+        with logs_at(other):
+            self.log("run", "end", "TASK-2", sid="s", exit=0)
+        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
+        with open(os.path.join(other, "orchestrator.jsonl")) as f:
+            self.assertEqual(json.loads(f.read())["issue"], "TASK-2")
+
+    def test_use_logs_sets_the_dir(self):
+        other = os.path.join(self.tmp, "other")
+        linear.use_logs(other)
+        self.assertEqual(linear.LOGS_DIR, other)
+        self.log("run", "end", "TASK-2")
+        self.assertTrue(os.path.isfile(os.path.join(other, "orchestrator.jsonl")))
+
+    def test_no_logs_dir_writes_no_file(self):
+        with (
+            logs_at(None),
+            mock.patch.object(os, "makedirs") as makedirs,
+        ):
+            self.assertEqual(
+                self.log("run", "end", "TASK-1", once=True, tty=True),
+                self.json("run", "end", "TASK-1"),
+            )
+            self.assertEqual(self.log("run", "end", "TASK-1"), "")
+        makedirs.assert_not_called()
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    def test_an_oserror_from_the_file_never_raises(self):
+        os.makedirs(self.logs)
+        os.symlink(os.path.join(self.tmp, "elsewhere"), self.path)
+        self.assertEqual(
+            self.log("run", "end", "TASK-1", tty=True), self.json("run", "end", "TASK-1")
+        )
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "elsewhere")))
+        file = os.path.join(self.tmp, "file")
+        open(file, "w").close()
+        with logs_at(os.path.join(file, "logs")):
+            self.log("run", "end", "TASK-1")
+
+    def test_an_oserror_from_stderr_never_raises(self):
+        for dry in (False, True):
+            self.log(
+                "router",
+                "skip",
+                tty=True,
+                dry=dry,
+                fail=OSError(5, "Input/output error"),
+                reason="x",
+            )
+        self.assertEqual(len(self.lines()), 1)
+
+    def test_a_stderr_copy_only_on_a_terminal_or_dry_and_printable(self):
+        self.assertEqual(self.log("run", "tui-error", "TASK-1", msg="a"), "")
+        self.assertEqual(
+            self.log("run", "tui-error", "TASK-1", tty=True, msg="a\x9b2Jb"),
+            self.json("run", "tui-error", "TASK-1", msg="a2Jb"),
+        )
+        self.assertEqual(self.lines()[-1]["msg"], "a\x9b2Jb")
+        self.assertEqual(
+            self.log("router", "pick", "TASK-2", dry=True, queue=1),
+            self.json("router", "pick", "TASK-2", queue=1),
+        )
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_once_dedups_on_src_kind_issue_entry_and_reason(self):
+        base = dict(
+            src="router",
+            kind="usage-skip",
+            issue=None,
+            mode="new",
+            reason="blocked by usage",
+            usage="five_hour=0.95",
+        )
+        cases = [
+            ({}, True),
+            ({"usage": "five_hour=0.97", "mode": "resume"}, False),
+            ({"reason": "other"}, True),
+            ({"issue": "TASK-1"}, True),
+            ({"src": "promote"}, True),
+            ({"kind": "blocked"}, True),
+            ({"entry": "TASK-1/tmp"}, True),
+            ({}, False),
+            ({"issue": "TASK-1"}, False),
+        ]
+        for change, written in cases:
+            with self.subTest(change=change):
+                before = len(self.lines())
+                kw = {**base, **change}
+                self.log(kw.pop("src"), kw.pop("kind"), kw.pop("issue"), once=True, **kw)
+                self.assertEqual(len(self.lines()) - before, int(written))
+        self.log("router", "usage-skip", mode="new", reason="blocked by usage", usage="x")
+        self.assertEqual(len(self.lines()), 7)
+
+    def test_once_reads_the_last_24_hours_of_the_file(self):
+        now = datetime.fromisoformat(self.TS)
+        recent, old = (now - timedelta(hours=h) for h in (23, 25))
+        os.makedirs(self.logs)
+        lines = [
+            {
+                "ts": recent.isoformat(),
+                "src": "router",
+                "kind": "blocked",
+                "issue": "TASK-1",
+                "by": ["TASK-7"],
+            },
+            {
+                "ts": old.isoformat(),
+                "src": "router",
+                "kind": "blocked",
+                "issue": "TASK-2",
+                "by": ["TASK-7"],
+            },
+            {
+                "ts": recent.isoformat(),
+                "src": "prune",
+                "kind": "prune-skip",
+                "entry": "TASK-3/tmp",
+                "reason": "r",
+            },
+        ]
+        junk = [
+            "router.py: crash",
+            "[1]",
+            '"x"',
+            "{",
+            json.dumps({"src": "router", "kind": "blocked", "issue": "TASK-4"}),
+            json.dumps({"ts": "yesterday", "src": "router", "kind": "blocked", "issue": "TASK-5"}),
+            json.dumps(
+                {
+                    "ts": "9999-12-31T23:59:59-05:00",
+                    "src": "router",
+                    "kind": "blocked",
+                    "issue": "TASK-6",
+                }
+            ),
+            json.dumps(
+                {
+                    "ts": now.replace(tzinfo=None).isoformat(),
+                    "src": "router",
+                    "kind": "blocked",
+                    "issue": "TASK-7",
+                }
+            ),
+        ]
+        with open(self.path, "w") as f:
+            f.write("".join(json.dumps(d) + "\n" for d in lines) + "".join(j + "\n" for j in junk))
+        for issue in ("TASK-1", "TASK-2", "TASK-4", "TASK-5", "TASK-6", "TASK-7"):
+            self.log("router", "blocked", issue, once=True, by=["TASK-8"])
+        self.log("prune", "prune-skip", once=True, entry="TASK-3/tmp", reason="r")
+        self.assertEqual(
+            [
+                json.loads(line)["issue"]
+                for line in self.text().splitlines()[len(lines) + len(junk) :]
+            ],
+            ["TASK-2", "TASK-4", "TASK-5", "TASK-7"],
+        )
+
+    def test_a_dry_run_ignores_once(self):
+        self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
+        for _ in range(2):
+            self.assertEqual(
+                self.log("router", "blocked", "TASK-1", once=True, dry=True, by=["TASK-7"]),
+                self.json("router", "blocked", "TASK-1", by=["TASK-7"]),
+            )
+        self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
+
+    def test_once_keeps_a_cache_per_log_path(self):
+        other = os.path.join(self.tmp, "other")
+        for logs, written in ((self.logs, 1), (other, 1), (self.logs, 0), (other, 0)):
+            with logs_at(logs):
+                path = os.path.join(logs, "orchestrator.jsonl")
+                before = len(self.text(path).splitlines())
+                self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
+                self.assertEqual(len(self.text(path).splitlines()) - before, written, logs)

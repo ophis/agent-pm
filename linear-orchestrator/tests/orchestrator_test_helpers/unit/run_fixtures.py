@@ -121,7 +121,7 @@ class Gql:
     """Linear: calls recorded as (name, service, vars); comments kept by client id, the issue as its UUID; `issue`: the
     issue read's node; `fail(name, vars)` returns an exception to raise."""
 
-    def __init__(self, fail=lambda name, v: None, issue=None):
+    def __init__(self, fail=lambda _name, _v: None, issue=None):
         self.fail, self.issue, self.calls, self.timeouts, self.comments = fail, issue, [], [], {}
 
     def __call__(self, query, *, service, timeout=30, **v):

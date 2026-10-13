@@ -1,0 +1,348 @@
+import functools
+import os
+import time
+import urllib.request
+from datetime import UTC, datetime, timedelta
+from unittest import mock
+
+from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine.types import LinearError
+from agent_pm.linear_orchestrator.linear import issues, linear, sessions
+from orchestrator_test_helpers.integration import fake_linear
+from orchestrator_test_helpers.integration.fake_linear_integration.data import (
+    ENGINEER,
+    ENGINEER_EMAIL,
+    HARNESS,
+    HARNESS_EMAIL,
+    LINEAR_TIME,
+    PROJECT,
+    SID,
+    VIEWER,
+)
+from orchestrator_test_helpers.integration.fake_linear_integration.served_fixtures import (
+    Served as ServedBase,
+)
+from orchestrator_test_helpers.unit.board_ids import STATES, TEAM
+
+
+class Served1(ServedBase):
+    def test_projection_keeps_only_the_selection(self):
+        want = {"issue": {"state": {"id": STATES["in_progress"]}}}
+        self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i="TASK-7"), want)
+        self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i=self.fake.find("TASK-7")["id"]), want)
+
+    def test_a_selected_field_the_model_lacks_is_an_error(self):
+        query = linear.Q_ISSUE_STATE.replace("state { id }", "state { id color }")
+        self.fake.ops[query] = "linear.Q_ISSUE_STATE"
+        with self.assertRaises(LinearError) as cm:
+            self.gql(query, i="TASK-7")
+        self.assertIn("fake: linear.Q_ISSUE_STATE has no field color", str(cm.exception))
+        self.assertEqual(self.log(), [("linear.Q_ISSUE_STATE", HARNESS_EMAIL, "error")])
+
+    def test_is_me_follows_the_key(self):
+        mine = {
+            HARNESS: self.fake.comment("TASK-7", self.harness, f"Run {SID} · running"),
+            ENGINEER: self.fake.comment("TASK-7", self.engineer, f"Run {SID} · not a session"),
+        }
+        self.fake.comment("TASK-7", None, "From an integration")
+        for service, gql in ((HARNESS, self.gql), (ENGINEER, self.eng)):
+            with self.subTest(service):
+                nodes = gql(issues.Q_ISSUE, i="TASK-7")["issue"]["comments"]["nodes"]
+                self.assertEqual(
+                    {n["body"]: (n["user"] or {}).get("isMe") for n in nodes},
+                    {
+                        f"Run {SID} · running": service == HARNESS,
+                        f"Run {SID} · not a session": service == ENGINEER,
+                        "From an integration": None,
+                    },
+                )
+                self.assertEqual(
+                    {
+                        s: gql(linear.Q_COMMENT, c=c)["comment"]["user"]["isMe"]
+                        for s, c in mine.items()
+                    },
+                    {HARNESS: service == HARNESS, ENGINEER: service == ENGINEER},
+                )
+        with self.assertRaises(LinearError):
+            self.eng(sessions.M_UPDATE, c=mine[HARNESS], b="hijacked")
+        self.assertEqual(
+            sorted(c["body"] for c in self.fake.find("TASK-7")["comments"]),
+            ["From an integration", f"Run {SID} · not a session", f"Run {SID} · running"],
+        )
+
+    def test_a_session_comment_is_created_then_updated_by_its_session_id(self):
+        session = linear.client_id(SID, "session")
+        for text in (f"Run {SID} · running · #1", f"Run {SID} · done · #2"):
+            self.assertIsNone(sessions.write(self.gql, SID, "TASK-7", text))
+        self.assertEqual(
+            [(c["id"], c["user"], c["body"]) for c in self.fake.find("TASK-7")["comments"]],
+            [(session, self.harness, f"Run {SID} · done · #2")],
+        )
+        self.assertEqual(
+            self.log(),
+            [
+                ("sessions.M_UPDATE", HARNESS_EMAIL, "error"),
+                ("linear.M_COMMENT_ID", HARNESS_EMAIL, "ok"),
+                ("sessions.M_UPDATE", HARNESS_EMAIL, "ok"),
+            ],
+        )
+
+    def test_a_comment_is_created_and_found_by_its_client_id(self):
+        cid = linear.client_id(SID, "comment")
+        task, other = self.fake.find("TASK-7")["id"], self.fake.issue("Other")["id"]
+        self.assertIsNone(linear.find_comment(self.eng, cid, task))
+        linear.comment(self.eng, task, "Build ready.", cid)
+        self.assertEqual(
+            self.eng(linear.Q_COMMENT, c=cid),
+            {
+                "comment": {
+                    "id": cid,
+                    "body": "Build ready.",
+                    "issue": {"id": task},
+                    "user": {"isMe": True},
+                }
+            },
+        )
+        self.assertEqual(linear.find_comment(self.eng, cid, task), "Build ready.")
+        for gql, issue in ((self.gql, task), (self.eng, other)):
+            with self.subTest(issue=issue), self.assertRaisesRegex(LinearError, "is not ours$"):
+                linear.find_comment(gql, cid, issue)
+        with self.assertRaises(LinearError) as cm:
+            linear.comment(self.gql, other, "Squatted.", cid)
+        self.assertIn(f"fake: comment id {cid} in use", str(cm.exception))
+        self.assertEqual(
+            [(c["id"], c["body"]) for c in self.fake.find("TASK-7")["comments"]],
+            [(cid, "Build ready.")],
+        )
+        self.assertEqual(self.fake.find(other)["comments"], [])
+        self.assertEqual(
+            self.log(),
+            [
+                ("linear.Q_COMMENT", ENGINEER_EMAIL, "error"),
+                ("linear.M_COMMENT_ID", ENGINEER_EMAIL, "ok"),
+                *[("linear.Q_COMMENT", ENGINEER_EMAIL, "ok")] * 2,
+                ("linear.Q_COMMENT", HARNESS_EMAIL, "ok"),
+                ("linear.Q_COMMENT", ENGINEER_EMAIL, "ok"),
+                ("linear.M_COMMENT_ID", HARNESS_EMAIL, "error"),
+            ],
+        )
+
+    def test_a_move_is_history_by_the_caller(self):
+        self.fake.issue("Claimed", identifier="TASK-8")
+        self.fake.move(
+            "TASK-8",
+            "in_progress",
+            actor=self.harness,
+            at=datetime(2026, 10, 8, 7, 30, 41, 62000, UTC),
+        )
+        self.assertIsNone(
+            linear.move(self.eng, "TASK-8", STATES["in_review"], STATES["in_progress"])
+        )
+        nodes = self.gql(promote.Q_DETAIL, i="TASK-8")["issue"]["history"]["nodes"]
+        self.assertEqual(
+            [(n["actorId"], n["fromStateId"], n["toStateId"]) for n in nodes],
+            [
+                (self.engineer, STATES["in_progress"], STATES["in_review"]),
+                (self.harness, STATES["todo"], STATES["in_progress"]),
+            ],
+        )
+        self.assertEqual(nodes[1]["createdAt"], "2026-10-08T07:30:41.062Z")
+        self.assertRegex(nodes[0]["createdAt"], LINEAR_TIME)
+        self.assertLess(
+            datetime.now(UTC) - linear.parse_time(nodes[0]["createdAt"]), timedelta(seconds=10)
+        )
+        self.assertEqual(self.fake.find("TASK-8")["state"], STATES["in_review"])
+
+    def test_each_failure_kind_as_the_caller_sees_it(self):
+        for name, eng in (
+            ("http", self.eng),
+            ("in process", functools.partial(self.fake, service=ENGINEER)),
+        ):
+            with self.subTest(name):
+                self.fake.requests.clear()
+                self.fake.fail("linear.M_COMMENT", "error")
+                with self.assertRaises(LinearError) as cm:
+                    linear.comment(eng, "TASK-7", "lost")
+                self.assertIsInstance(str(cm.exception), str)
+                self.fake.fail("linear.M_STATE", "unsuccessful")
+                with self.assertRaisesRegex(LinearError, "^issueUpdate: success: false$"):
+                    linear.move(eng, "TASK-7", STATES["in_review"], STATES["in_progress"])
+                self.fake.fail("linear.M_SUBSCRIBE", "503")
+                with self.assertRaises(linear.Unavailable) as cm:
+                    linear.call(eng, linear.M_SUBSCRIBE, "issueSubscribe", i="TASK-7", e="me@x.com")
+                self.assertEqual(str(cm.exception), "issueSubscribe: HTTP 503")
+                self.fake.fail("linear.Q_ISSUE_STATE", "hang", seconds=3)
+                start = time.monotonic()
+                with self.assertRaises(linear.Unavailable) as cm:
+                    eng(linear.Q_ISSUE_STATE, timeout=1, i="TASK-7")
+                self.assertEqual(str(cm.exception), "issue: TimeoutError: timed out")
+                self.assertLess(time.monotonic() - start, 2.5)
+                self.assertEqual(
+                    self.log(),
+                    [
+                        ("linear.M_COMMENT", ENGINEER_EMAIL, "error"),
+                        ("linear.Q_ISSUE_STATE", ENGINEER_EMAIL, "ok"),
+                        ("linear.M_STATE", ENGINEER_EMAIL, "unsuccessful"),
+                        ("linear.M_SUBSCRIBE", ENGINEER_EMAIL, "503"),
+                        ("linear.Q_ISSUE_STATE", ENGINEER_EMAIL, "hang"),
+                    ],
+                )
+        task = self.fake.find("TASK-7")
+        self.assertEqual(
+            (task["state"], task["comments"], task["subscribers"]), (STATES["in_progress"], [], [])
+        )
+
+    def test_account_and_times_scope_a_failure(self):
+        self.fake.fail("linear.M_COMMENT", "error", account="Engineer@agents.test", times=2)
+        linear.comment(self.gql, "TASK-7", "by the harness")
+        for _ in range(2):
+            with self.assertRaises(LinearError):
+                linear.comment(self.eng, "TASK-7", "lost")
+        linear.comment(self.eng, "TASK-7", "by the engineer")
+        self.assertEqual(
+            self.log(),
+            [
+                ("linear.M_COMMENT", HARNESS_EMAIL, "ok"),
+                ("linear.M_COMMENT", ENGINEER_EMAIL, "error"),
+                ("linear.M_COMMENT", ENGINEER_EMAIL, "error"),
+                ("linear.M_COMMENT", ENGINEER_EMAIL, "ok"),
+            ],
+        )
+        self.assertEqual(
+            [c["body"] for c in self.fake.find("TASK-7")["comments"]],
+            ["by the harness", "by the engineer"],
+        )
+
+    def test_an_unknown_query_and_a_bad_key_are_errors_and_logged(self):
+        with self.assertRaises(LinearError) as cm:
+            self.gql(VIEWER)
+        self.assertIn("fake: unknown query", str(cm.exception))
+        stranger = fake_linear.FakeLinear()
+        stranger.user("stranger@x.com", "Stranger", "stranger")
+        with (
+            mock.patch.dict(
+                os.environ, {"FAKE_LINEAR_TRANSPORT": fake_linear.seam(self, stranger, self.url)}
+            ),
+            self.assertRaises(urllib.error.HTTPError) as cm,
+        ):
+            linear.linear_gql(linear.Q_USER, service="stranger", e="me@x.com")
+        cm.exception.close()
+        self.assertEqual(cm.exception.code, 401)
+        self.assertEqual(
+            self.fake.requests,
+            [
+                fake_linear.Request(VIEWER, HARNESS_EMAIL, {}, "unknown"),
+                fake_linear.Request("linear.Q_USER", None, {"e": "me@x.com"}, "unauthorized"),
+            ],
+        )
+
+    def test_only_post_graphql_is_served(self):
+        send = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+        for req, code in (
+            (self.url, 405),
+            (urllib.request.Request(self.url.replace("/graphql", "/other"), b"{}"), 404),
+        ):
+            with self.subTest(code), self.assertRaises(urllib.error.HTTPError) as cm:
+                send(req, timeout=5)
+            cm.exception.close()
+            self.assertEqual(cm.exception.code, code)
+        self.assertEqual(self.fake.requests, [])
+
+    def test_a_bad_call_is_a_logged_error(self):
+        with self.assertRaises(LinearError) as cm:
+            self.gql(linear.Q_ISSUE_STATE)
+        self.assertIn("fake: linear.Q_ISSUE_STATE: KeyError: 'i'", str(cm.exception))
+        with self.assertRaises(LinearError) as cm:
+            self.gql(promote.Q_HANDOFF, t=TEAM, s=STATES["in_progress"], a=None)
+        self.assertIn("fake: promote.Q_HANDOFF: TypeError: ", str(cm.exception))
+        self.assertEqual(
+            self.log(),
+            [
+                ("linear.Q_ISSUE_STATE", HARNESS_EMAIL, "error"),
+                ("promote.Q_HANDOFF", HARNESS_EMAIL, "error"),
+            ],
+        )
+
+    def test_a_bad_body_is_a_logged_400(self):
+        send, key = (
+            urllib.request.build_opener(urllib.request.ProxyHandler({})).open,
+            self.fake.keys()[HARNESS],
+        )
+        for body in (b"not json", b"[]", b'{"variables": {}}', b'{"query": "q", "variables": []}'):
+            with self.subTest(body), self.assertRaises(urllib.error.HTTPError) as cm:
+                send(urllib.request.Request(self.url, body, {"Authorization": key}), timeout=5)
+            cm.exception.close()
+            self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(
+            self.fake.requests, [fake_linear.Request(None, HARNESS_EMAIL, {}, "error")] * 4
+        )
+
+    def test_finished_issues_page(self):
+        finished = [
+            self.fake.issue(
+                f"Finished {n}", state=("done", "canceled")[n % 2], assignee=self.engineer
+            )["identifier"]
+            for n in range(51)
+        ]
+        archived = self.fake.issue("Archived", state="done", assignee=self.engineer)["identifier"]
+        linear.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
+        self.fake.issue("Someone else's", state="done", assignee=self.human)
+        pages, cursor = [], None
+        while True:
+            page = self.gql(
+                prune.Q_FINISHED,
+                t=TEAM,
+                s=[STATES["done"], STATES["canceled"]],
+                a=[self.engineer],
+                c=cursor,
+            )["issues"]
+            pages.append([n["identifier"] for n in page["nodes"]])
+            if not page["pageInfo"]["hasNextPage"]:
+                break
+            cursor = page["pageInfo"]["endCursor"]
+        self.assertEqual([len(p) for p in pages], [50, 1])
+        self.assertEqual(sum(pages, []), finished)
+        self.assertTrue(self.fake.find(archived)["archived"])
+
+    def test_issue_create_takes_the_next_number_and_refuses_a_used_id(self):
+        self.fake.issue("Older", identifier="TASK-3")
+        new = {
+            "id": promote.child_id("src", "pm", "2026-10-09T07:00:00.000Z"),
+            "teamId": TEAM,
+            "projectId": PROJECT["id"],
+            "assigneeId": self.engineer,
+            "stateId": STATES["todo"],
+            "priority": 2,
+            "title": "PRD: Widgets",
+            "description": "Handoff from TASK-7: https://linear.app/fake/issue/TASK-7",
+        }
+        made = linear.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
+        self.assertEqual(
+            made, {"success": True, "issue": {"id": new["id"], "identifier": "TASK-8"}}
+        )
+        self.assertEqual(
+            self.gql(promote.Q_CHILD, c=new["id"]), {"issues": {"nodes": [made["issue"]]}}
+        )
+        child = self.fake.find("TASK-8")
+        self.assertEqual(
+            {
+                k: child[k]
+                for k in ("id", "state", "assignee", "project", "priority", "title", "description")
+            },
+            {
+                "id": new["id"],
+                "state": STATES["todo"],
+                "assignee": self.engineer,
+                "project": PROJECT,
+                "priority": 2,
+                "title": "PRD: Widgets",
+                "description": new["description"],
+            },
+        )
+        with self.assertRaises(LinearError) as cm:
+            linear.call(
+                self.gql, promote.M_CREATE, "issueCreate", **{"in": dict(new, title="Again")}
+            )
+        self.assertIn(new["id"], str(cm.exception))
+        self.assertEqual([r.result for r in self.fake.requests], ["ok", "ok", "error"])
+        self.assertIsNone(self.fake.find("TASK-9"))
