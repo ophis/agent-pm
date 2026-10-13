@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.types import Adapter, Headless
+from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import DriverError, Launch, Reply, SessionRequest, Stderr
 from agent_pm.session.modes import headless
 from agent_pm.session.modes.headless import HeadlessMode
@@ -71,14 +71,6 @@ def until(check) -> bool:
     return True
 
 
-class StubAdapter(Adapter):
-    def headless(self):
-        return StubRun(self)
-
-    def tui(self):
-        return None
-
-
 class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
@@ -99,7 +91,7 @@ class Base(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
-        self.mode = HeadlessMode(StubAdapter({}).headless())
+        self.mode = HeadlessMode(StubRun())
 
     def begin(self, code: str, env: dict | None = None, **kwargs):
         argv = (sys.executable, "-I", "-c", textwrap.dedent(code))
@@ -239,7 +231,7 @@ class Stop(Base):
     def test_falls_back_to_killing_the_process_when_killpg_fails(self):
         for error in (ProcessLookupError, PermissionError):
             with self.subTest(error=error.__name__):
-                self.mode = HeadlessMode(StubAdapter({}).headless())
+                self.mode = HeadlessMode(StubRun())
                 self.begin(SLEEPER)
                 with mock.patch("os.killpg", side_effect=error) as killpg:
                     self.promptly(self.mode.stop)

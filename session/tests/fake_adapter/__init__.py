@@ -94,7 +94,12 @@ def _parse(record):
         yield Exited(99)
 
 
-class FakeHeadless(Headless):
+class ConfiguredRun:
+    def __init__(self, adapter):
+        self.adapter = adapter
+
+
+class FakeHeadless(ConfiguredRun, Headless):
     def launch(self, prompt, request: SessionRequest):
         spec = request.spec
         resume = request.resumed
@@ -108,7 +113,7 @@ class FakeHeadless(Headless):
         return _parse(record)
 
 
-class FakeInProcess(InProcess):
+class FakeInProcess(ConfiguredRun, InProcess):
     def run(self, prompt, request: SessionRequest):
         spec = request.spec
         resume = request.resumed
@@ -145,7 +150,7 @@ class FakeInProcess(InProcess):
                 raise RuntimeError(step["raise"])
 
 
-class FakeTui(Tui):
+class FakeTui(ConfiguredRun, Tui):
     hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
 
     def launch(self, prompt, request: SessionRequest, hook):

@@ -51,10 +51,10 @@ class StubAdapter(Adapter):
     keys = frozenset({"model", "flags"})
 
     def headless(self):
-        return StubHeadless(self)
+        return StubHeadless()
 
     def tui(self):
-        return StubTui(self)
+        return StubTui()
 
 
 class StubHeadless(Headless):
@@ -465,11 +465,11 @@ class AdapterTest(Refusals):
         with self.assertRaises(TypeError):
             Adapter({})
         with self.assertRaises(TypeError):
-            Headless(StubAdapter({}))
+            Headless()
         with self.assertRaises(TypeError):
-            Tui(StubAdapter({}))
+            Tui()
         with self.assertRaises(TypeError):
-            InProcess(StubAdapter({}))
+            InProcess()
 
     def test_refuses_the_first_unknown_key_in_sorted_order(self):
         self.refused(
@@ -521,11 +521,6 @@ class AdapterTest(Refusals):
         self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))
         self.assertIsNone(StubAdapter({}).in_process())
 
-    def test_runs_keep_their_adapter(self):
-        adapter = StubAdapter({})
-        self.assertIs(adapter.headless().adapter, adapter)
-        self.assertIs(adapter.tui().adapter, adapter)
-
 
 class HeadlessTest(Case):
     def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
@@ -541,21 +536,17 @@ class HeadlessTest(Case):
             "{}\n",
             '{"texts": ["b", "c"]}',
         ]
-        self.assertEqual(
-            list(StubHeadless(StubAdapter({})).events(lines)), [Reply("a"), Reply("b"), Reply("c")]
-        )
+        self.assertEqual(list(StubHeadless().events(lines)), [Reply("a"), Reply("b"), Reply("c")])
 
 
 class InProcessTest(Case):
     def test_run_is_its_only_abstract_method(self):
         self.assertEqual(InProcess.__abstractmethods__, frozenset({"run"}))
         with self.assertRaises(TypeError):
-            CheckOnlyInProcess(StubAdapter({}))
+            CheckOnlyInProcess()
 
-    def test_keeps_its_adapter_and_checks_nothing_by_default(self):
-        adapter = StubAdapter({})
-        run = StubInProcess(adapter)
-        self.assertIs(run.adapter, adapter)
+    def test_checks_nothing_by_default(self):
+        run = StubInProcess()
         for resume in (False, True):
             with self.subTest(resume=resume):
                 self.assertIsNone(
@@ -565,14 +556,14 @@ class InProcessTest(Case):
 
 class TuiTest(Case):
     def setUp(self):
-        self.run = DetailedTui(StubAdapter({}))
+        self.run = DetailedTui()
         self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
 
     def test_the_hook_kinds(self):
         self.assertEqual((TURN_END, BLOCKED, ACTIVITY), ("turn_end", "blocked", "activity"))
 
     def test_defaults(self):
-        run = StubTui(StubAdapter({}))
+        run = StubTui()
         self.assertEqual(Tui.hooks, {})
         self.assertEqual(
             (run.pending(self.end), run.activity({"doing": "x"}), run.blocked_reason({"why": "y"})),
@@ -624,7 +615,7 @@ class TuiTest(Case):
                 self.assertEqual(self.run.hook_events(label, payload, bound="n1"), [event])
 
     def test_the_kinds_default_details(self):
-        run = LabeledTui(StubAdapter({}))
+        run = LabeledTui()
         payload = {"last": "r", "tasks": [1], "doing": "Bash", "why": "ask"}
         for label, event in (
             ("end", TurnEnd("r", 0)),
@@ -643,7 +634,7 @@ class TuiTest(Case):
         self.assertEqual(self.run.hook_events("other", {"session_id": "n1"}), [SessionBound("n1")])
 
     def test_without_hooks_no_label_has_a_kind(self):
-        run = StubTui(StubAdapter({}))
+        run = StubTui()
         payload = {"session_id": "n1", "last": "r", "tool_name": "Bash"}
         for label in ("Stop", "PostToolUse", "Notification", "PermissionRequest", "end"):
             with self.subTest(label=label):
@@ -663,7 +654,7 @@ class TuiTest(Case):
                 self.assertNotRegex(source, rf"\b{name}\b")
 
     def test_hook_events_binds_the_id_session_id_reads(self):
-        run = NativeIdTui(StubAdapter({}))
+        run = NativeIdTui()
         self.assertEqual(
             run.hook_events("end", {"thread": "t1", "session_id": "n1", "last": "r"}),
             [SessionBound("t1"), TurnEnd("r", 0)],
@@ -684,7 +675,7 @@ class NoProcessTest(Case):
             tui = adapter.tui()
             tui.submit("x")
             tui.hook_events("end", {"session_id": "n1"})
-            labeled = DetailedTui(adapter)
+            labeled = DetailedTui()
             for label in labeled.hooks:
                 labeled.hook_events(label, {"session_id": "n1", "doing": "Bash"}, bound="n1")
             tui.limit("screen")
@@ -693,7 +684,7 @@ class NoProcessTest(Case):
             adapter.usage("output")
             adapter.session_status("s", "/c")
             adapter.in_process()
-            StubInProcess(adapter).check(SessionRequest(Spec(workdir="/w"), resumed=False))
+            StubInProcess().check(SessionRequest(Spec(workdir="/w"), resumed=False))
         popen.assert_not_called()
         run.assert_not_called()
 
