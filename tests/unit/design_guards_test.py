@@ -326,8 +326,7 @@ class StatusLogFormat(Sample):
                 f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
             }
         )
-        outside = "status log line format outside "
-                          "session/engine/status_log.py or hosts/tmux/"
+        outside = "status log line format outside session/engine/status_log.py or hosts/tmux/"
         self.assertEqual(
             guards.status_log_format(root),
             sorted(
@@ -360,6 +359,6 @@ class StatusLogFormat(Sample):
             [
                 f"session/{PKG}/session/hosts/tmux_external/x.py:1: "
                 "status log line format outside "
-                          "session/engine/status_log.py or hosts/tmux/"
+                "session/engine/status_log.py or hosts/tmux/"
             ],
         )
