@@ -12,7 +12,8 @@ from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.fake_linear_integration_data import (
+from orchestrator_tests.integration.fake_linear.fixtures import ServerCase
+from orchestrator_tests.integration.fake_linear.seeds import (
     ENGINEER,
     ENGINEER_EMAIL,
     HARNESS,
@@ -23,11 +24,10 @@ from orchestrator_tests.integration.fake_linear_integration_data import (
     SID,
     VIEWER,
 )
-from orchestrator_tests.integration.fake_linear_integration_scenarios import ServedScenario
 from orchestrator_tests.unit.board_ids import STATES, TASK_GROUP, TEAM
 
 
-class ServedProjectionKeepsOnlyTheSelection(ServedScenario):
+class GraphQLProjection(ServerCase):
     def test_projection_keeps_only_the_selection(self):
         want = {"issue": {"state": {"id": STATES["in_progress"]}}}
         self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i="TASK-7"), want)

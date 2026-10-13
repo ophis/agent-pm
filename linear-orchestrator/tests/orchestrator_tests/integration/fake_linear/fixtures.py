@@ -5,7 +5,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.fake_linear_integration_data import (
+from orchestrator_tests.integration.fake_linear.seeds import (
     ENGINEER,
     ENGINEER_EMAIL,
     HARNESS,
@@ -15,7 +15,7 @@ from orchestrator_tests.integration.fake_linear_integration_data import (
 from orchestrator_tests.integration.transport.fake_transport import install
 
 
-class ServedScenario(Case):
+class ServerCase(Case):
     def setUp(self):
         self.fake = fake = fake_linear.FakeLinear(harness=HARNESS)
         self.harness = fake.user(HARNESS_EMAIL, "Harness", HARNESS)
