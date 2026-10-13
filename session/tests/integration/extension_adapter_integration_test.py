@@ -16,11 +16,13 @@ from tests.case import PROJECTS, PY, REPO, Case, child_env
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
-# The child: starts runtime argv[2] headless in workdir argv[1] and prints its events; a ConfigError exits 1, its text
+# The child: configures the session from the copy's config, starts runtime argv[2] headless in workdir argv[1] and prints its events; a ConfigError exits 1, its text
 # on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import api
+from agent_pm.delegate.engine.config import session_settings
+from agent_pm.session import Session, api
 try:
+    Session.configure(**session_settings())
     handle = api.start(sys.argv[2], "headless", "hello", api.Spec(workdir=sys.argv[1]))
 except api.ConfigError as e:
     sys.exit(f"ConfigError: {e}")

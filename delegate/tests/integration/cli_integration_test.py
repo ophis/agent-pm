@@ -14,9 +14,9 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.engine.config import session_settings
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import api
-from agent_pm.session.adapters import registry
+from agent_pm.session import Session, api
 
 from delegate.tests.unit.runner_test import block
 from session.tests.integration.adapters.claude import fake_claude
@@ -524,7 +524,7 @@ class UsageLimit(Integration):
         )
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
-        registry.reset()
+        Session.configure(**session_settings())
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(api.session_info("claude", SID, self.proj).resumable, "yes")
 
