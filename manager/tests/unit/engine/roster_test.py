@@ -5,7 +5,10 @@ import fcntl
 import io
 import json
 import os
+import select
 import stat
+import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -18,7 +21,7 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held, Lease, RosterError, Spec, Stale, State
 from agent_pm.utils import Record, append_line
 
-from manager.tests.case import Case
+from manager.tests.case import Case, child_env
 
 
 class RosterTest(Case):
@@ -743,6 +746,210 @@ class RosterTest(Case):
         path.write_bytes(b"h" * (half - 1) + b"\n" + b"u" * half + b"\n")
         self.assertTrue(self.roster.rotate_events())
         self.assertEqual((self.content()["cursor"], self.content()["gen"]), (0, 1))
+
+    def test_concurrent_distinct_process_writes_preserve_both_entries(self):
+        self.assertTrue(Path(self.roster.events).exists())
+        records = [
+            replace(self.record, name=name, sessions=(name,), sid=str(uuid4()))
+            for name in ("first", "second")
+        ]
+        script = """import sys
+from agent_pm.manager.engine.roster import Roster
+from agent_pm.utils import Record
+roster = Roster(sys.argv[1])
+record = Record.parse(sys.argv[2])
+print('ready', flush=True)
+sys.stdin.readline()
+print('writing', flush=True)
+roster.adopt(record)
+print('done', flush=True)
+"""
+        lock = os.open(Path(self.directory, "roster.lock"), os.O_RDWR)
+        children = []
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for record in records:
+                children.append(
+                    subprocess.Popen(
+                        (sys.executable, "-P", "-c", script, self.directory, record.to_line()),
+                        env=child_env(),
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                )
+            for child in children:
+                readable, _, _ = select.select([child.stdout], [], [], 10)
+                self.assertTrue(readable, "writer did not reach barrier")
+                self.assertEqual(child.stdout.readline(), "ready\n")
+            for child in children:
+                child.stdin.write("go\n")
+                child.stdin.flush()
+            for child in children:
+                readable, _, _ = select.select([child.stdout], [], [], 10)
+                self.assertTrue(readable, "writer did not begin its mutation")
+                self.assertEqual(child.stdout.readline(), "writing\n")
+                self.assertIsNone(child.poll())
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            for child in children:
+                stdout, stderr = child.communicate(timeout=10)
+                self.assertEqual(child.returncode, 0, stderr)
+                self.assertEqual(stdout, "done\n")
+        finally:
+            os.close(lock)
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.communicate(timeout=5)
+        entries = self.roster.entries()
+        self.assertEqual(set(entries), {"first", "second"})
+        self.assertEqual({entry.record for entry in entries.values()}, set(records))
+
+    def test_hostile_entry_diagnostic_is_one_escaped_line_with_healthy_entry_kept(self):
+        self.roster.adopt(self.record)
+        data = self.content()
+        hostile = "invalid\n\x1b[31mforged\u2028"
+        data["entries"]["bad"] = {**data["entries"]["x"], "state": hostile}
+        Path(self.roster.path).write_text(json.dumps(data))
+        before = Path(self.roster.path).read_bytes()
+        warning = io.StringIO()
+        with mock.patch("sys.stderr", warning):
+            entries = self.roster.entries()
+        self.assertEqual(list(entries), ["x"])
+        self.assertEqual(entries["x"].record, self.record)
+        self.assertEqual(len(warning.getvalue().splitlines()), 1)
+        self.assertIn(repr(hostile), warning.getvalue())
+        self.assertNotIn("\x1b", warning.getvalue())
+        self.assertNotIn("\u2028", warning.getvalue())
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_top_level_faults_refuse_reads_and_writes_without_changing_bytes(self):
+        self.roster.adopt(self.record)
+        valid = self.content()
+        cases = []
+        for field in valid:
+            missing = {key: value for key, value in valid.items() if key != field}
+            cases.append((f"missing {field}", missing))
+        cases.append(("extra field", {**valid, "extra": 0}))
+        for value in (True, 1, None, "2"):
+            cases.append((f"version {value!r}", {**valid, "version": value}))
+        for field in ("cursor", "gen", "lease_gen"):
+            for value in (True, -1, None, "0", 1.5):
+                cases.append((f"{field} {value!r}", {**valid, field: value}))
+        for value in ([], None, "invalid"):
+            cases.append((f"entries {value!r}", {**valid, "entries": value}))
+        holder = {"id": str(uuid4()), "session": "owner"}
+        for value in (
+            False,
+            [],
+            "invalid",
+            {},
+            {"session": "owner"},
+            {"id": holder["id"]},
+            {**holder, "since": "now"},
+            {**holder, "id": None},
+            {**holder, "id": "invalid"},
+            {**holder, "id": holder["id"].upper()},
+            {**holder, "session": ""},
+            {**holder, "session": "bad\nowner"},
+            {**holder, "session": "bad\towner"},
+        ):
+            cases.append((f"holder {value!r}", {**valid, "holder": value, "lease_gen": 1}))
+        cases.append(("holder with zero generation", {**valid, "holder": holder}))
+        for label, data in cases:
+            with self.subTest(label=label):
+                raw = json.dumps(data).encode()
+                Path(self.roster.path).write_bytes(raw)
+                for operation in (self.roster.entries, lambda: self.roster.note("x", "blocked")):
+                    with self.assertRaises(RosterError):
+                        operation()
+                    self.assertEqual(Path(self.roster.path).read_bytes(), raw)
+                    self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
+
+    def test_manager_directory_regular_file_is_refused_without_touching_it(self):
+        path = Path(self.directory)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"keep")
+        with self.assertRaises(RosterError):
+            self.begin()
+        self.assertEqual(path.read_bytes(), b"keep")
+        self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_agent_pm_regular_file_is_refused_without_touching_it(self):
+        path = Path(self.agent_pm)
+        path.rmdir()
+        path.write_bytes(b"keep")
+        with self.assertRaises(RosterError):
+            self.begin()
+        self.assertEqual(path.read_bytes(), b"keep")
+        self.assertFalse(Path(self.directory).exists())
+
+    def test_roster_json_directory_is_refused_and_left_unchanged(self):
+        self.roster.adopt(self.record)
+        path = Path(self.roster.path)
+        path.unlink()
+        path.mkdir()
+        with self.assertRaises(RosterError):
+            self.roster.entries()
+        self.assertTrue(path.is_dir())
+        self.assertEqual(list(path.iterdir()), [])
+
+    def test_foreign_managers_parent_is_refused_without_mutation(self):
+        self.roster.adopt(self.record)
+        before = Path(self.roster.path).read_bytes()
+        parent = str(Path(self.directory).parent)
+        original = os.lstat
+
+        def foreign(path, *args, **kwargs):
+            info = original(path, *args, **kwargs)
+            if os.fspath(path) == parent:
+                values = list(info)
+                values[4] += 1
+                return os.stat_result(values)
+            return info
+
+        with (
+            mock.patch.object(os, "lstat", side_effect=foreign),
+            self.assertRaisesRegex(RosterError, "directory owned by you"),
+        ):
+            self.roster.note("x", "blocked")
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_valid_roster_at_exact_size_cap_is_read_without_rewrite(self):
+        self.roster.adopt(self.record)
+        raw = Path(self.roster.path).read_bytes()
+        padded = raw + b" " * ((1 << 20) - len(raw))
+        Path(self.roster.path).write_bytes(padded)
+        self.assertEqual(self.roster.entries()["x"].record, self.record)
+        self.assertEqual(Path(self.roster.path).read_bytes(), padded)
+
+    def test_large_event_history_cursor_slices_across_read_blocks(self):
+        path = Path(self.roster.events)
+        lines = [f"12:00:00 worker done {index}" for index in range(20000)]
+        path.write_text("\n".join(lines) + "\npartial")
+        self.roster.advance(12345, 0)
+        self.assertEqual(self.roster.backlog(), (12345, 0, lines[12345:]))
+        self.assertEqual(self.roster.next_event(12345, 0), (12346, lines[12345]))
+        self.roster.advance(len(lines) - 2, 0)
+        self.assertEqual(self.roster.backlog(), (len(lines) - 2, 0, lines[-2:]))
+
+    def test_new_directories_restore_owner_bits_stripped_by_umask(self):
+        previous = os.umask(0o277)
+        try:
+            self.assertTrue(Path(self.roster.events).exists())
+            for path in (Path(self.directory).parent, Path(self.directory)):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+        finally:
+            os.umask(previous)
+
+    def test_existing_managers_parent_mode_is_preserved(self):
+        parent = Path(self.directory).parent
+        parent.mkdir(parents=True)
+        parent.chmod(0o755)
+        self.assertTrue(Path(self.roster.events).exists())
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(self.directory).stat().st_mode), 0o700)
 
     def test_events_ignore_partial_line_and_advance_is_monotonic(self):
         path = self.roster.events
