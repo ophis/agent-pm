@@ -13,7 +13,7 @@ import tomllib
 
 from agent_pm.utils.config_file import LEVELS
 
-from tests.import_contracts import violation
+from tests.import_policy import violation
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 

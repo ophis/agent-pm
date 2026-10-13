@@ -200,7 +200,6 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
-Root unit checks require Import Linter, pinned in `.github/workflows/test.yml`.
 Run Lint checks with the pinned tool versions in `.github/workflows/test.yml`:
 
 ```bash
@@ -211,7 +210,7 @@ pyright
 lint-imports --no-cache
 pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
 python3 -m tests.checks
-python3 .github/run_tests.py "Repository imports" tests/integration
+python3 .github/run_tests.py "Repository integration" tests/integration
 python3 .github/integration_jobs.py --check
 actionlint -shellcheck= -pyflakes=
 typos --config pyproject.toml
@@ -220,5 +219,5 @@ typos --config pyproject.toml
 One project's unit tests: `python3 .github/run_tests.py "Session unit" session/tests/unit`.
 Run project and repository unit tests with `python3 .github/run_tests.py Unit --unit`; integration
 shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
-shards; Lint also runs the repository import integration test with its pinned tools installed. Its
+shards; Lint also runs the repository integration tests with its pinned tools installed. Its
 required `CI` job succeeds only when every dependency succeeds.

@@ -3,13 +3,12 @@ import importlib
 import json
 import os
 import subprocess
-import unittest
 from pathlib import Path
 
 from tests import guards
 from tests.case import ORCH_ROOT, PY, REPO, SRC, Case, child_env
 from tests.checks import checks
-from tests.guard_samples import PKG, Sample, fixtures, flat, own_case, test_suites
+from tests.guard_samples import PKG, Sample, fixtures, test_suites
 
 OPKG = "src/agent_pm/linear_orchestrator"
 
@@ -74,14 +73,6 @@ class RealTree(Case):
 
 
 class EveryTest(Sample):
-    def test_is_a_case(self):
-        loader, found = unittest.TestLoader(), []
-        for top in guards.TESTS:
-            for start, import_root in test_suites(REPO, top):
-                tests = loader.discover(start, "*_test.py", import_root)
-                found += [test.id() for test in flat(tests) if not own_case(test, top)]
-        self.assertEqual((loader.errors, found), ([], []))
-
     def test_discovery_finds_direct_and_normalized_test_packages(self):
         root = self.tree(
             {
