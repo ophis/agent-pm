@@ -102,7 +102,7 @@ def absolute_path(path: object, label: str) -> str:
 
 def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict):
-        raise RecoveryError(f"invalid Codex recovery snapshot {'fields'}")
+        raise RecoveryError("invalid Codex recovery snapshot fields")
     if set(value) != {
         "cwd",
         "project",
@@ -114,18 +114,18 @@ def validate_snapshot(value: dict) -> dict:
         "flags",
         "env",
     }:
-        raise RecoveryError(f"invalid Codex recovery snapshot {'fields'}")
+        raise RecoveryError("invalid Codex recovery snapshot fields")
     env, flags = _snapshot_inputs(value)
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     if type(value["project"]) is not bool:
-        raise RecoveryError(f"invalid Codex recovery snapshot {'project'}")
+        raise RecoveryError("invalid Codex recovery snapshot project")
     for key in ("dirs", "commands"):
         if not isinstance(value[key], list):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
     dirs = [absolute_path(item, "dir") for item in value["dirs"]]
     commands = value["commands"]
     if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
-        raise RecoveryError(f"invalid Codex recovery snapshot {'commands'}")
+        raise RecoveryError("invalid Codex recovery snapshot commands")
     for key in ("model", "effort"):
         if value[key] is not None and (
             not isinstance(value[key], str) or not value[key] or not value[key].isprintable()
@@ -142,7 +142,7 @@ def validate_snapshot(value: dict) -> dict:
         "env": dict(env),
     }
     if validated != value:
-        raise RecoveryError(f"invalid Codex recovery snapshot {'path'}")
+        raise RecoveryError("invalid Codex recovery snapshot path")
     return validated
 
 
@@ -152,10 +152,10 @@ def _snapshot_inputs(value):
         isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
         for k, v in env.items()
     ):
-        raise RecoveryError(f"invalid Codex recovery snapshot {'env'}")
+        raise RecoveryError("invalid Codex recovery snapshot env")
     flags = value["flags"]
     if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
-        raise RecoveryError(f"invalid Codex recovery snapshot {'flags'}")
+        raise RecoveryError("invalid Codex recovery snapshot flags")
     return env, flags
 
 
@@ -296,9 +296,7 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
         or type(data["version"]) is not int
         or data["version"] != _SESSION_VERSION
     ):
-        raise RecoveryError(
-            "malformed recovery state" if None is None else f"malformed recovery state: {None}"
-        )
+        raise RecoveryError("malformed recovery state")
     if data["workdir"] != workdir or data["sid"] != sid:
         raise RecoveryError("invalid recovery state identity")
     native = data["native_id"]
@@ -414,9 +412,7 @@ def read_state(
     data = _state_data(fd, path)
     if workdir is None:
         if not isinstance(data, dict):
-            raise RecoveryError(
-                "malformed recovery state" if None is None else f"malformed recovery state: {None}"
-            )
+            raise RecoveryError("malformed recovery state")
         workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
     if sid is None:
         raise RecoveryError("invalid recovery state identity")

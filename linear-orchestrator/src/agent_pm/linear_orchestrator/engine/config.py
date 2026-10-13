@@ -257,10 +257,8 @@ def _check_ids(cfg):
         )
     for k in STATES:
         if not _uuid(states[k]):
-            error_k = k
-            error_states_k = states[k]
             raise ConfigError(
-                f"linear-orchestrator/config.toml: states.{error_k} must be a Linear workflow state id (UUID): {error_states_k!r}"
+                f"linear-orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}"
             )
     if not _uuid(cfg.get("task_label_group")):
         raise ConfigError(
@@ -270,10 +268,8 @@ def _check_ids(cfg):
 
 def _load_config(cfg, root, local):
     if missing := utils.unset(cfg, REQUIRED):
-        error_join_missing = ", ".join(missing)
-        error_local = local
         raise ConfigError(
-            f"linear-orchestrator/config.toml: required, unset: {error_join_missing}: set them in {error_local} (linear-orchestrator/config.toml's `# local:` lines)"
+            f"linear-orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} (linear-orchestrator/config.toml's `# local:` lines)"
         )
     _check_ids(cfg)
     hk = cfg.get("harness_key")
@@ -295,19 +291,13 @@ def _role_fields(cfg):
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
-            error_name = name
-            error_join_extra = ", ".join(extra)
             raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{error_name}] has unknown keys: {error_join_extra}"
+                f"linear-orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}"
             )
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
-                error_name_value_value_value_value_value = name
-                error_k_value_value_value = k
-                error_what = what
-                error_p_get_k = p.get(k)
                 raise ConfigError(
-                    f"linear-orchestrator/config.toml: [roles.{error_name_value_value_value_value_value}] {error_k_value_value_value} must be {error_what}: {error_p_get_k!r}"
+                    f"linear-orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}"
                 )
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
@@ -359,10 +349,8 @@ def _local_clones(cfg):
                 f"linear-orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}"
             )
         if k.lower() in seen:
-            error_seen_k_lower = seen[k.lower()]
-            error_k_value = k
             raise ConfigError(
-                f"linear-orchestrator/config.toml: local_clones.{error_seen_k_lower} and local_clones.{error_k_value} are the same repo"
+                f"linear-orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo"
             )
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
@@ -381,11 +369,8 @@ def _task_labels(cfg):
                 f"linear-orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}"
             )
         if v in seen:
-            error_seen_v = seen[v]
-            error_k_value_value = k
-            error_v = v
             raise ConfigError(
-                f"linear-orchestrator/config.toml: task_labels.{error_seen_v} and task_labels.{error_k_value_value} have the same label id {error_v}"
+                f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
             )
         seen[v] = k
 
@@ -460,33 +445,24 @@ def _role_links(cfg, out):
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
-            error_name_value = name
-            error_r_key = r.key
             raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{error_name_value}] key {error_r_key!r} is harness_key"
+                f"linear-orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key"
             )
         if r.key in owner:
-            error_name_value_value = name
-            error_r_key_value = r.key
-            error_owner_r_key = owner[r.key]
             raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{error_name_value_value}] key {error_r_key_value!r} is also [roles.{error_owner_r_key}]'s"
+                f"linear-orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s"
             )
         owner[r.key] = name
     for name, r in out.items():
         if not r.next:
             continue
         if r.next not in out:
-            error_name_value_value_value = name
-            error_r_next = r.next
             raise ConfigError(
-                f"linear-orchestrator/config.toml: next of {error_name_value_value_value!r} names undefined role {error_r_next!r}"
+                f"linear-orchestrator/config.toml: next of {name!r} names undefined role {r.next!r}"
             )
         if not TASKS[r.next].prefix:
-            error_name_value_value_value_value = name
-            error_r_next_value = r.next
             raise ConfigError(
-                f"linear-orchestrator/config.toml: next of {error_name_value_value_value_value!r} is role {error_r_next_value!r}, whose config.TASKS entry has no prefix"
+                f"linear-orchestrator/config.toml: next of {name!r} is role {r.next!r}, whose config.TASKS entry has no prefix"
             )
 
 

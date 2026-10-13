@@ -69,10 +69,10 @@ class InProcessMode:
         return "live" if self.begun and not self.over.is_set() else "absent"
 
     def send(self, _text: str, /) -> None:
-        raise DriverError(f"{'send'}: tui mode only")
+        raise DriverError("send: tui mode only")
 
     def screen(self, _lines: int | None = None, /) -> str:
-        raise DriverError(f"{'screen'}: tui mode only")
+        raise DriverError("screen: tui mode only")
 
     def stop(self) -> None:
         # A run blocked in a call goes on until its next yield or the process exits.

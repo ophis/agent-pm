@@ -635,9 +635,7 @@ def find_opener(proc) -> str:
         return own
     value = os.environ.get("ITERM_SESSION_ID", "")
     if not value or os.environ.get("TERM_PROGRAM") != "iTerm.app":
-        raise TuiError(
-            f"no anchor pane: {('not in tmux' if None is None else None)}, no iTerm2 pane ($ITERM_SESSION_ID)"
-        )
+        raise TuiError("no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)")
     if ":" not in value or not OPENER.fullmatch(value):
         raise TuiError(f"bad $ITERM_SESSION_ID {value!r}: want {OPENER.pattern}")
     return value
@@ -1384,9 +1382,7 @@ def start(
                 may_run = False
             raise TuiError(f"tmux: {tmux_error(res)}")
         if not wait_started(path, pipe, argv[0], sleep):
-            raise TuiError(
-                "the session did not start" if None is None else f"session {None} did not start"
-            )
+            raise TuiError("the session did not start")
         may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e

@@ -337,10 +337,8 @@ def role_ids(gql, roles):
     for name, role in roles.items():
         uid = user_id(gql, role.account)
         if not uid:
-            error_name = name
-            error_role_account = role.account
             raise LinearError(
-                f"linear-orchestrator/config.toml [roles.{error_name}]: account {error_role_account!r} not found in Linear"
+                f"linear-orchestrator/config.toml [roles.{name}]: account {role.account!r} not found in Linear"
             )
         out[uid] = name
     return out
@@ -357,10 +355,8 @@ def team(gql, cfg):
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg.states[k]}" for k in STATES if cfg.states[k] not in ids]:
-        error_t_name = t["name"]
-        error_join_bad = ", ".join(bad)
         raise LinearError(
-            f"linear-orchestrator/config.toml: [states] not workflow states of team {error_t_name!r}: {error_join_bad}"
+            f"linear-orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
         )
     return Team(t["id"], t["name"], {k: cfg.states[k] for k in STATES})
 
@@ -385,8 +381,6 @@ def task_group(gql, cfg):
         )
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
-        error_group = group
-        error_join_bad_value = ", ".join(bad)
         raise LinearError(
-            f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {error_group}: {error_join_bad_value}"
+            f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}"
         )

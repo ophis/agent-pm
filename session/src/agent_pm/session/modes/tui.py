@@ -48,9 +48,7 @@ def read_state(name: str) -> dict:
     try:
         return tui_hook.read_state(os.path.join(session_dir(name), tui_hook.STATE))
     except HookError as e:
-        raise DriverError(
-            f"no tui session {name}" if e is None else f"no tui session {name}: {e}"
-        ) from None
+        raise DriverError(f"no tui session {name}: {e}") from None
 
 
 def close(name: str, *, host=tmux_host) -> None:
@@ -78,11 +76,7 @@ def _drop(name: str) -> None:
     try:
         _remove(session_dir(name))
     except OSError as e:
-        raise DriverError(
-            f"cannot close tui session {name}: {e.strerror or e}"
-            if isinstance(e, OSError)
-            else f"cannot close tui session {name}: {e}"
-        ) from None
+        raise DriverError(f"cannot close tui session {name}: {e.strerror or e}") from None
 
 
 @contextlib.contextmanager
@@ -249,9 +243,7 @@ class TuiMode:
         except TuiError:
             tagged = pane = None
         if tagged != state["sid"]:
-            raise DriverError(
-                f"no tui session {name}" if None is None else f"no tui session {name}: {None}"
-            )
+            raise DriverError(f"no tui session {name}")
         mode = cls(
             name, run, state["sid"], runtime=state["runtime"], events=state["events"], host=host
         )

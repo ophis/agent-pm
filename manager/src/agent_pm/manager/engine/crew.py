@@ -426,9 +426,7 @@ def _override(item: str) -> tuple[str, str]:
 
 def note_text(text: str) -> str | None:
     if len(text) > roster.NOTE_MAX:
-        error_length = len(text)
-        error_maximum = roster.NOTE_MAX
-        raise WorkersError(f"note: {error_length} characters: want at most {error_maximum}")
+        raise WorkersError(f"note: {len(text)} characters: want at most {roster.NOTE_MAX}")
     if not roster.printable(text):
         raise WorkersError(f"note: {text!r}: {UNPRINTABLE}")
     return text or None

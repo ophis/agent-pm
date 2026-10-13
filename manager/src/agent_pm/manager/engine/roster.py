@@ -233,9 +233,7 @@ def validated(data, path: str, *, strict: bool) -> dict:
     for name, value in data["entries"].items():
         if bad := entry_fault(name, value):
             if strict:
-                error_path = path
-                error_diagnostic = f"entry {name!r}: {bad}"
-                raise RosterError(f"{error_path}: {error_diagnostic}")
+                raise RosterError(f"{path}: entry {name!r}: {bad}")
             print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
         else:
             entries[name] = value
@@ -380,6 +378,9 @@ def now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
+_NOT_REGULAR = "not a regular file owned by you"
+
+
 def _owned_file(fd: int, path: str) -> None:
     st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
@@ -391,13 +392,11 @@ def _open(path: str, flags: int) -> int | None:
         fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
     except FileNotFoundError as e:
         if flags & os.O_CREAT:
-            raise RosterError(
-                f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-            ) from e
+            raise RosterError(f"{path}: {e.strerror}") from e
         return None
     except OSError as e:
         raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
+            f"{path}: {(_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror)}"
         ) from e
     try:
         _owned_file(fd, path)
@@ -422,9 +421,7 @@ def _locked(path: str) -> Iterator[None]:
                     raise RosterError(f"{path}: busy") from None
                 time.sleep(POLL)
             except OSError as e:
-                raise RosterError(
-                    f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-                ) from e
+                raise RosterError(f"{path}: {e.strerror}") from e
         yield
     finally:
         os.close(fd)
@@ -441,13 +438,9 @@ def _read(path: str):
     try:
         return json.loads(raw)
     except RecursionError:
-        raise RosterError(
-            f"{path}: invalid JSON: {(None if None is not None else 'nested too deep')}"
-        ) from None
+        raise RosterError(f"{path}: invalid JSON: nested too deep") from None
     except ValueError as e:
-        raise RosterError(
-            f"{path}: invalid JSON: {(e if e is not None else 'nested too deep')}"
-        ) from e
+        raise RosterError(f"{path}: invalid JSON: {e}") from e
 
 
 def _dump(data: dict) -> str:
@@ -458,9 +451,7 @@ def _write(directory: str, path: str, text: str) -> None:
     try:
         fd, tmp = tempfile.mkstemp(dir=directory, prefix="roster.json.")
     except OSError as e:
-        raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-        ) from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     try:
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -470,9 +461,7 @@ def _write(directory: str, path: str, text: str) -> None:
     except OSError as e:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
-        raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-        ) from e
+        raise RosterError(f"{path}: {e.strerror}") from e
 
 
 @contextlib.contextmanager
@@ -570,8 +559,7 @@ def entry(
 
 def set_entry(r: dict, name: str, value: dict) -> None:
     if bad := entry_fault(name, value):
-        error_subject_value = "entry" if name is None else f"entry {name!r}"
-        raise RosterError(f"{error_subject_value}: {bad}")
+        raise RosterError(f"entry {name!r}: {bad}")
     r["entries"][name] = value
 
 
@@ -652,9 +640,7 @@ def _reading(path: str) -> Iterator:
         try:
             yield f
         except OSError as e:
-            raise RosterError(
-                f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-            ) from e
+            raise RosterError(f"{path}: {e.strerror}") from e
 
 
 def _offset(f, n: int) -> int:
@@ -699,19 +685,13 @@ def due(r: dict, directory: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError as e:
-        raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-        ) from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     return size > EVENTS_MAX and offset(path, r["cursor"]) >= EVENTS_MAX // 2
 
 
 def advance(r: dict, directory: str, after: int | None, gen: int | None) -> int:
     if gen != r["gen"]:
-        error_requested = gen
-        error_current = r["gen"]
-        raise Stale(
-            f"stale line numbers (gen {error_requested}, now {error_current}): run crew.py attach"
-        )
+        raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run crew.py attach")
     path = events(directory, create=False)
     n = lines(path)
     if after is None:
@@ -730,9 +710,7 @@ def _writing(path: str, flags: int) -> Iterator[int]:
     try:
         yield fd
     except OSError as e:
-        raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-        ) from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     finally:
         os.close(fd)
 
@@ -762,17 +740,13 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         except FileNotFoundError:
             continue
         except OSError as e:
-            raise RosterError(
-                f"{p}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-            ) from e
+            raise RosterError(f"{p}: {e.strerror}") from e
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             raise RosterError(f"{p}: not a regular file owned by you")
     try:
         os.replace(path, old)
     except OSError as e:
-        raise RosterError(
-            f"{path}: {('not a regular file owned by you' if e.errno == errno.ELOOP else e.strerror)}"
-        ) from e
+        raise RosterError(f"{path}: {e.strerror}") from e
     cursor = r["cursor"]
     # never raises after the rename: cursor and gen still change, so the new file is never numbered
     # by the old

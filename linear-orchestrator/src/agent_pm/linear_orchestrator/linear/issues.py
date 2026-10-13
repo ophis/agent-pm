@@ -82,9 +82,7 @@ def read_issue(gql, ident) -> Issue:
     if node is None:
         raise IssueError(f"{ident}: issue not found")
     if node["identifier"] != ident:
-        error_str_node_identifier_40 = str(node["identifier"])[:40]
-        error_ident = ident
-        raise IssueError(f"Linear returned {error_str_node_identifier_40!r} for {error_ident}")
+        raise IssueError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
     notes = sorted(
         (
             Note(

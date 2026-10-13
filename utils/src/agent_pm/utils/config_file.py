@@ -68,19 +68,15 @@ def read_project(
         layer = {}
         for project in level:
             if clash := sorted(set(layer) & set(configs[project])):
-                error_project = project
-                error_key_value = clash[0]
                 raise ConfigFileError(
-                    f"{error_project}/config.toml: {error_key_value} is also a same-level project's"
+                    f"{project}/config.toml: {clash[0]} is also a same-level project's"
                 )
             layer.update(configs[project])
         out = merge(out, layer)
     found = _load(os.path.expanduser(local))
     if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
-        error_local = local
-        error_key = unknown[0]
         raise ConfigFileError(
-            f"{error_local}: unknown key {error_key!r}: no project's config.toml has it"
+            f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it"
         )
     if own:
         return merge(configs[name], _owned(found, known, lambda owners: name in owners))
@@ -98,8 +94,8 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    error_projects = ", ".join(p for level in LEVELS for p in level)
-    raise ConfigFileError(f"project {name!r}: want one of {error_projects}")
+    projects = ", ".join(p for level in LEVELS for p in level)
+    raise ConfigFileError(f"project {name!r}: want one of {projects}")
 
 
 def _configs(root: str, name: str, path: str | None) -> dict[str, dict]:

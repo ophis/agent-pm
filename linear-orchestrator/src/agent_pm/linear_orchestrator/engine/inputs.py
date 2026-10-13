@@ -77,9 +77,7 @@ def _read(run, docs, path):
         return res.stdout
     if re.search(r"HTTP 404\b", res.stderr or ""):
         return None
-    error_path = path
-    error_err_text_res = err_text(res)
-    raise InputError(f"gh api contents {error_path}: {error_err_text_res}")
+    raise InputError(f"gh api contents {path}: {err_text(res)}")
 
 
 def _names(text):
@@ -97,9 +95,7 @@ def _listed(run, docs, ident, dir_):
     if res.returncode != 0:
         if re.search(r"HTTP 404\b", res.stderr or ""):
             return None
-        error_path_value = d
-        error_err_text_res_value = err_text(res)
-        raise InputError(f"gh api contents {error_path_value}: {error_err_text_res_value}")
+        raise InputError(f"gh api contents {d}: {err_text(res)}")
     names = _names(res.stdout)
     if names is None:
         raise InputError(f"gh api contents {d}: unusable response")

@@ -604,9 +604,7 @@ class Driver:
             adapter = self.registry.adapter(state["runtime"])
             run = adapter.tui()
         except ConfigError as e:
-            raise DriverError(
-                f"no tui session {name}" if e is None else f"no tui session {name}: {e}"
-            ) from None
+            raise DriverError(f"no tui session {name}: {e}") from None
         if run is None:
             raise DriverError(
                 f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
@@ -729,13 +727,11 @@ class Driver:
             raise ConfigError(f"match {match!r:.80}: {e}") from None
         found = self.host.listing(pattern)
         if found is None:
-            detail = "tmux failed" if None is None else str(None)
-            raise DriverError(f"tmux sessions unknown: {detail}")
+            raise DriverError("tmux sessions unknown: tmux failed")
         try:
             own = self.host.own_session() if found else None
         except TuiError as e:
-            detail = "tmux failed" if e is None else str(e)
-            raise DriverError(f"tmux sessions unknown: {detail}") from None
+            raise DriverError(f"tmux sessions unknown: {e}") from None
         return [_row(f, own) for f in found]
 
     def close(self, name: str) -> None:

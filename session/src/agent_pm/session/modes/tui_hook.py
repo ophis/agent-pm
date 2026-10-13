@@ -143,9 +143,9 @@ def read_state(path: str) -> dict:
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
     if "adapter_hook" in state and not _abs(state["adapter_hook"]):
-        raise HookError(f"{path}: bad {'adapter_hook'}")
+        raise HookError(f"{path}: bad adapter_hook")
     if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
-        raise HookError(f"{path}: bad {'adapter_state'}")
+        raise HookError(f"{path}: bad adapter_state")
     return state
 
 
