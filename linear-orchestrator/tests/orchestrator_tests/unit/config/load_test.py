@@ -317,11 +317,10 @@ class ConfigurationLoading(ConfigFile, Case):
                 mock.call(
                     r,
                     None,
-                    overlays=[overlay],
-                    label=LABEL,
-                    config=CORE,
-                    local=config.LOCAL,
-                    cfg=core,
+                    overrides=delegate.RunOverrides(
+                        values=(overlay,), source=LABEL[0], table=LABEL[1]
+                    ),
+                    source=delegate.ConfigSource(path=CORE, local=config.LOCAL, table=core),
                 )
                 for r in roles
             ],
@@ -332,7 +331,15 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
-            {r: delegate.resolve_run(r, overlays=[overlay], label=LABEL) for r in roles},
+            {
+                r: delegate.resolve_run(
+                    r,
+                    overrides=delegate.RunOverrides(
+                        values=(overlay,), source=LABEL[0], table=LABEL[1]
+                    ),
+                )
+                for r in roles
+            },
         )
 
     def test_a_config_error_carries_the_log_dir_once_work_dir_is_valid(self):

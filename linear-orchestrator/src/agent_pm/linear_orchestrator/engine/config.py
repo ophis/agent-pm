@@ -371,11 +371,10 @@ def _resolve_roles(cfg, overlay, core: CoreConfig):
             run = delegate.resolve_run(
                 name,
                 None,
-                overlays=[overlay],
-                label=("linear-orchestrator/config.toml", "core"),
-                config=core.path,
-                local=core.local,
-                cfg=core.values,
+                overrides=delegate.RunOverrides(
+                    values=(overlay,), source="linear-orchestrator/config.toml", table="core"
+                ),
+                source=delegate.ConfigSource(path=core.path, local=core.local, table=core.values),
             )
             tasks = tuple(
                 delegate.task_index(name, config=core.path, local=core.local, cfg=core.values)
