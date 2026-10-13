@@ -13,7 +13,7 @@ from agent_pm.utils.config_file import merge, read_config, read_project, unset
 
 from utils.tests.case import REPO, Case
 
-LOCAL = "~/.agent-pm/local.toml"
+LOCAL = "~/.agent-pm/config.local.toml"
 
 
 class ConfigFileTest(Case):
@@ -22,7 +22,7 @@ class ConfigFileTest(Case):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
         self.path = self.root / "config.toml"
-        self.local = self.root / "local.toml"
+        self.local = self.root / "config.local.toml"
 
     def test_merge_nested_tables_and_replace_other_values_without_changing_inputs(self):
         base = {"table": {"keep": 1, "change": {"x": 1}, "list": [1]}, "value": 1}
@@ -60,7 +60,7 @@ class ConfigFileTest(Case):
         self.path.write_text("value = 1\n")
         self.local.write_text("value = 2\n")
         with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
-            self.assertEqual(read_config(str(self.path), "~/local.toml"), {"value": 2})
+            self.assertEqual(read_config(str(self.path), "~/config.local.toml"), {"value": 2})
 
     def test_absent_or_directory_overlay_is_ignored(self):
         self.path.write_text("value = 1\n")
@@ -88,7 +88,7 @@ class Defaults(Case):
         with open(self.path, "w", encoding="utf-8") as f:
             f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
 
-    def local(self, text, name="local.toml"):
+    def local(self, text, name="config.local.toml"):
         """`text` as this test's ~/.agent-pm/<name>."""
         with open(os.path.join(self.agent_pm, name), "w", encoding="utf-8") as f:
             f.write(text)
@@ -103,7 +103,7 @@ class Defaults(Case):
         )
 
     def test_the_home_local_file_goes_on_top_and_the_old_ones_are_not_read(self):
-        for old in (f"{name}.local.toml" for name in ("core", "core-new", "linear-new")):
+        for old in ("local.toml", *(f"{n}.local.toml" for n in ("core", "core-new", "linear-new"))):
             self.local('users = ["old"]\n', old)
         self.assertEqual(
             read_config(self.path, LOCAL), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
@@ -122,7 +122,7 @@ MANAGER = 'runtime = "m"\n'
 
 class Projects(Case):
     """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has none) and this
-    test's ~/.agent-pm/local.toml."""
+    test's ~/.agent-pm/config.local.toml."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -142,14 +142,14 @@ class Projects(Case):
             f.write(text)
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "local.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def read(self, name, **kw):
         return read_project(name, root=self.root, **kw)
 
     def test_the_paths(self):
-        self.assertEqual(config_file.LOCAL, "~/.agent-pm/local.toml")
+        self.assertEqual(config_file.LOCAL, "~/.agent-pm/config.local.toml")
         self.assertEqual(config_file.ROOT, REPO)
         self.assertEqual(
             config_file.LEVELS,
@@ -247,7 +247,7 @@ class Projects(Case):
                 self.subTest(name),
                 self.assertRaisesRegex(
                     ValueError,
-                    r"^~/.agent-pm/local.toml: unknown key 'bogus': no project's config.toml has it$",
+                    r"^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's config.toml has it$",
                 ),
             ):
                 self.read(name)

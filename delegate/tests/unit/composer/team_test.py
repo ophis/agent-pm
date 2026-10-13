@@ -93,7 +93,7 @@ class Fake(Case):
         self.tmp = tmp.name
         self.root = os.path.join(tmp.name, "team")
         self.config = os.path.join(tmp.name, "config.toml")
-        self.local_file = os.path.join(tmp.name, "local.toml")
+        self.local_file = os.path.join(tmp.name, "config.local.toml")
         self.write(self.root, FILES)
         self.configure(CONFIG)
         os.chmod(self.agent_pm, 0o755)
@@ -264,7 +264,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("malformed = [\n")
 
     def test_team_dirs(self):
@@ -487,7 +487,7 @@ class TeamDirs(Fake):
                 self.assertEqual(
                     self.refused(call, self.with_dir(files, name)),
                     f"{self.path(rel, name)}: front matter (---) is not read: team dir files hold text "
-                    "only; run keys go in ~/.agent-pm/local.toml",
+                    "only; run keys go in ~/.agent-pm/config.local.toml",
                 )
 
     def test_each_defect_of_a_team_dir_file_names_it(self):

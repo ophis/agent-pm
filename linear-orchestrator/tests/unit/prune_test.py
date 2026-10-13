@@ -863,7 +863,10 @@ class PruneTest(Case):
                 self.assertEqual(self.closed(), [B, A])
 
     def tick(self, prune_gql):
-        write(os.path.join(self.agent_pm, "local.toml"), f'work_dir = "{self.root}"\n' + CORE_LOCAL)
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            f'work_dir = "{self.root}"\n' + CORE_LOCAL,
+        )
         path = os.path.join(self.root, "config.toml")
         write(path, tp.CONFIG)
         fake = tp.FakeLinear()

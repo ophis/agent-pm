@@ -15,7 +15,7 @@ from collections.abc import Iterator, Mapping
 
 from agent_pm.utils.paths import ROOT
 
-LOCAL = "~/.agent-pm/local.toml"
+LOCAL = "~/.agent-pm/config.local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
 UNCONFIGURED = ("utils", "manager")  # no own file
 

@@ -61,7 +61,7 @@ class Fake(Case):
         self.tmp = tmp.name
         self.root = os.path.join(self.tmp, "team")
         self.config = os.path.join(self.tmp, "config.toml")
-        self.local_file = os.path.join(self.tmp, "local.toml")
+        self.local_file = os.path.join(self.tmp, "config.local.toml")
         self.write(FILES)
         self.configure(CONFIG)
 

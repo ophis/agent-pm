@@ -483,7 +483,7 @@ class RealCore(Case):
         self.local(FIXTURE)
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(text)
 
     def test_the_config_renders_the_language_and_progress_rules_once(self):

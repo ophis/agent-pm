@@ -1399,7 +1399,7 @@ class TaskLabels(Base):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (
             ([], (None, None)),
             (outside, (None, None)),

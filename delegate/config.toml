@@ -1,4 +1,4 @@
-# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/local.toml, the one local file over every
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, the one local file over every
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below, a key you set only locally with its empty default; a `# local:` line shows a value
 # to copy there, uncommented. A table cannot drop a key this file sets, so a local [output] keeps this file's other
@@ -11,7 +11,7 @@
 # Delegate (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<runtime>]. [adapters] and [hosts]: session/config.toml.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
-#   layers  this file (local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
+#   layers  this file (config.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
 #           them); so a later layer's global value beats an earlier layer's role value
 #   levels  within a layer: global → role ([roles.<role>])
 

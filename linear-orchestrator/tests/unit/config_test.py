@@ -68,7 +68,7 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 def missing(keys):
     return (
-        f"required, unset: {keys}: set them in ~/.agent-pm/local.toml (linear-orchestrator/config.toml's "
+        f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's "
         "`# local:` lines)"
     )
 
@@ -87,14 +87,16 @@ def write(path, text):
 
 class ConfigFile:
     def setUp(self):
-        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
+        write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
 
     def local(self, text):
-        """~/.agent-pm/local.toml: `text` amid CORE_LOCAL (the delegate's keys)."""
-        write(os.path.join(self.agent_pm, "local.toml"), CORE_TOP + text + "\n" + CORE_TABLES)
+        """~/.agent-pm/config.local.toml: `text` amid CORE_LOCAL (the delegate's keys)."""
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"), CORE_TOP + text + "\n" + CORE_TABLES
+        )
 
     def load(self, text):
         path = os.path.join(self.dir, "config.toml")
@@ -112,7 +114,7 @@ class Config(ConfigFile, Case):
     def test_tests_never_read_this_machines_local_file(self):
         self.assertEqual(
             os.path.expanduser(config.LOCAL),
-            os.path.join(self.agent_pm, "local.toml"),
+            os.path.join(self.agent_pm, "config.local.toml"),
         )
 
     def test_stage_order(self):
@@ -430,7 +432,7 @@ class Config(ConfigFile, Case):
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
     def test_importing_reads_no_config_file(self):
-        write(os.path.join(self.agent_pm, "local.toml"), "[[[ not toml")
+        write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
         code = (
             "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
             "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
@@ -579,7 +581,7 @@ DIRS = {"researcher": "Research/", "pm": "Designs/"}
 class OtherRoot(ConfigFile, Case):
     def setUp(self):
         super().setUp()
-        os.remove(os.path.join(self.agent_pm, "local.toml"))
+        os.remove(os.path.join(self.agent_pm, "config.local.toml"))
         self.root = os.path.join(self.dir, "my root")
         self.dir = os.path.join(self.root, "linear-orchestrator")
         os.makedirs(self.dir)
@@ -615,8 +617,8 @@ class OtherRoot(ConfigFile, Case):
         )
 
     def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
-        write(os.path.join(self.agent_pm, "local.toml"), "[[[ not toml")
-        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
+        write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, 'language = "French"\n' + role("engineer", "max_runs = 2"))
         with mock.patch.object(config_file, "open", create=True, side_effect=open) as opened:
@@ -633,7 +635,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
 
     def test_load_reads_each_config_once_passing_the_read_table_on(self):
-        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "")
         with (
@@ -695,7 +697,7 @@ class OtherRoot(ConfigFile, Case):
 
     def test_load_configures_the_session_from_the_session_config(self):
         write(
-            os.path.join(self.agent_pm, "local.toml"),
+            os.path.join(self.agent_pm, "config.local.toml"),
             '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n',
         )
         self.refused_unconfigured()
@@ -704,7 +706,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
 
     def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):
-        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "[hosts.tmux]\nstatus_line = true\n")
         pm = config.load(self.root, path=path, local=local, core=self.core_path).roles["pm"]
@@ -713,7 +715,7 @@ class OtherRoot(ConfigFile, Case):
         self.assertTrue(registry.tui().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
-        write(os.path.join(self.agent_pm, "local.toml"), '[hosts]\ndefault = "nope"\n')
+        write(os.path.join(self.agent_pm, "config.local.toml"), '[hosts]\ndefault = "nope"\n')
         self.fails("session: [hosts] default: want one of tmux", PIPELINE)
         self.refused_unconfigured()
 
@@ -800,7 +802,7 @@ class OtherRoot(ConfigFile, Case):
     def test_docs_mismatch(self):
         message = (
             "core: document roles must publish to one github.com repo and branch (their [output] in "
-            "~/.agent-pm/local.toml)"
+            "~/.agent-pm/config.local.toml)"
         )
         for design in (
             DESIGN.replace("acme/notes", "acme/other"),
@@ -860,7 +862,7 @@ class Local(ConfigFile, Case):
     def test_local_alone_and_no_local(self):
         self.local(PIPELINE)
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
-        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
+        write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.assertEqual(self.load(PIPELINE).team, TEAM)
 
     def test_an_empty_local_role_table_adds_no_role(self):
@@ -921,7 +923,7 @@ class TeamDirsIgnored(ConfigFile, Case):
     def test_team_dirs_change_no_orchestrator_run(self):
         before = self.seen()
         write(
-            os.path.join(self.agent_pm, "local.toml"),
+            os.path.join(self.agent_pm, "config.local.toml"),
             f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
         )
         self.assertIn(
@@ -935,8 +937,8 @@ class TeamDirsIgnored(ConfigFile, Case):
 
 class RealConfig(Case):
     def setUp(self):
-        write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
-        self.local = os.path.join(self.agent_pm, "local.toml")
+        write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
+        self.local = os.path.join(self.agent_pm, "config.local.toml")
 
     def load(self, local=None):
         if local is not None:

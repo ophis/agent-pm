@@ -1,4 +1,4 @@
-# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/local.toml, the one local file over every
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, the one local file over every
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below; a `# local:` line shows a value to copy there, uncommented.
 #

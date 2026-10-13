@@ -19,7 +19,7 @@ from agent_pm.utils import repos, shell
 
 from delegate.tests.case import Case
 
-LOCAL = "local.toml"
+LOCAL = "config.local.toml"
 SHA = "a" * 40
 URL = "https://github.com/o/n.git"
 SPEC = importlib.util.spec_from_file_location("repo", os.path.join(TEAM, "tools", "repo.py"))
@@ -931,7 +931,7 @@ class LocalSafety(Clone):
         other, alias = os.path.join(self.tmp, "clone2"), os.path.join(self.tmp, "alias")
         git("clone", "-q", self.bare, other)
         os.symlink(self.clone, alias)
-        local = os.path.join(self.tmp, "local.toml")
+        local = os.path.join(self.tmp, "config.local.toml")
         for case, listed, in_local, spec, on in (
             ("none listed", None, False, None, False),
             ("listed", [self.clone], False, None, True),
@@ -1130,7 +1130,7 @@ class Status(Base):
         ]
         with open(os.path.join(self.agent_pm, LOCAL), "w") as f:
             f.write("malformed = [\n")
-        local = os.path.join(self.dir, "local.toml")
+        local = os.path.join(self.dir, "config.local.toml")
         with open(local, "w") as f:
             f.write('users = ["alice"]\n')
         for text, given in (('users = ["alice"]\n', os.devnull), ('users = ["bob"]\n', local)):
@@ -1197,7 +1197,7 @@ class Status(Base):
             )
         self.assertEqual(code, 2)
         read.assert_called_once_with("delegate", path=repo.CONFIG, local=repo.LOCAL)
-        self.assertEqual(repo.LOCAL, "~/.agent-pm/local.toml")
+        self.assertEqual(repo.LOCAL, "~/.agent-pm/config.local.toml")
 
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))

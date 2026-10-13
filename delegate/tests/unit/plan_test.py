@@ -69,7 +69,7 @@ class Base(Case):
 
     def local(self, text):
         """The local config `text`, the session configured with its adapters and the fake runtime."""
-        local = os.path.join(self.agent_pm, "local.toml")
+        local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
             f.write(text)
         fake = {"implementation": "adapters.fake:FakeAdapter"}
