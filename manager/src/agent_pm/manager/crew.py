@@ -43,7 +43,7 @@ HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
 ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
 RECORD = "worker.json"
-STARTS = ("start", "restart", "attach", "reply", "next-event")
+STARTS = ("start", "restart", "attach", "reply")
 RECORD_MAX = 64 << 10
 FIELDS = (
     "version",

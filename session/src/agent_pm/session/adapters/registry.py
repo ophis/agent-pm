@@ -4,6 +4,7 @@ host), checked and stored by configure() until the next configure() or reset() (
 ConfigError. settings(config): configure's keyword arguments from an already-read session config (its [adapters] and
 [hosts], the latter through tables.parse); else ValueError."""
 
+import copy
 import importlib
 import inspect
 import re
@@ -49,6 +50,8 @@ parse_hosts = tables.parse
 
 
 def settings(config: Mapping) -> dict:
+    if not isinstance(config, Mapping):
+        raise ValueError("session config: want a table")
     found = tables.parse(config.get("hosts"))
     return {
         "adapters": config.get("adapters", {}),
@@ -69,7 +72,9 @@ def configure(*, adapters: Mapping, hosts: Mapping, default_host: str) -> None:
         found = tables.parse({**hosts, "default": default_host})
     except ValueError as e:
         raise ConfigError(str(e)) from None
-    settings = Settings({k: dict(t) for k, t in adapters.items()}, found.tables, found.default)
+    settings = Settings(
+        copy.deepcopy({k: dict(t) for k, t in adapters.items()}), found.tables, found.default
+    )
     with _lock:
         _settings = settings
 

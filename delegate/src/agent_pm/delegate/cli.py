@@ -23,6 +23,7 @@ from dataclasses import replace
 from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
+from agent_pm.delegate.engine.config import harness_host
 from agent_pm.delegate.engine.runner import printable
 from agent_pm.session import Session, api
 from agent_pm.utils.args import Once
@@ -135,7 +136,9 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
 
 def _configure() -> None:
     try:
-        Session.configure(**Session.settings(read_project("session")))
+        settings = Session.settings(read_project("session"))
+        harness_host(read_project("delegate"), settings["hosts"])
+        Session.configure(**settings)
     except (OSError, ValueError, api.ConfigError) as e:
         raise ConfigError(f"session config: {e}") from None
 

@@ -16,6 +16,7 @@ from collections.abc import Iterator, Mapping
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 LOCAL = "~/.agent-pm/local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
+UNCONFIGURED = ("utils", "manager")  # no own file
 
 
 def merge(base: dict, over: dict) -> dict:
@@ -39,8 +40,11 @@ def read_project(
     name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
     """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`: `name`'s file and
-    the local keys it owns. `path` stands in for `name`'s config.toml. A missing file is empty."""
+    the local keys it owns. `path` stands in for `name`'s config.toml. Missing: `path` or an own file is an OSError."""
     rank = _rank(name)
+    own_file = path or os.path.join(root, name, "config.toml")
+    if (path or name not in UNCONFIGURED) and not os.path.exists(own_file):
+        raise FileNotFoundError(f"{own_file}: missing")
     configs = _configs(root, name, path)
     known = (
         {**configs, name: merge(_configs(root, name, None)[name], configs[name])}

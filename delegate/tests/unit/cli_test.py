@@ -236,6 +236,17 @@ class Configures(Base):
         self.assertEqual((code, out, err), (2, "", "delegate: session config: [hosts]: missing\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
+    def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
+        for text, want in (
+            ('[delegates]\nharness_host = "nope"\n', "[delegates] harness_host: want one of tmux"),
+            ("[delegates]\nkind = 1\n", "[delegates] kind: the delegate takes only harness_host"),
+        ):
+            with self.subTest(text):
+                self.local(text)
+                code, out, err = self.runs()
+                self.assertEqual((code, out, err), (2, "", f"delegate: session config: {want}\n"))
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
     def test_list_never_configures_and_works_with_a_bad_session_config(self):
         registry.reset()
         with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):

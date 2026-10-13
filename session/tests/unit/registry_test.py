@@ -108,6 +108,15 @@ class ConfigureTest(Base):
         registry.reset()
         self.refused(UNCONFIGURED, registry.configured)
 
+    def test_the_adapter_tables_are_deep_copies(self):
+        self.register(fake=fake_adapter)
+        given = settings(
+            {"fake": {"implementation": "adapters.fake:FakeAdapter", "log": {"a": [1]}}}
+        )
+        Session.configure(**given)
+        given["adapters"]["fake"]["log"]["a"].append(2)
+        self.assertEqual(registry.adapter("fake").config, {"log": {"a": [1]}})
+
     def test_refuses_bad_input_and_keeps_what_was_configured(self):
         self.configure(FAKE)
         tables = "adapters: want a mapping of [adapters.<name>] tables"
@@ -166,6 +175,12 @@ class SettingsTest(Base):
         self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})
         with self.assertRaisesRegex(ValueError, r"\A\[hosts\]: missing\Z"):
             registry.settings({})
+        for config in (None, 1, [], "x"):
+            with (
+                self.subTest(config=config),
+                self.assertRaisesRegex(ValueError, r"\Asession config: want a table\Z"),
+            ):
+                registry.settings(config)
 
     def test_the_session_config_with_the_local_file_on_top(self):
         with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:

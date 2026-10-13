@@ -159,18 +159,26 @@ def load(
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg, root)
     try:
-        found = _load(cfg, root, work, local, core)
-        _configure(local)
+        found, core_cfg = _load(cfg, root, work, local, core)
+        _configure(local, core_cfg)
         return found
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
 
 
-def _configure(local):
+def _configure(local, core_cfg):
     try:
-        Session.configure(**Session.settings(config_file.read_project("session", local=local)))
-    except (OSError, ValueError, api.ConfigError) as e:
+        settings = Session.settings(config_file.read_project("session", local=local))
+    except (OSError, ValueError) as e:
+        raise ConfigError(f"session: {e}") from None
+    try:
+        agent_pm.delegate.engine.config.harness_host(core_cfg, settings["hosts"])
+    except ValueError as e:
+        raise ConfigError(f"core: {e}") from None
+    try:
+        Session.configure(**settings)
+    except api.ConfigError as e:
         raise ConfigError(f"session: {e}") from None
 
 
@@ -276,13 +284,17 @@ def _work_dir(cfg, root, clones=None):
 
 def _load(cfg, root, work, local, core):
     _load_config(cfg, root, local)
-    roles = _runnable(cfg, root, work, core, local)
+    try:
+        core_cfg = config_file.read_project("delegate", path=core, local=local)
+    except (OSError, ValueError) as e:
+        raise ConfigError(f"core: {e}") from None
+    roles = _runnable(cfg, root, work, core_cfg, local)
     docs = _docs(roles, local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
         for k in ("states", "task_labels", "project_repos", "local_clones")
     }
-    return Config(
+    found = Config(
         team=cfg["team"],
         human_members=tuple(cfg.get("human_members") or ()),
         harness_key=cfg["harness_key"],
@@ -293,6 +305,7 @@ def _load(cfg, root, work, local, core):
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         **frozen,
     )
+    return found, core_cfg
 
 
 def _uuid(v):
@@ -420,9 +433,8 @@ def _fill_root(value, root):
     return value
 
 
-def _runnable(cfg, root, work, core, local):
+def _runnable(cfg, root, work, core_cfg, local):
     try:
-        core_cfg = config_file.read_project("delegate", path=core, local=local)
         core_roles = core_cfg.get("roles", {})
         trusted = composer.trusted_dirs(cfg=core_cfg)
     except (OSError, ValueError, composer.ConfigError) as e:

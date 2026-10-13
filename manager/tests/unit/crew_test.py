@@ -1003,6 +1003,21 @@ class MainTest(WorkerCase):
                 self.assertTrue(err.startswith("workers: config: "), err)
         self.assertEqual(self.api.calls, [])
 
+    def test_the_other_commands_work_with_a_bad_config(self):
+        self.started(note="keep")
+        for text in ("x = \n", "bogus = 1\n"):
+            self.local(text)
+            for argv in (
+                ["note", "w1", "new", "--manager", "m1"],
+                ["stop-all", "--dry-run"],
+                ["stop", "w1", "--manager", "m1"],
+                ["forget", "w1", "--manager", "m1"],
+                ["release", "--manager", "m1"],
+            ):
+                with self.subTest(text=text, cmd=argv[0]):
+                    rc, out, err = self.run_main(*argv)
+                    self.assertNotIn("config", err)
+
     def test_reply(self):
         for reply, want in (("done", (0, "done\n", "")), ("", (0, "", "")), (None, (0, "", ""))):
             with self.subTest(reply=reply):
@@ -1259,6 +1274,19 @@ class NextEventTest(CrewCase):
                 self.run_main("next-event", "--manager", "m1", "--after", "end", "--gen", "0"),
                 (0, f"3 {self.C}\n", ""),
             )
+
+    def test_main_with_a_bad_config(self):
+        self.attached("--manager", "m1")
+        self.api.rows.update(w1=row("w1", state="dead"), w2=row("w2", state="dead"))
+        path = roster.events(roster.directory("m1"), create=False)
+        self.append(nl(self.A, self.B), path)
+        for text in ("x = \n", "bogus = 1\n"):
+            self.local(text)
+            with self.subTest(text), self.sleeping():
+                self.assertEqual(
+                    self.run_main("next-event", "--manager", "m1", "--after", "1", "--gen", "0"),
+                    (0, f"2 {self.B}\n", ""),
+                )
 
     def test_main_error_exit(self):
         self.attached("--manager", "m1")

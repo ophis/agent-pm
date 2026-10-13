@@ -628,6 +628,18 @@ class OtherRoot(ConfigFile, Case):
             ["delegate", "linear-orchestrator", "session"],
         )
 
+    def test_an_unknown_harness_host_or_delegates_key_stops_the_caller(self):
+        for text, want in (
+            ('[delegates]\nharness_host = "nope"\n', "[delegates] harness_host: want one of tmux"),
+            ("[delegates]\nkind = 1\n", "[delegates] kind: the delegate takes only harness_host"),
+        ):
+            with self.subTest(text):
+                self.core(CORE_TOML + text)
+                registry.reset()
+                self.fails(f"core: {want}", PIPELINE)
+                with self.assertRaisesRegex(api.ConfigError, "not configured"):
+                    registry.configured()
+
     def test_an_index_error_stops_the_caller(self):
         error = composer.ConfigError("roles/researcher.md: lists 'ghost' without tasks/ghost.md")
         with mock.patch.object(composer, "index", side_effect=error):

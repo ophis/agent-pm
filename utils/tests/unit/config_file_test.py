@@ -266,6 +266,14 @@ class Projects(Case):
             self.read("utils"), {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
         )
 
+    def test_a_missing_own_config_or_given_path_is_an_os_error(self):
+        own = os.path.join(self.root, "delegate", "config.toml")
+        os.remove(own)
+        for name, kw in (("delegate", {}), ("session", {"path": own})):
+            with self.subTest(name), self.assertRaisesRegex(FileNotFoundError, f"{own}: missing"):
+                self.read(name, **kw)
+        self.assertIn("work_dir", self.read("linear-orchestrator"))
+
     def test_a_name_that_is_not_a_project_is_refused(self):
         for name in ("core", "tests", "", "linear_orchestrator", "../delegate"):
             with (
