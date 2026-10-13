@@ -199,7 +199,11 @@ class RouterArguments(Base):
     def main(self, argv):
         err = io.StringIO()
         with redirect_stderr(err):
-            rc = router.main(argv, gql=None, config_path=os.path.join(self.tmp, "absent.toml"))
+            rc = router.main(
+                argv,
+                config_path=os.path.join(self.tmp, "absent.toml"),
+                services=router.RouterServices(gql=None),
+            )
         return rc, err.getvalue()
 
     def test_unknown_flags_rejected(self):
@@ -293,7 +297,9 @@ class RouterLocking(TickBase):
             out = io.StringIO()
             with redirect_stdout(out):
                 rc = router.main(
-                    ["--brake", "researcher"], config_path=self.config_path, driver=self.api
+                    ["--brake", "researcher"],
+                    config_path=self.config_path,
+                    services=router.RouterServices(driver=self.api),
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
         self.assertEqual(fake.mutations, [])

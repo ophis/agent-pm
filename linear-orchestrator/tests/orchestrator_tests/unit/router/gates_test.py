@@ -202,7 +202,11 @@ class RunBrake(Base):
             redirect_stderr(err),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
         ):
-            rc = router.main(["--brake", role], config_path=self.config_path, driver=self.api)
+            rc = router.main(
+                ["--brake", role],
+                config_path=self.config_path,
+                services=router.RouterServices(driver=self.api),
+            )
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc, out.getvalue()

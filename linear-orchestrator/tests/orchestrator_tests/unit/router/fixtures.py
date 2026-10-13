@@ -218,13 +218,12 @@ class TickBase(Base):
         ):
             rc = router.main(
                 list(argv),
-                gql=fake,
                 now=now,
                 config_path=self.config_path,
-                driver=self.api,
                 hour=hour,
-                start=self.start,
-                **(outer or {}),
+                services=router.RouterServices(
+                    gql=fake, driver=self.api, start=self.start, **outer or {}
+                ),
             )
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())

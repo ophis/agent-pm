@@ -38,6 +38,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
     Invalid,
     LinearError,
+    RouterServices,
     Transient,
     Unavailable,
 )
@@ -773,17 +774,13 @@ def options(argv):
 
 
 def main(
-    argv,
-    *,
-    gql=linear_gql,
-    now=None,
-    config_path=config.CONFIG,
-    hour=None,
-    run=config.sh_run,
-    keychain=linear.has_key,
-    start=None,
-    driver=None,
+    argv, *, now=None, config_path=config.CONFIG, hour=None, services: RouterServices | None = None
 ):
+    services = services or RouterServices()
+    gql = services.gql or linear_gql
+    run = services.run or config.sh_run
+    keychain = services.keychain or linear.has_key
+    start, driver = services.start, services.driver
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)

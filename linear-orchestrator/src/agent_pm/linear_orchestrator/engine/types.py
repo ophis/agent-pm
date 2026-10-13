@@ -1,7 +1,7 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -131,3 +131,12 @@ class Promotion:
     first: str
     latest: str
     child: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RouterServices:
+    gql: Callable[..., dict] | None = None
+    run: Callable | None = None
+    keychain: Callable[[str], bool] | None = None
+    start: Callable[..., int] | None = None
+    driver: Driver | None = None
