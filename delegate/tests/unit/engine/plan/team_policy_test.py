@@ -106,7 +106,9 @@ class CustomTeam(Base):
         self.found = composer.team(composer.TEAM, [self.team])
 
     def read_unadded(self, role, task, reads, **kw):
-        """`role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs."""
+        """
+        `role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs.
+        """
         home = os.path.join(self.tmp, "codex")
         for runtime in ("fake", "codex"):
             with (

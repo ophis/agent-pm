@@ -54,6 +54,7 @@ class FakeHandle:
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
+        self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
     def start(self, _runtime, _mode, _prompt, spec, *, options=None):
@@ -67,7 +68,7 @@ class FakeHandle:
             yield event
             if isinstance(event, Exited):
                 return
-        raise AssertionError("no event left")
+        raise self.exhausted
 
     def send(self, text):
         self.calls.append(("send", text))

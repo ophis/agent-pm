@@ -133,7 +133,7 @@ class Access(Fake):
         self.repo = os.path.join(self.tmp, "repo")
         self.tasks = os.path.join(self.root, "tasks")
 
-    def intent(self, cwd=None, project=False, repo_dir=None, found=None, **kw):
+    def intent(self, cwd=None, *, project=False, repo_dir=None, found=None, **kw):
         run = RunConfig(
             **{
                 "role": "writer",

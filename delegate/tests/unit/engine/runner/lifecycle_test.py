@@ -201,15 +201,20 @@ class UsageLimit(Base):
 
 
 class Stops(Base):
-    """Main's HostFailure cases: a session stopped on an exception, its record closed `stopped: …`."""
+    """
+    Main's HostFailure cases: a session stopped on an exception, its record closed `stopped: …`.
+    """
 
     def test_an_on_event_raise_stops_the_session_and_propagates(self):
+        failure = RuntimeError("boom")
+
         def boom(event):
             if isinstance(event, Progress):
-                raise RuntimeError("boom")
+                raise failure
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as caught:
             self.go(said(START), {"sleep": 30}, said(block(DONE)), on_event=boom)
+        self.assertIs(caught.exception, failure)
         self.assertFalse(running(self.launches()[0]["pid"]))
         result, end = self.records()[-2:]
         self.assertEqual((result["error"], end["rc"]), ("stopped: RuntimeError: boom", 1))
@@ -244,7 +249,7 @@ class Stops(Base):
                 )
 
     def test_the_closing_writes_never_mask_the_runs_exception(self):
-        def swap(event):
+        def swap(_event):
             os.remove(self.channel)
             os.mkdir(self.channel)
             raise KeyboardInterrupt

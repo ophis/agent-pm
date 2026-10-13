@@ -25,7 +25,9 @@ def head() -> str:
 
 
 def prefix() -> str:
-    """What step 4 puts before each command of the prompt that runs an agent_pm module or team tool."""
+    """
+    What step 4 puts before each command of the prompt that runs an agent_pm module or team tool.
+    """
     return command(4)
 
 

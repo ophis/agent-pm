@@ -144,8 +144,9 @@ class Methods(Case):
                 self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
             self.assertTrue(
                 rule(text, "Pipeline")[0].startswith(
-                    "- **Pipeline**: ≤ 10 subagents running at once. Each result of a stage goes to the next stage as soon "
-                    "as it arrives, never in batches;"
+                    "- **Pipeline**: ≤ 10 subagents running at once. Each result of a "
+                    "stage goes to the next stage as soon as it arrives, never in "
+                    "batches;"
                 ),
                 m,
             )
@@ -214,7 +215,10 @@ class Methods(Case):
                 self.assertNotIn(phrase, method("deep-research"))
 
     def test_private_detail_has_its_home_in_the_researcher_charter(self):
-        home = "with no **private detail** in queries: internal names, paths, permalinks, private repo names, "
+        home = (
+            "with no **private detail** in queries: internal names, paths, "
+            "permalinks, private repo names, "
+        )
         with open(os.path.join(TEAM, "roles", "researcher.md")) as f:
             self.assertIn(home, f.read())
         link = "private detail ([Researcher › Type and target › Agents](#type-and-target))"

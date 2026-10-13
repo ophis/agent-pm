@@ -16,8 +16,9 @@ from delegate.tests.unit.composer.teams import FILES, RUN_CONFIG
 
 TEXTS = {
     "guide.md": (
-        "# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"
-        "On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task's.\n"
+        "# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in "
+        "`<tasks>`.\n\nOn conflict: [Principles](#principles) > [{{role}} "
+        "rules](#{{role_anchor}}) > your task's.\n"
     ),
     "principles.md": "# Principles\n",
     "output/output.md": "# Output\n\nWrite `Output:`.\n",

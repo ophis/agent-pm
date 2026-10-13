@@ -80,7 +80,9 @@ class Fake(Case):
         return read_project("delegate", path=self.config, local=self.local_file)
 
     def tasks_of(self, role, found=None):
-        """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""
+        """
+        `role`'s index in `found`, else in a fresh scan of the team root, with the temp config.
+        """
         return index(
             role, found if found is not None else team(self.root), self.config, self.local_file
         )

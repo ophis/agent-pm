@@ -145,8 +145,11 @@ class Overlays(Fake):
             ({"output": {"type": "local", "typo": 1}}, "unknown key 'typo' in [{t}.output]"),
             (
                 {"roles": {"writer": {"tasks": {}}}},
-                "[{t}.roles.writer] has 'tasks': task-level config and "
-                "default_task are gone; set run keys in [{t}.roles.writer] (a run without a task picks one)",
+                (
+                    "[{t}.roles.writer] has 'tasks': task-level config and default_task "
+                    "are gone; set run keys in [{t}.roles.writer] (a run without a task "
+                    "picks one)"
+                ),
             ),
         )
         labels = (

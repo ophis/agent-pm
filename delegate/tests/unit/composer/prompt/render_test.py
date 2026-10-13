@@ -111,11 +111,17 @@ class Prompt(Fake):
         self.assertTrue(RETURN.startswith("## Return\n\n"))
         self.assertEqual(OUTCOME, "agent-pm-outcome")
         for literal in (
-            "at each `[agent-pm-progress:<name>] …` line in your steps, before calling the next tool, "
-            "write that line in a reply as a line of its own, outside any code block",
+            (
+                "at each `[agent-pm-progress:<name>] …` line in your steps, before calling "
+                "the next tool, write that line in a reply as a line of its own, outside "
+                "any code block"
+            ),
             "`[agent-pm-progress:start] <what that line asks you to report>`",
             "all background work and every agent you spawned have finished",
-            "end your last reply with one fenced code block whose info string is `agent-pm-outcome`",
+            (
+                "end your last reply with one fenced code block whose info string is "
+                "`agent-pm-outcome`"
+            ),
             "one JSON object of the fields in [Output](#output)",
             "`deliverable_file`",
         ):
@@ -168,8 +174,11 @@ class Prompt(Fake):
         self,
     ):
         self.assertIn(
-            "Continue the task this session already picked or was given, following your task file's "
-            "`## Resume` section; never pick it again.",
+            (
+                "Continue the task this session already picked or was given, following "
+                "your task file's `## Resume` section; never pick it "
+                "again."
+            ),
             RESUME,
         )
         self.assertIn(
@@ -258,7 +267,9 @@ class Parameters(Fake):
     def test_gate_used_in_a_method_file_a_text_names(self):
         self.write(
             {
-                "tasks/long-note.md": "# Long Note\n\nFollow `<team>/methods/m.md`, `<team>/methods/gone.md`.\n",
+                ("tasks/long-note.md"): (
+                    "# Long Note\n\nFollow `<team>/methods/m.md`, `<team>/methods/gone.md`.\n"
+                ),
                 "methods/m.md": "# M\n\nRun `<gate>`.\n",
                 "methods/other.md": "# O\n\n`<out-dir>`\n",
             }
@@ -304,7 +315,9 @@ class Parameters(Fake):
 
 class Deliverable(Fake):
     DEST = {
-        "output/destinations/local.md": "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"
+        ("output/destinations/local.md"): (
+            "## Destination\n\nKeep it local.\nWrite it to `{{deliverable}}`.\n"
+        )
     }
 
     def test_a_destination_names_it_under_the_workdirs_name(self):
@@ -324,7 +337,9 @@ class Deliverable(Fake):
     def test_an_unfilled_placeholder_in_another_destination_line_fails(self):
         self.write(
             {
-                "output/destinations/local.md": "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"
+                ("output/destinations/local.md"): (
+                    "## Destination\n\nWrite it to `{{deliverable}}`.\nSee {{dir}}.\n"
+                )
             }
         )
         self.assertEqual(self.fails(), "unfilled placeholder {{dir}} in destinations/local.md")

@@ -223,13 +223,24 @@ class TeamDirs(Fake):
         for dirs, msg in (
             (
                 (a,),
-                f"{a}/roles/poet.md: lists 'long-note', whose file tasks/long-note.md is not in {a}/tasks: a "
-                "role runs only its own tasks",
+                (
+                    f"{a}"
+                    f"/roles/poet.md: lists 'long-note', whose file tasks/long-note.md is "
+                    f"not in "
+                    f"{a}"
+                    f"/tasks: a role runs only its own tasks"
+                ),
             ),
             (
                 (b, c),
-                f"{b}/roles/poet.md: lists 'verse', whose file {c}/tasks/verse.md is not in {b}/tasks: a role "
-                "runs only its own tasks",
+                (
+                    f"{b}"
+                    f"/roles/poet.md: lists 'verse', whose file "
+                    f"{c}"
+                    f"/tasks/verse.md is not in "
+                    f"{b}"
+                    f"/tasks: a role runs only its own tasks"
+                ),
             ),
         ):
             with self.subTest(msg=msg):
@@ -284,8 +295,12 @@ class TeamDirs(Fake):
         b = self.team_dir({"roles/poet.md": POET}, "b")
         self.assertEqual(
             self.refused(self.tasks_of, "poet", team(self.root, (a, b))),
-            f"{b}/roles/poet.md: role 'poet' is also defined by {a}/roles/poet.md; team dir files only "
-            "add",
+            (
+                f"{b}"
+                f"/roles/poet.md: role 'poet' is also defined by "
+                f"{a}"
+                f"/roles/poet.md; team dir files only add"
+            ),
         )
 
     def test_a_misnamed_file_stops_only_check_all_and_a_lookup_naming_it(self):
@@ -362,8 +377,11 @@ class TeamDirs(Fake):
                 name = rel.replace("/", "-")
                 self.assertEqual(
                     self.refused(call, self.with_dir(files, name)),
-                    f"{self.path(rel, name)}: front matter (---) is not read: team dir files hold text "
-                    "only; run keys go in ~/.agent-pm/config.local.toml",
+                    (
+                        f"{self.path(rel, name)}"
+                        f": front matter (---) is not read: team dir files hold text only; "
+                        f"run keys go in ~/.agent-pm/config.local.toml"
+                    ),
                 )
 
     def test_each_defect_of_a_team_dir_file_names_it(self):

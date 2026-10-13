@@ -15,7 +15,7 @@ from agent_pm.delegate.engine.runner import STOP_LIMIT
 
 from delegate.tests.case import committed
 from delegate.tests.replies import block
-from delegate.tests.unit.cli.case import KEYS, SID, Base, RefusingAdapter
+from delegate.tests.unit.cli.case import KEYS, SID, Base, RefusingAdapter, Selection
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, limit, no_child, said, turn
 
 
@@ -57,7 +57,7 @@ class DryRun(Base):
         self.assertEqual(json.loads(stdout)["runtime"], "fake")
 
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
-        code, out, _ = self.runs("--dry-run", task=None)
+        code, out, _ = self.runs("--dry-run", selection=Selection(task=None))
         shown = json.loads(out)
         self.assertEqual((code, uuid.UUID(shown["sid"]).version, shown["resume"]), (0, 4, False))
         self.assertIn("**Your task**: pick it from", shown["prompt"])
@@ -221,7 +221,9 @@ class Deliverable(Base):
 
 
 class InProcess(Base):
-    """The in_process-only fake, and RefusingAdapter (runtime `refusing`); no child process starts."""
+    """
+    The in_process-only fake, and RefusingAdapter (runtime `refusing`); no child process starts.
+    """
 
     def setUp(self):
         super().setUp()

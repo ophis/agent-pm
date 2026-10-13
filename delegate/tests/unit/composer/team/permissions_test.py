@@ -148,7 +148,15 @@ class TeamDirChecks(Fake):
         os.symlink(moved, tasks)
         self.assertEqual(
             self.checked([("the workdir", work)]),
-            f"team_dirs: {tasks} ({moved}) overlaps the workdir {work}: the agent run can write there",
+            (
+                f"team_dirs: "
+                f"{tasks}"
+                f" ("
+                f"{moved}"
+                f") overlaps the workdir "
+                f"{work}"
+                f": the agent run can write there"
+            ),
         )
         os.chmod(os.path.join(elsewhere, "verse.md"), 0o666)
         self.assertEqual(

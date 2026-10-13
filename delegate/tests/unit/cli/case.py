@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from unittest import mock
 
 from agent_pm.delegate import Outcome, Result, cli
@@ -61,8 +62,12 @@ class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
 
 
 class RefusingRun(fake_adapter.FakeInProcess):
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.refusal = ConfigError("refused by check")
+
     def check(self, _request, /):
-        raise ConfigError("refused by check")
+        raise self.refusal
 
 
 class FakeApplication:
@@ -78,6 +83,12 @@ class FakeApplication:
 
     def run(self, config, spec, *, on_event):
         return cli.Application(self.driver).run(config, spec, on_event=on_event)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Selection:
+    role: str = "dummy-tester"
+    task: str | None = "echo"
 
 
 class Base(Case):
@@ -134,17 +145,17 @@ class Base(Case):
     def runs(
         self,
         *extra,
-        role="dummy-tester",
-        task="echo",
+        selection=None,
         input="Hello.",
         runtime="fake",
         stdin="",
         out=None,
     ):
+        selection = Selection() if selection is None else selection
         return self.cli(
             "--role",
-            role,
-            *(("--task", task) if task else ()),
+            selection.role,
+            *(("--task", selection.task) if selection.task else ()),
             "--input",
             input,
             "--out",

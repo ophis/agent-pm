@@ -276,7 +276,9 @@ class Read(Base):
 
 
 class ReadRace(Base):
-    """A file swapped between _file's check and the open, faked by patching os.open to swap first."""
+    """
+    A file swapped between _file's check and the open, faked by patching os.open to swap first.
+    """
 
     def swapped(self, swap, reason=""):
         real_open = os.open
@@ -287,9 +289,11 @@ class ReadRace(Base):
                 done.append(swap())
             return real_open(path, *args, **kw)
 
-        with unittest.mock.patch("os.open", side_effect=open_):
-            with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+        with (
+            unittest.mock.patch("os.open", side_effect=open_),
+            self.assertRaises(InvalidOutcome) as cm,
+        ):
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertEqual(len(done), 1)
         self.assertIn("deliverable_file ", str(cm.exception))
         self.assertIn(reason, str(cm.exception))
@@ -341,9 +345,11 @@ class ReadRace(Base):
             os.rename(other, self.target)
             return fd
 
-        with unittest.mock.patch("os.open", side_effect=open_):
-            with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+        with (
+            unittest.mock.patch("os.open", side_effect=open_),
+            self.assertRaises(InvalidOutcome) as cm,
+        ):
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertIn("replaced while it was opened", str(cm.exception))
 
 

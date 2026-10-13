@@ -3,6 +3,7 @@ session/tests/integration/adapters/claude/fake_claude.py, CodexIntegration over
 session/tests/integration/adapters/codex/fake_codex.py, their outcomes.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -149,10 +150,8 @@ class Integration(Runs):
     def reap(self, proc: subprocess.Popen) -> None:
         targets = [(os.killpg, proc.pid)] + [(os.kill, call["pid"]) for call in self.calls()]
         for kill, target in targets:
-            try:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 kill(target, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
         proc.communicate()
 
     def until(self, proc: subprocess.Popen, done, what: str) -> None:
@@ -189,7 +188,11 @@ class CodexIntegration(Runs):
         codex = os.path.join(bin_dir, "codex")
         with open(codex, "w") as f:
             f.write(
-                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_codex.__file__)} "$@"\n'
+                f"#!/bin/sh\nexec "
+                f"{shlex.quote(sys.executable)}"
+                f" "
+                f"{shlex.quote(fake_codex.__file__)}"
+                f' "$@"\n'
             )
         os.chmod(codex, 0o755)
         self.out = os.path.join(self.work, "out.md")

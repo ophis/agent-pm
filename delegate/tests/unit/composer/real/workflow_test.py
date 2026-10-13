@@ -56,8 +56,11 @@ class RealCore(Case):
 
     def test_fixed_labels_are_translated_and_template_headings_say_so(self):
         self.assertIn(
-            "- Reports and PRDs, headings and fixed labels included, are in Chinese; a `<X, translated>` in "
-            "a template or task is X in Chinese.",
+            (
+                "- Reports and PRDs, headings and fixed labels included, are in Chinese; a "
+                "`<X, translated>` in a template or task is X in "
+                "Chinese."
+            ),
             composed("researcher")[0],
         )
         for role, task in role_tasks():
@@ -66,7 +69,10 @@ class RealCore(Case):
                 self.assertNotIn(literal, text, (role, task, literal))
         for role, task in runs():
             self.assertIn(
-                "Its headings are fixed apart from their language ([Principles › Writing](#writing))",
+                (
+                    "Its headings are fixed apart from their language ([Principles › "
+                    "Writing](#writing))"
+                ),
                 guide(composed(role, task)[0]),
                 (role, task),
             )
@@ -77,8 +83,11 @@ class RealCore(Case):
             writing = section(prompt, "Writing")
             self.assertNotIn("the first mention adds the", prompt, (role, task))
             self.assertIn(
-                "A term's first mention adds one gloss, its Chinese rendering (for an acronym, of its full "
-                "name); none when the term is common in Chinese, and none in a heading.",
+                (
+                    "A term's first mention adds one gloss, its Chinese rendering (for an "
+                    "acronym, of its full name); none when the term is common in Chinese, "
+                    "and none in a heading."
+                ),
                 writing,
             )
             diagrams = item(writing, "Diagrams and tables")
@@ -138,8 +147,9 @@ class RealCore(Case):
 
     def test_a_local_files_other_layers_keys_are_left_alone(self):
         self.local(
-            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
-            'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
+            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = '
+            '"none"\n[hosts.tmux]\nworkers_per_column = 2\ngrid_retile = "off"\nteam = '
+            '"T"\n[roles.pm]\naccount = "pm@x"\n'
         )
         for role, task in role_tasks():
             run = composer.resolve(role, task)
@@ -154,7 +164,7 @@ class RealCore(Case):
             anchors = heading_anchors(composed(role, task)[0])
             self.assertEqual(len(anchors), len(set(anchors)), (role, task))
 
-    def test_every_run_composes_without_placeholders_and_opens_with_the_guide_listing_parameters_first_input_last(
+    def test_runs_fill_placeholders_and_list_parameters_before_input(
         self,
     ):
         for role, task in runs():
@@ -413,10 +423,13 @@ class RealCore(Case):
     def test_merges_failing_checks_say_what_happens_in_finish_before_the_build_and_on_resume(self):
         merge = item(section(composed("engineer")[0], "Repo"), "Merge")
         self.assertIn(
-            "One failing: during [Engineer › Finish › Done](#finish) → "
-            "[Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on "
-            "[Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → "
-            "[Engineer › Finish › Failure](#finish).",
+            (
+                "One failing: during [Engineer › Finish › Done](#finish) → [Engineer › "
+                "Finish › Failure](#finish); before the build → the failing checks go into "
+                "the build's requirement; on [Engineer › Repo › Resume](#repo) → into the "
+                "requirement of the build left, none left → [Engineer › Finish › "
+                "Failure](#finish)."
+            ),
             merge,
         )
 

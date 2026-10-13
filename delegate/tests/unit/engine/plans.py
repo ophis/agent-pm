@@ -31,7 +31,9 @@ class Base(Case):
         self.local("")
 
     def local(self, text):
-        """The local config `text`, the session configured with its adapters and the fake runtime."""
+        """
+        The local config `text`, the session configured with its adapters and the fake runtime.
+        """
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
             f.write(text)

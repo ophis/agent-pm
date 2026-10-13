@@ -11,7 +11,7 @@ from agent_pm.delegate import Begun, Outcome, Result
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.session import SIGNALS, ConfigError, DriverError
 
-from delegate.tests.unit.cli.case import DONE_RESULT, DRIVER, KEYS, SID, SPLIT, TUI, Base
+from delegate.tests.unit.cli.case import DONE_RESULT, DRIVER, KEYS, SID, SPLIT, TUI, Base, Selection
 from delegate.tests.unit.runs import STOP, FakeHandle
 
 
@@ -114,7 +114,7 @@ class Detach(Base):
 
     def test_detach_configures_the_session_before_reaching_it(self):
         seen = []
-        self.started.side_effect = lambda *a, **kw: seen.append(self.driver)
+        self.started.side_effect = lambda *_args, **_kwargs: seen.append(self.driver)
         code, _, err = self.detaches()
         self.assertEqual((code, len(seen)), (0, 1), err)
         self.assertIs(seen[0], self.driver)
@@ -173,7 +173,7 @@ class DriverForm(Base):
         `result`; noted in self.calls.
         """
 
-        def run(*args, on_event, **kw):
+        def run(*_args, on_event, **_kwargs):
             self.calls.append(("run",))
             on_event(Begun(SID))
             if isinstance(effect, BaseException):
@@ -239,7 +239,7 @@ class DriverForm(Base):
 
     def test_a_config_error_exits_2_and_writes_error(self):
         for kw, extra, want in (
-            ({"role": "ghost", "task": None}, (), "unknown role 'ghost'"),
+            ({"selection": Selection(role="ghost", task=None)}, (), "unknown role 'ghost'"),
             ({}, ("--split", "right"), SPLIT),
         ):
             with self.subTest(want=want), self.ran() as run:

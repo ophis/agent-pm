@@ -89,7 +89,7 @@ class Real(Fake):
         return res
 
 
-def info(push=True, default="main"):
+def info(*, push=True, default="main"):
     return (
         ["gh", "api", "--hostname"],
         ok(json.dumps({"permissions": {"push": push}, "default_branch": default})),

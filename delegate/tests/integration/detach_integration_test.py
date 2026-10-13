@@ -79,7 +79,7 @@ class Detach(Case):
             timeout=WAIT,
         )
 
-    def said(self, res: subprocess.CompletedProcess, tui: bool) -> None:
+    def said(self, res: subprocess.CompletedProcess, *, tui: bool) -> None:
         want = [
             f"delegate: session {SID}\n",
             f"delegate: driver session {DRIVER}: tmux attach -t '={DRIVER}'\n",
@@ -186,7 +186,7 @@ class Tui(Detach):
         rc = 128 + signal.SIGHUP
         self.assertEqual(
             (self.last("result")["error"], self.last("end")["rc"]),
-            (f"stopped: SystemExit: {rc}", rc),
+            (f"stopped: Stopped: {rc}", rc),
         )
 
     def test_an_events_path_tmux_would_misread_detaches_then_the_driver_form_exits_2_outcome_error(

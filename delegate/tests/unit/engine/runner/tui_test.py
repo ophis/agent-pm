@@ -239,12 +239,15 @@ class TuiPolicy(Base):
                 self.assertNotIn(("stop",), self.handle.calls)
 
     def test_an_on_event_raise_stops_the_session_and_propagates(self):
+        failure = RuntimeError("boom")
+
         def boom(event):
             if isinstance(event, Progress):
-                raise RuntimeError("boom")
+                raise failure
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as caught:
             self.faked(turn(START), on_event=boom)
+        self.assertIs(caught.exception, failure)
         self.assertEqual(self.handle.calls, [("stop",)])
         self.assertEqual(self.last("result")["error"], "stopped: RuntimeError: boom")
 

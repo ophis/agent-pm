@@ -39,6 +39,7 @@ WRITER = (
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 CATALOG = """from agent_pm.utils import read_project
+
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
 composer.check_all(team, read_project("delegate"))
@@ -47,8 +48,11 @@ rows = {}
 for role, tasks in composer.catalog(team).items():
     run = composer.resolve(role, team=team)
     composer.render(run, params, team=team)
-    rows[role] = [run.output["type"], team.source(composer.lookup(team, "roles", role)),
-                  {t: [what, team.source(composer.lookup(team, "tasks", t))] for t, what in tasks.items()}]
+    rows[role] = [
+        run.output["type"],
+        team.source(composer.lookup(team, "roles", role)),
+        {t: [what, team.source(composer.lookup(team, "tasks", t))] for t, what in tasks.items()},
+    ]
 print(json.dumps(rows))
 """
 
@@ -57,7 +61,7 @@ def make_team(case: unittest.TestCase) -> str:
     """A team dir of TEAM's files under TEAMS, removed after `case`'s test."""
     os.makedirs(TEAMS, mode=0o700, exist_ok=True)
     if os.path.realpath(TEAMS) != TEAMS:
-        raise RuntimeError(f"{TEAMS} must not contain symlinks")
+        case.fail(f"{TEAMS} must not contain symlinks")
     os.chmod(TEAMS, 0o700)
     team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
     case.addCleanup(shutil.rmtree, team, ignore_errors=True)
@@ -141,8 +145,13 @@ class ComposerTeamDirs(child.Case):
         self.assertEqual(
             got,
             {
-                "error": f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
-                "run can write there"
+                ("error"): (
+                    f"team_dirs: "
+                    f"{self.team}"
+                    f" overlaps a dir the run adds "
+                    f"{self.team}"
+                    f": the agent run can write there"
+                )
             },
         )
 

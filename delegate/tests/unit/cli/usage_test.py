@@ -7,7 +7,7 @@ from unittest import mock
 from agent_pm.delegate import composer
 
 from delegate.tests.case import PY, child_env
-from delegate.tests.unit.cli.case import HEADS, Base
+from delegate.tests.unit.cli.case import HEADS, Base, Selection
 
 
 class List(Base):
@@ -138,10 +138,15 @@ class Usage(Base):
 
     def test_a_config_error_exits_2_before_anything_starts(self):
         cases = [
-            ("an unknown role", {"role": "ghost", "task": None}, "", "unknown role 'ghost'"),
+            (
+                ("an unknown role"),
+                {("selection"): Selection(role=("ghost"), task=None)},
+                (""),
+                ("unknown role 'ghost'"),
+            ),
             (
                 "a task off the index",
-                {"role": "engineer", "task": "deep-research"},
+                {"selection": Selection(role="engineer", task="deep-research")},
                 "",
                 "task 'deep-research' is not one of engineer's tasks (build, light-build)",
             ),

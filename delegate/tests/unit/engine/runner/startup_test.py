@@ -213,7 +213,7 @@ class Start(Base):
                     (self.out if dest == "local" else "", "# Doc\n"),
                 )
 
-    def test_an_out_not_a_regular_file_holding_the_deliverable_is_replaced_never_followed_or_waited_on(
+    def test_output_replaces_unusable_files_without_following_or_waiting(
         self,
     ):
         save_spy, target = self.spy_save(), os.path.join(self.tmp, "zshrc")
@@ -239,7 +239,7 @@ class Start(Base):
                 save_spy.reset_mock()
                 self.go(
                     said(START, block(DONE)),
-                    on_event=lambda e: plant() if isinstance(e, Begun) else None,
+                    on_event=lambda e, plant=plant: plant() if isinstance(e, Begun) else None,
                 )
                 self.assertEqual(
                     (

@@ -100,17 +100,22 @@ class Acceptance(Case):
                 )[0]
                 destination = section(prompt, "Destination")
                 self.assertIn(
-                    "Write the deliverable to `<Workdir>/out.md` and name that file in the outcome's "
-                    "`deliverable_file`",
+                    (
+                        "Write the deliverable to `<Workdir>/out.md` and name that file in "
+                        "the outcome's `deliverable_file`"
+                    ),
                     destination,
                 )
                 self.assertNotIn("outcome's `deliverable`", destination)
                 self.assertIn("Leave `url` empty.", destination)
                 self.assertEqual(prompt.count("`<Workdir>/out.md`"), 1)
                 self.assertIn(
-                    "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
-                    "of `deliverable`, when [Output › Destination](#destination) says so or the deliverable "
-                    "is long.\n",
+                    (
+                        "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the "
+                        "deliverable, in place of `deliverable`, when [Output › "
+                        "Destination](#destination) says so or the deliverable is "
+                        "long.\n"
+                    ),
                     prompt,
                 )
 
@@ -278,8 +283,10 @@ class Shipped(Case):
             heads, ["Tasks", "Rules", "Input processing", "Repo", "Autopilot", "Finish"]
         )
         lines = (
-            "Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
-            "or branch.",
+            (
+                "Work only in `<worktree>` on branch `<branch>`, with absolute paths; "
+                "create no other clone, worktree or branch."
+            ),
             "Commits merged from `origin/<base>` are not this build's work.",
             "Skip S7; keep the commits. After <your task's push points>, run exactly "
             "`git -C <worktree> push -u origin <branch>`.",
@@ -291,8 +298,10 @@ class Shipped(Case):
 
     def test_a_builds_files_are_its_spec_and_plan_doc(self):
         self.assertIn(
-            "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc (on failure, those "
-            "that exist);",
+            (
+                "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan "
+                "doc (on failure, those that exist);"
+            ),
             task_text("build"),
         )
 
@@ -300,27 +309,37 @@ class Shipped(Case):
         for task, doc in (("build", "the plan doc's"), ("light-build", "the state file's")):
             text = task_text(task)
             self.assertIn(
-                "**Report progress** at the end of each build step (`S<i>`) you run and of each S5 task:",
+                (
+                    "**Report progress** at the end of each build step (`S<i>`) you run "
+                    "and of each S5 task:"
+                ),
                 text,
                 task,
             )
             self.assertIn(
-                "[agent-pm-progress:step] the step and its result; an S5 task as "
-                f"`S5 task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` {doc} task count "
-                "(its `### Task` headings)",
+                (
+                    f"[agent-pm-progress:step] the step and its result; an S5 task as `S5 "
+                    f"task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` "
+                    f"{doc}"
+                    f" task count (its `### Task` headings)"
+                ),
                 text,
                 task,
             )
 
     def test_light_build_always_writes_a_state_file_with_a_task_list(self):
         self.assertIn(
-            'docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; '
-            'never `git add -f` it."',
+            (
+                'docs line "The state file goes where the repo keeps design docs, else in '
+                '`docs/.autopilot/`; never `git add -f` it."'
+            ),
             task_text("light-build"),
         )
         self.assertIn(
-            "(a task list in its state file, implementation, verification, a light review, no spec or plan "
-            "docs)",
+            (
+                "(a task list in its state file, implementation, verification, a light "
+                "review, no spec or plan docs)"
+            ),
             catalog()["engineer"]["light-build"],
         )
 

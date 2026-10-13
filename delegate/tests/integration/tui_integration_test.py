@@ -8,6 +8,7 @@ tests/integration/core/drive_tui_integration_test.py, its tui run.
 
 import io
 import json
+import logging
 import os
 import threading
 import time
@@ -53,7 +54,9 @@ class Ahead:
 
 
 class TuiRun(tui_live.Live):
-    """dummy-tester's echo as session SID in workdir `work`, out `out.md`, events file self.events."""
+    """
+    dummy-tester's echo as session SID in workdir `work`, out `out.md`, events file self.events.
+    """
 
     def setUp(self):
         super().setUp()
@@ -86,6 +89,8 @@ class TuiRun(tui_live.Live):
             if on_event:
                 on_event(event)
 
+        logger = logging.Logger("delegate-tui-test")
+
         def target():
             try:
                 ended.append(
@@ -107,6 +112,7 @@ class TuiRun(tui_live.Live):
                     )
                 )
             except BaseException as e:
+                logger.exception("Tui test worker failed")
                 ended.append(e)
 
         thread = threading.Thread(target=target, daemon=True)

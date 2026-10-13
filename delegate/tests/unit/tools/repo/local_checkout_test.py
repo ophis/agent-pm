@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import os
 import threading
 import unittest
@@ -212,6 +213,8 @@ class Local(Clone):
         self.advance()
         results = {}
 
+        logger = logging.Logger("delegate-checkout-test")
+
         def go(branch):
             try:
                 results[branch] = repo.worktree(
@@ -220,6 +223,7 @@ class Local(Clone):
                     temp=(),
                 )
             except Exception as e:
+                logger.exception("Checkout test worker failed")
                 results[branch] = e
 
         threads = [threading.Thread(target=go, args=(b,)) for b in ("TASK-1-a", "TASK-2-b")]

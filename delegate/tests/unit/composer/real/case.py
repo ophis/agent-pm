@@ -117,21 +117,24 @@ REPO_ARGS = {
 
 
 CHECKOUT_RULE = (
-    "- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
-    "`Checkout:`; no `Checkout:` → drop it."
+    "- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, "
+    "`<checkout>` the input's `Checkout:`; no `Checkout:` → drop "
+    "it."
 )
 
 
 PICK = (
-    "**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
-    "wins. Read that task's file (no other task's), `<tasks>/<task>.md`, and follow its steps in order; its links "
-    "(`#…`) point to sections of this prompt."
+    "**Your task**: pick it from your charter's Tasks section as its opening sentence "
+    "says; a task the input names wins. Read that task's file (no other task's), "
+    "`<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to "
+    "sections of this prompt."
 )
 
 
 COMMANDS_RULE = (
-    "- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
-    "command (no `cd`, pipe, redirect or `&&`)."
+    "- **Commands**: run each command this prompt gives exactly, written as Parameters "
+    "says, as its own command (no `cd`, pipe, redirect or "
+    "`&&`)."
 )
 
 
@@ -155,7 +158,9 @@ def runs() -> list[tuple[str, str | None]]:
 
 
 def tickets(root):
-    """{path relative to `root`: its ticket ids beyond TICKET_EXAMPLES} of each file under `root`."""
+    """
+    {path relative to `root`: its ticket ids beyond TICKET_EXAMPLES} of each file under `root`.
+    """
     found = {}
     for top, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d != "__pycache__"]
@@ -184,7 +189,9 @@ def expanded(prompt):
 
 
 def words(prompt):
-    """`prompt` with this checkout's path, the machine's and not the team's text, written as <root>."""
+    """
+    `prompt` with this checkout's path, the machine's and not the team's text, written as <root>.
+    """
     return prompt.replace(REPO, "<root>")
 
 
