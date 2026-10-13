@@ -38,8 +38,8 @@ def detach(
     split_from: str | None = None,
 ) -> Detached:
     """The events file must be one you own (created if missing); a tui run's pane opener from
-    layout, None when the caller has no pane and split_from is None. DriverError from detach_session
-    propagates.
+    layout, None when the caller has no pane and split_from is None. DriverError from the Plan's
+    Driver.detach propagates.
     """
     mode = p.spec.mode
     if mode not in MODES:

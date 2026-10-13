@@ -1,5 +1,5 @@
-"""GUARD: git options that keep a checkout's fsmonitor and hooks from running; common_dir: a
-worktree's clone; git: runs git, retrying lock failures.
+"""GUARD: git options disabling fsmonitor and hooks; git: retries lock failures; common_dir: a
+worktree's clone. Repository specs, origin URLs and checkout paths identify and locate repos.
 """
 
 import os

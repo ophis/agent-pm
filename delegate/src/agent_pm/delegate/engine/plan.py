@@ -1,6 +1,6 @@
-"""One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing; the
-caller configured the session (configure). A refusal is ConfigError, a Driver one keeping its
-message.
+"""One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing. The
+caller supplies its Driver, or configure builds one from config. A refusal is ConfigError, a Driver
+one keeping its message.
 """
 
 import contextlib
