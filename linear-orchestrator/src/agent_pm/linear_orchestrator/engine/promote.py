@@ -9,6 +9,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     CALL_ERRORS,
     SERVICE_ERRORS,
     ConfigError,
+    Promotion,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
@@ -96,7 +97,7 @@ class Promoter:
         self.ids = {r: i for i, r in self.roles.items()}
         self.say = functools.partial(log, "promote", dry=dry)
 
-    def run(self):
+    def pending(self):
         issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))[
             "issues"
         ]["nodes"]
@@ -109,12 +110,17 @@ class Promoter:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
                     if detail["state"]["id"] != self.states["handoff"]:
                         continue
-                    work.append((self.moves(src, detail), src, detail, role, nxt))
+                    cutoff, first, latest = self.moves(src, detail)
+                    work.append(Promotion(src, detail, role, nxt, cutoff, first, latest))
                 except Unavailable:
                     raise
                 except CALL_ERRORS as e:
                     self.say("handoff-error", src["identifier"], error=one_line(e))
-        for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
+        return sorted(work, key=lambda handoff: handoff.latest)
+
+    def run(self):
+        for handoff in self.pending():
+            src, latest = handoff.source, handoff.latest
             if self.wait and self.now - parse_time(latest) < MATURE:
                 self.say(
                     "handoff-wait",
@@ -123,15 +129,14 @@ class Promoter:
                     reason=f"in Handoff under {MATURE.seconds // 60} min",
                 )
                 continue
-            found = [None]
             try:
-                self.promote(src, detail, role, nxt, cutoff, first, found)
+                self.promote(handoff)
             except Unavailable:
                 raise
             except CALL_ERRORS as e:
                 self.say("handoff-error", src["identifier"], error=one_line(e))
                 if self.now - parse_time(latest) > GRACE:
-                    self.bounce_failed(src, e, found[0])
+                    self.bounce_failed(src, e, handoff.child)
 
     def moves(self, src, detail):
         hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
@@ -166,23 +171,24 @@ class Promoter:
             key=lambda c: parse_time(c["createdAt"]),
         )
 
-    def promote(self, src, detail, role, nxt, cutoff, first, found):
-        comments = self.instructions(detail, cutoff)
+    def promote(self, handoff: Promotion):
+        src, detail, role, nxt = handoff.source, handoff.detail, handoff.role, handoff.next
+        comments = self.instructions(detail, handoff.cutoff)
         if not comments and self.cfg.roles[role].require_instructions:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
                 self.say(
                     "handoff-bounce", src["identifier"], to="in_review", reason="no instructions"
                 )
             return
-        cid = child_id(src["id"], nxt, first)
+        cid = child_id(src["id"], nxt, handoff.first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
         if existing:
-            child = found[0] = existing[0]
+            child = handoff.child = existing[0]
         elif self.dry:
             self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
             return
         else:
-            child = found[0] = linear.call(
+            child = handoff.child = linear.call(
                 self.gql,
                 M_CREATE,
                 "issueCreate",

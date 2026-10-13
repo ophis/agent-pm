@@ -119,3 +119,15 @@ class Config:
 
     def run_dir(self, issue: str) -> str:
         return os.path.join(self.runs_dir, issue)
+
+
+@dataclass
+class Promotion:
+    source: dict[str, Any]
+    detail: dict[str, Any]
+    role: str
+    next: str
+    cutoff: str | None
+    first: str
+    latest: str
+    child: dict[str, Any] | None = None
