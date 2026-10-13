@@ -11,7 +11,7 @@ TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
 )
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
-TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
+TMUX_HOME = "session/src/agent_pm/session/hosts/tmux/"
 PKG = "agent_pm"
 SESSION = "session"
 ORCH = "linear_orchestrator"
@@ -34,7 +34,7 @@ CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
-ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
+ADAPTERS_HOME = f"{SESSION_SRC}adapters/types.py"
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
 STATUS_LOG_CLOCK = "%H:%M:%S"
 COMMAND_SRC = (

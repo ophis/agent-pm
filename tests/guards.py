@@ -49,7 +49,7 @@ from tests.guard_rules import (
     STATUS_LOG_CLOCK,
     STATUS_LOG_HOME,
     SUBPACKAGES,
-    TMUX_HOST,
+    TMUX_HOME,
     TOML_CODE,
     TOML_HEADER,
     TOML_IMPLEMENTATION,
@@ -169,7 +169,7 @@ def adapters_key(repo: str) -> list[str]:
 def tmux_calls(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, ".py"):
-        if rel != TMUX_HOST:
+        if not rel.startswith(TMUX_HOME):
             found.update(
                 f'{rel}:{line}: str constant "tmux"'
                 for line, s in _strings(ast.parse(text, rel))
@@ -183,9 +183,10 @@ def status_log_format(repo: str) -> list[str]:
     for top in PROJECTS:
         for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
             rel = f"{top}/src/{rel}"
-            if rel != STATUS_LOG_HOME and rel != TMUX_HOST:
+            if rel != STATUS_LOG_HOME and not rel.startswith(TMUX_HOME):
                 found.update(
-                    f"{rel}:{line}: status log line format outside session/engine/status_log.py"
+                    f"{rel}:{line}: status log line format outside "
+                    "session/engine/status_log.py or hosts/tmux/"
                     for line, s in _strings(ast.parse(text, rel))
                     if STATUS_LOG_CLOCK in s
                 )

@@ -222,11 +222,14 @@ class AdaptersKey(Sample):
 
 
 class TmuxCalls(Sample):
-    def test_the_tmux_constant_only_in_tmux_host(self):
+    def test_the_tmux_constant_only_in_its_subsystem(self):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
         root = self.tree(
             {
                 f"session/{PKG}/session/hosts/tmux/tmux_host.py": sample,
+                f"session/{PKG}/session/hosts/tmux/commands.py": sample,
+                f"session/{PKG}/session/hosts/tmux/model/validation.py": sample,
+                f"session/{PKG}/session/hosts/tmux_external/x.py": sample,
                 f"session/{PKG}/session/modes/x.py": sample,
                 f"delegate/{PKG}/delegate/composer/y.py": 'TOOL = "tmux"\n',
                 "session/src/hosts/tmux/tmux_host.py": sample,
@@ -240,6 +243,7 @@ class TmuxCalls(Sample):
                     f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
                     'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
                     f'session/{PKG}/session/modes/x.py:2: str constant "tmux"',
+                    f'session/{PKG}/session/hosts/tmux_external/x.py:2: str constant "tmux"',
                 ]
             ),
         )
@@ -322,7 +326,8 @@ class StatusLogFormat(Sample):
                 f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
             }
         )
-        outside = "status log line format outside session/engine/status_log.py"
+        outside = "status log line format outside "
+                          "session/engine/status_log.py or hosts/tmux/"
         self.assertEqual(
             guards.status_log_format(root),
             sorted(
@@ -335,13 +340,26 @@ class StatusLogFormat(Sample):
             ),
         )
 
-    def test_status_log_py_tmux_host_and_files_outside_src_are_clean(self):
+    def test_status_log_and_tmux_subsystem_own_the_clock(self):
         root = self.tree(
             {
                 f"session/{PKG}/session/engine/status_log.py": self.CLOCK,
                 f"session/{PKG}/session/hosts/tmux/tmux_host.py": self.CLOCK,
+                f"session/{PKG}/session/hosts/tmux/lifecycle.py": self.CLOCK,
+                f"session/{PKG}/session/hosts/tmux/model/clock.py": self.CLOCK,
                 "session/tests/x_test.py": self.CLOCK,
                 "tests/y_test.py": self.CLOCK,
             }
         )
         self.assertEqual(guards.status_log_format(root), [])
+
+    def test_a_similarly_named_subsystem_cannot_own_the_clock(self):
+        root = self.tree({f"session/{PKG}/session/hosts/tmux_external/x.py": self.CLOCK})
+        self.assertEqual(
+            guards.status_log_format(root),
+            [
+                f"session/{PKG}/session/hosts/tmux_external/x.py:1: "
+                "status log line format outside "
+                          "session/engine/status_log.py or hosts/tmux/"
+            ],
+        )

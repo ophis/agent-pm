@@ -162,15 +162,7 @@ def _boundary_name(node, aliases):
 
 
 def _boundary_bindings(tree):
-    aliases = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            aliases.update(
-                (a.asname or a.name.split(".")[0], a.name if a.asname else a.name.split(".")[0])
-                for a in node.names
-            )
-        elif isinstance(node, ast.ImportFrom):
-            aliases.update((a.asname or a.name, f"{node.module}.{a.name}") for a in node.names)
+    aliases = _bindings(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
