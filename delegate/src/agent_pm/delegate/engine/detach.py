@@ -7,10 +7,10 @@ import sys
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import SessionStatusLog, api
 from agent_pm.utils.files import append_line
-from agent_pm.utils.text import printable
 
 MODES = ("headless", "tui")
 
@@ -25,7 +25,6 @@ def names(role: str, sid: str, mode: str) -> tuple[str | None, str]:
 class Detached:
     driver: str
     tui: str | None
-    opener: str | None
 
 
 def detach(
@@ -95,7 +94,7 @@ def detach(
         )
     except api.ConfigError as e:
         raise ConfigError(str(e)) from None
-    return Detached(driver, tui, opener)
+    return Detached(driver, tui)
 
 
 def outcome(events: str, driver: str, status: str | None) -> None:
@@ -103,4 +102,4 @@ def outcome(events: str, driver: str, status: str | None) -> None:
     try:
         SessionStatusLog(events).write(driver, "outcome", status or "error")
     except OSError as e:
-        print(printable(f"delegate: {e}"), file=sys.stderr, flush=True)
+        say(f"delegate: {e}")

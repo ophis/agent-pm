@@ -1,12 +1,22 @@
 """delegate/src/agent_pm/delegate/engine/config.py: its paths; harness_host(), a read delegate config's [delegates]
-harness_host checked against Session.parse_hosts' names (their cases: session/host_tables_test.py)."""
+harness_host checked against Session.parse_hosts' names (their cases: session/host_tables_test.py); policy()'s shape
+(plan's Policy cases: through plan) and trusted_dirs()."""
 
 import os
 import tomllib
 import unittest
+from unittest import mock
 
 import agent_pm.delegate.engine.config
-from agent_pm.delegate.engine.config import CONFIG, DELEGATE, IMPORT_ROOTS, PYTHONPATH, harness_host
+from agent_pm.delegate.engine.config import (
+    CONFIG,
+    DELEGATE,
+    IMPORT_ROOTS,
+    PYTHONPATH,
+    harness_host,
+    policy,
+    trusted_dirs,
+)
 from agent_pm.session import Session
 from agent_pm.utils.config_file import read_project
 
@@ -82,6 +92,31 @@ class HarnessHostTest(Case):
                     parsed(f"[delegates]\nharness_host = {value}\n"),
                     f"[delegates] harness_host: want one of {NAMES}",
                 )
+
+
+class PolicyTest(Case):
+    def test_a_runtimes_flags_and_env_else_none(self):
+        cfg = parsed('[policy.codex]\nflags = ["-s"]\nenv = { K = "v" }\n')
+        self.assertEqual(policy("codex", cfg), (["-s"], {"K": "v"}))
+        self.assertEqual(policy("fake", cfg), ([], {}))
+
+    def test_a_malformed_table_is_a_value_error(self):
+        for cfg in (
+            {"policy": 1},
+            {"policy": {"c": 1}},
+            {"policy": {"c": {"x": 1}}},
+            {"policy": {"c": {"flags": "-s"}}},
+        ):
+            with self.subTest(cfg=cfg), self.assertRaises(ValueError):
+                policy("c", cfg)
+
+
+class TrustedDirsTest(Case):
+    def test_unset_is_empty_and_paths_are_real_paths(self):
+        self.assertEqual(trusted_dirs({}), frozenset())
+        with mock.patch.dict(os.environ, {"HOME": "/var/h"}):
+            got = trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
+        self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
 
 
 if __name__ == "__main__":

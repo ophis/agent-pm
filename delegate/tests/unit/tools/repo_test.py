@@ -14,8 +14,6 @@ import unittest
 import unittest.mock
 
 from agent_pm.delegate.composer import TEAM
-from agent_pm.utils import git as git_utils
-from agent_pm.utils import repos, shell
 
 from delegate.tests.case import Case
 
@@ -147,42 +145,6 @@ class Base(Case):
         with open(path, "w") as f:
             f.write(text)
         return path
-
-
-class Moved(Case):
-    def test_the_moved_helpers_are_the_utils_ones(self):
-        for module, names in (
-            (shell, ("SHORT", "LONG", "Runner", "sh", "USERINFO", "redact", "err_text")),
-            (git_utils, ("GUARD", "common_dir", "LOCK", "git")),
-            (
-                repos,
-                (
-                    "OWNER",
-                    "NAME",
-                    "HOST",
-                    "SPEC",
-                    "URL",
-                    "SLUG",
-                    "Invalid",
-                    "Repo",
-                    "url_slug",
-                    "origin",
-                    "resolve",
-                    "check_slug",
-                    "checkout",
-                ),
-            ),
-        ):
-            for name in names:
-                self.assertIs(getattr(repo, name), getattr(module, name), name)
-
-
-class TrustedDirs(Case):
-    def test_unset_is_empty_and_paths_are_real_paths(self):
-        self.assertEqual(repo.trusted_dirs({}), frozenset())
-        with unittest.mock.patch.dict(os.environ, {"HOME": "/var/h"}):
-            got = repo.trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
-        self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
 
 
 class Worktree(Base):

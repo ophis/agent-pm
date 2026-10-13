@@ -69,7 +69,6 @@ ALLOWED = {
     ("delegate", "delegate.composer"),
     ("delegate", SESSION),
     ("delegate", SESSION_API),
-    ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
     *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     ("session.adapters", SESSION_TYPES),
@@ -79,6 +78,7 @@ ALLOWED = {
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
+    ("manager.crew", "delegate"),  # IMPORT_ROOTS, PYTHONPATH: until TASK-371
 }
 SHARED = ("utils", CONFIG, "delegate.event")
 TOOLS = "delegate.team.tools"
@@ -88,7 +88,6 @@ PURE = {
     "utils": ("utils",),
     CONFIG: ("utils", CONFIG),
     "delegate.event": SHARED,
-    "delegate.event.outcome": (*SHARED, "delegate.composer"),
     TOOLS: ("utils", CONFIG),
 }
 BARE = (
@@ -166,7 +165,7 @@ MANAGER_ALLOWED = {
 }
 MANAGER_EXCEPTIONS = {
     "manager.crew": (
-        f"{PKG}.{CONFIG}",  # until TASK-371
+        *(f"{PKG}.delegate.{n}" for n in ("IMPORT_ROOTS", "PYTHONPATH")),  # until TASK-371
         f"{PKG}.session.Session",  # until TASK-371
         f"{PKG}.session.api",  # until TASK-371
     ),

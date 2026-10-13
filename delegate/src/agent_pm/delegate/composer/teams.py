@@ -7,15 +7,9 @@ import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from agent_pm.delegate.composer.base import (
-    CONFIG,
-    METHOD,
-    PLACEHOLDER,
-    TEAM,
-    read_text,
-    title_of,
-)
+from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
 from agent_pm.delegate.composer.types import ConfigError, Team
+from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils.config_file import LOCAL, read_config, read_project
 from agent_pm.utils.markdown import unfenced

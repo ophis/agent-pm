@@ -1,10 +1,12 @@
 """The delegate's paths, their only home: CONFIG (read by read_project("delegate")), DELEGATE, IMPORT_ROOTS and
-PYTHONPATH (them joined: a child's). harness_host: [delegates] harness_host, None unset, else one of `hosts`."""
+PYTHONPATH (them joined: a child's); its keys' parsers, raising ValueError: harness_host (None unset, else one of
+`hosts`), policy, trusted_dirs."""
 
 import os
 from collections.abc import Collection, Mapping
 
-from agent_pm.utils.paths import import_roots
+from agent_pm.utils.config_file import read_project
+from agent_pm.utils.paths import import_roots, real_dirs
 
 DELEGATE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 IMPORT_ROOTS = import_roots()
@@ -23,3 +25,21 @@ def harness_host(config: Mapping, hosts: Collection[str]) -> str | None:
     if harness is not None and (not isinstance(harness, str) or harness not in hosts):
         raise ValueError(f"[delegates] harness_host: want one of {', '.join(sorted(hosts))}")
     return harness
+
+
+def policy(runtime: str, cfg: Mapping | None = None) -> tuple[list, dict]:
+    """[policy.<runtime>]'s flags and env, unchecked; `cfg` None: read."""
+    tables = (read_project("delegate") if cfg is None else cfg).get("policy", {})
+    if not isinstance(tables, Mapping):
+        raise ValueError("policy must be a table")
+    value = tables.get(runtime, {})
+    if not isinstance(value, Mapping) or set(value) - {"flags", "env"}:
+        raise ValueError(f"policy.{runtime} must contain only flags/env")
+    flags, env = value.get("flags", []), value.get("env", {})
+    if not isinstance(flags, list):
+        raise ValueError(f"policy.{runtime}.flags must be a list of strings without NUL")
+    return flags, env
+
+
+def trusted_dirs(cfg: Mapping) -> frozenset[str]:
+    return real_dirs(cfg.get("trusted_dirs", []), "trusted_dirs")

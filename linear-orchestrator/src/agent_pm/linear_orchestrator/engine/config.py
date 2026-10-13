@@ -15,7 +15,6 @@ from typing import Literal
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.paths import import_roots, temp_dirs, under
@@ -105,7 +104,7 @@ class Role:
     max_runs: int
     next: str | None
     require_instructions: bool
-    run: composer.RunConfig
+    run: delegate.RunConfig
 
 
 @dataclass(frozen=True)
@@ -160,27 +159,14 @@ def load(
     work = _work_dir(cfg, root)
     try:
         found, core_cfg = _load(cfg, root, work, local, core)
-        _configure(local, core_cfg)
+        try:
+            delegate.configure(local=local, cfg=core_cfg)
+        except delegate.ConfigError as e:
+            raise ConfigError(str(e)) from None
         return found
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
-
-
-def _configure(local, core_cfg):
-    try:
-        table = config_file.read_project("session", local=local)
-        hosts = Session.parse_hosts(table.get("hosts")).tables
-    except (OSError, ValueError, api.ConfigError) as e:
-        raise ConfigError(f"session: {e}") from None
-    try:
-        delegate.harness_host(core_cfg, hosts)
-    except ValueError as e:
-        raise ConfigError(f"core: {e}") from None
-    try:
-        Session.configure_from(table)
-    except api.ConfigError as e:
-        raise ConfigError(f"session: {e}") from None
 
 
 def session(role, issue):

@@ -1,34 +1,46 @@
-"""One run's plan: its cwd, session Spec, sid and prompt, every check before anything starts, writing nothing; the caller
-configured the session. A refusal is ConfigError, a Driver one keeping its message."""
+"""One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing; the caller configured
+the session (configure). A refusal is ConfigError, a Driver one keeping its message."""
 
+import contextlib
 import functools
 import os
 import sys
 import uuid
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import RunConfig, RunParams, Team
+from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
+from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import api
-from agent_pm.utils.config_file import read_project
+from agent_pm.session import Session, api
+from agent_pm.utils.config_file import LOCAL, read_project
 from agent_pm.utils.paths import under
 
-DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
+
+def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> None:
+    """The session from its config once harness_host (`cfg`, else read) names its host."""
+    with _config("session"):
+        table = read_project("session", local=local)
+        hosts = Session.parse_hosts(table.get("hosts")).tables
+    with _config("delegate"):
+        config.harness_host(read_project("delegate", local=local) if cfg is None else cfg, hosts)
+    with _config("session"):
+        Session.configure_from(table)
+
+
+@contextlib.contextmanager
+def _config(name: str) -> Iterator[None]:
+    try:
+        yield
+    except (OSError, ValueError, api.ConfigError) as e:
+        raise ConfigError(f"{name} config: {e}") from None
 
 
 def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
     try:
-        tables = read_project("delegate").get("policy", {})
-        if not isinstance(tables, dict):
-            raise ConfigError("policy must be a table")
-        value = tables.get(runtime, {})
-        if not isinstance(value, dict) or set(value) - {"flags", "env"}:
-            raise ConfigError(f"policy.{runtime} must contain only flags/env")
-        flags, env = value.get("flags", []), value.get("env", {})
-        if not isinstance(flags, list):
-            raise ConfigError(f"policy.{runtime}.flags must be a list of strings without NUL")
+        flags, env = config.policy(runtime)
         spec = api.Spec(workdir="/", flags=tuple(flags), env=env)
         return spec.flags, dict(spec.env)
     except (OSError, ValueError, api.ConfigError) as exc:

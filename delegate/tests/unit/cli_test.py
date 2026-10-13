@@ -27,17 +27,8 @@ from agent_pm.session import api
 from agent_pm.session.adapters import registry
 
 from delegate.tests.case import PY, Case, child_env, committed
-from delegate.tests.unit.runner_test import (
-    DONE,
-    START,
-    STOP,
-    FakeHandle,
-    block,
-    limit,
-    no_child,
-    said,
-    turn,
-)
+from delegate.tests.replies import block
+from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, limit, no_child, said, turn
 from session.tests import fake_adapter
 
 SID = "11111111-2222-3333-4444-555555555555"

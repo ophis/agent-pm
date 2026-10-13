@@ -12,23 +12,21 @@ exited non-zero (an in_process run that raised: 1) or failed to start without a 
 when the Driver session did not start; the driver form 128 + signum on a signal."""
 
 import argparse
-import contextlib
 import functools
 import json
 import os
 import signal
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 
-from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, plan, run
+from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, configure, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
-from agent_pm.delegate.engine.config import harness_host
-from agent_pm.delegate.engine.runner import printable
-from agent_pm.session import Session, api
+from agent_pm.delegate.engine.runner import say
+from agent_pm.session import api
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils.text import printable
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -97,7 +95,7 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
             print(listing(team), end="")
             return 0, None
         config = composer.resolve(a.role, a.task, team=team)
-        _configure()
+        configure()
         text = sys.stdin.read() if a.input == "-" and a.driver is None else a.input
         spec = Spec(
             text,
@@ -121,36 +119,18 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
         spec = replace(spec, name=tui)
         result = run(config, spec, on_event=functools.partial(_begun, a, tui))
     except ConfigError as e:
-        _say(f"delegate: {e}")
+        say(f"delegate: {e}")
         return 2, None
     if result.outcome is None:
-        _say(f"delegate: {result.error}")
+        say(f"delegate: {result.error}")
         return (3 if result.returncode or result.limit else 1), None
     if deliverable := result.outcome.deliverable:
         if a.out == "-":
             print("\n".join(map(printable, deliverable.split("\n"))), end="", flush=True)
         elif api.records.holds(out := os.path.abspath(a.out), deliverable):
-            _say(f"delegate: deliverable {out}")
-    _say(f"delegate: status {result.outcome.status}")
+            say(f"delegate: deliverable {out}")
+    say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
-
-
-def _configure() -> None:
-    with _config("session"):
-        table = read_project("session")
-        hosts = Session.parse_hosts(table.get("hosts")).tables
-    with _config("delegate"):
-        harness_host(read_project("delegate"), hosts)
-    with _config("session"):
-        Session.configure_from(table)
-
-
-@contextlib.contextmanager
-def _config(name: str) -> Iterator[None]:
-    try:
-        yield
-    except (OSError, ValueError, api.ConfigError) as e:
-        raise ConfigError(f"{name} config: {e}") from None
 
 
 def _check_detach(a: argparse.Namespace) -> None:
@@ -174,12 +154,12 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
     try:
         d = detach.detach(p, events=a.events, split=a.split, split_from=a.split_from)
     except api.DriverError as e:
-        _say(f"delegate: {e}")
+        say(f"delegate: {e}")
         return 3
-    _say(f"delegate: session {p.spec.sid}")
-    _say(f"delegate: driver session {d.driver}: {api.attach_command(d.driver)}")
+    say(f"delegate: session {p.spec.sid}")
+    say(f"delegate: driver session {d.driver}: {api.attach_command(d.driver)}")
     if d.tui is not None:
-        _say(f"delegate: tui session {d.tui}: {api.attach_command(d.tui)}")
+        say(f"delegate: tui session {d.tui}: {api.attach_command(d.tui)}")
     return 0
 
 
@@ -231,17 +211,13 @@ def _shown(p: Plan) -> dict:
 def _begun(a: argparse.Namespace, tui: str | None, event) -> None:
     if not isinstance(event, Begun):
         return
-    _say(f"delegate: session {event.sid}")
+    say(f"delegate: session {event.sid}")
     if tui is not None and a.opener is not None:
         try:
             if command := api.show(tui, a.split, a.split_from, a.opener):
-                _say(command)
+                say(command)
         except (api.ConfigError, api.DriverError) as e:
-            _say(f"delegate: show {tui}: {e}")
-
-
-def _say(text: str) -> None:
-    print(printable(text), file=sys.stderr, flush=True)
+            say(f"delegate: show {tui}: {e}")
 
 
 if __name__ == "__main__":

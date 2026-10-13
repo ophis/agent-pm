@@ -12,7 +12,7 @@ from agent_pm.delegate import Begun, ConfigError, Finished, Progress, Spec, comp
 from agent_pm.delegate.event.reply import marks
 
 from delegate.tests.case import Case, committed
-from delegate.tests.unit.runner_test import no_child
+from delegate.tests.unit.runs import no_child
 
 SID = "11111111-2222-3333-4444-555555555555"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")

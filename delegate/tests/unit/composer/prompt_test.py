@@ -10,7 +10,7 @@ import unittest
 from dataclasses import replace
 
 from agent_pm.delegate.composer import ConfigError, RunParams
-from agent_pm.delegate.composer.base import METHOD, TEAM, outline
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import (
     OUTCOME,
     PARAMETERS,
@@ -24,8 +24,16 @@ from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
 
 from delegate.tests.case import Case
-from delegate.tests.unit.composer.run_test import CONFIG
-from delegate.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
+from delegate.tests.unit.composer.prompts import (
+    heading_anchors,
+    method,
+    own_text,
+    parameters,
+    role_sources,
+    rule,
+    task_text,
+)
+from delegate.tests.unit.composer.teams import FILES, INTRO, POET, RUN_CONFIG, VERSE, WRITER
 
 TEXTS = {
     "guide.md": (
@@ -38,67 +46,7 @@ TEXTS = {
     "output/destinations/github.md": "## Destination\n\nPush to `<out-repo>` on `<out-branch>`.\n",
 }
 PARAMS = RunParams(input="Research X.", out="/w/out.md", workdir="/w")
-RUN = RunParams(
-    input="Research X.", out="/runs/W-1/out.md", workdir="/runs/W-1"
-)  # a workdir no other text holds
 METHOD_NAMES = ("deep-research", "ultracode")
-
-
-def parameters(prompt):
-    """{name: value} of the prompt's # Parameters lines after RULE, in order; a line of another shape fails."""
-    section_ = re.search(r"^# Parameters\n\n(.*?)\n(?=# )", prompt, re.M | re.S).group(1)
-    lines = section_.split("\n\n", 1)[1].splitlines()
-    return dict(re.fullmatch(r"- `([^`]+)`: (.+)", line).groups() for line in lines)
-
-
-def own_text(prompt):
-    """`prompt` up to and including its # Input heading line: the input text, always last, is dropped."""
-    return prompt.split("\n# Input\n\n", 1)[0] + "\n# Input\n"
-
-
-def heading_anchors(prompt):
-    """The anchor of each heading of the prompt's own text, in order."""
-    return [a for _, _, a, heading in outline(own_text(prompt)) if heading]
-
-
-def composed(role, task=None, overlays=(), **changes):
-    """The real core's prompt for `role` (and `task`) with RUN, its run changed by `changes`, and that run."""
-    run = replace(resolve(role, task, overlays=overlays), **changes)
-    return render(run, RUN), run
-
-
-def task_text(task):
-    with open(os.path.join(TEAM, "tasks", f"{task}.md")) as f:
-        return f.read()
-
-
-def method(name):
-    with open(os.path.join(TEAM, "methods", f"{name}.md")) as f:
-        return f.read()
-
-
-def role_sources(role, task=None):
-    """What `reference_errors` takes for `role` (and `task`): the real prompt's own text, the role's task files and the
-    method files these name."""
-    own = own_text(composed(role, task)[0])
-    tasks = {t: task_text(t) for t in index(role)}
-    named = sorted(set(METHOD.findall(own + "".join(tasks.values()))))
-    return own, tasks, {f"methods/{m}.md": method(m) for m in named}
-
-
-def rule(text, name):
-    return [line for line in text.splitlines() if line.startswith(f"- **{name}**:")]
-
-
-def section(text, name):
-    m = re.search(rf"^## {name}\n(.*?)(?=^#)", text, re.M | re.S)
-    return m.group(1) if m else ""
-
-
-def item(text, name):
-    """The top-level bold item `- **name**` of `text`, up to the next top-level item."""
-    m = re.search(rf"^- \*\*{re.escape(name)}\*\*(.*?)(?=^- |\Z)", text, re.M | re.S)
-    return m.group(1) if m else ""
 
 
 class Fake(Case):
@@ -113,7 +61,7 @@ class Fake(Case):
         self.local_file = os.path.join(self.tmp, "config.local.toml")
         self.write(FILES | TEXTS)
         with open(self.config, "w") as f:
-            f.write(CONFIG)
+            f.write(RUN_CONFIG)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -357,12 +305,12 @@ class Errors(Fake):
             ),
         ):
             with self.subTest(new=new):
-                self.configure(CONFIG.replace(old, new))
+                self.configure(RUN_CONFIG.replace(old, new))
                 self.assertEqual(self.fails(role), msg)
 
     def test_a_missing_guide(self):
-        os.remove(os.path.join(self.root, "guide.md"))
-        self.assertEqual(self.fails(), "missing file guide.md")
+        os.remove(path := os.path.join(self.root, "guide.md"))
+        self.assertEqual(self.fails(), f"{path}: No such file or directory")
 
 
 class Anchors(Fake):

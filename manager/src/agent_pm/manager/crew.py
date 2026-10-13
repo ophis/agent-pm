@@ -8,7 +8,7 @@ error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONP
 each entry resolving to one (unset when empty): what workers and recovered role or pipeline entries get; then
 configures the session from the session config before a subcommand of STARTS (those that start, show or attach a
 session); next-event configures just before it attaches, a config error becoming its content text. The import roots
-(delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it prints (U as at
+(agent_pm.delegate's IMPORT_ROOTS), then U, appear only in a command running crew: each one it prints (U as at
 print time) and a recovered worker entry."""
 
 import argparse
@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Iterator
 
-import agent_pm.delegate.engine.config
+from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager import roster
 from agent_pm.manager.engine.types import RosterError, Spec, Stale
 from agent_pm.session import Session, api
@@ -510,11 +510,7 @@ def _pythonpath(argv: list[str]) -> dict[str, str]:
     if tuple(argv[1:4]) != roster.CREW_MODULE:
         return {}
     user = os.environ.get("PYTHONPATH")
-    return {
-        "PYTHONPATH": os.pathsep.join(
-            filter(None, (agent_pm.delegate.engine.config.PYTHONPATH, user))
-        )
-    }
+    return {"PYTHONPATH": os.pathsep.join(filter(None, (PYTHONPATH, user)))}
 
 
 def _command(argv: list[str]) -> str:
@@ -779,7 +775,7 @@ def _number(value: str) -> int:
 
 
 def _drop_import_root() -> None:
-    roots = {os.path.realpath(r) for r in agent_pm.delegate.engine.config.IMPORT_ROOTS}
+    roots = {os.path.realpath(r) for r in IMPORT_ROOTS}
     entries = os.environ.pop("PYTHONPATH", "").split(os.pathsep)
     if user := os.pathsep.join(p for p in entries if os.path.realpath(p) not in roots):
         os.environ["PYTHONPATH"] = user
