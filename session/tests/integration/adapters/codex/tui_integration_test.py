@@ -34,6 +34,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
+from agent_pm.session.modes.tui import hook_argv
 
 from session.tests import live_tmux
 from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings
@@ -409,7 +410,7 @@ class HookTrustIntegrationTest(Live):
         launch = run.launch(
             "hello",
             dataclasses.replace(self.spec, sid=self.sid),
-            (sys.executable, "-V"),
+            hook_argv("/protected/session"),
             resume=False,
         )
         data = json.loads(launch.argv[-1])

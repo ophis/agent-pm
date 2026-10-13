@@ -18,7 +18,8 @@ from session.tests.source_roots import source_roots_cases
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
-HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
+ROOTS_JSON = json.dumps([case.SRC["session"], case.SRC["utils"]])
+HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session", ROOTS_JSON)
 INSPECT = """import dataclasses, json, runpy, sys, typing
 script, data = sys.argv[1:]
 sys.argv = [script, data]
@@ -278,7 +279,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
 
     def test_start_adds_transient_trust_and_execs_saved_home_without_config_write(self):
         run = self.adapter.tui()
-        hook = (sys.executable, "-I", "/protected/driver_hook.py")
+        hook = HOOK
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = run.launch("prompt", self.spec, hook, resume=False)
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
@@ -303,7 +304,10 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         spec = dataclasses.replace(self.spec, access=access)
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "prompt", spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
+                "prompt",
+                spec,
+                (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                resume=False,
             )
         with (
             mock.patch.dict(os.environ, launch.env),
@@ -428,7 +432,10 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         run = self.adapter.tui()
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = run.launch(
-                "prompt", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
+                "prompt",
+                self.spec,
+                (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                resume=False,
             )
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
             with self.subTest(signum=signum):
@@ -458,7 +465,10 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
     def test_wrapper_checks_effective_tmpdir_before_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "hi", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
+                "hi",
+                self.spec,
+                (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                resume=False,
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),

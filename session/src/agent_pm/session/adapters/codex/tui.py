@@ -19,7 +19,7 @@ from agent_pm.session.adapters.codex.common import (
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.flags import split_flags
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
-from agent_pm.utils import import_roots, module_roots
+from agent_pm.utils import import_roots, printable_abs
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -60,7 +60,19 @@ class CodexTui(Tui):
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Tui mode hook command")
-        roots = module_roots(sys.modules["agent_pm.session"], sys.modules["agent_pm.utils"])
+        try:
+            roots = json.loads(hook[-1])
+        except (ValueError, RecursionError) as exc:
+            raise ConfigError("Codex tui hook command requires source roots JSON") from exc
+        if (
+            not isinstance(roots, list)
+            or not roots
+            or any(not printable_abs(path) or not os.path.isdir(path) for path in roots)
+            or len(set(roots)) != len(roots)
+        ):
+            raise ConfigError(
+                "Codex tui hook command requires distinct absolute source directories"
+            )
         protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
         dependencies = [
             *protected_roots,

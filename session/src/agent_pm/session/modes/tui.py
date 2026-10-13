@@ -13,17 +13,9 @@ import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
 
+import agent_pm.session.engine.types
+import agent_pm.utils
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
-from agent_pm.session.engine.types import (
-    Activity,
-    Blocked,
-    DriverError,
-    Event,
-    Paste,
-    SessionBound,
-    SessionInfo,
-    Stderr,
-)
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import tui_hook
@@ -40,7 +32,7 @@ def session_dir(name: str) -> str:
 
 
 def hook_argv(folder: str) -> tuple[str, ...]:
-    roots = module_roots(sys.modules["agent_pm.session"], sys.modules["agent_pm.utils"])
+    roots = module_roots(agent_pm.session, agent_pm.utils)
     return sys.executable, "-I", os.path.abspath(tui_hook.__file__), folder, json.dumps(roots)
 
 
@@ -49,7 +41,7 @@ def read_state(name: str) -> dict:
     try:
         return tui_hook.read_state(os.path.join(session_dir(name), tui_hook.STATE))
     except HookError as e:
-        raise DriverError(f"no tui session {name}: {e}") from None
+        raise agent_pm.session.engine.types.DriverError(f"no tui session {name}: {e}") from None
 
 
 def close(name: str, *, host=tmux_host) -> None:
@@ -65,7 +57,9 @@ def _close(name: str, pane: str | None = None, *, host=tmux_host) -> None:
         host.kill(pane or name)
     except TuiError as e:
         if host.status(pane or name) is not None:
-            raise DriverError(f"cannot close tui session {name}: {e}") from None
+            raise agent_pm.session.engine.types.DriverError(
+                f"cannot close tui session {name}: {e}"
+            ) from None
     _drop(name)
 
 
@@ -73,7 +67,9 @@ def _drop(name: str) -> None:
     try:
         _remove(session_dir(name))
     except OSError as e:
-        raise DriverError(f"cannot close tui session {name}: {e.strerror or e}") from None
+        raise agent_pm.session.engine.types.DriverError(
+            f"cannot close tui session {name}: {e.strerror or e}"
+        ) from None
 
 
 @contextlib.contextmanager
@@ -83,7 +79,7 @@ def lock(name: str) -> Iterator[None]:
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     except OSError as e:
-        raise DriverError(f"{path}: {e.strerror or e}") from None
+        raise agent_pm.session.engine.types.DriverError(f"{path}: {e.strerror or e}") from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -109,12 +105,12 @@ def _tui_dir() -> None:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             if os.fstat(fd).st_uid != os.getuid():
-                raise DriverError(f"{root}: not your directory")
+                raise agent_pm.session.engine.types.DriverError(f"{root}: not your directory")
             os.fchmod(fd, 0o700)
         finally:
             os.close(fd)
     except OSError as e:
-        raise DriverError(f"{root}: {e.strerror or e}") from None
+        raise agent_pm.session.engine.types.DriverError(f"{root}: {e.strerror or e}") from None
 
 
 def _records(data: bytes) -> Iterator[tuple[str, dict]]:
@@ -148,7 +144,7 @@ class TuiMode:
         cls,
         name: str,
         run: Tui,
-        info: SessionInfo,
+        info: agent_pm.session.engine.types.SessionInfo,
         *,
         events: str | None,
         runtime: str,
@@ -172,25 +168,35 @@ class TuiMode:
         }
         for field, check in tui_hook.SESSION_STATE.items():
             if not check(state[field]):
-                raise DriverError(f"tui session {name}: bad {field} {state[field]!r:.80}")
+                raise agent_pm.session.engine.types.DriverError(
+                    f"tui session {name}: bad {field} {state[field]!r:.80}"
+                )
         status = host.status(name)
         if status == tmux_host.RUNNING:
-            raise DriverError(f"tui session {name} is running; {host.attach_command(name)}")
+            raise agent_pm.session.engine.types.DriverError(
+                f"tui session {name} is running; {host.attach_command(name)}"
+            )
         if status == tmux_host.UNKNOWN:
-            raise DriverError(f"tui session {name}: its tmux state is unknown")
+            raise agent_pm.session.engine.types.DriverError(
+                f"tui session {name}: its tmux state is unknown"
+            )
         _tui_dir()
         mode = cls(name, run, info.sid, events=events, runtime=runtime, host=host)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
-                    raise DriverError(f"{mode.dir}: not a directory")
+                    raise agent_pm.session.engine.types.DriverError(f"{mode.dir}: not a directory")
                 _remove(mode.dir)
             os.mkdir(mode.dir, 0o700)
             mode._made = os.lstat(mode.dir)
         except FileExistsError:
-            raise DriverError(f"tui session {name} is starting") from None
+            raise agent_pm.session.engine.types.DriverError(
+                f"tui session {name} is starting"
+            ) from None
         except OSError as e:
-            raise DriverError(f"{mode.dir}: {e.strerror or e}") from None
+            raise agent_pm.session.engine.types.DriverError(
+                f"{mode.dir}: {e.strerror or e}"
+            ) from None
         try:
             fd, temp = tempfile.mkstemp(dir=mode.dir, prefix=".session.")
             with os.fdopen(fd, "w") as f:
@@ -198,7 +204,9 @@ class TuiMode:
             os.replace(temp, os.path.join(mode.dir, tui_hook.STATE))
         except OSError as e:
             mode._unmake()
-            raise DriverError(f"{mode.dir}: {e.strerror or e}") from None
+            raise agent_pm.session.engine.types.DriverError(
+                f"{mode.dir}: {e.strerror or e}"
+            ) from None
         return mode
 
     def begin(
@@ -219,12 +227,16 @@ class TuiMode:
             )
         except TuiError as e:
             self._unmake()
-            raise DriverError(f"cannot start tui session {self.name}: {e}") from e
+            raise agent_pm.session.engine.types.DriverError(
+                f"cannot start tui session {self.name}: {e}"
+            ) from e
         try:
             self._pane = self.host.pane(self.name)
         except TuiError as e:
             _close(self.name, host=self.host)  # start() holds the name's lock
-            raise DriverError(f"cannot start tui session {self.name}: {e}") from e
+            raise agent_pm.session.engine.types.DriverError(
+                f"cannot start tui session {self.name}: {e}"
+            ) from e
         self._live = True
 
     def _unmake(self) -> None:
@@ -242,7 +254,7 @@ class TuiMode:
         except TuiError:
             tagged = pane = None
         if tagged != state["sid"]:
-            raise DriverError(f"no tui session {name}")
+            raise agent_pm.session.engine.types.DriverError(f"no tui session {name}")
         mode = cls(
             name, run, state["sid"], runtime=state["runtime"], events=state["events"], host=host
         )
@@ -264,7 +276,11 @@ class TuiMode:
         mode._live = True
         return mode
 
-    def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
+    def poll(
+        self, timeout: float
+    ) -> tuple[
+        list[agent_pm.session.engine.types.Event | agent_pm.session.engine.types.Stderr], bool
+    ]:
         """New records' events, else a pane scan, else a wait of `timeout` s; ended at once after
         stop() or once another pane holds the name.
         """
@@ -317,7 +333,9 @@ class TuiMode:
         self._gone = True
         self._code = -signal.SIGHUP if self._code is None else self._code
 
-    def _read(self) -> list[Event | Stderr]:
+    def _read(
+        self,
+    ) -> list[agent_pm.session.engine.types.Event | agent_pm.session.engine.types.Stderr]:
         data = b"" if self._gone else read_regular(self.hooks, offset=self._offset) or b""
         end = data.rfind(b"\n") + 1
         if end:
@@ -328,21 +346,27 @@ class TuiMode:
         found = []
         for label, payload in _records(data[:end]):
             for event in self.run.hook_events(label, payload, self.bound):
-                if isinstance(event, SessionBound):
+                if isinstance(event, agent_pm.session.engine.types.SessionBound):
                     self.bound = event.native_id
                 found.append(event)
         return found
 
-    def _scan(self, screen: str) -> list[Event | Stderr]:
+    def _scan(
+        self, screen: str
+    ) -> list[agent_pm.session.engine.types.Event | agent_pm.session.engine.types.Stderr]:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
         per appearance.
         """
         screen = " ".join(screen.split())
         shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
-        found: list[Event | Stderr] = (
-            [Activity("")] if self._dialogs - shown else []
+        found: list[agent_pm.session.engine.types.Event | agent_pm.session.engine.types.Stderr] = (
+            [agent_pm.session.engine.types.Activity("")] if self._dialogs - shown else []
         )  # first: a later Blocked keeps the idle pause
-        found += [Blocked(d) for d in self.run.dialogs if d in shown - self._dialogs]
+        found += [
+            agent_pm.session.engine.types.Blocked(d)
+            for d in self.run.dialogs
+            if d in shown - self._dialogs
+        ]
         limit = self.run.limit(screen)
         if limit is not None and self._limit is None:
             found.append(limit)
@@ -376,26 +400,32 @@ class TuiMode:
         last = None
         try:
             for item in self.run.submit(text):
-                if isinstance(item, Paste):
+                if isinstance(item, agent_pm.session.engine.types.Paste):
                     self.host.paste(self._pane, item.text)
                 else:
-                    if isinstance(last, Paste):
+                    if isinstance(last, agent_pm.session.engine.types.Paste):
                         time.sleep(tmux_host.PAUSE)
                     self.host.keys(self._pane, item.name)
                 last = item
         except TuiError as e:
-            raise DriverError(f"send to tui session {self.name}: {e}") from e
+            raise agent_pm.session.engine.types.DriverError(
+                f"send to tui session {self.name}: {e}"
+            ) from e
 
     def screen(self, lines: int | None = None) -> str:
         self._running()
         try:
             return self.host.read(self._pane, lines)
         except TuiError as e:
-            raise DriverError(f"screen of tui session {self.name}: {e}") from e
+            raise agent_pm.session.engine.types.DriverError(
+                f"screen of tui session {self.name}: {e}"
+            ) from e
 
     def _running(self) -> None:
         if self._own(self.host.status(self.name)) != tmux_host.RUNNING:
-            raise DriverError(f"tui session {self.name} is not running")
+            raise agent_pm.session.engine.types.DriverError(
+                f"tui session {self.name} is not running"
+            )
 
     def stop(self) -> None:
         """Under the name's lock, unless another pane holds the name, kills its pane's session

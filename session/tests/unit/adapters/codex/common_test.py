@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
+from agent_pm.session.modes.tui import hook_argv
 
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
@@ -136,7 +137,9 @@ class CommonTest(Base):
                         launch = (
                             run.launch("again", requested, resume=True)
                             if mode == "headless"
-                            else run.launch("again", requested, ("/fake/hook",), resume=True)
+                            else run.launch(
+                                "again", requested, hook_argv("/fake/session"), resume=True
+                            )
                         )
                     self.assertIs(launch.project, saved)
                     self.assertEqual(launch.transcript, str(path))

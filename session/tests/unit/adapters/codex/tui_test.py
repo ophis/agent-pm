@@ -22,12 +22,16 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests.case import ROOTS
+from session.tests.case import ROOTS, SRC
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
-HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
-
-HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
+HOOK = (
+    sys.executable,
+    "-I",
+    "/protected/driver_hook.py",
+    "context",
+    json.dumps([SRC["session"], SRC["utils"]]),
+)
 
 
 class TuiTest(Base):
@@ -44,6 +48,23 @@ class TuiTest(Base):
     def test_the_launch_protects_the_import_roots_first(self):
         _, _, data = self.launch()
         self.assertEqual(data["protect"][: len(ROOTS)], list(ROOTS))
+
+    def test_launch_reuses_roots_supplied_by_the_mode_hook(self):
+        roots = [SRC["utils"], SRC["session"]]
+        hook = (*HOOK[:-1], json.dumps(roots))
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = self.adapter.tui().launch("hi", self.spec, hook, resume=False)
+        self.assertEqual(json.loads(launch.argv[-1])["import_roots"], roots)
+
+    def test_launch_requires_valid_source_roots_in_the_hook_command(self):
+        for encoded in ("not-json", "null", "{}", "[]", '["relative"]', '["/missing"]'):
+            with (
+                self.subTest(encoded=encoded),
+                mock.patch("shutil.which", return_value="/protected/codex"),
+                self.assertRaisesRegex(ConfigError, "source"),
+            ):
+                self.adapter.tui().launch("hi", self.spec, (*HOOK[:-1], encoded), resume=False)
+            self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
     def payload(self, **fields):
         return {"session_id": NATIVE, "cwd": str(self.cwd), **fields}
@@ -257,7 +278,7 @@ class TuiTest(Base):
     def test_writable_executable_and_hook_dependency_are_rejected(self):
         for path in (self.cwd / "codex", self.extra / "driver.py"):
             spec = dataclasses.replace(self.spec, sid="unsafe-" + path.name)
-            hook = HOOK if path.name == "codex" else (sys.executable, "-I", str(path))
+            hook = HOOK if path.name == "codex" else (*HOOK[:2], str(path), *HOOK[3:])
             with (
                 mock.patch(
                     "shutil.which",
@@ -276,7 +297,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "rewrite|writable"),
         ):
             self.adapter.tui().launch(
-                "hi", self.spec, (sys.executable, "-I", str(link)), resume=False
+                "hi", self.spec, (*HOOK[:2], str(link), *HOOK[3:]), resume=False
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
@@ -339,7 +360,7 @@ class TuiTest(Base):
                         adapter.tui().launch(
                             "hi",
                             spec,
-                            (sys.executable, "-I", "/driver-only/hook.py"),
+                            (*HOOK[:2], "/driver-only/hook.py", *HOOK[3:]),
                             resume=resume,
                         )
                     if not resume:
