@@ -510,6 +510,75 @@ class PrivateImports(Sample):
 
 
 class ImportHygiene(Sample):
+    def test_bootstrap_owners_may_prepend_roots_in_their_startup_function(self):
+        root = self.tree(
+            {
+                path: (
+                    f"import sys\ndef {function}(roots):\n"
+                    "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                )
+                for path, function in guards.IMPORT_BOOTSTRAPS.items()
+            }
+        )
+        self.assertEqual(guards.import_hygiene(root), [])
+
+    def test_bootstrap_permission_does_not_cover_other_scopes(self):
+        assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+            with self.subTest(path=path):
+                root = self.tree(
+                    {
+                        path: (
+                            f"import sys\n{assignment}\ndef {function}(roots):\n"
+                            f"    {assignment}\n"
+                            f"    def nested():\n        {assignment}\n"
+                            f"def other(roots):\n    {assignment}\n"
+                            f"class Other:\n    def {function}(self, roots):\n"
+                            f"        {assignment}\n"
+                        )
+                    }
+                )
+                self.assertEqual(
+                    guards.import_hygiene(root),
+                    sorted(f"{path}:{line}: sys.path mutation" for line in (2, 6, 8, 11)),
+                )
+
+    def test_bootstrap_permission_covers_only_one_root_prefix_assignment(self):
+        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+            with self.subTest(path=path):
+                root = self.tree(
+                    {
+                        path: (
+                            f"import sys\ndef {function}(roots):\n"
+                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                            "    sys.path[:0] = ['arbitrary']\n    sys.path[:] = roots\n"
+                            "    sys.path[0:0] = roots\n    sys.path[:False] = roots\n"
+                            "    sys.path.append(roots)\n    sys.path.insert(0, roots)\n"
+                            "    sys.path = roots\n    sys.path += roots\n"
+                        )
+                    }
+                )
+                self.assertEqual(
+                    guards.import_hygiene(root),
+                    sorted(f"{path}:{line}: sys.path mutation" for line in range(4, 13)),
+                )
+
+    def test_named_bootstrap_functions_in_other_files_cannot_change_search_paths(self):
+        assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+        root = self.tree(
+            {
+                "tests/other.py": (
+                    f"import sys\ndef _bootstrap(roots):\n    {assignment}\n"
+                    f"def main(roots):\n    {assignment}\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.import_hygiene(root),
+            ["tests/other.py:3: sys.path mutation", "tests/other.py:5: sys.path mutation"],
+        )
+
     def test_any_sys_path_mutation(self):
         root = self.tree(
             {
@@ -584,7 +653,7 @@ class StandaloneImports(Sample):
         root = self.tree({path: "" for path in guards.STANDALONE if path != missing})
         self.assertEqual(guards.standalone_imports(root), [f"{missing}: missing standalone script"])
 
-    def test_top_level_package_branch_is_skipped_and_standalone_fallback_is_checked(self):
+    def test_every_branch_is_checked_unconditionally(self):
         source = """if __package__:
     from agent_pm.session.adapters import flags
 else:
@@ -597,7 +666,11 @@ import agent_pm.utils
             sorted(
                 f"{path}:{line}: non-stdlib import {name}"
                 for path in guards.STANDALONE
-                for line, name in ((5, "requests"), (6, "agent_pm.utils"))
+                for line, name in (
+                    (2, "agent_pm.session.adapters"),
+                    (5, "requests"),
+                    (6, "agent_pm.utils"),
+                )
             ),
         )
 
@@ -618,31 +691,6 @@ if not __package__:
                 for line, name in ((3, "agent_pm.utils"), (5, "requests"), (7, "other"))
             ),
         )
-
-    def test_rebinding_package_metadata_rejects_the_binding_and_checks_both_branches(self):
-        for binding in (
-            '__package__ = "foreign"',
-            '__package__ += "foreign"',
-            '(__package__ := "foreign")',
-            "del __package__",
-            "import os as __package__",
-            "from os import path as __package__",
-            "def __package__(): pass",
-            "class __package__: pass",
-        ):
-            with self.subTest(binding=binding):
-                source = binding + "\nif __package__:\n    import requests\nelse:\n    import os\n"
-                self.assertEqual(
-                    self.found(source),
-                    sorted(
-                        violation
-                        for path in guards.STANDALONE
-                        for violation in (
-                            f"{path}:1: rebinds __package__",
-                            f"{path}:3: non-stdlib import requests",
-                        )
-                    ),
-                )
 
     def test_unlisted_module_is_not_a_standalone_script(self):
         files = dict.fromkeys(guards.STANDALONE, "")

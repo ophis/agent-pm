@@ -7,23 +7,67 @@ import hashlib
 import json
 import os
 import re
-import runpy
 import signal
 import sys
 import time
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+class StartError(Exception):
+    pass
 
 
-if __package__:
+def _decode_launch_data(argv):
+    if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
+        raise StartError("Codex tui launch: expected bounded launch data")
+    try:
+        data = json.loads(argv[0])
+    except (ValueError, RecursionError) as exc:
+        raise StartError("Codex tui launch: malformed launch data") from exc
+    if not isinstance(data, dict):
+        raise StartError("Codex tui launch: invalid launch fields")
+    return data
+
+
+def _import_roots(value):
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(
+            not isinstance(path, str)
+            or not path.isprintable()
+            or not os.path.isabs(path)
+            or not os.path.isdir(path)
+            for path in value
+        )
+        or len(set(value)) != len(value)
+    ):
+        raise StartError("Codex tui launch: invalid import roots")
+    return value
+
+
+def _bootstrap(argv):
+    data = _decode_launch_data(argv)
+    roots = _import_roots(data.get("import_roots"))
+    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
+
+
+ANSWER_MAX = 64 << 20
+
+if __name__ == "__main__":
+    try:
+        _bootstrap(sys.argv[1:])
+    except StartError as exc:
+        print(f"codex tui: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+try:
     from agent_pm.session.adapters.codex import app_server, sessions
     from agent_pm.session.adapters.codex.hook_schema import HOOKS
-else:
-    _sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
-    sessions = _sibling(DIRECTORY, "sessions")
-    app_server = _sibling(DIRECTORY, "app_server")
-    HOOKS = _sibling(DIRECTORY, "hook_schema").HOOKS
-
+except ImportError as exc:
+    if __name__ != "__main__":
+        raise
+    print(f"codex tui: cannot import session packages: {exc}", file=sys.stderr)
+    sys.exit(1)
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -34,12 +78,6 @@ ANSWER_WAIT = 20
 RETRY = 1
 
 POLL = 0.1
-
-ANSWER_MAX = 64 << 20
-
-
-class StartError(Exception):
-    pass
 
 
 class Stopped(BaseException):
@@ -269,13 +307,8 @@ def _listed_hooks(result, cwd):
 
 
 def _launch_data(argv):
-    if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
-        raise StartError("Codex tui launch: expected bounded launch data")
-    try:
-        data = json.loads(argv[0])
-    except (ValueError, RecursionError) as exc:
-        raise StartError("Codex tui launch: malformed launch data") from exc
-    if not isinstance(data, dict) or set(data) != {
+    data = _decode_launch_data(argv)
+    if set(data) != {
         "argv",
         "hook",
         "commands",
@@ -285,8 +318,10 @@ def _launch_data(argv):
         "store",
         "protect",
         "add_dirs",
+        "import_roots",
     }:
         raise StartError("Codex tui launch: invalid launch fields")
+    _import_roots(data["import_roots"])
     for key in ("argv", "hook", "hook_flags"):
         if (
             not isinstance(data[key], list)

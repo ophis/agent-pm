@@ -1,4 +1,4 @@
-"""Each tui hook runs `<python> -I tui_hook.py <session dir> <label>` with JSON on stdin. Checks
+"""Each tui hook runs `<python> -I tui_hook.py <session dir> <roots JSON> <label>` with JSON on stdin. Checks
 session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
 "payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
 session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
@@ -69,10 +69,14 @@ SESSION_STATE = {
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
-    if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
-        raise HookError("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
-    folder, label = argv
+    if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
+        raise HookError(
+            "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
+        )
+    folder, encoded_roots, label = argv
+    roots = _source_roots(encoded_roots)
     state = read_state(os.path.join(folder, STATE))
+    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
     if "adapter_hook" in state:
         adapter = load_adapter(state["adapter_hook"])
         if adapter.on_hook(label, payload, state) is False:
@@ -89,6 +93,23 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
             tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
             raise HookError(str(e)) from None
+
+
+def _source_roots(encoded: str) -> list[str]:
+    try:
+        roots = json.loads(encoded)
+    except (ValueError, RecursionError):
+        raise HookError(
+            "invalid source roots: expected a nonempty JSON array of directories"
+        ) from None
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or any(not _abs(path) or not os.path.isdir(path) for path in roots)
+        or len(set(roots)) != len(roots)
+    ):
+        raise HookError("invalid source roots: expected distinct absolute directories")
+    return roots
 
 
 def read_payload(stream) -> dict:

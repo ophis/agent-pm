@@ -19,7 +19,7 @@ from agent_pm.session.adapters.codex.common import (
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.flags import split_flags
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
-from agent_pm.utils import import_roots
+from agent_pm.utils import import_roots, module_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -60,9 +60,10 @@ class CodexTui(Tui):
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Tui mode hook command")
-        roots = import_roots()
+        roots = module_roots(sys.modules["agent_pm.session"], sys.modules["agent_pm.utils"])
+        protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
         dependencies = [
-            *roots,
+            *protected_roots,
             sys.prefix,
             sys.base_prefix,
             sys.executable,
@@ -115,7 +116,8 @@ class CodexTui(Tui):
             "workdir": self.state.workdir,
             "sid": self.state.sid,
             "store": store,
-            "protect": [*roots, *spec.protect],
+            "import_roots": list(roots),
+            "protect": [*protected_roots, *spec.protect],
             "add_dirs": added,
         }
         return Launch(

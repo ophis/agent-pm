@@ -21,6 +21,7 @@ from agent_pm.session.modes import tui_hook
 from session.tests.case import SRC, Case
 
 HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
+SOURCE_ROOTS = json.dumps([SRC["session"], SRC["utils"]])
 
 PANE = "%3"
 
@@ -117,7 +118,12 @@ class HookBase(Case):
         )
         environ = {k: v for k, v in {**self.env, **env}.items() if v is not None}
         res = subprocess.run(
-            [sys.executable, "-I", HOOK, *([self.dir, label] if args is None else args)],
+            [
+                sys.executable,
+                "-I",
+                HOOK,
+                *([self.dir, SOURCE_ROOTS, label] if args is None else args),
+            ],
             input=data,
             capture_output=True,
             env=environ,
@@ -187,7 +193,7 @@ runpy.run_path(path, run_name="__main__")
 
     def test_an_unexpected_error_still_exits_0(self):
         res = subprocess.run(
-            [sys.executable, "-I", HOOK, self.dir, "stop"],
+            [sys.executable, "-I", HOOK, self.dir, SOURCE_ROOTS, "stop"],
             capture_output=True,
             env=self.env,
             timeout=60,
@@ -238,7 +244,7 @@ class ErrorLoggingTest(HookBase):
             "relative",
         ):
             with self.subTest(folder=folder):
-                self.assertError(self.hook("stop", args=[folder, "stop"]), "tui_hook")
+                self.assertError(self.hook("stop", args=[folder, SOURCE_ROOTS, "stop"]), "tui_hook")
                 self.assertFalse(os.path.exists(os.path.join(folder, "hook.log")))
         self.assertNothingWritten()
 
@@ -254,8 +260,8 @@ from unittest import mock
 class BrokenFile(io.StringIO):
     def write(self, value):
         raise OSError("disk full")
-path, folder = sys.argv[1:]
-sys.argv = [path, folder, "stop"]
+path, folder, roots = sys.argv[1:]
+sys.argv = [path, folder, roots, "stop"]
 real_open = builtins.open
 def open_file(name, *args, **kwargs):
     if os.fspath(name) == os.path.join(folder, "hook.log"):
@@ -266,7 +272,7 @@ with mock.patch("builtins.open", side_effect=open_file):
 """
         os.unlink(os.path.join(self.dir, "session.json"))
         result = subprocess.run(
-            [sys.executable, "-I", "-c", script, HOOK, self.dir],
+            [sys.executable, "-I", "-c", script, HOOK, self.dir, SOURCE_ROOTS],
             input=b"{}",
             capture_output=True,
             env=self.env,
@@ -329,7 +335,7 @@ class PayloadTest(HookBase):
             unittest.mock.patch.dict(os.environ, self.env),
             redirect_stderr(io.StringIO()) as stderr,
         ):
-            tui_hook.main([self.dir, "stop"], stream)
+            tui_hook.main([self.dir, SOURCE_ROOTS, "stop"], stream)
         self.assertEqual(
             stderr.getvalue(), f"tui_hook: payload: over {tui_hook.PAYLOAD_MAX} bytes\n"
         )
@@ -403,7 +409,9 @@ class InProcess(Case):
             unittest.mock.patch("os.stat", fake_stat),
             unittest.mock.patch("os.access", fake_access),
         ):
-            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), load_host=lambda: self.fake)
+            tui_hook.main(
+                [self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"), load_host=lambda: self.fake
+            )
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
@@ -438,7 +446,9 @@ class InProcess(Case):
             calls.attach_mock(write, "write")
             calls.attach_mock(fake.mark, "mark")
             tui_hook.main(
-                [self.dir, "tool"], io.BytesIO(b'{"tool_name": "Bash"}'), load_host=lambda: fake
+                [self.dir, SOURCE_ROOTS, "tool"],
+                io.BytesIO(b'{"tool_name": "Bash"}'),
+                load_host=lambda: fake,
             )
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
@@ -598,24 +608,110 @@ class SecurityTest(HookBase):
         for args in (
             [],
             [self.dir],
-            [self.dir, "stop", "x"],
-            ["s1", "stop"],
-            [self.dir + "\n", "stop"],
-            [self.dir, ""],
-            [self.dir, "a b"],
-            [self.dir, "x" * 65],
-            [self.dir, "../x"],
+            [self.dir, "stop"],
+            [self.dir, SOURCE_ROOTS, "stop", "x"],
+            ["s1", SOURCE_ROOTS, "stop"],
+            [self.dir + "\n", SOURCE_ROOTS, "stop"],
+            [self.dir, SOURCE_ROOTS, ""],
+            [self.dir, SOURCE_ROOTS, "a b"],
+            [self.dir, SOURCE_ROOTS, "x" * 65],
+            [self.dir, SOURCE_ROOTS, "../x"],
         ):
             with self.subTest(args):
                 self.assertError(self.hook(None, args=args), "usage")
         self.assertNothingWritten()
+
+    def test_bad_source_roots_are_rejected_before_importing_the_callback(self):
+        callback, imported = (
+            os.path.join(self.root, "adapter.py"),
+            os.path.join(self.root, "imported"),
+        )
+        with open(callback, "w") as file:
+            file.write(f"open({imported!r}, 'w').close()\n")
+        self.state["adapter_hook"] = callback
+        write_state(self.dir, self.state)
+        for encoded in (
+            "not-json",
+            "[" * 1000 + "]" * 1000,
+            *(
+                json.dumps(roots)
+                for roots in (
+                    None,
+                    {},
+                    [],
+                    [None],
+                    [1],
+                    ["relative"],
+                    ["/invalid\0root"],
+                    [self.root + "\n"],
+                    [os.path.join(self.root, "missing")],
+                    [callback],
+                    [self.root, self.root],
+                )
+            ),
+        ):
+            with self.subTest(encoded=encoded):
+                self.assertError(
+                    self.hook("stop", args=[self.dir, encoded, "stop"]), "source roots"
+                )
+                self.assertFalse(os.path.exists(imported))
+        self.assertNothingWritten()
+
+    def test_supplied_distribution_roots_lead_once_before_callback_imports(self):
+        sources = [
+            os.path.join(self.root, name) for name in ("first-distribution", "second-distribution")
+        ]
+        for source, value in zip(sources, ("first", "second"), strict=True):
+            os.mkdir(source)
+            with open(os.path.join(source, "source_marker.py"), "w") as file:
+                file.write(f"VALUE = {value!r}\n")
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                """import sys
+from source_marker import VALUE
+def on_hook(label, payload, state):
+    payload["source"] = VALUE
+    payload["roots"] = sys.path[:2]
+    payload["counts"] = [sys.path.count(path) for path in sys.path[:2]]
+    payload["tail"] = sys.path[2:]
+"""
+            )
+        self.state.update(adapter_hook=callback, words={})
+        write_state(self.dir, self.state)
+        script = """import io, json, runpy, sys
+path, folder, encoded = sys.argv[1:]
+roots = json.loads(encoded)
+sys.path[:0] = [*roots, *roots]
+main = runpy.run_path(path)["main"]
+for _ in range(2):
+    main([folder, encoded, "stop"], io.BytesIO(b"{}"))
+"""
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", script, HOOK, self.dir, json.dumps(sources)],
+            capture_output=True,
+            env=self.env,
+            check=True,
+        )
+        self.assertEqual((result.stdout, result.stderr), (b"", b""))
+        records = self.records()
+        self.assertEqual(len(records), 2)
+        for record in records:
+            payload = record["payload"]
+            self.assertEqual(
+                (payload["source"], payload["roots"], payload["counts"]), ("first", sources, [1, 1])
+            )
+            self.assertNotIn(SRC["session"], payload["tail"])
+            self.assertNotIn(SRC["utils"], payload["tail"])
 
     def test_a_bad_session_dir_writes_nothing(self):
         afile = os.path.join(self.root, "file")
         open(afile, "w").close()
         for folder in (os.path.join(self.root, "missing"), afile):
             with self.subTest(folder):
-                self.assertError(self.hook(None, args=[folder, "stop"]), "session.json")
+                self.assertError(
+                    self.hook(None, args=[folder, SOURCE_ROOTS, "stop"]), "session.json"
+                )
         self.assertNothingWritten()
 
     def test_a_session_json_that_is_no_regular_file_writes_nothing(self):

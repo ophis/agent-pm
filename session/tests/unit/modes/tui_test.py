@@ -774,12 +774,11 @@ class CloseStopTest(Base):
     def test_close_prevents_a_late_hook_from_recreating_files_during_removal(self):
         self.started()
         remove, hooks = os.rmdir, []
-        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
 
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [sys.executable, "-I", hook, self.dir, "stop"],
+                    [*tui.hook_argv(self.dir), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,
@@ -1099,7 +1098,8 @@ class PathsTest(Base):
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
         hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
         argv = tui.hook_argv("/d/w1")
-        self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
+        self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1", argv[4]))
+        self.assertEqual(json.loads(argv[4]), [SRC["session"], SRC["utils"]])
         self.assertTrue(os.path.isabs(argv[2]))
         self.assertTrue(os.path.samefile(argv[2], hook))
 

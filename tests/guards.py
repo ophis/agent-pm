@@ -90,6 +90,12 @@ LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
+IMPORT_BOOTSTRAPS = {
+    f"{SESSION_SRC}adapters/codex/tui_start.py": "_bootstrap",
+    f"{SESSION_SRC}modes/tui_hook.py": "main",
+}
+
+
 STANDALONE = frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
@@ -98,10 +104,6 @@ STANDALONE = frozenset(
         "adapters/flags.py",
         "adapters/codex/app_server.py",
         "adapters/codex/hook_schema.py",
-        "adapters/codex/sessions.py",
-        "adapters/codex/siblings.py",
-        "adapters/codex/tui_start.py",
-        "adapters/codex/tui_hook.py",
     )
 )
 
@@ -684,7 +686,6 @@ def standalone(repo: str) -> list[str]:
 
 
 def standalone_imports(repo: str) -> list[str]:
-    """Skip only top-level `if __package__:` bodies with unrebound interpreter metadata."""
     found = []
     standard = sys.stdlib_module_names | {"__future__", "builtins"}
     for rel in sorted(STANDALONE):
@@ -694,36 +695,7 @@ def standalone_imports(repo: str) -> list[str]:
             continue
         with open(path, encoding="utf-8") as file:
             tree = ast.parse(file.read(), rel)
-        rebound = [
-            node
-            for node in ast.walk(tree)
-            if (
-                isinstance(node, ast.Name)
-                and node.id == "__package__"
-                and isinstance(node.ctx, ast.Store | ast.Del)
-            )
-            or (
-                isinstance(node, ast.alias)
-                and (node.asname or node.name.split(".")[0]) == "__package__"
-            )
-            or (
-                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
-                and node.name == "__package__"
-            )
-        ]
-        found.extend(f"{rel}:{node.lineno}: rebinds __package__" for node in rebound)
-        nodes = []
-        for statement in tree.body:
-            roots = (
-                statement.orelse
-                if not rebound
-                and isinstance(statement, ast.If)
-                and isinstance(statement.test, ast.Name)
-                and statement.test.id == "__package__"
-                else [statement]
-            )
-            nodes.extend(node for root in roots for node in ast.walk(root))
-        for node in nodes:
+        for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
@@ -862,13 +834,34 @@ def import_hygiene(repo: str) -> list[str]:
         path, environ, putenv = (
             _spellings(nodes, n) for n in ("sys.path", "os.environ", "os.putenv")
         )
-        found.update(f"{rel}:{n.lineno}: sys.path mutation" for n in nodes if _changes(n, path))
+        bootstrap = _path_bootstrap(rel, tree)
+        found.update(
+            f"{rel}:{n.lineno}: sys.path mutation"
+            for n in nodes
+            if _changes(n, path) and n is not bootstrap
+        )
         found.update(
             f"{rel}:{n.lineno}: module-level environment write"
             for n in _at_import(tree)
             if _changes(n, environ) or isinstance(n, ast.Call) and _is(n.func, putenv)
         )
     return sorted(found)
+
+
+def _path_bootstrap(rel, tree):
+    name = IMPORT_BOOTSTRAPS.get(rel)
+    if name is None:
+        return None
+    assignment = ast.parse(
+        "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+    ).body[0]
+    for function in tree.body:
+        if not isinstance(function, ast.FunctionDef) or function.name != name:
+            continue
+        for statement in function.body:
+            if isinstance(statement, ast.Assign) and ast.dump(statement) == ast.dump(assignment):
+                return statement.targets[0]
+    return None
 
 
 def namespace_package(repo: str) -> list[str]:

@@ -1,6 +1,4 @@
-"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts'
-sibling loading.
-"""
+"""Codex startup package bootstrap, trust, launch validation and process cleanup."""
 
 import contextlib
 import copy
@@ -12,75 +10,118 @@ import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex import sessions, tui_hook, tui_start
+from agent_pm.session.adapters.codex import tui_hook, tui_start
 
 from session.tests import case
 from session.tests.case import Case
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
-SCRIPTS = ("tui_hook.py", "tui_start.py")
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
-SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
-LOADED = """import json, runpy, sys
-before = list(sys.path)
-runpy.run_path(sys.argv[1])
-names = sorted(n for n in sys.modules if n.endswith(("sessions", "hook_schema")))
-print(json.dumps([names, sys.path == before]))
-"""
-
-
-class SiblingTest(Case):
-    def test_run_isolated_each_script_loads_its_siblings_by_path_under_private_names_only(self):
-        for name in SCRIPTS:
-            with self.subTest(name=name):
-                result = subprocess.run(
-                    [sys.executable, "-I", "-c", LOADED, str(DIRECTORY / name)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.assertEqual(json.loads(result.stdout), [sorted(SIBLINGS), True])
-
-    def test_registered_private_names_must_point_to_the_same_file(self):
-        code = """import runpy, sys, types
-name = "_agent_pm_codex_sessions"
-foreign = types.ModuleType(name)
-foreign.__file__ = "/foreign/sessions.py"
-sys.modules[name] = foreign
+INSPECT = """import dataclasses, json, runpy, sys, typing
+script, data = sys.argv[1:]
+sys.argv = [script, data]
 try:
-    runpy.run_path(sys.argv[1])
-except ImportError as error:
-    print(error)
-"""
-        for name in SCRIPTS:
-            with self.subTest(name=name):
-                result = subprocess.run(
-                    [sys.executable, "-I", "-c", code, str(DIRECTORY / name)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.assertIn("not " + str(DIRECTORY / "sessions.py"), result.stdout)
-
-    def test_scripts_reuse_the_same_registered_dependencies(self):
-        for script in (tui_start, tui_hook):
-            self.assertEqual(script.sessions.__file__, str(DIRECTORY / "sessions.py"))
-        self.assertIs(tui_start.sessions, tui_hook.sessions)
-        self.assertIs(tui_start.sessions, sessions)
-
-    def test_package_imports_share_canonical_modules_and_flag_type(self):
-        code = """import json, sys
+    runpy.run_path(script, run_name="__main__")
+except SystemExit as error:
+    status = error.code
 from agent_pm.session.adapters import flags
-from agent_pm.session.adapters.codex import app_server, hook_schema, sessions, tui_hook, tui_start
+from agent_pm.session.adapters.codex import app_server, hook_schema, sessions, tui_hook, tui_start, types
+roots = json.loads(data)["import_roots"]
+before = list(sys.path)
+tui_start._bootstrap([data])
 print(json.dumps([
+    status,
+    sys.path[:len(roots)] == roots,
+    all(sys.path.count(root) == 1 for root in roots),
+    sys.path == before,
+    sessions.argv_flags is flags,
+    type(next(sessions.argv_flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
+    dataclasses.is_dataclass(sessions.SessionState),
+    sessions.SessionState is types.SessionState,
+    typing.get_type_hints(sessions.SessionState)["snapshot"] is dict,
+    tui_start.sessions is sessions,
+    tui_hook.sessions is sessions,
+    tui_hook.sessions.RecoveryError is sessions.RecoveryError,
+    tui_start.app_server is app_server,
+    tui_start.HOOKS is hook_schema.HOOKS,
+    tui_hook.HOOKS is hook_schema.HOOKS,
+    sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),
+    sessions.__file__,
+    sys.modules["agent_pm.utils"].__file__,
+]))
+"""
+
+
+class BootstrapTest(Case):
+    def data(self, roots=None):
+        return {
+            "argv": [sys.executable],
+            "hook": [sys.executable],
+            "commands": {label: "command-" + label for label, _, _ in tui_start.HOOKS},
+            "hook_flags": ["-c", "fixture"],
+            "workdir": self.home,
+            "sid": "bootstrap",
+            "store": "/uncreated-agent-pm-state/recovery/codex",
+            "import_roots": roots or [case.SRC["session"], case.SRC["utils"]],
+            "protect": [],
+            "add_dirs": [],
+        }
+
+    def isolated(self, data, *, code=None, cwd=None, env=None):
+        command = (
+            [sys.executable, "-I", "-c", code, tui_start.__file__, json.dumps(data)]
+            if code is not None
+            else [sys.executable, "-I", tui_start.__file__, json.dumps(data)]
+        )
+        return subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
+
+    def test_isolated_launcher_uses_canonical_modules_dataclasses_and_flag_type(self):
+        data = self.data()
+        result = self.isolated(data, code=INSPECT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
+        values = json.loads(result.stdout)
+        self.assertEqual(values[:16], [1, *([True] * 14), []])
+        self.assertTrue(values[16].startswith(data["import_roots"][0] + os.sep))
+        self.assertTrue(values[17].startswith(data["import_roots"][1] + os.sep))
+
+    def test_supplied_alternate_layout_ignores_cwd_and_pythonpath_decoys(self):
+        layout = pathlib.Path(self.home) / "layout"
+        layout.mkdir()
+        roots = []
+        for package in ("session", "utils"):
+            root = layout / (package + "-python")
+            root.symlink_to(case.SRC[package], target_is_directory=True)
+            roots.append(str(root))
+        decoy = pathlib.Path(self.home) / "untrusted"
+        decoy.mkdir()
+        (decoy / "agent_pm.py").write_text('raise RuntimeError("untrusted agent_pm")\n')
+        (decoy / "sessions.py").write_text('raise RuntimeError("untrusted sessions")\n')
+        result = self.isolated(
+            self.data(roots),
+            code=INSPECT,
+            cwd=decoy,
+            env={**os.environ, "PYTHONPATH": str(decoy)},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
+        values = json.loads(result.stdout)
+        self.assertEqual(values[:16], [1, *([True] * 14), []])
+        self.assertTrue(values[16].startswith(roots[0] + os.sep))
+        self.assertTrue(values[17].startswith(roots[1] + os.sep))
+
+    def test_package_imports_keep_sys_path_and_share_canonical_modules(self):
+        code = """import json, sys
+before = list(sys.path)
+from agent_pm.session.adapters import flags
+from agent_pm.session.adapters.codex import sessions, tui_hook, tui_start
+print(json.dumps([
+    sys.path == before,
     sessions.argv_flags is flags,
     type(next(sessions.argv_flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
     tui_start.sessions is sessions,
     tui_hook.sessions is sessions,
-    tui_start.app_server is app_server,
-    tui_start.HOOKS is hook_schema.HOOKS,
-    tui_hook.HOOKS is hook_schema.HOOKS,
     sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),
 ]))
 """
@@ -90,9 +131,38 @@ print(json.dumps([
             text=True,
             check=True,
         )
-        self.assertEqual(json.loads(result.stdout), [True, True, True, True, True, True, True, []])
+        self.assertEqual(json.loads(result.stdout), [True, True, True, True, True, []])
 
-    def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
+    def test_bootstrap_rejects_missing_or_invalid_import_roots_before_package_imports(self):
+        file = pathlib.Path(self.home) / "file"
+        file.write_text("fixture")
+        unprintable = pathlib.Path(self.home) / "unprintable\nroot"
+        unprintable.mkdir()
+        data = self.data()
+        invalid = (
+            None,
+            [],
+            data["import_roots"][0],
+            [1],
+            ["relative"],
+            ["/a\0b"],
+            [str(unprintable)],
+            [str(file)],
+            [str(pathlib.Path(self.home) / "missing")],
+            [data["import_roots"][0]] * 2,
+        )
+        cases = [({key: value for key, value in data.items() if key != "import_roots"}, "missing")]
+        cases.extend(({**data, "import_roots": value}, value) for value in invalid)
+        for launch, value in cases:
+            with self.subTest(roots=value):
+                result = self.isolated(launch)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("codex tui: Codex tui launch:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("No module named", result.stderr)
+
+    def test_run_by_path_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(
             [sys.executable, "-I", tui_start.__file__, "not-json"], capture_output=True, text=True
         )
@@ -100,6 +170,21 @@ print(json.dumps([
             (result.returncode, result.stdout, result.stderr),
             (1, "", "codex tui: Codex tui launch: malformed launch data\n"),
         )
+
+    def test_run_by_path_requires_launch_argument_and_bounds_it_before_decoding(self):
+        result = subprocess.run(
+            [sys.executable, "-I", tui_start.__file__], capture_output=True, text=True
+        )
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr),
+            (1, "", "codex tui: Codex tui launch: expected bounded launch data\n"),
+        )
+        with (
+            mock.patch("json.loads") as decode,
+            self.assertRaisesRegex(tui_start.StartError, "expected bounded launch data"),
+        ):
+            tui_start._bootstrap([" " * (tui_start.ANSWER_MAX + 1)])
+        decode.assert_not_called()
 
 
 class StartTest(Base):
@@ -118,13 +203,18 @@ class StartTest(Base):
         self.assertEqual(self.adapter.tui().hooks, {label: kind for label, _, kind in expected})
         self.assertEqual(tui_start.HOOKS, expected)
         self.assertEqual(tui_hook.LABELS, {label for label, _, _ in expected})
+        code = """import json, sys
+sys.path[:0] = json.loads(sys.argv[1])
+from agent_pm.session.adapters.codex.hook_schema import HOOKS
+print(json.dumps(HOOKS))
+"""
         result = subprocess.run(
             [
                 sys.executable,
                 "-I",
                 "-c",
-                "import json, runpy, sys; print(json.dumps(runpy.run_path(sys.argv[1])['HOOKS']))",
-                str(pathlib.Path(tui_start.__file__).parent / "hook_schema.py"),
+                code,
+                json.dumps([case.SRC["session"], case.SRC["utils"]]),
             ],
             capture_output=True,
             text=True,
@@ -172,7 +262,7 @@ class StartTest(Base):
         with self.assertRaisesRegex(tui_start.StartError, "review"):
             tui_start.trusted(result, str(self.cwd), commands)
 
-    def test_standalone_dependencies_use_stdlib(self):
+    def test_standalone_account_probe_uses_stdlib(self):
         script = """import json, runpy, sys
 imports = set()
 def record(event, args):
@@ -182,22 +272,13 @@ sys.addaudithook(record)
 runpy.run_path(sys.argv[1])
 print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names)))
 """
-        for name in (
-            "sessions.py",
-            "tui_start.py",
-            "tui_hook.py",
-            "hook_schema.py",
-            "app_server.py",
-            "siblings.py",
-        ):
-            with self.subTest(name=name):
-                result = subprocess.run(
-                    [sys.executable, "-I", "-c", script, str(DIRECTORY / name)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.assertEqual(json.loads(result.stdout), [])
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", script, str(DIRECTORY / "app_server.py")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(json.loads(result.stdout), [])
 
     def test_start_adds_transient_trust_and_execs_saved_home_without_config_write(self):
         run = self.adapter.tui()
@@ -325,6 +406,34 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                 with self.assertRaises(tui_start.StartError):
                     tui_start.main([data])
         proc.assert_not_called()
+
+    def test_import_roots_are_required_and_validated_without_spawning(self):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = self.adapter.tui().launch("prompt", self.spec, HOOK, resume=False)
+        data = json.loads(launch.argv[-1])
+        missing = {key: value for key, value in data.items() if key != "import_roots"}
+        invalid = (
+            None,
+            [],
+            "/protected",
+            [1],
+            ["relative"],
+            ["/a\0b"],
+            ["/a\nb"],
+            [str(self.root / "missing")],
+            [case.SRC["session"]] * 2,
+        )
+        with mock.patch("subprocess.Popen") as proc, mock.patch("os.execve") as execute:
+            for changed in (missing, *(data | {"import_roots": roots} for roots in invalid)):
+                with (
+                    self.subTest(roots=changed.get("import_roots")),
+                    self.assertRaises(tui_start.StartError),
+                ):
+                    tui_start.main([json.dumps(changed)])
+            with self.assertRaisesRegex(tui_start.StartError, "fields"):
+                tui_start.main([json.dumps(data | {"unknown": []})])
+        proc.assert_not_called()
+        execute.assert_not_called()
 
     def test_signal_during_spawn_cleans_owned_process_without_retry_or_exec(self):
         run = self.adapter.tui()

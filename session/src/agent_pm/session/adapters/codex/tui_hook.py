@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-import os
-import runpy
 import sys
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
-
-
-if __package__:
-    from agent_pm.session.adapters.codex import sessions
-    from agent_pm.session.adapters.codex.hook_schema import HOOKS
-else:
-    _sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
-    sessions = _sibling(DIRECTORY, "sessions")
-    HOOKS = _sibling(DIRECTORY, "hook_schema").HOOKS
-
+from agent_pm.session.adapters.codex import sessions
+from agent_pm.session.adapters.codex.hook_schema import HOOKS
 
 LABELS = {label for label, _, _ in HOOKS}
 

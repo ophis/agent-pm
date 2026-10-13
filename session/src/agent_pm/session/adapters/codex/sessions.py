@@ -1,4 +1,4 @@
-"""Codex recovery records and snapshots; path-loaded by isolated startup and hook scripts."""
+"""Codex recovery records, persistence and validated snapshots."""
 
 from __future__ import annotations
 
@@ -8,42 +8,20 @@ import hashlib
 import json
 import os
 import re
-import runpy
 import stat
 import tempfile
 import time
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
 from typing import Literal, overload
 
-if __package__:
-    from agent_pm.session.adapters import flags as argv_flags
-else:
-    _directory = os.path.dirname(os.path.abspath(__file__))
-    _sibling = runpy.run_path(os.path.join(_directory, "siblings.py"))["load"]
-    argv_flags = _sibling(os.path.dirname(_directory), "flags")
+from agent_pm.session.adapters import flags as argv_flags
+from agent_pm.session.adapters.codex.types import SessionFile, SessionState
 
 
 class RecoveryError(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class SessionFile:
-    path: str
-    mtime: float
-    metadata: dict
-
-
-@dataclass(frozen=True)
-class SessionState:
-    workdir: str
-    sid: str
-    snapshot: dict
-    writable_roots: list[str]
-    native_id: str | None = None
 
 
 def private_file(info: os.stat_result) -> bool:

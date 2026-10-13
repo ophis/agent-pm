@@ -12,8 +12,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agent_pm.session.adapters.codex.sessions import (
     VALUED,
     RecoveryError,
-    SessionFile,
-    SessionState,
     SessionStore,
     absolute_path,
     added_dirs,
@@ -27,6 +25,7 @@ from agent_pm.session.adapters.codex.sessions import (
     session_paths,
     validate_snapshot,
 )
+from agent_pm.session.adapters.codex.types import SessionFile, SessionState
 from agent_pm.session.adapters.common import check
 from agent_pm.session.adapters.flags import scan, split_flags
 from agent_pm.session.engine.types import (

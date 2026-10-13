@@ -10,7 +10,7 @@ from agent_pm.session.adapters.codex.common import (
     native_id,
     reset_at,
 )
-from agent_pm.session.adapters.codex.sessions import SessionState
+from agent_pm.session.adapters.codex.types import SessionState
 from agent_pm.session.adapters.flags import split_flags
 from agent_pm.session.engine.types import (
     Activity,

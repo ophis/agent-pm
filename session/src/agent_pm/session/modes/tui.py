@@ -28,7 +28,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.tui_hook import HookError
-from agent_pm.utils import STATE, json_records, read_regular
+from agent_pm.utils import STATE, json_records, module_roots, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
@@ -40,7 +40,8 @@ def session_dir(name: str) -> str:
 
 
 def hook_argv(folder: str) -> tuple[str, ...]:
-    return sys.executable, "-I", os.path.abspath(tui_hook.__file__), folder
+    roots = module_roots(sys.modules["agent_pm.session"], sys.modules["agent_pm.utils"])
+    return sys.executable, "-I", os.path.abspath(tui_hook.__file__), folder, json.dumps(roots)
 
 
 def read_state(name: str) -> dict:

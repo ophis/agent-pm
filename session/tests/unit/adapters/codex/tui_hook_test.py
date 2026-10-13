@@ -11,6 +11,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import sessions, tui_hook
 
+from session.tests.case import SRC
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -92,6 +93,7 @@ class HookTest(Base):
         folder.mkdir()
         from agent_pm.session.modes import tui_hook as mode_hook
 
+        roots_json = json.dumps([SRC["session"], SRC["utils"]])
         state = {
             "runtime": "codex",
             "sid": self.spec.sid,
@@ -108,7 +110,7 @@ class HookTest(Base):
         }
         (folder / "session.json").write_text(json.dumps(state))
         result = subprocess.run(
-            [sys.executable, "-I", mode_hook.__file__, str(folder), "Stop"],
+            [sys.executable, "-I", mode_hook.__file__, str(folder), roots_json, "Stop"],
             input=json.dumps(self.payload(last_assistant_message="reply")),
             capture_output=True,
             text=True,
@@ -120,7 +122,7 @@ class HookTest(Base):
         self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         result = subprocess.run(
-            [sys.executable, "-I", mode_hook.__file__, str(folder), "Stop"],
+            [sys.executable, "-I", mode_hook.__file__, str(folder), roots_json, "Stop"],
             input=json.dumps(self.payload(agent_id=CHILD)),
             capture_output=True,
             text=True,

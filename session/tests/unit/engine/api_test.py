@@ -1453,7 +1453,8 @@ class TuiStartTest(TuiBase):
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
-            call.args[1][-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))]
+            call.args[1][-(1 + len(tui.hook_argv(os.path.join(self.root, "w1")))) :],
+            ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))],
         )
         self.assertEqual(call.kwargs["cwd"], self.workdir)
         self.assertEqual(
