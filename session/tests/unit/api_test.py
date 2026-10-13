@@ -822,7 +822,8 @@ class ModeTest(Case):
     ):
         def params(function):
             return [
-                (p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()
+                (None if p.kind is inspect.Parameter.POSITIONAL_ONLY else p.name, p.kind, p.default)
+                for p in inspect.signature(function).parameters.values()
             ]
 
         members = sorted(

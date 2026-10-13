@@ -18,7 +18,7 @@ from agent_pm.session.modes.reporting.types import FailureReport
 STOP_WAIT = 5
 
 
-def kill_group(proc: subprocess.Popen, ended: bool = False, *, wait: float = STOP_WAIT) -> None:
+def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STOP_WAIT) -> None:
     # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so
     # signal nothing.
     if not (ended and proc.returncode is not None):
@@ -123,12 +123,12 @@ class HeadlessMode:
     def state(self) -> str:
         return "live" if self.proc is not None and self.proc.poll() is None else "absent"
 
-    def send(self, text: str) -> None:
-        raise DriverError("send: tui mode only")
+    def send(self, _text: str, /) -> None:
+        raise DriverError.tui_only("send")
 
-    def screen(self, lines: int | None = None) -> str:
-        raise DriverError("screen: tui mode only")
+    def screen(self, _lines: int | None = None, /) -> str:
+        raise DriverError.tui_only("screen")
 
     def stop(self) -> None:
         if self.proc is not None:
-            kill_group(self.proc, all(eof.is_set() for eof in self.eof), wait=self.stop_wait)
+            kill_group(self.proc, ended=all(eof.is_set() for eof in self.eof), wait=self.stop_wait)

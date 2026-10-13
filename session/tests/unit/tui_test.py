@@ -1281,7 +1281,8 @@ class ModeTest(Case):
     def test_tui_mode_has_each_mode_method_with_its_parameters(self):
         def params(function):
             return [
-                (p.name, p.kind, p.default) for p in inspect.signature(function).parameters.values()
+                (None if p.kind is inspect.Parameter.POSITIONAL_ONLY else p.name, p.kind, p.default)
+                for p in inspect.signature(function).parameters.values()
             ]
 
         for name in ("poll", "returncode", "state", "send", "screen", "stop"):

@@ -95,11 +95,11 @@ class Mode(Protocol):
         """One of STATES."""
         ...
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, /) -> None:
         """Submits `text` to the session."""
         ...
 
-    def screen(self, lines: int | None = None) -> str:
+    def screen(self, lines: int | None = None, /) -> str:
         """The session's visible text."""
         ...
 
@@ -326,7 +326,7 @@ class _HeadlessSteps(_LaunchSteps):
         try:
             host.begin(launch.argv, cwd=self.cwd, env=_child_env(launch, self.cwd, self.drop))
         except (OSError, ValueError) as e:
-            raise DriverError(f"cannot start {launch.argv[0]}: {e}") from e
+            raise DriverError.start_command(launch.argv[0], e) from e
 
 
 class _TuiSteps(_LaunchSteps):
@@ -352,7 +352,7 @@ class _TuiSteps(_LaunchSteps):
         self.events = _events(events, host=self.host)
         self.tmux = self.host.tmux_path()
         if self.tmux is None:
-            raise DriverError("tmux not found")
+            raise DriverError.missing_tmux()
 
     def specced(self, spec: Spec) -> Spec:
         self.drop = _identity_drop(self.registry)
@@ -590,11 +590,9 @@ class Driver:
             adapter = self.registry.adapter(state["runtime"])
             run = adapter.tui()
         except ConfigError as e:
-            raise DriverError(f"no tui session {name}: {e}") from None
+            raise DriverError.no_tui_session(name, e) from None
         if run is None:
-            raise DriverError(
-                f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
-            )
+            raise DriverError.no_tui_runtime(name, state["runtime"])
         host = tui.TuiMode.attach(name, state, run, host=self.host)
         info = SessionInfo(
             state["sid"],
@@ -634,7 +632,7 @@ class Driver:
         _placement(split, split_from, opener)
         settings = self.registry.tui()
         if self.host.status(name) is None:
-            raise DriverError(f"no tmux session {name}")
+            raise DriverError.no_tmux_session(name)
         why = self.host.open_pane(
             name,
             split=split,
@@ -741,8 +739,7 @@ class Driver:
                     raise
                 return None
         except TuiError as e:
-            hint = "" if split_from else ": run from tmux or iTerm2, or pass split_from"
-            raise DriverError(f"no pane to show the TUI beside ({e}){hint}") from None
+            raise DriverError.no_anchor(e, split_from) from None
 
     def attach_command(self, name: str) -> str:
         return self.host.attach_command(_name(name))
@@ -774,4 +771,4 @@ class Driver:
         try:
             self.host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
         except TuiError as e:
-            raise DriverError(f"detach {name}: {e}") from e
+            raise DriverError.detach(name, e) from e

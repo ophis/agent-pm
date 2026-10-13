@@ -249,6 +249,97 @@ class DriverError(Exception):
         detail = "tmux failed" if cause is None else str(cause)
         return cls(f"tmux sessions unknown: {detail}")
 
+    @classmethod
+    def no_tui_session(cls, name: str, cause: Exception | None = None) -> "DriverError":
+        return cls(f"no tui session {name}" if cause is None else f"no tui session {name}: {cause}")
+
+    @classmethod
+    def close_tui(cls, name: str, cause: Exception) -> "DriverError":
+        return cls(
+            f"cannot close tui session {name}: {cause.strerror or cause}"
+            if isinstance(cause, OSError)
+            else f"cannot close tui session {name}: {cause}"
+        )
+
+    @classmethod
+    def file_access(cls, path: str, cause: OSError) -> "DriverError":
+        return cls(f"{path}: {cause.strerror or cause}")
+
+    @classmethod
+    def foreign_directory(cls, path: str) -> "DriverError":
+        return cls(f"{path}: not your directory")
+
+    @classmethod
+    def bad_tui_field(cls, name: str, field: str, value: object) -> "DriverError":
+        return cls(f"tui session {name}: bad {field} {value!r:.80}")
+
+    @classmethod
+    def running_tui(cls, name: str, attach: str) -> "DriverError":
+        return cls(f"tui session {name} is running; {attach}")
+
+    @classmethod
+    def unknown_tui(cls, name: str) -> "DriverError":
+        return cls(f"tui session {name}: its tmux state is unknown")
+
+    @classmethod
+    def non_directory(cls, path: str) -> "DriverError":
+        return cls(f"{path}: not a directory")
+
+    @classmethod
+    def starting_tui(cls, name: str) -> "DriverError":
+        return cls(f"tui session {name} is starting")
+
+    @classmethod
+    def start_tui(cls, name: str, cause: Exception) -> "DriverError":
+        return cls(f"cannot start tui session {name}: {cause}")
+
+    @classmethod
+    def send_tui(cls, name: str, cause: Exception) -> "DriverError":
+        return cls(f"send to tui session {name}: {cause}")
+
+    @classmethod
+    def screen_tui(cls, name: str, cause: Exception) -> "DriverError":
+        return cls(f"screen of tui session {name}: {cause}")
+
+    @classmethod
+    def absent_tui(cls, name: str) -> "DriverError":
+        return cls(f"tui session {name} is not running")
+
+    @classmethod
+    def start_in_process(cls, cause: RuntimeError) -> "DriverError":
+        return cls(f"cannot start the in_process run: {cause}")
+
+    @classmethod
+    def tui_only(cls, operation: str) -> "DriverError":
+        return cls(f"{operation}: tui mode only")
+
+    @classmethod
+    def start_command(cls, command: str, cause: Exception) -> "DriverError":
+        return cls(f"cannot start {command}: {cause}")
+
+    @classmethod
+    def missing_tmux(cls) -> "DriverError":
+        return cls("tmux not found")
+
+    @classmethod
+    def no_tui_runtime(cls, name: str, runtime: str) -> "DriverError":
+        return cls(f"no tui session {name}: runtime {runtime!r} has no tui mode")
+
+    @classmethod
+    def no_tmux_session(cls, name: str) -> "DriverError":
+        return cls(f"no tmux session {name}")
+
+    @classmethod
+    def no_anchor(cls, cause: Exception, split_from: str | None) -> "DriverError":
+        return cls(
+            f"no pane to show the TUI beside ({cause})"
+            + ("" if split_from else ": run from tmux or iTerm2, or pass split_from")
+        )
+
+    @classmethod
+    def detach(cls, name: str, cause: Exception) -> "DriverError":
+        return cls(f"detach {name}: {cause}")
+
 
 @dataclass(frozen=True)
 class IdleTimeout:
