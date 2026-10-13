@@ -318,7 +318,7 @@ class TuiMode:
         self._gone = True
         self._code = -signal.SIGHUP if self._code is None else self._code
 
-    def _read(self) -> list[Event]:
+    def _read(self) -> list[Event | Stderr]:
         data = b"" if self._gone else read_regular(self.hooks, offset=self._offset) or b""
         end = data.rfind(b"\n") + 1
         if end:
@@ -334,13 +334,13 @@ class TuiMode:
                 found.append(event)
         return found
 
-    def _scan(self, screen: str) -> list[Event]:
+    def _scan(self, screen: str) -> list[Event | Stderr]:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
         per appearance.
         """
         screen = " ".join(screen.split())
         shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
-        found = (
+        found: list[Event | Stderr] = (
             [Activity("")] if self._dialogs - shown else []
         )  # first: a later Blocked keeps the idle pause
         found += [Blocked(d) for d in self.run.dialogs if d in shown - self._dialogs]

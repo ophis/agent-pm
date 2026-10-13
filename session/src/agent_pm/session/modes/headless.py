@@ -55,6 +55,7 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
         kill_group(proc)
         return None
     finally:
+        assert proc.stdout is not None
         proc.stdout.close()
 
 
@@ -111,6 +112,7 @@ class HeadlessMode:
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
+        assert self.proc is not None
         try:
             return self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:

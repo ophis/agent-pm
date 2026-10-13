@@ -16,6 +16,7 @@ import signal
 import stat
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import replace
@@ -77,23 +78,29 @@ class Mode(Protocol):
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
         """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
+        ...
 
     def returncode(self, timeout: float) -> int | None:
         """The exit status, waiting at most `timeout` s; None while it runs; negative: killed by
         that signal.
         """
+        ...
 
     def state(self) -> str:
         """One of STATES."""
+        ...
 
     def send(self, text: str) -> None:
         """Submits `text` to the session."""
+        ...
 
     def screen(self, lines: int | None = None) -> str:
         """The session's visible text."""
+        ...
 
     def stop(self) -> None:
         """Ends the session; idempotent."""
+        ...
 
 
 class Handle:
@@ -151,7 +158,7 @@ class Handle:
                     found, self._closed = self._host.poll(wait)
                     self._queue.extend(e for e in found if not isinstance(e, Exited))
                     continue
-                if wait <= 0:
+                if wait <= 0 and self._idle is not None:
                     last = self.clock()
                     yield IdleTimeout(self._idle)
         except GeneratorExit:  # the caller closed this iterator; the session goes on
@@ -249,12 +256,18 @@ def _no_tui_fields(spec: Spec) -> Spec:
     return spec
 
 
-class _LaunchSteps:
+class _LaunchSteps(ABC):
     """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd
     for begin().
     """
 
+    runtime: str
+
+    @abstractmethod
+    def launch(self, prompt: str, spec: Spec, resumed: bool) -> Launch: ...
+
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        assert spec.sid is not None
         self.command = launch = self.launch(prompt, spec, resumed)
         if not launch.argv:
             raise ConfigError.empty_command(self.runtime)
@@ -328,6 +341,7 @@ class _TuiSteps(_LaunchSteps):
         self.registry = registry
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
         self.host = host
+        assert spec.sid is not None
         self.name = _name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
         self.events = _events(events, host=self.host)
         self.tmux = self.host.tmux_path()
@@ -393,6 +407,7 @@ class _InProcessSteps:
         self.run = run
 
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
+        assert spec.sid is not None
         self.run.check(prompt, spec, resumed)
         self.args = prompt, spec, resumed
         return SessionInfo(

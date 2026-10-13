@@ -63,6 +63,7 @@ def call(
             raise Error(f"{exe}: {e.strerror}") from e
         if termination is not None:
             termination.check()
+        assert proc.stdout is not None
         lines = Lines(proc.stdout.fileno(), wait, limit, termination)
         send(
             proc,
@@ -89,7 +90,7 @@ def call(
             close(proc, termination, exit_wait)
         if termination is not None:
             termination.check()
-        if exited:
+        if exited and proc is not None:
             raise Exited(proc.returncode)
 
 

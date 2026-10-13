@@ -22,6 +22,7 @@ class PrintPromptInProcess(InProcess):
             raise ConfigError.print_prompt_protocol()
 
     def run(self, prompt, spec, resume):
+        assert spec.reply_tags is not None
         progress, outcome = spec.reply_tags
         tmp = os.path.join(spec.workdir, "tmp")
         os.makedirs(tmp, exist_ok=True)
