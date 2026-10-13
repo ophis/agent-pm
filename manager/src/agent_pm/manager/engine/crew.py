@@ -26,6 +26,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
+from typing import TypeGuard
 
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager.engine import roster
@@ -323,7 +324,7 @@ def start(
     return record["sid"]
 
 
-def _worker(data, name: str, sid: str) -> bool:
+def _worker(data: object, name: str, sid: str) -> TypeGuard[dict]:
     if not (isinstance(data, dict) and set(data) == set(FIELDS)):
         return False
     flags, env, manager, split_from = (data[k] for k in ("flags", "env", "manager", "split_from"))
@@ -509,7 +510,8 @@ def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
         e = entries[name]
         pane, driver = _sessions(name, e, live)
         if pane is None and driver is None:
-            e["state"] = "gone" if e["kind"] == "worker" else ENDED.get(_status(e["cwd"]), "gone")
+            status = None if e["kind"] == "worker" else _status(e["cwd"])
+            e["state"] = ENDED.get(status, "gone") if status is not None else "gone"
             continue
         e["state"] = live[pane].state if pane else "working"
         if pane:
@@ -730,9 +732,9 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
     if os.path.isdir(home):
         with _leased(home, own, write=False, driver=driver):
             pass
-    read = {}
+    read: dict[str, dict] = {}
 
-    def entries(session):
+    def entries(session: str):
         if session not in read:
             read[session] = _entries(roster.directory(session, driver=driver))
         return read[session]

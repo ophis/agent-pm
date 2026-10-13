@@ -26,6 +26,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
+from typing import overload
 
 from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import Driver, DriverError
@@ -76,6 +77,14 @@ WORKER_DIR = "worker directory"
 
 class Held(RosterError):
     pass
+
+
+@overload
+def directory(manager: str, *, driver=None) -> str: ...
+
+
+@overload
+def directory(manager: None = None, *, driver=None) -> str | None: ...
 
 
 def directory(manager: str | None = None, *, driver=None) -> str | None:
@@ -341,6 +350,7 @@ def _open(path: str, flags: int) -> int | None:
 @contextlib.contextmanager
 def _locked(path: str) -> Iterator[None]:
     fd = _open(path, os.O_RDWR | os.O_CREAT)
+    assert fd is not None
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT
         while True:
@@ -624,7 +634,7 @@ def due(r: dict, directory: str) -> bool:
     return size > EVENTS_MAX and offset(path, r["cursor"]) >= EVENTS_MAX // 2
 
 
-def advance(r: dict, directory: str, after: int | None, gen: int) -> int:
+def advance(r: dict, directory: str, after: int | None, gen: int | None) -> int:
     if gen != r["gen"]:
         raise Stale(f"stale line numbers (gen {gen}, now {r['gen']}): run crew.py attach")
     path = events(directory, create=False)
