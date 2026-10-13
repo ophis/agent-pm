@@ -1,1 +1,1 @@
-"""The orchestrator_tests package holds tests and fixtures (AGENTS.md › Tests)."""
+"""The orchestrator_tests package holds tests and fixtures."""

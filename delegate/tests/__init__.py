@@ -1,3 +1,3 @@
 """
-Delegate unit and integration tests, with shared helpers beside their owner (AGENTS.md › Tests).
+Delegate unit and integration tests, with shared helpers beside their owner.
 """

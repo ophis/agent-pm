@@ -60,10 +60,10 @@ _Avoid_: agent run (a role's run, in a session)
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name and displays them (e.g. in tmux sessions). In code: `session/src/agent_pm/session/hosts/`.
+Where the session layer runs processes by name (e.g. in tmux sessions). A Displayable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
 
 **Record**:
-One roster entry naming what a manager started (a worker, a role run, a pipeline), its session identity, display state and resume command. In code: `manager/src/agent_pm/manager/engine/roster.py`.
+A versioned JSON line naming a started thing, its session identity and display, with commands to control and resume it. In code: `utils/src/agent_pm/utils/record.py`.
 
 **Session status log**:
 The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`. In code: `session/src/agent_pm/session/engine/status_log.py`.

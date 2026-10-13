@@ -1,1 +1,1 @@
-"""Utility unit tests and their Case (AGENTS.md › Tests)."""
+"""Utility unit tests and their Case."""
