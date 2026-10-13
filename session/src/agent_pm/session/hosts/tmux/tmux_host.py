@@ -172,7 +172,17 @@ class Cell(NamedTuple):
     y: int
     pane: str | None = None
     kind: str = LEAF
-    children: tuple[Cell, ...] = ()
+    children: tuple[Cell | Leaf, ...] = ()
+
+
+class Leaf(NamedTuple):
+    w: int
+    h: int
+    x: int
+    y: int
+    pane: str
+    kind: str = LEAF
+    children: tuple[Cell | Leaf, ...] = ()
 
 
 class Slot(NamedTuple):
@@ -1170,7 +1180,7 @@ def tile(
 
 def _grid_pass(
     window: str, per_column: int | None, proc, *, if_panes_changed: bool
-) -> tuple[list[tuple[str, str]], Cell | None, str, str] | None:
+) -> tuple[list[tuple[str, str]], Cell | Leaf | None, str, str] | None:
     """tile's pass: (swaps, layout, @grid-tiles, pane set) or None (zoomed, no grid, unreadable
     layout, unchanged set). Up to SETTLE_ITERATIONS more passes run while the result changes: the
     hooks are muted.
@@ -1186,12 +1196,7 @@ def _grid_pass(
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
     leaves = [] if current is None else _leaves(current)
-    layout_panes = []
-    for leaf in leaves:
-        if leaf.pane is None:
-            return None
-        layout_panes.append(leaf.pane)
-    if current is None or sorted(layout_panes) != sorted(panes):
+    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
         return None
     if manager not in panes or len(panes) == 1:
         _grid_down(window, proc)
@@ -1228,12 +1233,7 @@ def _grid_pass(
         )
         if want is None or _leaves(want) == _leaves(at):
             break
-        order = []
-        for cell in _leaves(want):
-            if cell.pane is None:
-                return None
-            order.append(cell.pane)
-        at = want
+        order, at = [c.pane for c in _leaves(want)], want
     if _leaves(at) == leaves:
         return None if recorded == pane_set else ([], None, tiles, pane_set)
     return _swaps(panes, order), at, tiles, pane_set
@@ -1280,7 +1280,7 @@ def _checksum(body: str) -> str:
     return f"{csum:04x}"
 
 
-def _parse_layout(text: str) -> Cell | None:
+def _parse_layout(text: str) -> Cell | Leaf | None:
     """The cell tree of `<checksum>,<body>` or a body; None when malformed."""
     csum, sep, body = text.partition(",")
     if sep and re.fullmatch(r"[0-9a-f]{4}", csum):
@@ -1294,13 +1294,13 @@ def _parse_layout(text: str) -> Cell | None:
     return cell if end == len(text) else None
 
 
-def _parse_cell(text: str, at: int) -> tuple[Cell, int]:
+def _parse_cell(text: str, at: int) -> tuple[Cell | Leaf, int]:
     m = LAYOUT_CELL.match(text, at)
     if m is None:
         raise ValueError(at)
     w, h, x, y = (int(v) for v in m.group(1, 2, 3, 4))
     if m.group(5) is not None:
-        return Cell(w, h, x, y, f"%{m.group(5)}"), m.end()
+        return Leaf(w, h, x, y, f"%{m.group(5)}"), m.end()
     kind = LEFT_RIGHT if m.group(6) == "{" else TOP_BOTTOM
     at, children = m.end(), []
     while True:
@@ -1313,12 +1313,12 @@ def _parse_cell(text: str, at: int) -> tuple[Cell, int]:
         at += 1
 
 
-def _render_layout(cell: Cell) -> str:
+def _render_layout(cell: Cell | Leaf) -> str:
     body = _body(cell)
     return f"{_checksum(body)},{body}"
 
 
-def _body(c: Cell) -> str:
+def _body(c: Cell | Leaf) -> str:
     head = f"{c.w}x{c.h},{c.x},{c.y}"
     if c.kind == LEAF:
         assert c.pane is not None
@@ -1326,16 +1326,15 @@ def _body(c: Cell) -> str:
     return head + c.kind[0] + ",".join(_body(child) for child in c.children) + c.kind[1]
 
 
-def _leaves(cell: Cell) -> list[Cell]:
+def _leaves(cell: Cell | Leaf) -> list[Leaf]:
     """Depth first: select-layout's pane order."""
-    return (
-        [cell]
-        if cell.kind == LEAF
-        else [leaf for child in cell.children for leaf in _leaves(child)]
-    )
+    if cell.kind == LEAF:
+        assert isinstance(cell, Leaf)
+        return [cell]
+    return [leaf for child in cell.children for leaf in _leaves(child)]
 
 
-def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
+def _paths(cell: Cell | Leaf, above: tuple[Cell | Leaf, ...] = ()) -> dict[str, list[Cell | Leaf]]:
     if cell.kind == LEAF:
         assert cell.pane is not None
         return {cell.pane: [*above, cell]}
@@ -1355,7 +1354,7 @@ def _grid_tree(
     manager: str,
     panes: list[str],
     sessions: list[tuple[int, str, str, str]],
-    layout: Cell,
+    layout: Cell | Leaf,
 ) -> list[Slot]:
     """The main grid's cells in order: a session's node sits in its @opener's, an orphan group (its
     @opener gone) where the layout shows it, the rest in main; main by _natural name, siblings by
@@ -1448,7 +1447,7 @@ def _grid_tree(
 
 def _grid_layout(
     cells: list[Slot], manager: str, *, width: int, height: int, manager_width: int, per_column: int
-) -> Cell | None:
+) -> Cell | Leaf | None:
     """The manager left at manager_width (narrowed to fit), cells in columns of per_column; None: it
     does not fit.
     """
@@ -1469,7 +1468,7 @@ def _grid_layout(
         0,
         kind=LEFT_RIGHT,
         children=(
-            Cell(mw, height, 0, 0, manager),
+            Leaf(mw, height, 0, 0, manager),
             _line(
                 columns,
                 LEFT_RIGHT,
@@ -1490,10 +1489,11 @@ def _min_width(s: Slot) -> int:
     return least if s.pane is None else 2 * least + 1
 
 
-def _place(s: Slot, *, w: int, h: int, x: int, y: int) -> Cell:
+def _place(s: Slot, *, w: int, h: int, x: int, y: int) -> Cell | Leaf:
     """A pane takes the left half, its children stack right; an orphan group stacks."""
     if not s.children:
-        return Cell(w, h, x, y, s.pane)
+        assert s.pane is not None
+        return Leaf(w, h, x, y, s.pane)
     if s.pane is None:
         return _line(s.children, TOP_BOTTOM, w=w, h=h, x=x, y=y)
     left = w // 2
@@ -1504,7 +1504,7 @@ def _place(s: Slot, *, w: int, h: int, x: int, y: int) -> Cell:
         y,
         kind=LEFT_RIGHT,
         children=(
-            Cell(left, h, x, y, s.pane),
+            Leaf(left, h, x, y, s.pane),
             _line(
                 s.children,
                 TOP_BOTTOM,
@@ -1517,7 +1517,7 @@ def _place(s: Slot, *, w: int, h: int, x: int, y: int) -> Cell:
     )
 
 
-def _line(slots: tuple[Slot, ...], kind: str, *, w: int, h: int, x: int, y: int) -> Cell:
+def _line(slots: tuple[Slot, ...], kind: str, *, w: int, h: int, x: int, y: int) -> Cell | Leaf:
     """Side by side or stacked, equal sizes, the remainder to the first."""
     if len(slots) == 1:
         return _place(slots[0], w=w, h=h, x=x, y=y)
