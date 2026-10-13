@@ -14,8 +14,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.session import api
 from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.engine import api
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -52,7 +52,7 @@ RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first TurnEnd, reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
-from agent_pm.session import api
+from agent_pm.session.engine import api
 from agent_pm.session import Session, TurnEnd
 Session.configure(adapters={"claude": json.loads(table)}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
 handle = api.attach(name)

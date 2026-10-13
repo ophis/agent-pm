@@ -15,8 +15,9 @@ from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
+from agent_pm.session import SIGNALS, DriverError, close, show
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, api
+from agent_pm.session import sessions as tui_sessions
 from agent_pm.utils.text import printable
 
 
@@ -26,7 +27,7 @@ def _stop(signum, frame):
 
 def _close_tuis(a, role):
     try:
-        found = api.sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
+        found = tui_sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
     except DriverError:
         log("run", "tui-error", a.issue, msg="tmux sessions unknown")
         return
@@ -34,7 +35,7 @@ def _close_tuis(a, role):
         if config.tui_issue(name) != (role, a.issue):
             continue
         try:
-            api.close(name)
+            close(name)
         except (SessionConfigError, DriverError) as e:
             log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         else:
@@ -45,7 +46,7 @@ def inner(a, cfg, *, gql, run=delegate.run):
     os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, api.SIGNALS)  # api.detach blocked them until now
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # session.detach blocked them until now
     role = config.role_for(cfg.roles, a.assignee)
     if role is None:
         reason = f"{a.assignee!r} is not a role account"
@@ -86,7 +87,7 @@ def inner(a, cfg, *, gql, run=delegate.run):
             post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
             if name is not None:
                 try:
-                    if command := api.show(name, a.split, a.split_from, a.opener):
+                    if command := show(name, a.split, a.split_from, a.opener):
                         print(printable(command), file=sys.stderr, flush=True)
                 except (SessionConfigError, DriverError) as e:
                     log("run", "tui-error", a.issue, session=name, msg=one_line(e))

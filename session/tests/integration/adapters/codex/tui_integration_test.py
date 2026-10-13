@@ -17,10 +17,10 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import Session, api
+from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.codex import tui_start
-from agent_pm.session.engine import records
+from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -40,7 +40,7 @@ from session.tests.integration.adapters.codex import fake_codex, fake_tui
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
-from agent_pm.session import api
+from agent_pm.session.engine import api
 from agent_pm.session import Session, TurnEnd
 Session.configure(**json.loads(sys.argv[1]))
 h = api.attach(sys.argv[2])

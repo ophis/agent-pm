@@ -7,7 +7,7 @@ from unittest import mock
 from agent_pm.delegate import Result
 from agent_pm.session import Exited, TurnEnd
 
-from session.tests.unit.api_test import SPAWNS
+from session.tests.case import SPAWNS
 
 NAME = "fake-11111111"
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}

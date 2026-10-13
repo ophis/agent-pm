@@ -13,10 +13,9 @@ from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProce
 from agent_pm.session.engine.types import ConfigError, Reply, SessionStatus, Spec, TurnEnd
 from agent_pm.utils.markdown import fenced
 
-from session.tests.case import Case
+from session.tests.case import SPAWNS, Case
 
 PROGRESS, OUTCOME = "agent-pm-progress", "agent-pm-outcome"
-SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 START = "[agent-pm-progress:start] the composed prompt is handed to the caller"
 SUMMARY = "The prompt is composed and handed to the caller, who runs the task."
 PROMPT = (

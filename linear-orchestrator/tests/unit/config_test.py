@@ -1249,7 +1249,7 @@ IMPORT_ALONE = """import json, os, sys
 opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.session import api
+import agent_pm.session
 from agent_pm.session.adapters import registry
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")

@@ -25,9 +25,8 @@ import uuid
 from unittest import mock
 
 import agent_pm.session as session_pkg
-from agent_pm.session import api
 from agent_pm.session.adapters import selection
-from agent_pm.session.engine import records
+from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.types import (
     Access,
@@ -53,14 +52,13 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 
 from session.tests import fake_adapter
-from session.tests.case import Case
+from session.tests.case import SPAWNS, Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 PYTHONPATH = "/child"
 TMUX = "/opt/tmux/bin/tmux"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
-SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 
 
 class BlankAdapter(fake_adapter.FakeAdapter):
@@ -1925,11 +1923,15 @@ class ExportsTest(Case):
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
         self.assertIs(api.session_record, records.session_record)
 
-    def test_types_have_one_public_path(self):
-        for name in session_pkg.__all__:
+    def test_the_session_package_exports_them_not_the_module(self):
+        for name in api.__all__:
             with self.subTest(name=name):
-                self.assertNotIn(name, api.__all__)
-                if hasattr(engine_types, name):
+                self.assertIs(getattr(session_pkg, name), getattr(api, name))
+                self.assertIn(name, session_pkg.__all__)
+        self.assertNotIn("api", session_pkg.__all__)
+        for name in session_pkg.__all__:
+            if hasattr(engine_types, name):
+                with self.subTest(name=name):
                     self.assertIs(getattr(session_pkg, name), getattr(engine_types, name))
 
     def test_constants(self):

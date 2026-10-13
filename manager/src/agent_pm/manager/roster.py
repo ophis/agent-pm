@@ -4,7 +4,7 @@ name (record): crew.py start (a worker, under its name), the old core's drive.de
 router.py --tui (a pipeline), keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one with
 its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled
 (0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
-Sessions are reached only through session.engine.api (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
+Sessions are reached only through agent_pm.session (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
 default_runtime: `runtime` as read_project("manager") reads it (delegate/config.toml's, config.local.toml on top), which recovery gives a worker entry without --client. A worker entry runs
 crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
 script, or the module agent_pm.crew, to that form."""
@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import DriverError, api
+from agent_pm.session import DriverError, close, sessions
 from agent_pm.utils.config_file import LOCAL, read_project
 from agent_pm.utils.paths import STATE
 
@@ -77,7 +77,7 @@ class Held(RosterError):
 def directory(manager: str | None = None) -> str | None:
     if manager is None:
         try:
-            manager = next((row.name for row in api.sessions() if row.own), None)
+            manager = next((row.name for row in sessions() if row.own), None)
         except DriverError as e:
             raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
@@ -419,7 +419,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
 
 def _live(session: str) -> bool:
     try:
-        return bool(api.sessions(re.escape(session)))
+        return bool(sessions(re.escape(session)))
     except DriverError:
         return False
 
@@ -530,7 +530,7 @@ def stop(r: dict, name: str) -> str:
         if session is None:
             continue
         with contextlib.suppress(DriverError):
-            api.close(session)
+            close(session)
         if _live(session):
             raise RosterError(f"{key}: session {session} still live after tmux kill-session")
     remove(r, key)
