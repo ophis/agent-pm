@@ -274,6 +274,13 @@ class Projects(Case):
                 self.read(name, **kw)
         self.assertIn("work_dir", self.read("linear-orchestrator"))
 
+    def test_a_directory_as_own_config_is_an_os_error(self):
+        own = os.path.join(self.root, "delegate", "config.toml")
+        os.remove(own)
+        os.mkdir(own)
+        with self.assertRaisesRegex(OSError, f"{own}: missing"):
+            self.read("delegate")
+
     def test_a_new_empty_local_table_is_dropped(self):
         self.local("[roles.ghost]\n")
         self.assertNotIn("ghost", self.read("linear-orchestrator").get("roles", {}))

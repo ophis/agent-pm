@@ -244,7 +244,7 @@ class Configures(Base):
             with self.subTest(text):
                 self.local(text)
                 code, out, err = self.runs()
-                self.assertEqual((code, out, err), (2, "", f"delegate: session config: {want}\n"))
+                self.assertEqual((code, out, err), (2, "", f"delegate: delegate config: {want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_list_never_configures_and_works_with_a_bad_session_config(self):

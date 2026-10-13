@@ -12,12 +12,13 @@ exited non-zero (an in_process run that raised: 1) or failed to start without a 
 when the Driver session did not start; the driver form 128 + signum on a signal."""
 
 import argparse
+import contextlib
 import functools
 import json
 import os
 import signal
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 
 from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, plan, run
@@ -135,12 +136,21 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
 
 
 def _configure() -> None:
-    try:
+    with _config("session"):
         table = read_project("session")
-        harness_host(read_project("delegate"), Session.parse_hosts(table.get("hosts")).tables)
+        hosts = Session.parse_hosts(table.get("hosts")).tables
+    with _config("delegate"):
+        harness_host(read_project("delegate"), hosts)
+    with _config("session"):
         Session.configure_from(table)
+
+
+@contextlib.contextmanager
+def _config(name: str) -> Iterator[None]:
+    try:
+        yield
     except (OSError, ValueError, api.ConfigError) as e:
-        raise ConfigError(f"session config: {e}") from None
+        raise ConfigError(f"{name} config: {e}") from None
 
 
 def _check_detach(a: argparse.Namespace) -> None:

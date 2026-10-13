@@ -44,7 +44,9 @@ def read_project(
     the local keys it owns. `path` stands in for `name`'s config.toml. Missing: `path` or an own file is an OSError."""
     rank = _rank(name)
     own_file = path or os.path.join(root, name, "config.toml")
-    if (path or name not in UNCONFIGURED) and not os.path.exists(own_file):
+    if (path or name not in UNCONFIGURED) and (
+        os.path.isdir(own_file) or not os.path.exists(own_file)
+    ):
         raise FileNotFoundError(f"{own_file}: missing")
     configs = _configs(root, name, path)
     known = (
