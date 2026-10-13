@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import RunConfig
+from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -64,12 +65,12 @@ class GiveUp:
 
 
 class Headless:
-    def __init__(self, note: Callable[..., None]):
-        self.note = note
+    def __init__(self, note: Callable[..., None], driver: Driver):
+        self.note, self.driver = note, driver
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
         s = p.spec
-        return p.driver.start(
+        return self.driver.start(
             p.runtime,
             s.mode,
             p.prompt,
@@ -81,7 +82,7 @@ class Headless:
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
-        return p.driver.start(
+        return self.driver.start(
             p.runtime,
             s.mode,
             text,
@@ -106,8 +107,8 @@ class Tui(Headless):
     gives up. The session is left open.
     """
 
-    def __init__(self, note: Callable[..., None]):
-        super().__init__(note)
+    def __init__(self, note: Callable[..., None], driver: Driver):
+        super().__init__(note, driver)
         self.nudged, self.count = False, 0
 
     def start(self, p: Plan) -> Handle:
@@ -115,7 +116,7 @@ class Tui(Headless):
         name = handle.name
         if name is None:
             raise DriverError("tui session has no name")
-        say(f"delegate: tui session {name}: {p.driver.attach_command(name)}")
+        say(f"delegate: tui session {name}: {self.driver.attach_command(name)}")
         return handle
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
@@ -159,13 +160,16 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: Driver,
+    driver: Driver | InstructionDriver,
 ) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
     its exception stops the session and propagates.
     """
     p = plan(run, spec, driver=driver)
-    attempts = _Attempts(p, on_event or (lambda _event: None))
+    if isinstance(driver, InstructionDriver):
+        instruction = driver.deliver(p.prompt)
+        return Result(0, None, instruction=instruction.path)
+    attempts = _Attempts(p, on_event or (lambda _event: None), driver)
     try:
         result = attempts.result()
     except BaseException as e:
@@ -196,8 +200,12 @@ def _resets(at: float | None) -> str:
 
 
 class _Attempts:
-    def __init__(self, p: Plan, on_event: Callable[[Event], None]):
-        self.plan, self.on_event, self.policy = p, on_event, POLICIES[Mode(p.spec.mode)](self.note)
+    def __init__(self, p: Plan, on_event: Callable[[Event], None], driver: Driver):
+        self.plan, self.on_event, self.policy = (
+            p,
+            on_event,
+            POLICIES[p.spec.mode](self.note, driver),
+        )
         self.workdir = p.spec.workdir
         self.seen: set[str] = set()
         self.refused = False  # the Driver refused the start: nothing to close
@@ -316,7 +324,7 @@ class _Attempts:
                 if name is None:
                     raise DriverError("tui session has no name")
                 say(
-                    f"delegate: {answer.reason}; session {name} left open: {self.plan.driver.attach_command(name)}"
+                    f"delegate: {answer.reason}; session {name} left open: {self.policy.driver.attach_command(name)}"
                 )
                 return 0, None, None
             if answer == END:

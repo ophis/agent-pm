@@ -21,7 +21,7 @@ from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, note
 
 from delegate.tests.plans import SID, TASKS, Base, write_team
-from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
+from delegate.tests.unit.engine.instruction import GITHUB, ROLES, RUNTIMES, InstructionCase
 from utils.tests.case import local_section
 
 
@@ -43,10 +43,10 @@ class ReplyTags(Base):
 
 
 class Configures(Base):
-    def test_plan_keeps_the_callers_driver(self):
+    def test_plan_keeps_resolved_data_and_not_the_session_owner(self):
         got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
-        self.assertIs(got.driver, self.driver)
+        self.assertNotIn("driver", vars(got))
 
     def test_configure_hands_the_driver_the_parsed_hosts_and_the_harness_host(self):
         for text, want in (("", None), ('[delegates]\nharness_host = "tmux"\n', "tmux")):
@@ -94,7 +94,7 @@ class Cwd(Base):
 
     def test_empty_is_the_callers_current_directory(self):
         here = os.getcwd()
-        self.assertEqual(self.placed(), ((here, False), notice(here)))
+        self.assertEqual(self.placed(), ((here, False), ""))
 
     def test_the_run_key_wins_over_the_callers_cwd_and_expands_tilde(self):
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
@@ -113,9 +113,8 @@ class Cwd(Base):
                 self.assertEqual(self.placed(entry, cwd=cwd), ((cwd, True), ""))
 
     def test_an_untrusted_cwd_gets_a_notice(self):
-        self.assertEqual(
-            self.placed(self.trusted, cwd=self.other), ((self.other, False), notice(self.other))
-        )
+        self.assertEqual(self.placed(self.trusted, cwd=self.other), ((self.other, False), ""))
+        self.assertEqual(self.planned(cwd=self.other)[1], notice(self.other))
 
     def test_the_workdir_as_cwd_has_no_notice(self):
         self.assertEqual(self.placed(cwd=self.work), ((self.work, False), ""))
@@ -485,7 +484,7 @@ class Policy(Base):
                 start.assert_not_called()
 
 
-class PrintPromptPlans(PrintPromptCase):
+class InstructionPlans(InstructionCase):
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
             with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
