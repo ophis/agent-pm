@@ -441,6 +441,9 @@ def main(
     a = ap.parse_args(argv)
     try:
         cfg = read_project("delegate", path=config, local=local)
+        users = cfg.get("users", [])
+        if not isinstance(users, list) or any(not isinstance(user, str) for user in users):
+            raise ValueError("users: want a list of strings")
         links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
     except (ValueError, OSError) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
@@ -465,7 +468,7 @@ def main(
                 slug=a.name,
                 base_branch=a.base,
                 run=run,
-                users=cfg.get("users"),
+                users=users,
             )
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")

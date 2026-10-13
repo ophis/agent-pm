@@ -410,6 +410,19 @@ class Status(Base):
         )
         self.assertEqual(code, 1)
 
+    def test_invalid_users_are_reported_before_the_repo_is_read(self):
+        for value in ("[1]", "5", '["me", 1]', '"me"'):
+            with self.subTest(users=value):
+                run = Fake([])
+                code, out, err = self.main(
+                    ["status", "--dir", self.dir, "--branch", "b", "not a repo"],
+                    run,
+                    self.config(f"users = {value}\n"),
+                )
+                self.assertEqual((code, out), (1, ""))
+                self.assertEqual(err, "repo.py: users: want a list of strings\n")
+                self.assertEqual(run.calls, [])
+
     def test_the_defaults_load_the_local_file(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as stream:
             stream.write("users = [\n")
