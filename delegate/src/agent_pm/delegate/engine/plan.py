@@ -114,11 +114,12 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
             raise ConfigError.task(spec.task, run.role, tasks)
         run = replace(run, task=spec.task)
     workdir = os.path.abspath(spec.workdir)
+    runtime = spec.runtime or run.runtime
     spec = replace(
         spec,
         workdir=workdir,
         out=os.path.abspath(spec.out) if spec.out else None,
-        runtime=spec.runtime or run.runtime,
+        runtime=runtime,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=team,
     )
@@ -133,7 +134,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
         reads=intent.reads,
         env=intent.env,
     )
-    flags, env = policy(spec.runtime)
+    flags, env = policy(runtime)
     session = SessionSpec(
         workdir=workdir,
         access=access,
@@ -147,7 +148,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
         team,
         guarded,
         intent.writes,
-        runtime=spec.runtime,
+        runtime=runtime,
         spec=session,
         resume=resume,
         driver=driver,

@@ -83,7 +83,8 @@ def _schema() -> dict:
 def _conform(value, schema: Mapping, where: str) -> None:
     """Only the subset of JSON Schema the outcome schema uses."""
     validators = {"object": _object, "string": _string, "array": _array}
-    if validate_kind := validators.get(schema.get("type")):
+    kind = schema.get("type")
+    if isinstance(kind, str) and (validate_kind := validators.get(kind)):
         validate_kind(value, schema, where)
     if "enum" in schema and value not in schema["enum"]:
         raise InvalidOutcome.enum(where, value, schema["enum"])

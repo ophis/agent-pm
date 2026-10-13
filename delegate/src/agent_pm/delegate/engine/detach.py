@@ -46,7 +46,7 @@ def detach(
         raise ConfigError.detach_mode(mode)
     if mode != "tui" and (split is not None or split_from is not None):
         raise ConfigError.split_mode()
-    tui, driver = names(p.run.role, p.spec.sid, mode)
+    tui, driver = names(p.run.role, p.sid, mode)
     events = os.path.abspath(events)
     try:
         append_line(events, "", own=True)

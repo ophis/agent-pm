@@ -70,7 +70,7 @@ class Headless:
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
         s = p.spec
         return p.driver.start(
-            s.runtime,
+            p.runtime,
             s.mode,
             p.prompt,
             replace(p.session, sid=s.sid, name=name),
@@ -84,7 +84,7 @@ class Headless:
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
         return p.driver.start(
-            s.runtime,
+            p.runtime,
             s.mode,
             text,
             p.session,
@@ -113,7 +113,9 @@ class Tui(Headless):
 
     def start(self, p: Plan) -> Handle:
         handle = super().start(p, p.spec.name, p.spec.events)
-        say(f"delegate: tui session {handle.name}: {p.driver.attach_command(handle.name)}")
+        name = handle.name
+        assert name is not None
+        say(f"delegate: tui session {name}: {p.driver.attach_command(name)}")
         return handle
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
@@ -185,6 +187,8 @@ def run(
 
 
 def _resets(at: float | None) -> str:
+    if at is None:
+        return "reset time unknown"
     try:
         return f"resets at {datetime.fromtimestamp(at).astimezone().isoformat(timespec='seconds')}"
     except (TypeError, ValueError, OverflowError, OSError):
@@ -226,7 +230,7 @@ class _Attempts:
             if stale:
                 self.stop(handle)
                 return Result(1, None, stale)
-            self.on_event(Begun(p.spec.sid))
+            self.on_event(Begun(p.sid))
             fixed = False
             while True:
                 rc, last, limit = self.attempt(handle)
@@ -306,8 +310,11 @@ class _Attempts:
                 rc = event.returncode
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
+                name = handle.name
+                assert name is not None
                 say(
-                    f"delegate: {answer.reason}; session {handle.name} left open: {self.plan.driver.attach_command(handle.name)}"
+                    f"delegate: {answer.reason}; session {name} left open: "
+                    f"{self.plan.driver.attach_command(name)}"
                 )
                 return 0, None, None
             if answer == END:

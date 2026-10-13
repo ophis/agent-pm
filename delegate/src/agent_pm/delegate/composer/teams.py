@@ -32,9 +32,14 @@ def lookup(team: Team, kind: str, name: str) -> str | None:
     return paths[0] if paths else None
 
 
+def path_for(team: Team, kind: str, name: str) -> str:
+    if path := lookup(team, kind, name):
+        return path
+    raise misnamed_error(team, kind, name) or ConfigError.missing_file(kind, name)
+
+
 def read(team: Team, kind: str, name: str) -> tuple[str, str]:
-    if not (path := lookup(team, kind, name)):
-        raise misnamed_error(team, kind, name) or ConfigError.missing_file(kind, name)
+    path = path_for(team, kind, name)
     return read_text(path), team.label(kind, name, path)
 
 

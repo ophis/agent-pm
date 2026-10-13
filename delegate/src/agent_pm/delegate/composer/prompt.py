@@ -197,7 +197,7 @@ def _task_path(after: str, paths) -> str | None:
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
     used = teams.used(team, run.role, run.templates)
-    paths = {t: teams.lookup(team, "tasks", t) for t in teams.index(run.role, team)}
+    paths = {t: teams.path_for(team, "tasks", t) for t in teams.index(run.role, team)}
     tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))

@@ -60,6 +60,15 @@ class Plan:
     params: RunParams
     driver: Driver = field(compare=False, repr=False)
 
+    @property
+    def runtime(self) -> str:
+        return self.spec.runtime or self.run.runtime
+
+    @property
+    def sid(self) -> str:
+        assert self.spec.sid is not None
+        return self.spec.sid
+
 
 @dataclass(frozen=True)
 class Limit:

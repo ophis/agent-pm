@@ -166,7 +166,7 @@ def _check_detach(a: argparse.Namespace) -> None:
 
 
 def _detach(a: argparse.Namespace, p: Plan) -> int:
-    tui, driver = detach.names(p.run.role, p.spec.sid, p.spec.mode)
+    tui, driver = detach.names(p.run.role, p.sid, p.spec.mode)
     if a.dry_run:
         shown = {**_shown(p), "driver": driver, "tui": tui, "events": os.path.abspath(a.events)}
         print(json.dumps(shown, ensure_ascii=False, indent=1))
@@ -197,10 +197,10 @@ def listing(team: Team) -> str:
         config = composer.resolve(role, team=team)
         composer.render(config, LIST_PARAMS, team=team)
         lines.append(
-            f"{role}  {config.output['type']}  {team.source(composer.lookup(team, 'roles', role))}\n"
+            f"{role}  {config.output['type']}  {team.source(composer.path_for(team, 'roles', role))}\n"
         )
         lines += [
-            f"  {t}: {what}  [{team.source(composer.lookup(team, 'tasks', t))}]\n"
+            f"  {t}: {what}  [{team.source(composer.path_for(team, 'tasks', t))}]\n"
             for t, what in tasks.items()
         ]
     return "".join(lines)
