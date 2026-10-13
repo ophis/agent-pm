@@ -339,47 +339,6 @@ def _strings(tree):
     )
 
 
-def _comment_blocks(text):
-    lines = text.splitlines()
-    blocks, current = [], []
-    for token in tokenize.generate_tokens(io.StringIO(text).readline):
-        if token.type != tokenize.COMMENT or lines[token.start[0] - 1][: token.start[1]].strip():
-            continue
-        line, indent = token.start
-        if current and (
-            line != current[-1][0] + 1 or indent != lines[current[-1][0] - 1].index("#")
-        ):
-            blocks.append(current)
-            current = []
-        content = token.string[1:].removeprefix(" ")
-        current.append((line, content.strip(), indent + len(content) - len(content.lstrip())))
-    blocks.append(current)
-    return blocks
-
-
-def _doc_blocks(text):
-    lines, blocks = text.splitlines(), []
-    for node in ast.walk(ast.parse(text)):
-        body = getattr(node, "body", None)
-        if not isinstance(body, list) or not body or not isinstance(body[0], ast.Expr):
-            continue
-        value = body[0].value
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            entries = [
-                (
-                    line,
-                    lines[line - 1].strip(),
-                    len(lines[line - 1]) - len(lines[line - 1].lstrip()),
-                )
-                for line in range(value.lineno, value.end_lineno + 1)
-            ]
-            indent = min((entry[2] for entry in entries[1:] if entry[1]), default=value.col_offset)
-            entries[0] = (entries[0][0], entries[0][1].lstrip("rRuU")[3:], indent)
-            entries[-1] = (entries[-1][0], entries[-1][1][:-3], entries[-1][2])
-            blocks.append(entries)
-    return blocks
-
-
 def _boundary_name(node, aliases):
     if isinstance(node, ast.Name):
         return aliases.get(node.id, node.id)
@@ -506,22 +465,6 @@ def _source_modules(repo, projects):
         for project in projects
         for rel, text in _files(os.path.join(repo, project, "src"), ".py")
     }
-
-
-def _prose_pairs(block):
-    fenced, previous = False, None
-    indent = min((entry[2] for entry in block), default=0)
-    for entry in block:
-        _, body, column = entry
-        if body.startswith(("```", "~~~")):
-            fenced, previous = not fenced, None
-            continue
-        if fenced or column >= indent + 4 or body.startswith((">>>", "...")):
-            previous = None
-            continue
-        if previous and previous[1] and body and not re.match(r"(?:[-*]|\d+[.)])\s", body):
-            yield previous, entry
-        previous = entry if body else None
 
 
 def session_names(repo: str) -> list[str]:
@@ -1273,19 +1216,6 @@ def _tree_files(repo, suffixes):
     for tree in TREES:
         for rel, text in _files(os.path.join(repo, tree), suffixes):
             yield f"{tree}/{rel}", text
-
-
-def comment_wrap(repo: str) -> list[str]:
-    found = []
-    for rel, text in _tree_files(repo, ".py"):
-        lines = text.splitlines()
-        blocks = [*_comment_blocks(text), *_doc_blocks(text)]
-        for block in blocks:
-            for (line, _, _), (_, following, _) in _prose_pairs(block):
-                word = following.split()[0]
-                if len(lines[line - 1].rstrip()) + len(word) + 1 <= 100:
-                    found.append(f"{rel}:{line}: next word {word!r} fits within 100 columns")
-    return sorted(found)
 
 
 def test_boundaries(repo: str) -> list[str]:

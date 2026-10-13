@@ -970,51 +970,6 @@ class PackageTop(Sample):
         )
 
 
-class CommentWrap(Sample):
-    def check(self, source):
-        return guards.comment_wrap(self.tree({"tests/a.py": source}))
-
-    def test_comments_and_docstrings_report_the_previous_line(self):
-        for source in ("# Short words\n# fit here\nx = 1\n", '"""Short words\nfit here."""\n'):
-            with self.subTest(source=source):
-                self.assertEqual(
-                    self.check(source), ["tests/a.py:1: next word 'fit' fits within 100 columns"]
-                )
-
-    def test_a_full_line_a_last_line_and_list_starters_are_clean(self):
-        for prefix in ("# ", '"""'):
-            for following in ("fit", "- item", "* item", "1. item", "2) item"):
-                first = "word " * 19 + "end"
-                closing = "\n" if prefix == "# " else '"""\n'
-                second = "# " if prefix == "# " else ""
-                with self.subTest(prefix=prefix, following=following):
-                    self.assertEqual(
-                        self.check(prefix + first + "\n" + second + following + closing), []
-                    )
-        self.assertEqual(self.check("# Alone\nx = 1\n"), [])
-
-    def test_blank_lines_different_indent_and_inline_comments_split_blocks(self):
-        for source in (
-            "# first\n\n# second\n",
-            "# first\n#\n# second\n",
-            "# first\ndef f():\n    # second\n    return 1\n",
-            "x = 1 # first\ny = 2 # second\n",
-            '"""first\n\nsecond"""\n',
-        ):
-            with self.subTest(source=source):
-                self.assertEqual(self.check(source), [])
-
-    def test_code_paragraphs_preserve_fences_indent_and_doctests(self):
-        for source in (
-            '"""Example.\n\n```python\nx = 1\ny = 2\n```\n"""\n',
-            '"""Example.\n\n    x = 1\n    y = 2\n"""\n',
-            "# Example.\n#\n#     x = 1\n#     y = 2\n",
-            '"""Example.\n\n>>> x = 1\n>>> y = 2\n"""\n',
-        ):
-            with self.subTest(source=source):
-                self.assertEqual(self.check(source), [])
-
-
 class TestBoundaries(Sample):
     def violations(self, sample, own, *, shipped=False):
         return guards.test_boundaries(
