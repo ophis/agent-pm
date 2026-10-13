@@ -903,7 +903,7 @@ class OutcomeFiles(Base):
         os.link(spec, os.path.join(ctx.workdir, "copy.md"))
         return spec
 
-    def outside(self, _ctx):
+    def outside(self, ctx):
         outside = os.path.join(self.tmp, "outside.md")
         with open(outside, "w") as f:
             f.write("secret")

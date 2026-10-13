@@ -127,7 +127,7 @@ class _HeadlessSteps(_LaunchSteps):
         return self.run.launch(prompt, spec, resume=resume)
 
     def prepared(
-        self, info: SessionInfo, workdir: str, /
+        self, info: SessionInfo, workdir: str
     ) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
         return contextlib.nullcontext(headless.HeadlessMode(self.run))
 
@@ -233,7 +233,7 @@ class _InProcessSteps:
         )
 
     def prepared(
-        self, info: SessionInfo, workdir: str, /
+        self, info: SessionInfo, workdir: str
     ) -> contextlib.AbstractContextManager[in_process.InProcessMode]:
         return contextlib.nullcontext(in_process.InProcessMode(self.run))
 

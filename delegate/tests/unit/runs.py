@@ -57,7 +57,7 @@ class FakeHandle:
         self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
-    def start(self, _runtime, _mode, _prompt, spec, *, resume=None, idle_timeout=None, events=None):
+    def start(self, runtime, mode, prompt, spec, *, resume=None, idle_timeout=None, events=None):
         os.makedirs(spec.workdir, exist_ok=True)
         self.name, self.sid = spec.name or NAME, resume or spec.sid
         return self

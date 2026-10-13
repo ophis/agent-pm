@@ -83,7 +83,7 @@ class StubAdapter(Adapter):
 class StubRun(Headless):
     """parse: {"text": t} → Reply(t), {"diag": t} → Stderr(t), {"raise": t} → RuntimeError(t)."""
 
-    def launch(self, _prompt, spec: Spec, *, resume: bool = False):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch((sys.executable,))
 
     def parse(self, record):
@@ -263,7 +263,7 @@ class Streams(Base):
         error = KeyboardInterrupt("parser interrupted")
 
         class ErrorRun(StubRun):
-            def parse(self, _record):
+            def parse(self, record):
                 raise error
 
         self.addCleanup(logging.disable, logging.root.manager.disable)

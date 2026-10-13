@@ -22,7 +22,7 @@ ABSTRACT = {
 
 
 class MinimalHost(Host):
-    def detach(self, *_args, **_kwargs):
+    def detach(self, *args, **kwargs):
         raise AssertionError("not called")
 
     terminal = attach = list = detach
