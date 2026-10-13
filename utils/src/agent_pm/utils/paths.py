@@ -16,14 +16,9 @@ class PathError(ValueError):
         super().__init__(f"{label}: {path!r:.80} is not an absolute or expandable ~ path")
 
 
-class PathTypeError(TypeError, ValueError):
-    def __init__(self, label):
-        super().__init__(f"{label}: want a list of local paths")
-
-
 def real_dirs(paths, label: str) -> frozenset[str]:
     if not isinstance(paths, list):
-        raise PathTypeError(label)
+        raise ValueError(f"{label}: want a list of local paths")
     for p in paths:
         if (
             not isinstance(p, str)

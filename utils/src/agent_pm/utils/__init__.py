@@ -29,7 +29,6 @@ from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
     PathError,
-    PathTypeError,
     import_roots,
     printable_abs,
     real_dirs,
@@ -57,7 +56,6 @@ __all__ = [
     "OWNER",
     "Once",
     "PathError",
-    "PathTypeError",
     "Record",
     "Repo",
     "Runner",

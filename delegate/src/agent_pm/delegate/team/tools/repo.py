@@ -43,7 +43,6 @@ from agent_pm.utils import (
     Invalid,
     Once,
     PathError,
-    PathTypeError,
     Repo,
     Runner,
     check_slug,
@@ -454,7 +453,7 @@ def main(
     try:
         cfg = read_project("delegate", path=config, local=local)
         links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
-    except (ConfigFileError, tomllib.TOMLDecodeError, PathError, PathTypeError, OSError) as e:
+    except (ConfigFileError, tomllib.TOMLDecodeError, PathError, ValueError, OSError) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 1
     try:

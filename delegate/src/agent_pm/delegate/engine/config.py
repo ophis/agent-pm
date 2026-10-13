@@ -14,24 +14,16 @@ PYTHONPATH = os.pathsep.join(IMPORT_ROOTS)
 CONFIG = os.path.join(DELEGATE, "config.toml")
 
 
-class SettingsError(ValueError):
-    pass
-
-
-class SettingsTypeError(TypeError, SettingsError):
-    pass
-
-
 def harness_host(config: Mapping, hosts: Collection[str]) -> str | None:
     delegates = config.get("delegates", {})
     if not isinstance(delegates, Mapping):
-        raise SettingsTypeError("[delegates]: the delegate takes only harness_host")
+        raise ValueError("[delegates]: the delegate takes only harness_host")
     for key in delegates:
         if key != "harness_host":
-            raise SettingsError(f"[delegates] {key}: the delegate takes only harness_host")
+            raise ValueError(f"[delegates] {key}: the delegate takes only harness_host")
     harness = delegates.get("harness_host") or None
     if harness is not None and (not isinstance(harness, str) or harness not in hosts):
-        raise SettingsError(f"[delegates] harness_host: want one of {', '.join(sorted(hosts))}")
+        raise ValueError(f"[delegates] harness_host: want one of {', '.join(sorted(hosts))}")
     return harness
 
 
@@ -39,15 +31,13 @@ def policy(runtime: str, cfg: Mapping | None = None) -> tuple[list, dict]:
     """[policy.<runtime>]'s flags and env, unchecked; `cfg` None: read."""
     tables = (read_project("delegate") if cfg is None else cfg).get("policy", {})
     if not isinstance(tables, Mapping):
-        raise SettingsTypeError("policy must be a table")
+        raise ValueError("policy must be a table")
     value = tables.get(runtime, {})
-    if not isinstance(value, Mapping):
-        raise SettingsTypeError(f"policy.{runtime} must contain only flags/env")
-    if set(value) - {"flags", "env"}:
-        raise SettingsError(f"policy.{runtime} must contain only flags/env")
+    if not isinstance(value, Mapping) or set(value) - {"flags", "env"}:
+        raise ValueError(f"policy.{runtime} must contain only flags/env")
     flags, env = value.get("flags", []), value.get("env", {})
     if not isinstance(flags, list):
-        raise SettingsTypeError(f"policy.{runtime}.flags must be a list of strings without NUL")
+        raise ValueError(f"policy.{runtime}.flags must be a list of strings without NUL")
     return flags, env
 
 
