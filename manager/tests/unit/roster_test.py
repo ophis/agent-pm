@@ -19,7 +19,7 @@ import unittest.mock
 
 from agent_pm.manager import roster
 from agent_pm.session import api
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils.config_file import LOCAL, read_project
 
 from manager.tests.case import PY, REPO, SRC, Case, child_env
 
@@ -92,7 +92,7 @@ class Base(Case):
         return path
 
     def local(self, text):
-        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, os.path.basename(LOCAL)), "w") as f:
             f.write(text)
 
 

@@ -19,6 +19,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.manager import crew, roster
+from agent_pm.utils.config_file import LOCAL
 
 from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
 from session.tests import live_tmux
@@ -586,7 +587,7 @@ class RuntimeTest(Live):
         sid = self.started("w1", **codex_session())
         self.assertEqual(self.record(sid)["runtime"], "claude")
         self.assertEqual((len(self.calls("w1")), self.codex_calls("w1")), (1, []))
-        with open(os.path.join(self.agent_pm, "local.toml"), "w") as f:
+        with open(os.path.join(self.agent_pm, os.path.basename(LOCAL)), "w") as f:
             f.write('runtime = "codex"\n')
         sid = self.started("w2")
         self.assertEqual(self.record(sid)["runtime"], "codex")
