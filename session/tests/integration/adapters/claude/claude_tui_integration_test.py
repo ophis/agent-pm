@@ -16,7 +16,17 @@ from unittest import mock
 
 from agent_pm.session import api
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.engine.types import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
+from agent_pm.session.engine.types import (
+    Activity,
+    Blocked,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    LimitHit,
+    SessionBound,
+    Spec,
+    TurnEnd,
+)
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
@@ -43,12 +53,12 @@ RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
 from agent_pm.session import api
-from agent_pm.session import Session
+from agent_pm.session import Session, TurnEnd
 Session.configure(adapters={"claude": json.loads(table)}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]
 handle.send(text)
-event = next(e for e in handle.events() if isinstance(e, api.TurnEnd))
+event = next(e for e in handle.events() if isinstance(e, TurnEnd))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
 
@@ -84,7 +94,7 @@ class Live(tui_live.Live):
             "claude",
             "tui",
             prompt,
-            api.Spec(workdir=self.workdir, name=name, sid=sid),
+            Spec(workdir=self.workdir, name=name, sid=sid),
             events=self.events,
             **kwargs,
         )
@@ -128,7 +138,7 @@ class TurnsTest(Live):
             [stream.next(idle=False) for _ in range(3)],
             [SessionBound(SID), Activity(""), TurnEnd("Hi from w1.", 2)],
         )
-        self.assertEqual(stream.next(), api.IdleTimeout(IDLE))
+        self.assertEqual(stream.next(), IdleTimeout(IDLE))
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
@@ -178,7 +188,7 @@ class BlockedTest(Live):
         stream.quiet(3 * IDLE)
         handle.send("1")
         self.assertEqual(stream.next(), TurnEnd("Edited.", 0))
-        self.assertEqual(stream.next(), api.IdleTimeout(IDLE))
+        self.assertEqual(stream.next(), IdleTimeout(IDLE))
         self.lines("w1 blocked", "w1 done")
 
     def test_the_trust_dialog_on_the_screen_is_blocked_and_marked(self):
@@ -236,7 +246,7 @@ class DeadTest(Live):
             (handle.state(), [r.state for r in api.sessions("w1")]), ("live", ["dead"])
         )
         for call in (lambda: handle.send("more"), handle.screen):
-            with self.assertRaises(api.DriverError):
+            with self.assertRaises(DriverError):
                 call()
         api.close("w1")
         self.closed(handle)
@@ -250,7 +260,7 @@ class DeadTest(Live):
         pane = self.server.tmux("capture-pane", "-p", "-J", "-t", "=w2:").stdout
         self.assertIn("claude: error: unrecognized arguments: --bogus", pane)
         self.assertEqual([r.state for r in api.sessions("w2")], ["dead"])
-        with self.assertRaises(api.DriverError):
+        with self.assertRaises(DriverError):
             handle.screen()
         api.close("w2")
         self.closed(handle)
@@ -358,7 +368,7 @@ class ShowTest(Live):
         api.close("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.closed(handle)
-        with self.assertRaises(api.DriverError):
+        with self.assertRaises(DriverError):
             api.show("w1")
 
 

@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import api
+from agent_pm.session import DriverError, api
 from agent_pm.utils.config_file import LOCAL, read_project
 
 ROOT = "~/.agent-pm/managers"
@@ -77,7 +77,7 @@ def directory(manager: str | None = None) -> str | None:
     if manager is None:
         try:
             manager = next((row.name for row in api.sessions() if row.own), None)
-        except api.DriverError as e:
+        except DriverError as e:
             raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
             return None
@@ -419,7 +419,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
 def _live(session: str) -> bool:
     try:
         return bool(api.sessions(re.escape(session)))
-    except api.DriverError:
+    except DriverError:
         return False
 
 
@@ -528,7 +528,7 @@ def stop(r: dict, name: str) -> str:
     for session in (key, entries[key]["tui"]):
         if session is None:
             continue
-        with contextlib.suppress(api.DriverError):
+        with contextlib.suppress(DriverError):
             api.close(session)
         if _live(session):
             raise RosterError(f"{key}: session {session} still live after tmux kill-session")

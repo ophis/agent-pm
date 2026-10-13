@@ -17,7 +17,7 @@ from agent_pm.delegate import (
     Result,
 )
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.session import NotDisplayable, api
+from agent_pm.session import NotDisplayable, SessionStatus
 from agent_pm.utils import files
 from agent_pm.utils.record import Record, Status
 
@@ -168,7 +168,7 @@ class FakeDelegate(Delegate):
         _update(self.workdir, alive=False)
 
     def session_info(self):
-        return api.SessionStatus("yes", None, "")
+        return SessionStatus("yes", None, "")
 
     def resume(self):
         state = _load(self.workdir)

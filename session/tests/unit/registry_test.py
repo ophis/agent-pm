@@ -15,7 +15,7 @@ from unittest import mock
 
 import agent_pm.session
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Session, api
+from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import ConfigError
@@ -172,14 +172,14 @@ class SettingsTest(Base):
             },
         )
         self.assertEqual(Session.settings(config), found)
-        with self.assertRaisesRegex(api.ConfigError, r"\A\[hosts\]: missing\Z"):
+        with self.assertRaisesRegex(ConfigError, r"\A\[hosts\]: missing\Z"):
             Session.settings({})
 
     def test_configure_from_a_read_config(self):
         self.register(fake=fake_adapter)
         Session.configure_from(tomllib.loads(self.TWO + FAKE))
         self.assertEqual(registry.configured(), ["fake"])
-        with self.assertRaisesRegex(api.ConfigError, r"\A\[hosts\]: missing\Z"):
+        with self.assertRaisesRegex(ConfigError, r"\A\[hosts\]: missing\Z"):
             Session.configure_from({})
         self.assertEqual(registry.configured(), ["fake"])
         self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})

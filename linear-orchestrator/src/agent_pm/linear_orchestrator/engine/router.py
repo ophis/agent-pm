@@ -47,7 +47,8 @@ from agent_pm.linear_orchestrator.linear.linear import (
     task_group,
     team,
 )
-from agent_pm.session import api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, api
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -96,7 +97,7 @@ def attempt_count(entries, issue, since=None):
 def live_sessions(roles):
     try:
         names = [row.name for row in api.sessions(re.escape(SESSIONS) + ".*")]
-    except api.DriverError:
+    except DriverError:
         return None
     live = {}
     for r in roles:
@@ -554,7 +555,7 @@ def outer(a, cfg, *, gql, run, keychain):
             cwd=rd,
             env={**os.environ, "PYTHONPATH": PYTHONPATH},
         )
-    except (api.ConfigError, api.DriverError) as e:
+    except (SessionConfigError, DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     return 0

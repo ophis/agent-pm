@@ -3,19 +3,19 @@
 import re
 from unittest import mock
 
-from agent_pm.session import api
+from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window, api
 
 NAMES = (
     "sessions",
     "close",
     "show",
-    "session_info",
-    "session",
+    "session_status",
+    "session_record",
     "usage",
     "detach",
     "attach_command",
 )
-LOW = api.Usage(api.Window(10.0, None), api.Window(10.0, None))
+LOW = Usage(Window(10.0, None), Window(10.0, None))
 
 
 def _answer(value):
@@ -26,7 +26,7 @@ def _answer(value):
 
 class FakeApi:
     """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default resumable yes),
-    `usages` (per runtime, default LOW) and `shown`: a value or an exception to raise; `records`: api.session's per sid;
+    `usages` (per runtime, default LOW) and `shown`: a value or an exception to raise; `records`: api.session_record's per sid;
     detach raises `detach_error`, else its name goes live. `order` logs the sessions, close, show and detach calls."""
 
     def __init__(self, order=None, gql=None):
@@ -39,9 +39,9 @@ class FakeApi:
     def sessions(self, match=None):
         self.order.append(("sessions", match))
         if self.live is None:
-            raise api.DriverError("tmux sessions unknown: tmux failed")
+            raise DriverError("tmux sessions unknown: tmux failed")
         return [
-            api.SessionRow(n, None, None, "working", None, None, None, None, False)
+            SessionRow(n, None, None, "working", None, None, None, None, False)
             for n in self.live
             if match is None or re.fullmatch(match, n)
         ]
@@ -56,11 +56,11 @@ class FakeApi:
         self.order.append(("show", name, split, split_from, opener, calls))
         return _answer(self.shown)
 
-    def session_info(self, runtime, sid, cwd):
+    def session_status(self, runtime, sid, cwd):
         self.info.append((runtime, sid, cwd))
-        return _answer(self.statuses.get(sid, api.SessionStatus("yes", None, f"resume {sid}")))
+        return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
 
-    def session(self, workdir, sid):
+    def session_record(self, workdir, sid):
         return self.records.get(sid)
 
     def usage(self, runtime):

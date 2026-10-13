@@ -57,7 +57,7 @@ def read(path: str) -> list[dict]:
     return found
 
 
-def session(workdir: str, sid: str) -> dict | None:
+def session_record(workdir: str, sid: str) -> dict | None:
     found = None
     for e in read(path(workdir)):
         if (
@@ -73,13 +73,3 @@ def session(workdir: str, sid: str) -> dict | None:
                 **{key: e[key] for key in ("transcript", "resume") if isinstance(e.get(key), str)},
             }
     return found
-
-
-def complete(workdir: str) -> bool:
-    done = None
-    for e in read(path(workdir)):
-        if e.get("kind") == "session":
-            done = False
-        elif e.get("kind") == "result" and done is False:
-            done = True
-    return done is True

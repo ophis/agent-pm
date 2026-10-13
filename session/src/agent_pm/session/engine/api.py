@@ -1,9 +1,10 @@
 """The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
 starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
 and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
-`stderr`. usage(), session_info() and session() give a runtime's Usage, a session's SessionStatus and its record;
-writable_dirs() the dirs a runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
-tui session by name; detach() runs a command in a tmux session of its own."""
+`stderr`. usage(), session_status() and session_record() give a runtime's Usage, a session's SessionStatus and its
+record; note() appends a record, holds() checks a file's text; writable_dirs() the dirs a runtime grants itself write
+to under a Spec. attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a
+tmux session of its own."""
 
 import contextlib
 import logging
@@ -19,23 +20,18 @@ from dataclasses import replace
 from typing import Protocol
 
 from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import RESUMABLE, Adapter, Headless, InProcess, Tui
+from agent_pm.session.adapters.base import Adapter, Headless, InProcess, Tui
 from agent_pm.session.adapters.selection import check as check_selection
 from agent_pm.session.engine import records
-from agent_pm.session.engine.records import session
+from agent_pm.session.engine.records import holds, session_record
 from agent_pm.session.engine.types import (
-    Access,
-    Activity,
     Blocked,
     ConfigError,
     DriverError,
     Event,
     Exited,
     IdleTimeout,
-    Key,
     Launch,
-    LimitHit,
-    Paste,
     Reply,
     SessionBound,
     SessionInfo,
@@ -45,7 +41,6 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
     Usage,
-    Window,
     sid_error,
 )
 from agent_pm.session.hosts.tmux import tmux_host
@@ -53,42 +48,18 @@ from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils.paths import printable_abs
 
 __all__ = [
-    "Access",
-    "Activity",
-    "Blocked",
-    "ConfigError",
-    "DriverError",
-    "Event",
-    "Exited",
     "Handle",
-    "IdleTimeout",
-    "Key",
-    "LimitHit",
     "MODES",
-    "Mode",
-    "POLL",
-    "Paste",
-    "RESUMABLE",
-    "Reply",
     "SIGNALS",
-    "STATES",
-    "SessionBound",
-    "SessionInfo",
-    "SessionRow",
-    "SessionStatus",
-    "Spec",
-    "Stderr",
-    "TurnEnd",
-    "Usage",
-    "Window",
     "attach",
     "attach_command",
     "close",
     "detach",
+    "holds",
     "layout",
-    "records",
-    "session",
-    "session_info",
+    "note",
+    "session_record",
+    "session_status",
     "sessions",
     "show",
     "start",
@@ -668,7 +639,12 @@ def usage(runtime: str) -> Usage | None:
         return None
 
 
-def session_info(runtime: str, sid: str, cwd: str) -> SessionStatus:
+def note(workdir: str, kind: str, **fields) -> None:
+    """Appends a `kind` record to <workdir>/run.jsonl."""
+    records.note(records.path(workdir), kind, **fields)
+
+
+def session_status(runtime: str, sid: str, cwd: str) -> SessionStatus:
     if error := sid_error(sid):
         raise ConfigError(error)
     if not printable_abs(cwd):

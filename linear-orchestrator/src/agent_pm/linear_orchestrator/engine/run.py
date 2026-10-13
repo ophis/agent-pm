@@ -15,7 +15,8 @@ from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
-from agent_pm.session import api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, api
 from agent_pm.utils.text import printable
 
 
@@ -26,7 +27,7 @@ def _stop(signum, frame):
 def _close_tuis(a, role):
     try:
         found = api.sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
-    except api.DriverError:
+    except DriverError:
         log("run", "tui-error", a.issue, msg="tmux sessions unknown")
         return
     for name in (row.name for row in found):
@@ -34,7 +35,7 @@ def _close_tuis(a, role):
             continue
         try:
             api.close(name)
-        except (api.ConfigError, api.DriverError) as e:
+        except (SessionConfigError, DriverError) as e:
             log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         else:
             log("run", "tui-closed", a.issue, session=name)
@@ -87,7 +88,7 @@ def inner(a, cfg, *, gql, run=delegate.run):
                 try:
                     if command := api.show(name, a.split, a.split_from, a.opener):
                         print(printable(command), file=sys.stderr, flush=True)
-                except (api.ConfigError, api.DriverError) as e:
+                except (SessionConfigError, DriverError) as e:
                     log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         elif isinstance(event, delegate.Progress):
             writeback.progress(ctx, event)

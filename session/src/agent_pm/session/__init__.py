@@ -4,7 +4,25 @@
 from agent_pm.session.engine import api
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Access, ConfigError, DriverError, Spec, Usage
+from agent_pm.session.engine.types import (
+    Access,
+    Activity,
+    Blocked,
+    ConfigError,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    LimitHit,
+    Reply,
+    SessionBound,
+    SessionRow,
+    SessionStatus,
+    Spec,
+    Stderr,
+    TurnEnd,
+    Usage,
+    Window,
+)
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, NotDisplayable, Terminal
 
 __all__ = [
@@ -19,6 +37,18 @@ __all__ = [
     "NotDisplayable",
     "SessionStatusLog",
     "Usage",
+    "Window",
+    "SessionRow",
+    "SessionStatus",
+    "Activity",
+    "Blocked",
+    "Exited",
+    "IdleTimeout",
+    "LimitHit",
+    "Reply",
+    "SessionBound",
+    "Stderr",
+    "TurnEnd",
     "DriverError",
     "ConfigError",
 ]

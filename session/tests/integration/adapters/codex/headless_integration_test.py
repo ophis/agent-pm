@@ -784,12 +784,16 @@ class HeadlessIntegrationTest(Case):
             ),
         )
         self.assertIn(NATIVE, info.resume)
-        self.assertEqual(records.session(str(self.work), handle.sid)["transcript"], info.transcript)
-        status = api.session_info("codex", handle.sid, str(self.cwd))
+        self.assertEqual(
+            records.session_record(str(self.work), handle.sid)["transcript"], info.transcript
+        )
+        status = api.session_status("codex", handle.sid, str(self.cwd))
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)
         self.assertIn(NATIVE, status.resume_command)
         fake_codex.session_path(NATIVE).unlink()
-        self.assertEqual(api.session_info("codex", handle.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(api.session_status("codex", handle.sid, str(self.cwd)).resumable, "no")
         self.record().write_text("bad json")
-        self.assertEqual(api.session_info("codex", handle.sid, str(self.cwd)).resumable, "unknown")
+        self.assertEqual(
+            api.session_status("codex", handle.sid, str(self.cwd)).resumable, "unknown"
+        )

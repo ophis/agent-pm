@@ -17,6 +17,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import api
+from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import live_tmux
@@ -493,7 +494,7 @@ class SplitsTest(Live):
         with self.inside(MANAGER):
             self.assertEqual(api.layout(), MANAGER)
         self.assertIsNone(api.layout("below", MANAGER))
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.layout("below")
         self.assertTrue(
             str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),
