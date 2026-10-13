@@ -82,47 +82,40 @@ def _schema() -> dict:
 
 def _conform(value, schema: Mapping, where: str) -> None:
     """Only the subset of JSON Schema the outcome schema uses."""
-    validators = {"object": _object, "string": _string, "array": _array}
     kind = schema.get("type")
-    if isinstance(kind, str) and (validate_kind := validators.get(kind)):
-        validate_kind(value, schema, where)
+    if kind == "object":
+        if not isinstance(value, dict):
+            raise InvalidOutcome(f"{where} must be an object")
+        props = schema.get("properties", {})
+        if missing := [k for k in schema.get("required", ()) if k not in value]:
+            raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
+        if schema.get("additionalProperties") is False and (
+            extra := sorted(set(value) - set(props))
+        ):
+            raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
+        for k, v in value.items():
+            if k in props:
+                _conform(v, props[k], k)
+    elif kind == "string":
+        if not isinstance(value, str):
+            raise InvalidOutcome(f"{where} must be text")
+        if len(value) < schema.get("minLength", 0):
+            raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
+        if len(value) > schema.get("maxLength", len(value)):
+            raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            raise InvalidOutcome(f"{where} must match {schema['pattern']}")
+    elif kind == "array":
+        if not isinstance(value, list):
+            raise InvalidOutcome(f"{where} must be a list")
+        if len(value) > schema.get("maxItems", len(value)):
+            raise InvalidOutcome(f"{where} has more than {schema['maxItems']} items")
+        for i, v in enumerate(value):
+            _conform(v, schema.get("items", {}), f"{where}[{i}]")
     if "enum" in schema and value not in schema["enum"]:
         raise InvalidOutcome(
             f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}"
         )
-
-
-def _object(value, schema, where):
-    if not isinstance(value, dict):
-        raise InvalidOutcome("not an object" if where is None else f"{where} must be an object")
-    props = schema.get("properties", {})
-    if missing := [k for k in schema.get("required", ()) if k not in value]:
-        raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
-    if schema.get("additionalProperties") is False and (extra := sorted(set(value) - set(props))):
-        raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
-    for key, item in value.items():
-        if key in props:
-            _conform(item, props[key], key)
-
-
-def _string(value, schema, where):
-    if not isinstance(value, str):
-        raise InvalidOutcome(f"{where} must be text")
-    if len(value) < schema.get("minLength", 0):
-        raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
-    if len(value) > schema.get("maxLength", len(value)):
-        raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
-    if "pattern" in schema and not re.search(schema["pattern"], value):
-        raise InvalidOutcome(f"{where} must match {schema['pattern']}")
-
-
-def _array(value, schema, where):
-    if not isinstance(value, list):
-        raise InvalidOutcome(f"{where} must be a list")
-    if len(value) > schema.get("maxItems", len(value)):
-        raise InvalidOutcome(f"{where} has more than {schema['maxItems']} items")
-    for index, item in enumerate(value):
-        _conform(item, schema.get("items", {}), f"{where}[{index}]")
 
 
 def _url(url: str, out: Mapping) -> str:

@@ -381,12 +381,6 @@ def now() -> str:
 _NOT_REGULAR = "not a regular file owned by you"
 
 
-def _owned_file(fd: int, path: str) -> None:
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-        raise RosterError(f"{path}: not a regular file owned by you")
-
-
 def _open(path: str, flags: int) -> int | None:
     try:
         fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
@@ -399,7 +393,9 @@ def _open(path: str, flags: int) -> int | None:
             f"{path}: {(_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror)}"
         ) from e
     try:
-        _owned_file(fd, path)
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            raise RosterError(f"{path}: {_NOT_REGULAR}")
     except BaseException:
         os.close(fd)
         raise
