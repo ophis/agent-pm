@@ -27,6 +27,7 @@ from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, configur
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import say
+from agent_pm.delegate.engine.types import Stopped
 from agent_pm.session import MODES, SIGNALS, DriverError, holds
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.utils import Once, printable
@@ -94,6 +95,8 @@ def main(argv: list[str], *, application=None) -> int:
             return code
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    except Stopped as stopped:
+        return stopped.code
     finally:
         detach.outcome(a.events, a.driver, status)
 
@@ -180,9 +183,9 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
     return 0
 
 
-def _stop(signum, frame):
+def _stop(signum, _frame):
     signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)  # one exit: one outcome line
-    raise SystemExit(128 + signum)
+    raise Stopped(signum)
 
 
 def listing(team: Team) -> str:

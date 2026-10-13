@@ -20,6 +20,12 @@ __all__ = [
 ]
 
 
+class Stopped(BaseException):
+    def __init__(self, signum: int):
+        self.code = 128 + signum
+        super().__init__(self.code)
+
+
 @dataclass(frozen=True)
 class Spec:
     """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None:
