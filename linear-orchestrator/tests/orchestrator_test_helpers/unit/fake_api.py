@@ -4,7 +4,6 @@ import re
 
 from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window
 
-
 LOW = Usage(Window(10.0, None), Window(10.0, None))
 
 

@@ -1,7 +1,8 @@
-"""The orchestrator's integration flows: the test's HOME with both local files ([task_labels] included), FakeLinear
-over HTTP through test-only transport with the harness, role and human accounts and the task label group, fake_claude
-as `claude`, run, promote and router as `python3 -P -m` subprocesses, and readers of Linear, the logs and a run's
-files. TmuxFlow adds a private tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
+"""The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
+included), FakeLinear over HTTP through test-only transport with the harness, role and human
+accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3
+-P -m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private
+tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
 
 import copy
 import json
@@ -12,14 +13,13 @@ import tempfile
 import tomllib
 from urllib.parse import quote
 
+from orchestrator_test_helpers.case import PY, Case, child_env
+from orchestrator_test_helpers.integration import fake_gh, fake_linear
+from orchestrator_test_helpers.unit import board_ids, run_fixtures
+from orchestrator_test_helpers.unit.run_fixtures import ID, SID
 
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
-
-from ..case import PY, Case, child_env
-from ..unit import board_ids, run_fixtures
-from ..unit.run_fixtures import ID, SID
-from . import fake_gh, fake_linear
 
 RUN, PROMOTE, ROUTER = (
     ("-m", f"agent_pm.linear_orchestrator.engine.{n}") for n in ("run", "promote", "router")

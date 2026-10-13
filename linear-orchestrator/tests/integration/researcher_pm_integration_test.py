@@ -1,18 +1,18 @@
-"""The researcher to pm flow over router.py --issue, run.py in its detached Driver session and promote.py: a research
-issue becomes a PM issue; a task label picks the task; a blocked issue waits for its blocker; an answer starts a new
-session; a failed run is not promoted; four failed runs cap the issue."""
+"""The researcher to pm flow over router.py --issue, run.py in its detached Driver session and
+promote.py: a research issue becomes a PM issue; a task label picks the task; a blocked issue
+waits for its blocker; an answer starts a new session; a failed run is not promoted; four
+failed runs cap the issue."""
 
 import unittest
 
 from agent_pm.linear_orchestrator.engine import router
-
-from .flow_fixtures import (
+from orchestrator_test_helpers.integration.flow_fixtures import (
     HARNESS_EMAIL,
     HUMAN,
     LIGHT_RESEARCH,
     RESEARCH_DIR,
 )
-from .segments import RESEARCH, Segment
+from orchestrator_test_helpers.integration.segments import RESEARCH, Segment
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."

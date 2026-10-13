@@ -1,5 +1,5 @@
-"""orchestrator config.py, ported from the old config_test (less its clients layer and transcript cases) onto load()'s
-frozen Config, plus the old attended name cases (TUI names)."""
+"""orchestrator config.py, ported from the old config_test (less its clients layer and transcript
+cases) onto load()'s frozen Config, plus the old attended name cases (TUI names)."""
 
 import builtins
 import dataclasses
@@ -15,12 +15,10 @@ from unittest import mock
 
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.utils import GUARD
-from agent_pm.utils import SHORT, temp_dirs
-
-from ..case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
-from .board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
-from .config_support import GATE
+from agent_pm.utils import GUARD, SHORT, temp_dirs
+from orchestrator_test_helpers.case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
+from orchestrator_test_helpers.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+from orchestrator_test_helpers.unit.config_support import GATE
 
 BASE = (
     HEADER
@@ -98,7 +96,7 @@ class ConfigFile:
     def fails(self, message, text):
         with self.assertRaises(config.ConfigError) as cm:
             self.load(text)
-        self.assertEqual(cm.exception.code, message)
+        self.assertEqual(str(cm.exception), message)
         return cm.exception
 
 
@@ -308,7 +306,7 @@ class Config(ConfigFile, Case):
             with self.subTest(table=table, key=key, value=value):
                 with self.assertRaises(config.ConfigError) as cm:
                     self.load(BASE + f'[{table}]\n"{key}" = {json.dumps(value)}\n')
-                msg = str(cm.exception.code)
+                msg = str(str(cm.exception))
                 self.assertTrue(
                     msg.startswith(f"linear-orchestrator/config.toml: {table}.{key} "), msg
                 )
@@ -407,7 +405,7 @@ class Config(ConfigFile, Case):
             'work_dir = "w"\n' + PIPELINE,
         )
         self.assertIsNone(e.logs_dir)
-        self.assertIsInstance(e, SystemExit)
+        self.assertIsInstance(e, config.ConfigError)
         logs = os.path.join(os.path.realpath(self.agent_pm), "logs")
         for message, text in (
             (
@@ -963,7 +961,7 @@ class RealConfig(Case):
         with self.assertRaises(config.ConfigError) as cm:
             self.load()
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             "linear-orchestrator/config.toml: "
             + missing(
                 "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
@@ -1011,7 +1009,7 @@ class RealConfig(Case):
             self.load(local)
         zero = "00000000-0000-0000-0000-000000000000"
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             f"linear-orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
             "(UUID) to <owner>/<name>: '<owner>/<name>'",
         )

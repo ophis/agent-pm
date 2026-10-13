@@ -1,4 +1,5 @@
-"""An agent run's input: the docs an issue links, read with gh (gather), laid out by its role's task kind (render)."""
+"""An agent run's input: the docs an issue links, read with gh (gather), laid out by its role's
+task kind (render)."""
 
 import fnmatch
 import json
@@ -8,6 +9,7 @@ from urllib.parse import quote, unquote
 
 from agent_pm.linear_orchestrator.engine.config import TASKS, sh_run
 from agent_pm.linear_orchestrator.engine.target import pr_title
+from agent_pm.linear_orchestrator.engine.types import InputError
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.linear_orchestrator.linear.linear import parse_time
 from agent_pm.utils import SHORT, err_text
@@ -82,7 +84,7 @@ def _read(run, docs, path):
         return res.stdout
     if re.search(r"HTTP 404\b", res.stderr or ""):
         return None
-    raise RuntimeError(f"gh api contents {path}: {err_text(res)}")
+    raise InputError.gh_api_contents(path, err_text(res))
 
 
 def _names(text):
@@ -103,7 +105,7 @@ def _listed(run, docs, ident, dir_):
         raise RuntimeError(f"gh api contents {d}: {err_text(res)}")
     names = _names(res.stdout)
     if names is None:
-        raise RuntimeError(f"gh api contents {d}: unusable response")
+        raise InputError.gh_api_contents_unusable_response(d)
     hits = sorted(n for n in names if fnmatch.fnmatchcase(n, f"*-{ident}-*.md"))
     return f"{d}/{hits[-1]}" if hits else None
 

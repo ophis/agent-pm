@@ -1,5 +1,6 @@
-"""orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id, numbered
-`#<seq>`, repaired at the end after a late write; the resume command is the Driver's session_status."""
+"""orchestrator sessions.py, ported from the old sessions_test: one comment written by its session
+id, numbered `#<seq>`, repaired at the end after a late write; the resume command is the
+Driver's session_status."""
 
 import subprocess
 import threading
@@ -9,11 +10,11 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import Outcome
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import ConfigError, SessionStatus
-
-from .. import case
-from .fake_api import FakeApi
+from orchestrator_test_helpers import case
+from orchestrator_test_helpers.unit.fake_api import FakeApi
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
@@ -23,7 +24,7 @@ CID = linear.client_id(SID, "session")
 T1, T2, T3 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00", "2026-09-30T12:00:00+08:00"
 WORKDIR, RUNTIME = "/w/TASK-12", "claude"
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
-NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 
 
 def record(driver, started_at=T1):
@@ -357,8 +358,8 @@ class Failure(Case):
         for exc, reason in (
             (RuntimeError("boom"), "RuntimeError: boom"),
             (
-                SystemExit("linear api error: [{'message': 'nope'}]"),
-                "SystemExit: linear api error: [{'message': 'nope'}]",
+                LinearError("linear api error: [{'message': 'nope'}]"),
+                "LinearError: linear api error: [{'message': 'nope'}]",
             ),
         ):
             with self.subTest(reason=reason):
@@ -383,8 +384,8 @@ class Failure(Case):
             for exc, reason in (
                 (RuntimeError("boom"), "RuntimeError: boom"),
                 (
-                    SystemExit("linear api error: [{'message': 'nope'}]"),
-                    "SystemExit: linear api error: [{'message': 'nope'}]",
+                    LinearError("linear api error: [{'message': 'nope'}]"),
+                    "LinearError: linear api error: [{'message': 'nope'}]",
                 ),
                 (RuntimeError("two\nlines"), "RuntimeError: two lines"),
                 (False, "success: false"),
@@ -486,7 +487,7 @@ class Repair(Case):
         self.assertEqual(self.fake.only()["body"], text(f"done · #3 · {T2} → {T3} · exit 0"))
 
     def test_errors_return_a_string_and_write_nothing(self):
-        theirs = f"RuntimeError: comment {CID} is not ours"
+        theirs = f"LinearError: comment {CID} is not ours"
         body = f"Run {SID} · running · #1 · {T1}"
         for name, seed, fail, reason in (
             ("find fails", (), {"comment": RuntimeError("boom")}, "RuntimeError: boom"),

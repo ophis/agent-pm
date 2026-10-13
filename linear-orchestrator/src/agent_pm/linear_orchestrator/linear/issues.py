@@ -1,9 +1,10 @@
-"""Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar: handoff,
-parse_handoff and head."""
+"""Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar:
+handoff, parse_handoff and head."""
 
 import re
 from dataclasses import dataclass
 
+from agent_pm.linear_orchestrator.engine.types import IssueError
 from agent_pm.linear_orchestrator.linear import linear, sessions
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
@@ -66,9 +67,9 @@ class Issue:
 def read_issue(gql, ident) -> Issue:
     node = gql(Q_ISSUE, i=ident)["issue"]
     if node is None:
-        raise LookupError(f"{ident}: issue not found")
+        raise IssueError.issue_not_found(ident)
     if node["identifier"] != ident:
-        raise LookupError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
+        raise IssueError.linear_returned_for(str(node["identifier"])[:40], ident)
     notes = sorted(
         (
             Note(
@@ -106,8 +107,10 @@ def _lines(description):
 
 
 def _starts(lines):
-    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first one (unless it
-    # comes after Instructions' first), Instructions the first after it, Comments the last after Instructions.
+    # Only Instructions carry unquoted user text, which may hold header lines: Source is the
+    # first one (unless it
+    # comes after Instructions' first), Instructions the first after it, Comments the last
+    # after Instructions.
     source, instructions, comments = SECTIONS
 
     def find(header, after, last=False):

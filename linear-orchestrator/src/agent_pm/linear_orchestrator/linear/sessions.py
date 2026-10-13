@@ -1,11 +1,12 @@
-"""Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness account under its
-session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it when a late write left an older one.
-status: a session's SessionStatus at its recorded cwd."""
+"""Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness
+account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites
+it when a late write left an older one. status: a session's SessionStatus at its recorded cwd."""
 
 import re
 import threading
 
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
 
 URL = "https://agent-pm.invalid/run/"
@@ -81,7 +82,7 @@ def _bounded(call, limit):
     def run():
         try:
             out["value"] = call()
-        except (Exception, SystemExit) as e:
+        except (Exception, LinearError) as e:
             out["error"] = e
 
     t = threading.Thread(target=run, daemon=True)
@@ -100,7 +101,7 @@ def write(gql, sid, issue, text, limit=LIMIT):
     def call():
         try:
             done = gql(M_UPDATE, c=cid, b=text)["commentUpdate"]
-        except SystemExit as e:
+        except LinearError as e:
             if not linear.not_found(e):
                 raise
             done = None

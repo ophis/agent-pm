@@ -6,30 +6,31 @@ import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
-from agent_pm.linear_orchestrator.engine import config, promote
-from agent_pm.linear_orchestrator.linear import linear, sessions
-from ..case import Case
-from .board_ids import TEAM
-from .board_ids import STATES as IDS_BY_KEY
-from .board_ids import role as role_table
-from .outage import FAILURES, FIELDS, failing
-from .run_fixtures import HARNESS, logged, show
 
-from .promote_support import (
-    NOW,
-    STATES,
-    ROLE,
+from agent_pm.linear_orchestrator.engine import config, promote
+from agent_pm.linear_orchestrator.engine.types import LinearError
+from agent_pm.linear_orchestrator.linear import linear, sessions
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_test_helpers.unit.board_ids import TEAM
+from orchestrator_test_helpers.unit.board_ids import role as role_table
+from orchestrator_test_helpers.unit.outage import FAILURES, FIELDS, failing
+from orchestrator_test_helpers.unit.promote_support import (
     AGENT,
-    OTHER,
-    CONFIG,
-    PM_NEXT,
     CHILD,
-    ago,
-    instructions,
+    CONFIG,
+    NOW,
+    OTHER,
+    PM_NEXT,
+    ROLE,
+    STATES,
+    Base,
     FakeLinear,
     FakePruner,
-    Base,
+    ago,
+    instructions,
 )
+from orchestrator_test_helpers.unit.run_fixtures import HARNESS, logged, show
 
 
 class TestPromote(Base):
@@ -110,9 +111,9 @@ class TestPromote(Base):
     def test_bad_state_id_stops_before_changes(self):
         self.ready()
         self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.run_main()
-        self.assertIn("[states] not workflow states of team 'Team': done", str(cm.exception.code))
+        self.assertIn("[states] not workflow states of team 'Team': done", str(str(cm.exception)))
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
@@ -439,7 +440,7 @@ class TestPartialFailures(Base):
         self.assertEqual(
             self.out.splitlines()[-1],
             "handoff-error DR-1 reason=promoted, but the comment failed "
-            "error=SystemExit: linear api error: comment failed",
+            "error=LinearError: linear api error: comment failed",
         )
 
     def test_failed_bounce_posts_no_comment_and_stays_in_handoff(self):
@@ -462,7 +463,7 @@ class TestPartialFailures(Base):
                 "In Review",
                 [
                     promote.NO_INSTRUCTIONS
-                    + "\n\nCould not subscribe me@x.com: SystemExit: linear api error: boom"
+                    + "\n\nCould not subscribe me@x.com: LinearError: linear api error: boom"
                 ],
             ),
         )
@@ -520,7 +521,7 @@ class TestDryRun(Base):
 
 class TestConfigError(Base):
     def test_a_config_error_is_logged_once_a_day_printed_only_on_a_terminal(self):
-        from .streams import Stderr
+        from orchestrator_test_helpers.unit.streams import Stderr
 
         FakePruner.calls.clear()
         cases = (
@@ -647,7 +648,7 @@ class Outage(Base):
                 self.assertEqual(
                     self.out.splitlines(),
                     [
-                        "handoff-error DR-1 error=SystemExit: linear api error: create failed",
+                        "handoff-error DR-1 error=LinearError: linear api error: create failed",
                         f"linear-error op=issueUpdate {FIELDS[name]}",
                     ],
                 )

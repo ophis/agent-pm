@@ -1,5 +1,6 @@
-"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback HTTP: each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its answer
-projected to the query's selection."""
+"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback
+HTTP: each exact query text is an op (OPS; BUILT: the router's issue lists, built by
+router.q_issues), its answer projected to the query's selection."""
 
 import functools
 import hashlib
@@ -18,9 +19,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from agent_pm.linear_orchestrator.engine import config, promote, prune, router
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
-
-from ..unit.board_ids import STATES, TEAM
+from orchestrator_test_helpers.unit.board_ids import STATES, TEAM
 
 KEY = "TASK"
 BACKLOG = "00000000-0000-4000-8000-000000000017"
@@ -323,7 +324,7 @@ class FakeLinear:
         service = service or self.harness
         keys = self.keys()
         if service not in keys:
-            raise SystemExit(f"fake transport: no key for {service}")
+            raise LinearError(f"fake transport: no key for {service}")
         status, body, delay = self.answer(query, variables, keys[service])
         if delay:
             time.sleep(min(delay, timeout))
@@ -340,7 +341,7 @@ class FakeLinear:
                 io.BytesIO(json.dumps(body).encode()),
             )
         if body.get("errors"):
-            raise SystemExit(f"linear api error: {body['errors']}")
+            raise LinearError(f"linear api error: {body['errors']}")
         return body["data"]
 
     def _log(self, op, account, variables, result, status, body, delay=0):
@@ -665,7 +666,8 @@ class FakeLinear:
         return {"issueRelationCreate": {"success": True}}
 
 
-# _teams, _handoff, _child and _finished hard-code their query's filter and page size: a changed filter in the text
+# _teams, _handoff, _child and _finished hard-code their query's filter and page size: a changed
+# filter in the text
 # still dispatches here, so change the handler with it.
 OPS = {
     "linear.M_COMMENT": FakeLinear._comment_create,

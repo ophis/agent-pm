@@ -1,6 +1,7 @@
-"""promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its client id), related,
-the source Done; a failed move or a Linear outage is retried without a second child; the tick's prune closes a
-finished issue's TUI session on a private tmux server, deletes its checkouts and archives it."""
+"""promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its
+client id), related, the source Done; a failed move or a Linear outage is retried without a
+second child; the tick's prune closes a finished issue's TUI session on a private tmux server,
+deletes its checkouts and archives it."""
 
 import os
 import subprocess
@@ -8,9 +9,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import promote
-
-from . import fake_linear
-from .flow_fixtures import (
+from orchestrator_test_helpers.integration import fake_linear
+from orchestrator_test_helpers.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,

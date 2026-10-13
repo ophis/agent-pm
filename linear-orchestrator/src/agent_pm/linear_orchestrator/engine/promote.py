@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import ConfigError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from agent_pm.linear_orchestrator.linear.linear import (
     config_error,
@@ -94,7 +94,7 @@ class Promoter:
                     work.append((self.moves(src, detail), src, detail, role, nxt))
                 except Unavailable:
                     raise
-                except (Exception, SystemExit) as e:
+                except (Exception, LinearError) as e:
                     self.say("handoff-error", src["identifier"], error=one_line(e))
         for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
             if self.wait and self.now - parse_time(latest) < MATURE:
@@ -110,7 +110,7 @@ class Promoter:
                 self.promote(src, detail, role, nxt, cutoff, first, found)
             except Unavailable:
                 raise
-            except (Exception, SystemExit) as e:
+            except (Exception, LinearError) as e:
                 self.say("handoff-error", src["identifier"], error=one_line(e))
                 if self.now - parse_time(latest) > GRACE:
                     self.bounce_failed(src, e, found[0])
@@ -199,7 +199,7 @@ class Promoter:
         self.say("promote", src["identifier"], to=child["identifier"])
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
-        except (Exception, SystemExit) as e:
+        except (Exception, LinearError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -236,7 +236,7 @@ class Promoter:
                 self.say("handoff-failed", src["identifier"], to="in_review")
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (Exception, LinearError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -281,7 +281,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None, *, driver=None):
         pruner(gql, now, dry, work=work, team=team, roles=roles, driver=driver).run()
     except Unavailable as e:
         linear_error("prune", e, dry)
-    except (Exception, SystemExit) as e:
+    except (Exception, LinearError) as e:
         log("prune", "prune-error", dry=dry, error=one_line(e))
 
 

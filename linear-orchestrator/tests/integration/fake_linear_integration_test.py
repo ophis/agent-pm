@@ -1,6 +1,6 @@
-"""fake_linear.py, the orchestrator's Linear fake: its op table and seeding, then its answers over HTTP through
-linear_gql through a test-only transport: projection, isMe, failures, the router's board reads, the promote, prune and
-write-back ops, comments by client id (FR-54, FR-55)."""
+"""fake_linear.py, the orchestrator's Linear fake: its op table and seeding, then its answers over
+HTTP through linear_gql through a test-only transport: projection, isMe, failures, the router's
+board reads, the promote, prune and write-back ops, comments by client id (FR-54, FR-55)."""
 
 import functools
 import os
@@ -14,11 +14,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import promote, prune, router
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
-
-from ..case import Case
-from ..unit.board_ids import STATES, TASK_GROUP, TEAM
-from . import fake_linear
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.integration import fake_linear
+from orchestrator_test_helpers.unit.board_ids import STATES, TASK_GROUP, TEAM
 
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"
@@ -30,7 +30,7 @@ VIEWER = "query { viewer { id } }"
 LINEAR_TIME = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"
 
 
-from .transport.fake_transport import install
+from orchestrator_test_helpers.integration.transport.fake_transport import install
 
 
 class Table(Case):
@@ -164,9 +164,9 @@ class Served(Case):
     def test_a_selected_field_the_model_lacks_is_an_error(self):
         query = linear.Q_ISSUE_STATE.replace("state { id }", "state { id color }")
         self.fake.ops[query] = "linear.Q_ISSUE_STATE"
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.gql(query, i="TASK-7")
-        self.assertIn("fake: linear.Q_ISSUE_STATE has no field color", cm.exception.code)
+        self.assertIn("fake: linear.Q_ISSUE_STATE has no field color", str(cm.exception))
         self.assertEqual(self.log(), [("linear.Q_ISSUE_STATE", HARNESS_EMAIL, "error")])
 
     def test_is_me_follows_the_key(self):
@@ -193,7 +193,7 @@ class Served(Case):
                     },
                     {HARNESS: service == HARNESS, ENGINEER: service == ENGINEER},
                 )
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LinearError):
             self.eng(sessions.M_UPDATE, c=mine[HARNESS], b="hijacked")
         self.assertEqual(
             sorted(c["body"] for c in self.fake.find("TASK-7")["comments"]),
@@ -235,11 +235,11 @@ class Served(Case):
         )
         self.assertEqual(linear.find_comment(self.eng, cid, task), "Build ready.")
         for gql, issue in ((self.gql, task), (self.eng, other)):
-            with self.subTest(issue=issue), self.assertRaisesRegex(RuntimeError, "is not ours$"):
+            with self.subTest(issue=issue), self.assertRaisesRegex(LinearError, "is not ours$"):
                 linear.find_comment(gql, cid, issue)
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             linear.comment(self.gql, other, "Squatted.", cid)
-        self.assertIn(f"fake: comment id {cid} in use", cm.exception.code)
+        self.assertIn(f"fake: comment id {cid} in use", str(cm.exception))
         self.assertEqual(
             [(c["id"], c["body"]) for c in self.fake.find("TASK-7")["comments"]],
             [(cid, "Build ready.")],
@@ -291,11 +291,11 @@ class Served(Case):
             with self.subTest(name):
                 self.fake.requests.clear()
                 self.fake.fail("linear.M_COMMENT", "error")
-                with self.assertRaises(SystemExit) as cm:
+                with self.assertRaises(LinearError) as cm:
                     linear.comment(eng, "TASK-7", "lost")
-                self.assertIsInstance(cm.exception.code, str)
+                self.assertIsInstance(str(cm.exception), str)
                 self.fake.fail("linear.M_STATE", "unsuccessful")
-                with self.assertRaisesRegex(RuntimeError, "^issueUpdate: success: false$"):
+                with self.assertRaisesRegex(LinearError, "^issueUpdate: success: false$"):
                     linear.move(eng, "TASK-7", STATES["in_review"], STATES["in_progress"])
                 self.fake.fail("linear.M_SUBSCRIBE", "503")
                 with self.assertRaises(linear.Unavailable) as cm:
@@ -326,7 +326,7 @@ class Served(Case):
         self.fake.fail("linear.M_COMMENT", "error", account="Engineer@agents.test", times=2)
         linear.comment(self.gql, "TASK-7", "by the harness")
         for _ in range(2):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(LinearError):
                 linear.comment(self.eng, "TASK-7", "lost")
         linear.comment(self.eng, "TASK-7", "by the engineer")
         self.assertEqual(
@@ -344,9 +344,9 @@ class Served(Case):
         )
 
     def test_an_unknown_query_and_a_bad_key_are_errors_and_logged(self):
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.gql(VIEWER)
-        self.assertIn("fake: unknown query", cm.exception.code)
+        self.assertIn("fake: unknown query", str(cm.exception))
         stranger = fake_linear.FakeLinear()
         stranger.user("stranger@x.com", "Stranger", "stranger")
         with (
@@ -379,12 +379,12 @@ class Served(Case):
         self.assertEqual(self.fake.requests, [])
 
     def test_a_bad_call_is_a_logged_error(self):
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.gql(linear.Q_ISSUE_STATE)
-        self.assertIn("fake: linear.Q_ISSUE_STATE: KeyError: 'i'", cm.exception.code)
-        with self.assertRaises(SystemExit) as cm:
+        self.assertIn("fake: linear.Q_ISSUE_STATE: KeyError: 'i'", str(cm.exception))
+        with self.assertRaises(LinearError) as cm:
             self.gql(promote.Q_HANDOFF, t=TEAM, s=STATES["in_progress"], a=None)
-        self.assertIn("fake: promote.Q_HANDOFF: TypeError: ", cm.exception.code)
+        self.assertIn("fake: promote.Q_HANDOFF: TypeError: ", str(cm.exception))
         self.assertEqual(
             self.log(),
             [
@@ -469,11 +469,11 @@ class Served(Case):
                 "description": new["description"],
             },
         )
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             linear.call(
                 self.gql, promote.M_CREATE, "issueCreate", **{"in": dict(new, title="Again")}
             )
-        self.assertIn(new["id"], cm.exception.code)
+        self.assertIn(new["id"], str(cm.exception))
         self.assertEqual([r.result for r in self.fake.requests], ["ok", "ok", "error"])
         self.assertIsNone(self.fake.find("TASK-9"))
 

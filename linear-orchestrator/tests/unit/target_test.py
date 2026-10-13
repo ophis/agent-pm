@@ -12,11 +12,8 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, target
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils import GUARD, SHORT, checkout
-
-from ..case import Case
-
-from .target_support import ok, FakeRun, api
-
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit.target_support import FakeRun, api, ok
 
 PROJ = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 NO_LINE = target.Invalid("no Repo: line in the description or its ## Instructions")

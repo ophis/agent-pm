@@ -1,4 +1,5 @@
-"""orchestrator prune.py, ported from the old prune_test onto a fake Driver api (FR-50); its tick through promote.main."""
+"""orchestrator prune.py, ported from the old prune_test onto a fake Driver api (FR-50); its tick
+through promote.main."""
 
 import io
 import json
@@ -13,17 +14,17 @@ from functools import partial
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, promote, prune
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError, DriverError
 from agent_pm.utils import GUARD, sh, temp_dirs
-
-from ..case import Case
-from . import promote_support as tp
-from .board_ids import STATES as IDS_BY_KEY
-from .board_ids import TEAM, team_node
-from .fake_api import FakeApi
-from .outage import FAILURES, FIELDS, failing
-from .run_fixtures import CORE_LOCAL, HARNESS, logged, show
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit import promote_support as tp
+from orchestrator_test_helpers.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_test_helpers.unit.board_ids import TEAM, team_node
+from orchestrator_test_helpers.unit.fake_api import FakeApi
+from orchestrator_test_helpers.unit.outage import FAILURES, FIELDS, failing
+from orchestrator_test_helpers.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
 NOW = tp.NOW
 STATE_IDS = {
@@ -80,7 +81,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
             if ident in fail:
-                raise SystemExit("linear api error: boom")
+                raise LinearError("linear api error: boom")
             if ident not in refuse:
                 gql.gone.add(ident)
             return {"issueArchive": {"success": ident not in refuse}}
@@ -618,7 +619,7 @@ class PruneTest(Case):
         self.assertEqual(out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree")
         self.assertTrue(
             out.splitlines()[1].startswith(
-                "prune-error TASK-49 error=RuntimeError: git --git-dir="
+                "prune-error TASK-49 error=GitError: git --git-dir="
             ),
             out,
         )
@@ -718,8 +719,8 @@ class PruneTest(Case):
         self.assertEqual(
             out.splitlines(),
             [
-                "prune-error TASK-1 error=archive: SystemExit: linear api error: boom",
-                "prune-error TASK-2 error=archive: RuntimeError: issueArchive: success: false",
+                "prune-error TASK-1 error=archive: LinearError: linear api error: boom",
+                "prune-error TASK-2 error=archive: LinearError: issueArchive: success: false",
                 "prune-archived TASK-3",
             ],
         )
@@ -740,12 +741,12 @@ class PruneTest(Case):
 
         def gql(query, **v):
             if query == prune.Q_FINISHED:
-                raise SystemExit("linear api error: down")
+                raise LinearError("linear api error: down")
             return issues(query, **v)
 
         code, out = self.prune(gql)
         self.assertEqual(code, 3)
-        self.assertIn("prune-error error=archive: Linear: SystemExit: linear api error: down", out)
+        self.assertIn("prune-error error=archive: Linear: LinearError: linear api error: down", out)
         self.assertFalse(os.path.lexists(clone))
 
     def test_a_live_tui_session_alone_makes_a_candidate_closed_when_finished_24h(self):
@@ -904,11 +905,11 @@ class PruneTest(Case):
         clone = self.mkc("TASK-49", "src", "o", "repo")
 
         def down(query, **v):
-            raise SystemExit("linear api error: down")
+            raise LinearError("linear api error: down")
 
         code, state, out = self.tick(down)
         self.assertEqual((code, state), (0, "Done"))
-        self.assertIn("prune-error TASK-49 error=Linear: SystemExit: linear api error: down", out)
+        self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", out)
         self.assertTrue(os.path.isdir(clone))
 
     def outage(self, op, issues, failed):

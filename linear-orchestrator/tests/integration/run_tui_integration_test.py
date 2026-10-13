@@ -1,17 +1,17 @@
-"""run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server (live_tmux) whose manager
-session a client shows, fake_claude interactive as runtime `claude`: FR-43 closes only this role and issue's old TUI;
-the TUI `<role>-<ID>-<sid8>` shows beside the --split-from session, or in the --opener's grid; the run writes back
-and leaves its TUI open."""
+"""run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server
+(live_tmux) whose manager session a client shows, fake_claude interactive as runtime `claude`:
+FR-43 closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows beside the
+--split-from session, or in the --opener's grid; the run writes back and leaves its TUI open."""
 
 import functools
 import unittest
 
+from orchestrator_test_helpers.integration.flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
+from orchestrator_test_helpers.unit.run_fixtures import ID, SID, UUID
+from orchestrator_test_helpers.unit.writeback_support import PRD
+
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux
-
-from ..unit.run_fixtures import ID, SID, UUID
-from ..unit.writeback_support import PRD
-from .flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
 
 MANAGER = "manager"
 TUI = f"pm-{ID}-{SID[:8]}"

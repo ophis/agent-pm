@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among the team's
-issues assigned to role accounts, then starts it through the outer (run.py in a detached Driver session).
+"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes
+among the team's issues assigned to role accounts, then starts it through the outer (run.py in
+a detached Driver session).
 
-python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE
+python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] |
+--brake ROLE
 
-(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
-              unavailable (config-error, linear-error: once a day), else 0.
-  --now       Skip the 01:00-06:59 hours check.
---issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
-              Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
-              outer's code: 0 started or bounced, 1 the start failed, 2 a config error of the issue, 3 transient.
---dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
---brake ROLE  Print ROLE's runtime usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
-              role.
-Bad arguments exit 2.
+(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config
+error or Linear unavailable (config-error, linear-error: once a day), else 0. --now       Skip
+the 01:00-06:59 hours check. --issue ID    Start or resume only this issue, without the hours,
+max_runs and usage gates. Exits 1 a config error, Linear unavailable, agent runs unknown, a
+live agent run of the issue or nothing started, else the outer's code: 0 started or bounced, 1
+the start failed, 2 a config error of the issue, 3 transient. --dry-run     With either: print
+the plan (a tick's with its usage checks); change nothing, start nothing; exit 0. --brake ROLE
+Print ROLE's runtime usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2
+no such role. Bad arguments exit 2.
 
-Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked one only its
-usage-skip lines.
-"""
+Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-
+blocked one only its usage-skip lines."""
 
 import argparse
 import contextlib
@@ -33,7 +33,13 @@ from datetime import UTC, datetime, timedelta
 from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
-from agent_pm.linear_orchestrator.engine.types import ConfigError, Invalid, Transient, Unavailable
+from agent_pm.linear_orchestrator.engine.types import (
+    ConfigError,
+    Invalid,
+    LinearError,
+    Transient,
+    Unavailable,
+)
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import (
     ISSUE_ID,
@@ -233,13 +239,13 @@ class Board:
         if self.ready is None:
             try:
                 issues = self.issues("todo", RELATIONS)
-            except SystemExit as e:
+            except LinearError as e:
                 self.say("todo-error", error=one_line(e))
                 issues = self.issues("todo")
                 for i in issues:
                     try:
                         i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
-                    except SystemExit:
+                    except LinearError:
                         i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
             self.blocked = {i["identifier"]: b for i in issues if (b := blockers(i))}
             for ident, b in self.blocked.items():
@@ -500,7 +506,7 @@ def outer(a, cfg, *, gql, run, keychain):
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
     try:
         issue = issues.read_issue(gql, a.issue)
-    except (Exception, SystemExit) as e:
+    except (Exception, LinearError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     ctx = writeback.context(
         cfg,
@@ -526,7 +532,7 @@ def outer(a, cfg, *, gql, run, keychain):
         if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo.reason)
-            except (Exception, SystemExit) as e:
+            except (Exception, LinearError) as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
@@ -685,7 +691,7 @@ def tick(opts, cfg, gql, now, hour, start):
             walk.write()  # the outer logs past the walk
             try:
                 rc = start(a)
-            except (Exception, SystemExit) as e:
+            except (Exception, LinearError) as e:
                 walk("launch-error", a.issue, error=one_line(e))
                 return 0
             walk("launch", a.issue, exit=rc)

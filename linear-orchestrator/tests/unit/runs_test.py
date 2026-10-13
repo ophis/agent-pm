@@ -1,5 +1,5 @@
-"""orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim), plus runtime, limit rows
-(FR-60) and runtime_of."""
+"""orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim),
+plus runtime, limit rows (FR-60) and runtime_of."""
 
 import json
 import os
@@ -8,10 +8,9 @@ import unittest
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-from agent_pm.utils import save
 from agent_pm.linear_orchestrator.engine import runs
-
-from .. import case
+from agent_pm.utils import save
+from orchestrator_test_helpers import case
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))

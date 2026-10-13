@@ -1,5 +1,5 @@
-"""orchestrator inputs.py, ported from the old inputs_test (its Checkout case on the composer), plus FR-57: a Handoff
-whose Instructions hold a `## Comments` line."""
+"""orchestrator inputs.py, ported from the old inputs_test (its Checkout case on the composer),
+plus FR-57: a Handoff whose Instructions hold a `## Comments` line."""
 
 import json
 import os
@@ -11,8 +11,7 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils import SHORT
-
-from ..case import Case
+from orchestrator_test_helpers.case import Case
 
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}
@@ -354,13 +353,15 @@ class Gather(Case):
                 run=Gh({endpoint("Research"): ok(code=1, stderr="boom")}),
             )
         for bad in ("not json", json.dumps({"name": "x"}), json.dumps([1])):
-            with self.subTest(bad=bad):
-                with self.assertRaisesRegex(
+            with (
+                self.subTest(bad=bad),
+                self.assertRaisesRegex(
                     RuntimeError, r"^gh api contents Research: unusable response$"
-                ):
-                    inputs.gather(
-                        issue(""), "researcher", DOCS, run=Gh({endpoint("Research"): ok(bad)})
-                    )
+                ),
+            ):
+                inputs.gather(
+                    issue(""), "researcher", DOCS, run=Gh({endpoint("Research"): ok(bad)})
+                )
 
     def test_design_falls_back_to_first_design_link(self):
         prd1, prd2 = (

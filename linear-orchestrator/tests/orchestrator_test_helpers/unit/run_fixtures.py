@@ -1,5 +1,5 @@
-"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear fake recording each
-call's identity, and the orchestrator log's readers."""
+"""Run-side fixtures: ids, the config files config.load() reads (in the test's HOME), a Linear
+fake recording each call's identity, and the orchestrator log's readers."""
 
 import json
 import os
@@ -8,10 +8,10 @@ import tempfile
 from datetime import datetime
 from unittest import mock
 
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
-
-from ..case import Case
-from .board_ids import HEADER, STATES, role
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit.board_ids import HEADER, STATES, role
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -19,7 +19,7 @@ PROJECT = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 ENGINEER, RESEARCHER = "engineer@agents.test", "researcher@agents.test"
 HARNESS, KEY = "linear-api-key", "linear-api-key-engineer"
 SESSION = linear.client_id(SID, "session")
-NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 URL = f"https://linear.app/t/issue/{ID}"
 USER_NOTE = {
     "body": "Use SQLite.",

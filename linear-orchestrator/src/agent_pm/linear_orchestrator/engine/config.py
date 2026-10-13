@@ -1,7 +1,8 @@
-"""The Linear orchestrator's config: load() reads its own keys once (linear-orchestrator/config.toml with the keys of
-~/.agent-pm/config.local.toml it owns: TOP_KEYS, and ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and
-the delegate's, constructs a caller-owned Driver and returns a frozen Config with a resolved RunConfig per role,
-or raises ConfigError; plus TUI names and shared helpers."""
+"""The Linear orchestrator's config: load() reads its own keys once (linear-
+orchestrator/config.toml with the keys of ~/.agent-pm/config.local.toml it owns: TOP_KEYS, and
+ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and the delegate's,
+constructs a caller-owned Driver and returns a frozen Config with a resolved RunConfig per
+role, or raises ConfigError; plus TUI names and shared helpers."""
 
 import os
 import re
@@ -13,11 +14,9 @@ from types import MappingProxyType
 from typing import Literal
 
 from agent_pm import delegate, utils
+from agent_pm.linear_orchestrator.engine.types import ConfigError, TuiError
 from agent_pm.session import Driver
-from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import GUARD
-from agent_pm.utils import STATE, import_roots, temp_dirs, under
-from agent_pm.utils import NAME, OWNER
+from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
@@ -90,7 +89,8 @@ TASKS = {
     ),
 }
 
-# Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the github destination's
+# Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the
+# github destination's
 # `<Workdir>/publish`.
 CLONES = ("src", "publish")
 
@@ -155,7 +155,7 @@ def load(
     try:
         cfg = utils.read_project("linear-orchestrator", path=path, local=local, own=True)
     except (OSError, ValueError) as e:
-        raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
+        raise ConfigError.read_failed(e) from None
     work = _work_dir(cfg, root)
     try:
         found, core_cfg = _load(cfg, root, work, local, core)
@@ -176,7 +176,7 @@ def session(role, issue):
 def tui_prefix(role, issue):
     name = f"{role}-{issue}"
     if not re.fullmatch(_ROLE_ISSUE, name):
-        raise ValueError(f"TUI session prefix {name!r}: want {_ROLE_ISSUE}")
+        raise TuiError.tui_session_prefix_want(name, _ROLE_ISSUE)
     return name + "-"
 
 
@@ -253,14 +253,10 @@ def _work_dir(cfg, root, clones=None):
     v = cfg.get("work_dir", STATE)
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}"
-        )
+        raise ConfigError.invalid_work_path(v)
     path = os.path.realpath(path)
     if _overlap(path, real):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: work_dir must neither lie in nor contain the repo {real}: {v!r}"
-        )
+        raise ConfigError.work_overlaps_repo(real, v)
     for k, clone in (clones or {}).items():
         if _overlap(path, clone):
             raise ConfigError(
@@ -274,7 +270,7 @@ def _load(cfg, root, work, local, core):
     try:
         core_cfg = utils.read_project("delegate", path=core, local=local)
     except (OSError, ValueError) as e:
-        raise ConfigError(f"core: {e}") from None
+        raise ConfigError.core(e) from None
     roles = _runnable(cfg, root, work, core, core_cfg, local)
     docs = _docs(roles, local)
     frozen = {
@@ -301,79 +297,52 @@ def _uuid(v):
 
 def _check_ids(cfg):
     if not _uuid(cfg.get("team")):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: team must be a Linear team id (UUID): {cfg.get('team')!r}"
-        )
+        raise ConfigError.invalid_team_id(cfg.get("team"))
     states = cfg["states"]
     if extra := sorted(set(states) - set(STATES)):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: [states] has unknown keys: {', '.join(extra)}"
-        )
+        raise ConfigError.unknown_states(", ".join(extra))
     for k in STATES:
         if not _uuid(states[k]):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states[k]!r}"
-            )
+            raise ConfigError.invalid_state_id(k, states[k])
     if not _uuid(cfg.get("task_label_group")):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg.get('task_label_group')!r}"
-        )
+        raise ConfigError.invalid_label_group_id(cfg.get("task_label_group"))
 
 
 def _load_config(cfg, root, local):
     if missing := utils.unset(cfg, REQUIRED):
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} "
-            "(linear-orchestrator/config.toml's `# local:` lines)"
-        )
+        raise ConfigError.missing_keys(", ".join(missing), local)
     _check_ids(cfg)
     hk = cfg.get("harness_key")
     if not isinstance(hk, str) or not hk:
-        raise ConfigError(
-            f"linear-orchestrator/config.toml: harness_key must be a Keychain service name: {hk!r}"
-        )
+        raise ConfigError.invalid_harness_key(hk)
     if extra := sorted(set(cfg) - TOP_KEYS):
-        raise ConfigError(f"linear-orchestrator/config.toml: unknown keys: {', '.join(extra)}")
+        raise ConfigError.unknown_keys(", ".join(extra))
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{name}] has unknown keys: {', '.join(extra)}"
-            )
+            raise ConfigError.unknown_role_keys(name, ", ".join(extra))
         for k, what in (("account", "the role's Linear email"), ("key", "a Keychain service name")):
             if not isinstance(p.get(k), str) or not p[k]:
-                raise ConfigError(
-                    f"linear-orchestrator/config.toml: [roles.{name}] {k} must be {what}: {p.get(k)!r}"
-                )
+                raise ConfigError.invalid_role_field(name, k, what, p.get(k))
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}"
-            )
+            raise ConfigError.invalid_max_runs(name, n)
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
             if nxt in seen:
-                raise ConfigError(
-                    f"linear-orchestrator/config.toml: the next chain from {name!r} has a cycle"
-                )
+                raise ConfigError.next_cycle(name)
             seen.add(nxt)
             nxt = roles.get(nxt, {}).get("next")
     projects = cfg.setdefault("project_repos", {})
     if not isinstance(projects, dict):
-        raise ConfigError(
-            'linear-orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'
-        )
+        raise ConfigError.invalid_projects_table()
     for k, v in projects.items():
         if not _uuid(k) or not repo_slug(v):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
-            )
+            raise ConfigError.invalid_project_repo(k, v)
     clones = cfg.setdefault("local_clones", {})
     if not isinstance(clones, dict):
-        raise ConfigError(
-            'linear-orchestrator/config.toml: local_clones must be a table of "<owner>/<name>" = "<path>"'
-        )
+        raise ConfigError.invalid_clones_table()
     seen = {}
     for k, v in clones.items():
         if (
@@ -382,31 +351,21 @@ def _load_config(cfg, root, local):
             or not v.startswith(("/", "~"))
             or not v.isprintable()
         ):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}"
-            )
+            raise ConfigError.invalid_local_clone(k, v)
         if k.lower() in seen:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: local_clones.{seen[k.lower()]} and local_clones.{k} are the same repo"
-            )
+            raise ConfigError.duplicate_clone(seen[k.lower()], k)
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
     _work_dir(cfg, root, clones)
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
-        raise ConfigError(
-            'linear-orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"'
-        )
+        raise ConfigError.invalid_labels_table()
     seen = {}
     for k, v in labels.items():
         if not _uuid(v):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}"
-            )
+            raise ConfigError.invalid_task_label(k, v)
         if v in seen:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
-            )
+            raise ConfigError.duplicate_label(seen[v], k, v)
         seen[v] = k
 
 
@@ -432,17 +391,13 @@ def _runnable(cfg, root, work, core, core_cfg, local):
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
         if under(work, [d]):
-            raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
+            raise ConfigError.work_trusted(d, work)
     overlay, out = _fill_root(cfg.get("core", {}), root), {}
     for name, p in cfg["roles"].items():
         if name not in core_roles:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: role {name!r} is not in delegate/config.toml"
-            )
+            raise ConfigError.undefined_delegate_role(name)
         if name not in TASKS:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: role {name!r} has no entry in config.TASKS"
-            )
+            raise ConfigError.undefined_task_role(name)
         try:
             run = delegate.resolve_run(
                 name,
@@ -468,34 +423,24 @@ def _runnable(cfg, root, work, core, core_cfg, local):
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{name}] key {r.key!r} is harness_key"
-            )
+            raise ConfigError.shared_harness_key(name, r.key)
         if r.key in owner:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: [roles.{name}] key {r.key!r} is also [roles.{owner[r.key]}]'s"
-            )
+            raise ConfigError.shared_role_key(name, r.key, owner[r.key])
         owner[r.key] = name
     for name, r in out.items():
         if not r.next:
             continue
         if r.next not in out:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: next of {name!r} names undefined role {r.next!r}"
-            )
+            raise ConfigError.undefined_next_role(name, r.next)
         if not TASKS[r.next].prefix:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: next of {name!r} is role {r.next!r}, whose config.TASKS entry has no prefix"
-            )
+            raise ConfigError.next_without_prefix(name, r.next)
     tasks = {t for r in out.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
-            )
+            raise ConfigError.undefined_task(task)
     for key, path in cfg["local_clones"].items():
         if reason := clone_error(path, key):
-            raise ConfigError(f"linear-orchestrator/config.toml: local_clones.{key}: {reason}")
+            raise ConfigError.local_clones(key, reason)
     return out
 
 
@@ -504,10 +449,7 @@ def _docs(roles, local):
     targets = {(o.get("repo"), o.get("branch"), o.get("host", "github.com")) for o in outs.values()}
     name, branch, host = targets.pop() if len(targets) == 1 else (None, None, None)
     if not name or not branch or host != "github.com":
-        raise ConfigError(
-            "core: document roles must publish to one github.com repo and branch (their [output] in "
-            f"{local})"
-        )
+        raise ConfigError.inconsistent_docs_destination(local)
     return Docs(name, branch, MappingProxyType({r: o["dir"] for r, o in outs.items()}))
 
 

@@ -1,5 +1,6 @@
-"""orchestrator writeback.py, ported from the old writeback_test (the sink's cases on progress), plus comment steps by
-client id found again on resume (FR-54), the usage-limit path (FR-59), runs.note and the Context builder."""
+"""orchestrator writeback.py, ported from the old writeback_test (the sink's cases on progress),
+plus comment steps by client id found again on resume (FR-54), the usage-limit path (FR-59),
+runs.note and the Context builder."""
 
 import fcntl
 import functools
@@ -16,13 +17,13 @@ from unittest import mock
 
 from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
-
-from .clock import logs_at
-from ..case import Case
-from . import board_ids, run_fixtures
-from .run_fixtures import logged, show
-from .writeback_support import APPROVE_MAPPED, DOC, PR, PRD
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit import board_ids, run_fixtures
+from orchestrator_test_helpers.unit.clock import logs_at
+from orchestrator_test_helpers.unit.run_fixtures import logged, show
+from orchestrator_test_helpers.unit.writeback_support import APPROVE_MAPPED, DOC, PR, PRD
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -39,7 +40,7 @@ SPEC_TEXT = "# Spec\n\nBuild the registry.\n"
 PLAN_TEXT = "# Plan\n\nRESUME: phase=2\n\n- [ ] task 1\n"
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 APPROVE = "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
-NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 START = Progress("start", "x")
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 
@@ -474,7 +475,7 @@ class FinishLedger(Base):
         self.assertEqual(broken.calls[-1], post("comment", "Build ready: Ready."))
         self.assertEqual(
             self.lines()[-1],
-            f"step-error {ID} step=comment error=RuntimeError: commentCreate: success: false",
+            f"step-error {ID} step=comment error=LinearError: commentCreate: success: false",
         )
         again = Gql()
         self.assertTrue(writeback.finish(replace(ctx, gql=again), done))
@@ -487,13 +488,13 @@ class FinishLedger(Base):
 
     def test_read_error_stops(self):
         gql = Gql(
-            fail=lambda name, v: SystemExit("linear api error: down") if name == "read" else None
+            fail=lambda name, v: LinearError("linear api error: down") if name == "read" else None
         )
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
         self.assertEqual(gql.calls, [READ])
         self.assertEqual(
-            self.lines(), [f"step-error {ID} step=read error=SystemExit: linear api error: down"]
+            self.lines(), [f"step-error {ID} step=read error=LinearError: linear api error: down"]
         )
 
     def test_other_sid_does_not_skip(self):
@@ -625,7 +626,7 @@ class CommentIds(Base):
         self.assertEqual(len([c for c in again.calls if c[0] == "comment"]), 1)
 
     def test_a_find_error_is_the_steps_error(self):
-        squatted = f"RuntimeError: comment {cid('comment')} is not ours"
+        squatted = f"LinearError: comment {cid('comment')} is not ours"
         for name, comments, fail, error in (
             ("another issue's", {cid("comment"): mine("x", OTHER_ISSUE)}, None, squatted),
             (
@@ -637,8 +638,8 @@ class CommentIds(Base):
             (
                 "unreadable",
                 {},
-                SystemExit("linear api error: down"),
-                "SystemExit: linear api error: down",
+                LinearError("linear api error: down"),
+                "LinearError: linear api error: down",
             ),
         ):
             with self.subTest(name):
@@ -708,7 +709,7 @@ class UsageLimit(Base):
             post(
                 "limit",
                 "Usage limit, reset time unknown."
-                "\n\nCould not subscribe ann@example.com: RuntimeError: issueSubscribe: success: false",
+                "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false",
             ),
         )
 
@@ -743,7 +744,7 @@ class UsageLimit(Base):
         self.assertEqual(gql.calls[-1][0], "comment")
         self.assertEqual(
             self.lines(),
-            [f"step-error {ID} step=limit error=RuntimeError: commentCreate: success: false"],
+            [f"step-error {ID} step=limit error=LinearError: commentCreate: success: false"],
         )
         self.no_ledger(ctx)
 
@@ -751,11 +752,11 @@ class UsageLimit(Base):
         for name, err, line in (
             (
                 "state",
-                SystemExit("linear api error: x"),
-                "step=move:in_review error=SystemExit: linear api error: x",
+                LinearError("linear api error: x"),
+                "step=move:in_review error=LinearError: linear api error: x",
             ),
-            ("reread", SystemExit(143), "step=limit error=SystemExit: 143"),
-            ("subscribe", SystemExit(143), "step=limit error=SystemExit: 143"),
+            ("reread", Stopped(143), "step=limit error=Stopped: 143"),
+            ("subscribe", Stopped(143), "step=limit error=Stopped: 143"),
         ):
             with self.subTest(name=name):
                 gql = Gql(fail=lambda n, v: err if n == name else None)
@@ -779,7 +780,7 @@ class FinishSteps(Base):
             "Unable to create issue attachment",
         ):
             with self.subTest(text=text):
-                err = SystemExit(f"linear api error: [{{'message': '{text}'}}]")
+                err = LinearError(f"linear api error: [{{'message': '{text}'}}]")
                 gql = Gql(fail=lambda name, v: err if name == "attach" else None)
                 ctx = self.ctx(gql=gql)
                 self.assertTrue(
@@ -790,14 +791,14 @@ class FinishSteps(Base):
 
     def test_other_attach_error_stops(self):
         gql = Gql(
-            fail=lambda name, v: SystemExit("linear api error: boom") if name == "attach" else None
+            fail=lambda name, v: LinearError("linear api error: boom") if name == "attach" else None
         )
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
         self.assertEqual(gql.calls[-1][0], "attach")
         self.assertEqual(
             self.lines()[-1],
-            f"step-error {ID} step=attach:{PR} error=SystemExit: linear api error: boom",
+            f"step-error {ID} step=attach:{PR} error=LinearError: linear api error: boom",
         )
 
     def test_no_move_from_another_state(self):
@@ -822,20 +823,20 @@ class FinishSteps(Base):
     def test_subscribe_failures_noted_and_finish_continues(self):
         def fail(name, v):
             if name == "subscribe":
-                return False if v["e"] == HUMANS[0] else SystemExit("linear api error: boom")
+                return False if v["e"] == HUMANS[0] else LinearError("linear api error: boom")
 
         gql = Gql(fail=fail)
         ctx = self.ctx(gql=gql)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         body = (
             "Build failed: push not permitted"
-            "\n\nCould not subscribe ann@example.com: RuntimeError: issueSubscribe: success: false"
-            "\n\nCould not subscribe bob@example.com: SystemExit: linear api error: boom"
+            "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
+            "\n\nCould not subscribe bob@example.com: LinearError: linear api error: boom"
         )
         self.assertEqual(gql.calls, expect(body=body, state="in_review"))
 
     def test_rejected_spec_post_noted(self):
-        err = SystemExit("linear api error: body too long")
+        err = LinearError("linear api error: body too long")
         gql = Gql(
             fail=lambda name, v: (
                 err if name == "comment" and v["b"].startswith("**Spec**") else None
@@ -846,7 +847,7 @@ class FinishSteps(Base):
         self.assertTrue(
             writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan]))
         )
-        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: SystemExit: linear api error: body too long"
+        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: LinearError: linear api error: body too long"
         self.assertEqual(
             gql.calls,
             expect(
@@ -858,7 +859,7 @@ class FinishSteps(Base):
             ),
         )
         self.assertIn(
-            f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=SystemExit: linear api error: body too long",
+            f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=LinearError: linear api error: body too long",
             self.lines(),
         )
 
@@ -902,16 +903,16 @@ class FileRecheck(Base):
     def test_skipped(self):
         for name, make, reason in (
             ("symlink", self.symlink, "OSError: "),
-            ("hard link", self.hard_link, "ValueError: not a single-link file"),
-            ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "ValueError: not a .md file"),
-            ("outside the workdir", self.outside, "ValueError: not under the workdir"),
-            ("outside through a linked dir", self.linked_dir, "ValueError: not under the workdir"),
+            ("hard link", self.hard_link, "FileError: not a single-link file"),
+            ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "FileError: not a .md file"),
+            ("outside the workdir", self.outside, "FileError: not under the workdir"),
+            ("outside through a linked dir", self.linked_dir, "FileError: not under the workdir"),
             (
                 "too big",
                 lambda ctx: self.write(ctx, "big.md", "x" * 1_000_001),
-                "ValueError: over 1000000 bytes",
+                "FileError: over 1000000 bytes",
             ),
-            ("fifo, without blocking", self.fifo, "ValueError: not a regular file"),
+            ("fifo, without blocking", self.fifo, "FileError: not a regular file"),
         ):
             with self.subTest(name):
                 ctx = self.ctx()
@@ -1049,20 +1050,20 @@ class ProgressEvents(Base):
         self.assertEqual(self.ledger(ctx), {SID: steps})
 
     def test_swallows_system_exit_and_retries_later(self):
-        gql = Gql(fail=lambda name, v: SystemExit("linear api error: down"))
+        gql = Gql(fail=lambda name, v: LinearError("linear api error: down"))
         ctx = self.ctx(gql=gql)
         writeback.progress(ctx, START)
         self.assertEqual(
-            self.lines(), [f"step-error {ID} step=start error=SystemExit: linear api error: down"]
+            self.lines(), [f"step-error {ID} step=start error=LinearError: linear api error: down"]
         )
         ok = Gql()
         writeback.progress(replace(ctx, gql=ok), START)
         self.assertEqual(ok.calls, [post("start", "Build started: x")])
 
     def test_signal_exit_passes_through(self):
-        gql = Gql(fail=lambda name, v: SystemExit(129))
+        gql = Gql(fail=lambda name, v: Stopped(129))
         ctx = self.ctx(gql=gql)
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(Stopped) as cm:
             writeback.progress(ctx, START)
         self.assertEqual(cm.exception.code, 129)
         self.no_ledger(ctx)
@@ -1085,14 +1086,14 @@ class FinishNeverRaises(Base):
     def test_signal_exit_stops_the_steps(self):
         for name in ("read", "subscribe", "comment", "attach"):
             with self.subTest(name=name):
-                gql = Gql(fail=lambda n, v: SystemExit(143) if n == name else None)
+                gql = Gql(fail=lambda n, v: Stopped(143) if n == name else None)
                 ctx = self.ctx(gql=gql)
                 self.assertFalse(
                     writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
                 )
                 self.assertEqual(gql.calls[-1][0], name)
                 self.assertEqual(
-                    self.lines()[-1], f"step-error {ID} step=finish error=SystemExit: 143"
+                    self.lines()[-1], f"step-error {ID} step=finish error=Stopped: 143"
                 )
                 self.assertNotIn("state", [c[0] for c in gql.calls])
 
@@ -1182,7 +1183,7 @@ class Bounce(Base):
         )
 
     def test_unarchive_failure_ignored(self):
-        for err in (SystemExit("linear api error: not archived"), False):
+        for err in (LinearError("linear api error: not archived"), False):
             with self.subTest(err=err):
                 gql = Gql(
                     issue=self.src(),
@@ -1197,7 +1198,7 @@ class Bounce(Base):
             issue=self.src(),
             states=self.DONE,
             fail=lambda name, v: (
-                SystemExit("linear api error: boom")
+                LinearError("linear api error: boom")
                 if name == "subscribe" and v["e"] == HUMANS[1]
                 else None
             ),
@@ -1206,7 +1207,7 @@ class Bounce(Base):
         t = self.text("r")
         self.assertIn(
             comment(
-                t + "\n\nCould not subscribe bob@example.com: SystemExit: linear api error: boom",
+                t + "\n\nCould not subscribe bob@example.com: LinearError: linear api error: boom",
                 SRC_UUID,
             ),
             gql.calls,
@@ -1260,7 +1261,7 @@ class Bounce(Base):
             [
                 comment(
                     self.question("r") + "\n\nCould not subscribe ann@example.com: "
-                    "RuntimeError: issueSubscribe: success: false"
+                    "LinearError: issueSubscribe: success: false"
                 ),
                 reread(),
                 move("in_review"),
@@ -1271,21 +1272,21 @@ class Bounce(Base):
         for name in ("unarchive", "subscribe"):
             with self.subTest(name=name):
                 gql = Gql(
-                    issue=self.src(), fail=lambda n, v: SystemExit(129) if n == name else None
+                    issue=self.src(), fail=lambda n, v: Stopped(129) if n == name else None
                 )
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(Stopped):
                     writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
                 self.assertEqual(gql.calls[-1][0], name)
 
     def test_other_failures_raise(self):
         gql = Gql(issue=self.src(), fail=lambda name, v: False if name == "comment" else None)
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(LinearError):
             writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
         self.assertEqual(gql.calls[-1], comment(self.text("r"), SRC_UUID))
         gql = Gql(
-            fail=lambda name, v: SystemExit("linear api error: x") if name == "state" else None
+            fail=lambda name, v: LinearError("linear api error: x") if name == "state" else None
         )
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LinearError):
             writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
 
 

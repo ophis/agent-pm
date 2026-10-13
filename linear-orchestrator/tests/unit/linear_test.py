@@ -1,12 +1,12 @@
-"""orchestrator linear.py, ported from the old linear_test (every call names its service; the log dir is a setting),
-plus client ids and comments found by id."""
+"""orchestrator linear.py, ported from the old linear_test (every call names its service; the log
+dir is a setting), plus client ids and comments found by id."""
 
 import http.client
 import io
 import json
 import os
-import subprocess
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,14 +16,13 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import linear
-
-from .clock import frozen, logs_at
-from ..case import Case
-from .board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
-from .outage import FAILURES, failing
-
-from .streams import Stderr
+from orchestrator_test_helpers.case import Case
+from orchestrator_test_helpers.unit.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
+from orchestrator_test_helpers.unit.clock import frozen, logs_at
+from orchestrator_test_helpers.unit.outage import FAILURES, failing
+from orchestrator_test_helpers.unit.streams import Stderr
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
@@ -37,12 +36,12 @@ class RoleIds(Case):
             return {"users": {"nodes": [{"id": "u-" + variables["e"]}]}}
 
         self.assertEqual(linear.role_ids(gql, roles), {f"u-{a}": r for r, a in ACCOUNTS.items()})
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             linear.role_ids(
                 lambda q, **v: {"users": {"nodes": []}}, {"engineer": roles["engineer"]}
             )
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             "linear-orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear",
         )
 
@@ -54,10 +53,10 @@ class Humans(Case):
 
         self.assertEqual(linear.humans(gql, SimpleNamespace(human_members=("a@b.c",))), ["u-a@b.c"])
         self.assertEqual(linear.humans(gql, SimpleNamespace(human_members=())), [])
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             linear.humans(gql, SimpleNamespace(human_members=("a@b.c", "x@y.z")))
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             "linear-orchestrator/config.toml: human_members not found in Linear: x@y.z",
         )
 
@@ -91,10 +90,10 @@ class TeamCheck(Case):
         }
         for message, nodes in cases.items():
             with self.subTest(message):
-                with self.assertRaises(SystemExit) as cm:
+                with self.assertRaises(LinearError) as cm:
                     linear.team(self.gql(nodes), self.cfg())
                 self.assertEqual(
-                    str(cm.exception.code), "linear-orchestrator/config.toml: " + message
+                    str(str(cm.exception)), "linear-orchestrator/config.toml: " + message
                 )
 
 
@@ -110,7 +109,7 @@ class TaskGroupCheck(Case):
         def gql(query, **v):
             calls.append((query, v))
             if error:
-                raise SystemExit(error)
+                raise LinearError(error)
             return {"issueLabel": node}
 
         gql.calls = calls
@@ -155,10 +154,10 @@ class TaskGroupCheck(Case):
         ]
         for gql, labels, message in cases:
             with self.subTest(message):
-                with self.assertRaises(SystemExit) as cm:
+                with self.assertRaises(LinearError) as cm:
                     linear.task_group(gql, self.cfg(labels))
                 self.assertEqual(
-                    str(cm.exception.code), "linear-orchestrator/config.toml: " + message
+                    str(str(cm.exception)), "linear-orchestrator/config.toml: " + message
                 )
                 self.assertEqual(len(gql.calls), 1)
 
@@ -179,11 +178,11 @@ def refused(case, call):
         mock.patch.object(
             urllib.request, "build_opener", side_effect=AssertionError("request sent")
         ),
-        case.assertRaises(SystemExit) as cm,
+        case.assertRaises(LinearError) as cm,
     ):
         call()
-    case.assertIsInstance(cm.exception.code, str)
-    return cm.exception.code
+    case.assertIsInstance(str(cm.exception), str)
+    return str(cm.exception)
 
 
 class LinearGql(Case):
@@ -354,10 +353,10 @@ class Unavailable(Case):
                 )
 
     def test_graphql_errors_in_a_200_stay_systemexit(self):
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.gql(VIEWER, body=errors("RATELIMITED"))
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             "linear api error: [{'message': 'm', 'extensions': {'code': 'RATELIMITED'}}]",
         )
 
@@ -433,7 +432,7 @@ class Helpers(Case):
     def test_one_line(self):
         self.assertEqual(linear.one_line("a\n\n  b\tc "), "a b c")
         self.assertEqual(linear.one_line(RuntimeError("two\nlines")), "RuntimeError: two lines")
-        self.assertEqual(linear.one_line(SystemExit("api error")), "SystemExit: api error")
+        self.assertEqual(linear.one_line(LinearError("api error")), "LinearError: api error")
 
     def test_stamp_is_local_time_in_seconds(self):
         self.assertRegex(linear.stamp(), r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\Z")
@@ -679,7 +678,7 @@ class LogsDirDefault(Case):
         self.assertIsNone(linear.LOGS_DIR)
 
 
-class LinearError(Logs):
+class ApiErrors(Logs):
     def error(self, e, tty=False, dry=False, src="router"):
         return self.stderr(lambda: linear.linear_error(src, e, dry), tty)
 
@@ -806,7 +805,7 @@ class Writes(Case):
             linear.call(gql, linear.M_COMMENT, "commentCreate", i="I", b="x"), {"success": True}
         )
         self.assertEqual(gql.calls, [("comment", {"i": "I", "b": "x"})])
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(LinearError) as cm:
             linear.call(
                 Gql(fail=lambda name, v: False), linear.M_COMMENT, "commentCreate", i="I", b="x"
             )
@@ -820,7 +819,7 @@ class Writes(Case):
             gql.calls,
             [("comment", {"i": "I", "b": "x"}), ("comment_id", {"c": "c-1", "i": "I", "b": "y"})],
         )
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(LinearError):
             linear.comment(Gql(fail=lambda name, v: False), "I", "y", cid="c-1")
 
     def test_move(self):
@@ -865,16 +864,16 @@ class Writes(Case):
                 )
                 self.assertEqual([n for n, _ in gql.calls], ["subscribe", "read"])
         gql = Gql(
-            fail=lambda name, v: SystemExit("linear api error: boom") if name == "move" else None
+            fail=lambda name, v: LinearError("linear api error: boom") if name == "move" else None
         )
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(LinearError):
             linear.comment_and_move(gql, "I", "body", IN_REVIEW, IN_PROGRESS)
         self.assertEqual([n for n, _ in gql.calls], ["read", "move"])
 
     def test_subscribe_failures_noted_in_the_comment(self):
         def fail(name, v):
             if name == "subscribe":
-                return False if v["e"] == "a@x.com" else SystemExit("linear api error: boom")
+                return False if v["e"] == "a@x.com" else LinearError("linear api error: boom")
 
         gql = Gql(fail=fail)
         self.assertIsNone(
@@ -889,16 +888,16 @@ class Writes(Case):
                 {
                     "i": "I",
                     "b": "body"
-                    "\n\nCould not subscribe a@x.com: RuntimeError: issueSubscribe: success: false"
-                    "\n\nCould not subscribe b@x.com: SystemExit: linear api error: boom",
+                    "\n\nCould not subscribe a@x.com: LinearError: issueSubscribe: success: false"
+                    "\n\nCould not subscribe b@x.com: LinearError: linear api error: boom",
                 },
             ),
         )
         self.assertEqual(linear.subscribe(Gql(), "I", ("a@x.com",)), "")
 
     def test_signal_exit_reraised(self):
-        gql = Gql(fail=lambda name, v: SystemExit(130) if name == "subscribe" else None)
-        with self.assertRaises(SystemExit) as cm:
+        gql = Gql(fail=lambda name, v: Stopped(130) if name == "subscribe" else None)
+        with self.assertRaises(Stopped) as cm:
             linear.comment_and_move(
                 gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com", "b@x.com")
             )
@@ -958,7 +957,7 @@ class FindComment(Case):
         for gql in (
             comment_gql(),
             comment_gql(
-                error=SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+                error=LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
             ),
         ):
             with self.subTest(calls=gql):
@@ -966,8 +965,8 @@ class FindComment(Case):
 
     def test_other_errors_raise(self):
         for error in (
-            SystemExit("linear api error: boom"),
-            SystemExit(130),
+            LinearError("linear api error: boom"),
+            Stopped(130),
             linear.Unavailable("comment", status=503),
             RuntimeError("x"),
         ):
@@ -982,19 +981,19 @@ class FindComment(Case):
             {**node(), "user": None},
             {**node(), "issue": None},
         ):
-            with self.subTest(found=found), self.assertRaises(RuntimeError) as cm:
+            with self.subTest(found=found), self.assertRaises(LinearError) as cm:
                 linear.find_comment(comment_gql(found), "c-1", ISSUE)
             self.assertEqual(str(cm.exception), "comment c-1 is not ours")
 
     def test_not_found_names_only_that_text(self):
         self.assertTrue(
             linear.not_found(
-                SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
+                LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
             )
         )
         for e in (
-            SystemExit("linear api error: boom"),
-            SystemExit(130),
+            LinearError("linear api error: boom"),
+            Stopped(130),
             RuntimeError("Entity not found"),
         ):
             with self.subTest(e=repr(e)):

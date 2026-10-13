@@ -1,6 +1,6 @@
-"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and moves, each step
-once per session id (the ledger; comment steps by client id, found again on resume); bounce, the router's repo-check
-report."""
+"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments
+and moves, each step once per session id (the ledger; comment steps by client id, found again
+on resume); bounce, the router's repo-check report."""
 
 import fcntl
 import functools
@@ -15,6 +15,7 @@ from datetime import datetime
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.target import MAPPED
+from agent_pm.linear_orchestrator.engine.types import FileError, LinearError, Stopped
 from agent_pm.linear_orchestrator.linear.issues import Issue
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
@@ -24,7 +25,6 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     move,
     one_line,
-    reraise_signal,
     subscribe,
 )
 from agent_pm.utils import save
@@ -43,7 +43,8 @@ PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
-# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain open forever; regular-file
+# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain
+# open forever; regular-file
 # reads ignore it.
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
@@ -142,8 +143,7 @@ def _step(ctx, step, call, cid=None):
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (Exception, LinearError) as e:
         _error(ctx, step, e)
         return e
     log("writeback", "step", ctx.ident, sid=ctx.sid, step=step, found=found or None)
@@ -156,7 +156,7 @@ def _post(ctx, step, body):
 
 
 def progress(ctx, event: Progress) -> None:
-    # raises only a signal SystemExit: an on_event exception stops the Delegate's session
+    # raises only a signal LinearError: an on_event exception stops the Delegate's session
     try:
         if not isinstance(event, Progress):
             return
@@ -166,28 +166,28 @@ def progress(ctx, event: Progress) -> None:
         else:
             digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
             _post(ctx, f"progress:{event.name}:{digest}", f"Progress ({event.name}): {event.text}")
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (Exception, LinearError) as e:
         _error(ctx, "sink", e)
 
 
 def _read_file(path, workdir):
-    # re-checked on the open fd: a process the agent run left behind could swap it after the Delegate's check
+    # re-checked on the open fd: a process the agent run left behind could swap it after the
+    # Delegate's check
     fd = os.open(path, NO_FOLLOW)
     with os.fdopen(fd, "rb") as f:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            raise ValueError("not a regular file")
+            raise FileError.not_a_regular_file()
         if st.st_nlink != 1:
-            raise ValueError("not a single-link file")
+            raise FileError.not_a_single_link_file()
         real = os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
         if not real.endswith(".md"):
-            raise ValueError("not a .md file")
+            raise FileError.not_a_md_file()
         if not real.startswith(os.path.join(os.path.realpath(workdir), "")):
-            raise ValueError("not under the workdir")
+            raise FileError.not_under_the_workdir()
         data = f.read(MAX_FILE + 1) if st.st_size <= MAX_FILE else None
     if data is None or len(data) > MAX_FILE:  # len: the file may grow after fstat
-        raise ValueError(f"over {MAX_FILE} bytes")
+        raise FileError.over_bytes(MAX_FILE)
     return data
 
 
@@ -208,11 +208,12 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: Outcome) -> bool:
-    # never raises: a signal SystemExit stops the steps and returns False, so run.py still posts the session comment's
+    # never raises: a signal LinearError stops the steps and returns False, so run.py still
+    # posts the session comment's
     # end
     try:
         return _finish(ctx, outcome)
-    except (Exception, SystemExit) as e:
+    except (Exception, Stopped) as e:
         _error(ctx, "finish", e)
         return False
 
@@ -236,8 +237,7 @@ def _finish(ctx, o):
 
     try:
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (Exception, LinearError) as e:
         _error(ctx, "read", e)
         return False
 
@@ -285,7 +285,7 @@ def _finish(ctx, o):
                 return
             try:
                 call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
-            except (Exception, SystemExit) as e:
+            except (Exception, LinearError) as e:
                 if not any(
                     s in str(e) for s in ATTACHED
                 ):  # the GitHub integration links PRs itself
@@ -305,7 +305,7 @@ def _finish(ctx, o):
 def limit(ctx, resets_at: float | None) -> bool:
     try:
         return _limit(ctx, resets_at)
-    except (Exception, SystemExit) as e:
+    except (Exception, Stopped) as e:
         _error(ctx, "limit", e)
         return False
 
@@ -318,8 +318,7 @@ def _limit(ctx, resets_at):
     # not ledgered: a resumed sid that hits the limit again moves again
     try:
         _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (Exception, LinearError) as e:
         _error(ctx, "move:in_review", e)
         return False
     return True
@@ -336,8 +335,8 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
         )
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        except (Exception, SystemExit) as e:
-            reraise_signal(e)
+        except (Exception, LinearError):
+            pass
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)
         _guarded_move(ctx, src["id"], h.source, "in_review", "done")

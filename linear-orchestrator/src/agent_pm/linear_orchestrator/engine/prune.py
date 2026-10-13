@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown: skipped):
-- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a left-open agent may
-  work in one;
-- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own folder, a src or
-  publish entry only as a clone or worktree (.git a directory or a file), uncommitted work included;
-- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree prune`, then deletes
-  each <ID>-* branch but the default that origin/<branch> or origin/<default> holds, else keeps and reports it (git
-  reads refs only, so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
-- archives every finished issue of the team assigned to the pm or engineer role account.
-TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune); a failure is
-logged and the rest goes on (run returns 3), but Unavailable is raised.
-"""
+"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either;
+unknown: skipped): - closes its live TUI sessions of a configured role (session.close) before
+its checkouts go, since a left-open agent may work in one; - deletes
+<work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
+folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
+uncommitted work included; - in a deleted worktree's local clone, unless it lies in
+<work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the
+default that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads
+refs only, so code an agent run planted, such as filters or hooks, never runs outside auto
+mode's review); - archives every finished issue of the team assigned to the pm or engineer role
+account. TUI sessions unknown: an error, and no issue is pruned. Each step is logged
+(linear.log, src prune); a failure is logged and the rest goes on (run returns 3), but
+Unavailable is raised."""
 
 import functools
 import os
@@ -21,7 +22,7 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import Unavailable
+from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
@@ -31,9 +32,8 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
 )
 from agent_pm.session import ConfigError, DriverError
-from agent_pm.utils import GUARD, common_dir, run_git as git
-from agent_pm.utils import under
-from agent_pm.utils import SHORT
+from agent_pm.utils import GUARD, SHORT, common_dir, under
+from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -55,7 +55,13 @@ M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 
 
 class Skip(Exception):
-    pass
+    @classmethod
+    def unsafe_directory(cls, join_ident_parts_1):
+        return cls(f"not a real directory inside {join_ident_parts_1}/, refusing to touch")
+
+    @classmethod
+    def not_repository(cls):
+        return cls("not a clone or worktree")
 
 
 class Pruner:
@@ -105,15 +111,13 @@ class Pruner:
         key = "/".join((ident, *parts))
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip(
-                    f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch"
-                )
+                raise Skip.unsafe_directory("/".join((ident, *parts[:-1])))
             if parts == (TMP,):
                 self.delete(key, path, "temp files")
                 return None
             dotgit = os.path.join(path, ".git")
             if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
-                raise Skip("not a clone or worktree")
+                raise Skip.not_repository()
             common = common_dir(path) if os.path.isfile(dotgit) else None
             return (
                 common
@@ -245,7 +249,7 @@ class Pruner:
                 cursor = end
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (Exception, LinearError) as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
         for node in nodes:
@@ -262,7 +266,7 @@ class Pruner:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except Unavailable:
                     raise
-                except (Exception, SystemExit) as e:
+                except (Exception, LinearError) as e:
                     self.error(ident, error=f"archive: {one_line(e)}")
                     continue
                 self.say("prune-archived", ident)
@@ -292,7 +296,7 @@ class Pruner:
             issue = self.gql(Q_ISSUE, i=ident)["issue"]
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (Exception, LinearError) as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
         if not issue or issue["state"]["id"] not in finished:

@@ -1,7 +1,7 @@
-"""The pm to engineer flow over router.py --issue, run.py in its detached Driver session and promote.py: a PRD issue
-becomes an ENG issue; a rework starts a new session; a failed run is not promoted; a Linear outage relating the child
-is retried; a run without an outcome resumes its session; a lost transcript (resumable no) sends the issue back to
-Todo for a new session."""
+"""The pm to engineer flow over router.py --issue, run.py in its detached Driver session and
+promote.py: a PRD issue becomes an ENG issue; a rework starts a new session; a failed run is
+not promoted; a Linear outage relating the child is retried; a run without an outcome resumes
+its session; a lost transcript (resumable no) sends the issue back to Todo for a new session."""
 
 import os
 import re
@@ -10,10 +10,9 @@ from urllib.parse import unquote
 
 from agent_pm.linear_orchestrator.engine import promote
 from agent_pm.linear_orchestrator.linear import issues
-
-from . import fake_linear
-from .flow_fixtures import HARNESS_EMAIL
-from .segments import BUILD, REPORT, Segment
+from orchestrator_test_helpers.integration import fake_linear
+from orchestrator_test_helpers.integration.flow_fixtures import HARNESS_EMAIL
+from orchestrator_test_helpers.integration.segments import BUILD, REPORT, Segment
 
 REWORK = "Add a section on stale sessions."
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."

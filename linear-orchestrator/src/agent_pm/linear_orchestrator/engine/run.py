@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""One agent run of an issue's role through delegate.run: its events write back to Linear (the session comment as the
-harness account, progress and outcome as the role's), its usage limit to Linear and runs.jsonl. Exits 2 on bad argv,
-1 on a config error, else 0."""
+"""One agent run of an issue's role through delegate.run: its events write back to Linear (the
+session comment as the harness account, progress and outcome as the role's), its usage limit to
+Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0."""
 
 import argparse
 import functools
@@ -13,7 +13,7 @@ from dataclasses import replace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, runs
-from agent_pm.linear_orchestrator.engine.types import ConfigError
+from agent_pm.linear_orchestrator.engine.types import ConfigError, Stopped
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
 from agent_pm.session import SIGNALS, DriverError
@@ -22,7 +22,7 @@ from agent_pm.utils import printable
 
 
 def _stop(signum, frame):
-    raise SystemExit(128 + signum)  # the Delegate then stops its session
+    raise Stopped(128 + signum)  # the Delegate then stops its session
 
 
 def _close_tuis(a, role, cfg):
@@ -118,8 +118,8 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         )
         result = run(cfg.roles[role].run, spec, driver=cfg.driver, on_event=on_event)
         rc = result.returncode
-    except (Exception, SystemExit) as e:
-        if isinstance(e, SystemExit) and isinstance(e.code, int):
+    except (Exception, Stopped) as e:
+        if isinstance(e, Stopped):
             rc = e.code
         else:
             log("run", "run-error", a.issue, error=one_line(e))

@@ -1,6 +1,7 @@
-"""orchestrator router.py, ported from the old router_test (Plan, Claim, Blockers, TaskLabels, Gate over Usage, Tick,
-IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's headless parts as Entry) onto config.load() and a fake
-Driver api, plus FR-44 to FR-48, FR-56 and FR-60. A tick's start is injected but in Entry, which runs main's own outer."""
+"""orchestrator router.py, ported from the old router_test (Plan, Claim, Blockers, TaskLabels,
+Gate over Usage, Tick, IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's
+headless parts as Entry) onto config.load() and a fake Driver api, plus FR-44 to FR-48, FR-56
+and FR-60. A tick's start is injected but in Entry, which runs main's own outer."""
 
 import argparse
 import contextlib
@@ -21,22 +22,20 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, target
 from agent_pm.linear_orchestrator.engine import run as run_py
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear
 from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.utils import GUARD
-from agent_pm.utils import SHORT
-
-from .clock import frozen, logs_at
-from ..case import PYTHONPATH
-from . import run_fixtures
-from .board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
-from .board_ids import STATES as IDS_BY_KEY
-from .board_ids import role as role_table
-from .fake_api import FakeApi
-from .streams import Stderr
-from .outage import FAILURES, FIELDS, failing
-from .run_fixtures import (
+from agent_pm.utils import GUARD, SHORT
+from orchestrator_test_helpers.case import PYTHONPATH
+from orchestrator_test_helpers.unit import run_fixtures
+from orchestrator_test_helpers.unit.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
+from orchestrator_test_helpers.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_test_helpers.unit.board_ids import role as role_table
+from orchestrator_test_helpers.unit.clock import frozen, logs_at
+from orchestrator_test_helpers.unit.fake_api import FakeApi
+from orchestrator_test_helpers.unit.outage import FAILURES, FIELDS, failing
+from orchestrator_test_helpers.unit.run_fixtures import (
     ENGINEER,
     HARNESS,
     ID,
@@ -51,8 +50,9 @@ from .run_fixtures import (
     node,
     show,
 )
-from .target_support import FakeRun, ok
-from .target_support import api as repo_info
+from orchestrator_test_helpers.unit.streams import Stderr
+from orchestrator_test_helpers.unit.target_support import FakeRun, ok
+from orchestrator_test_helpers.unit.target_support import api as repo_info
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
@@ -159,7 +159,7 @@ class FakeLinear:
         if "issues(filter" in query:
             f = v["f"]
             if self.todo_error and "inverseRelations" in query:
-                raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
+                raise LinearError("linear api error: [{'message': 'Entity not found'}]")
             drop = (
                 {"state", "labels"}
                 if "inverseRelations" in query
@@ -181,7 +181,7 @@ class FakeLinear:
             }
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
-                raise SystemExit("linear api error: [{'message': 'Entity not found'}]")
+                raise LinearError("linear api error: [{'message': 'Entity not found'}]")
             return {"issue": {"inverseRelations": self.issues[v["i"]]["inverseRelations"]}}
         if query == RECHECK:
             i = self.issues[v["i"]]
@@ -749,7 +749,7 @@ class Plan(Base):
 
     def test_unknown_human_fails_loud(self):
         self.write_config('human_members = ["nobody@x.com"]\n' + CONFIG)
-        with self.assertRaises(SystemExit) as e:
+        with self.assertRaises(LinearError) as e:
             self.plan(FakeLinear([]))
         self.assertIn("nobody@x.com", str(e.exception))
 
@@ -1082,7 +1082,7 @@ class Claim(Base):
     def test_refused_claim_raises(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.refuse.add("TASK-1")
-        with self.assertRaises(RuntimeError) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.claim(fake)
         self.assertEqual(str(cm.exception), "issueUpdate: success: false")
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -1317,7 +1317,7 @@ class Blockers(Base):
         fake.todo_error, fake.unreadable = True, {"TASK-1"}
         self.assertEqual(self.claim(fake), "TASK-3 https://linear.app/x/TASK-3 Deep Research")
         said = self.said()
-        self.assertRegex(said[0], r"^todo-error error=SystemExit: linear api error: ")
+        self.assertRegex(said[0], r"^todo-error error=LinearError: linear api error: ")
         self.assertEqual(
             said[1:],
             [
@@ -2430,8 +2430,8 @@ class Tick(TickBase):
         cases = [
             (Start(exits={"TASK-1": 3}), "launch TASK-1 exit=3"),
             (
-                Start(raises={"TASK-1": SystemExit("linear api error: boom")}),
-                "launch-error TASK-1 error=SystemExit: linear api error: boom",
+                Start(raises={"TASK-1": LinearError("linear api error: boom")}),
+                "launch-error TASK-1 error=LinearError: linear api error: boom",
             ),
             (
                 Start(raises={"TASK-1": RuntimeError("x")}),
@@ -2973,10 +2973,10 @@ class TickTaskLabels(TickBase):
         )
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.group = {"isGroup": False}
-        with self.assertRaises(SystemExit) as cm:
+        with self.assertRaises(LinearError) as cm:
             self.tick(fake)
         self.assertEqual(
-            cm.exception.code,
+            str(cm.exception),
             f"linear-orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
         )
         self.assertEqual(
@@ -3210,7 +3210,7 @@ class OuterBase(TickBase):
     def detached(self, role="engineer"):
         name, argv, cwd, env = self.api.detached[-1]
         self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
-        expected = {**os.environ, "PATH": config.path(), "PYTHONPATH": PYTHONPATH}
+        expected = {**os.environ, "PATH": config.path(), "PYTHONPATH": os.pathsep.join(dict.fromkeys(os.path.abspath(p) for p in [*PYTHONPATH.split(os.pathsep), *os.environ.get("PYTHONPATH", "").split(os.pathsep)] if p))}
         self.assertEqual(set(env), set(expected))
         for key, value in expected.items():
             self.assertTrue(env[key] == value, key)
@@ -3412,10 +3412,10 @@ class Outer(OuterBase):
 
     def test_linear_errors_are_transient(self):
         for gql, reason in (
-            (Gql(), "LookupError: TASK-7: issue not found"),
+            (Gql(), "IssueError: TASK-7: issue not found"),
             (
-                Gql(lambda n, v: SystemExit("linear api error: boom"), node()),
-                "SystemExit: linear api error: boom",
+                Gql(lambda n, v: LinearError("linear api error: boom"), node()),
+                "LinearError: linear api error: boom",
             ),
         ):
             with self.subTest(reason=reason):
@@ -3455,11 +3455,11 @@ class Outer(OuterBase):
     def test_bounce_failure_is_transient(self):
         self.run_.table = [(("gh", "api"), ok(code=1, stderr="HTTP 404"))]
         self.gql = Gql(
-            lambda n, v: SystemExit("linear api error: boom") if n == "post" else None, node()
+            lambda n, v: LinearError("linear api error: boom") if n == "post" else None, node()
         )
         self.assertEqual(self.outer(), 3)
         self.assertEqual(
-            self.said(), ["transient TASK-7 reason=bounce: SystemExit: linear api error: boom"]
+            self.said(), ["transient TASK-7 reason=bounce: LinearError: linear api error: boom"]
         )
         self.assertEqual(self.api.detached, [])
 
@@ -3609,7 +3609,7 @@ class Entry(OuterBase):
             self.said(),
             [
                 "plan TASK-7 mode=resume sid=s",
-                "transient TASK-7 reason=Linear: LookupError: TASK-7: issue not found",
+                "transient TASK-7 reason=Linear: IssueError: TASK-7: issue not found",
                 "launch TASK-7 exit=3",
             ],
         )

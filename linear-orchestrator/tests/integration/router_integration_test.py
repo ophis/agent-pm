@@ -1,7 +1,8 @@
-"""router.py as a subprocess on the Driver: run.py in its detached session on a private tmux server, fake_claude as
-runtime claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear failure mid write-back resumes the
-same session; a Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
-SIGTERM'd run.py ends its run; the researcher's gate runs on a session's PYTHONPATH."""
+"""router.py as a subprocess on the Driver: run.py in its detached session on a private tmux
+server, fake_claude as runtime claude, FakeLinear over HTTP. A claim runs to In Review; a crash
+or a Linear failure mid write-back resumes the same session; a Linear outage stops a tick and
+--issue; a tick's usage gate; a long description reaches the run; a SIGTERM'd run.py ends its
+run; the researcher's gate runs on a session's PYTHONPATH."""
 
 import os
 import shlex
@@ -11,12 +12,8 @@ import sys
 import unittest
 
 from agent_pm.linear_orchestrator.engine import config
-
-from delegate.tests.replies import block, mark, option
-from session.tests import live_tmux
-
-from ..case import PYTHONPATH
-from .flow_fixtures import (
+from orchestrator_test_helpers.case import PYTHONPATH
+from orchestrator_test_helpers.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
@@ -26,7 +23,10 @@ from .flow_fixtures import (
     Flow,
     TmuxFlow,
 )
-from .segments import FIRST_WRITE, agent_calls, lookup
+from orchestrator_test_helpers.integration.segments import FIRST_WRITE, agent_calls, lookup
+
+from delegate.tests.replies import block, mark, option
+from session.tests import live_tmux
 
 ENGINEER = ACCOUNTS["engineer"]
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"

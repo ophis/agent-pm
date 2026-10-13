@@ -1,5 +1,5 @@
-"""Case, every linear-orchestrator test's base; child helpers (PY, child_env, ORCH_ROOT); this tree's import
-roots (REPO, SRC, ROOTS, PYTHONPATH)."""
+"""Case, every linear-orchestrator test's base; child helpers (PY, child_env, ORCH_ROOT); this
+tree's import roots (REPO, SRC, ROOTS, PYTHONPATH)."""
 
 import os
 import sys
@@ -11,7 +11,7 @@ import agent_pm
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import import_roots
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ROOTS = import_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)

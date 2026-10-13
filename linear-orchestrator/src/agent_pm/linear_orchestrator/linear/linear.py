@@ -1,5 +1,6 @@
-"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log (log, into LOGS_DIR
-once an entry's main sets it), comments by client id and the checks of the config's Linear ids."""
+"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log
+(log, into LOGS_DIR once an entry's main sets it), comments by client id and the checks of the
+config's Linear ids."""
 
 import datetime as dt
 import hashlib
@@ -17,9 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import Unavailable
-from agent_pm.utils import append_line
-from agent_pm.utils import printable
+from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
+from agent_pm.utils import append_line, printable
 
 URL = "https://api.linear.app/graphql"
 SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keychain
@@ -67,7 +67,7 @@ def linear_gql(query, *, service, timeout=30, **variables):
     except ValueError:
         raise Unavailable(operation(query), reason="response not JSON") from None
     if body.get("errors"):
-        raise SystemExit(f"linear api error: {body['errors']}")
+        raise LinearError.api(body["errors"])
     return body["data"]
 
 
@@ -90,7 +90,7 @@ def key(service, timeout):
         timeout=timeout,
     ).stdout.strip()
     if not _clean(found):
-        raise SystemExit(f"Linear key of {service}: empty, not printable or holds whitespace")
+        raise LinearError.invalid_key(service)
     return found
 
 
@@ -112,7 +112,7 @@ def _clean(s):
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
-CONFIG_ERRORS = (SystemExit, ValueError, OSError)
+CONFIG_ERRORS = (LinearError, ValueError, OSError)
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
@@ -140,7 +140,7 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
 
 
 def config_error(src, e, dry=False):
-    reason = one_line(e.code if isinstance(e, SystemExit) else e)
+    reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
     return _stop(src, "config-error", reason, dry, reason=reason)
 
 
@@ -219,7 +219,7 @@ NOT_FOUND = "Entity not found"
 def call(gql, query, field, **v):
     out = gql(query, **v)[field]
     if not out["success"]:
-        raise RuntimeError(f"{field}: success: false")
+        raise LinearError.unsuccessful(field)
     return out
 
 
@@ -228,7 +228,7 @@ def client_id(*parts):
 
 
 def not_found(e):
-    return isinstance(e, SystemExit) and NOT_FOUND in str(e)
+    return isinstance(e, LinearError) and NOT_FOUND in str(e)
 
 
 def comment(gql, issue, body, cid=None):
@@ -241,7 +241,7 @@ def comment(gql, issue, body, cid=None):
 def find_comment(gql, cid, issue_id):
     try:
         found = gql(Q_COMMENT, c=cid)["comment"]
-    except SystemExit as e:
+    except LinearError as e:
         if not_found(e):
             return None
         raise
@@ -250,15 +250,8 @@ def find_comment(gql, cid, issue_id):
     if (found.get("issue") or {}).get("id") != issue_id or not (found.get("user") or {}).get(
         "isMe"
     ):
-        raise RuntimeError(f"comment {cid} is not ours")
+        raise LinearError.foreign_comment(cid)
     return found["body"]
-
-
-def reraise_signal(e):
-    # The signal handler raises SystemExit(128 + signum), which must reach the Delegate to stop its session;
-    # linear_gql's SystemExit (a str code) is an API error.
-    if isinstance(e, SystemExit) and isinstance(e.code, int):
-        raise e
 
 
 def subscribe(gql, issue, emails):
@@ -266,8 +259,7 @@ def subscribe(gql, issue, emails):
     for email in emails:
         try:
             call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except (Exception, SystemExit) as e:
-            reraise_signal(e)
+        except (Exception, LinearError) as e:
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 
@@ -312,9 +304,7 @@ def humans(gql, cfg):
     emails = cfg.human_members
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}"
-        )
+        raise LinearError.human_members_not_found_in_linear(", ".join(missing))
     return ids
 
 
@@ -323,9 +313,7 @@ def role_ids(gql, roles):
     for name, role in roles.items():
         uid = user_id(gql, role.account)
         if not uid:
-            raise SystemExit(
-                f"linear-orchestrator/config.toml [roles.{name}]: account {role.account!r} not found in Linear"
-            )
+            raise LinearError.roles_account_not_found_in_linear(name, role.account)
         out[uid] = name
     return out
 
@@ -344,13 +332,11 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 def team(gql, cfg):
     nodes = gql(Q_TEAM, t=cfg.team)["teams"]["nodes"]
     if not nodes:
-        raise SystemExit(f"linear-orchestrator/config.toml: team {cfg.team} not found in Linear")
+        raise LinearError.team_not_found_in_linear(cfg.team)
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg.states[k]}" for k in config.STATES if cfg.states[k] not in ids]:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
-        )
+        raise LinearError.states_not_workflow_states_of_team(t["name"], ", ".join(bad))
     return Team(t["id"], t["name"], {k: cfg.states[k] for k in config.STATES})
 
 
@@ -364,16 +350,10 @@ def task_group(gql, cfg):
     group = cfg.task_label_group
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
-    except SystemExit as e:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: task_label_group {group} not found in Linear: {e.code}"
-        ) from None
+    except LinearError as e:
+        raise LinearError.task_label_group_not_found_in_linear(group, e) from None
     if not label["isGroup"]:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: task_label_group {group} is not a label group"
-        )
+        raise LinearError.task_label_group_is_not_a_label(group)
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}"
-        )
+        raise LinearError.task_labels_not_labels_of_task_label(group, ", ".join(bad))

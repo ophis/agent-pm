@@ -1,5 +1,5 @@
-"""The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume lines as Entries, live
-limit rows (`limits`), `trim` to KEEP."""
+"""The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
+lines as Entries, live limit rows (`limits`), `trim` to KEEP."""
 
 import json
 import os

@@ -1,6 +1,7 @@
-"""The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or comment, a router.py
---issue claim or resume, an agent run behind its fake_claude gate, a promote tick), says what it expects of the
-tracked issues, runs.jsonl and Linear's failed requests, and verify() compares them when the step ends."""
+"""The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
+comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a
+promote tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed
+requests, and verify() compares them when the step ends."""
 
 import contextlib
 import copy
@@ -13,12 +14,8 @@ from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.engine import config, router, runs
 from agent_pm.linear_orchestrator.linear import linear
-
-from delegate.tests.replies import block, mark, option
-from session.tests import live_tmux
-
-from . import fake_linear
-from .flow_fixtures import (
+from orchestrator_test_helpers.integration import fake_linear
+from orchestrator_test_helpers.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
@@ -29,6 +26,9 @@ from .flow_fixtures import (
     TIMEOUT,
     TmuxFlow,
 )
+
+from delegate.tests.replies import block, mark, option
+from session.tests import live_tmux
 
 ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
 DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}
@@ -523,7 +523,8 @@ class Segment(TmuxFlow):
         )
 
     def wait_next_second(self, ident):
-        # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo, and their ts is to the second
+        # router.attempt_count counts the runs.jsonl lines strictly after moved_to_todo,
+        # and their ts is to the second
         # (linear.stamp), so a claim within its second is no attempt
         time.sleep(
             max(
@@ -562,7 +563,8 @@ class Segment(TmuxFlow):
         return text
 
     def section(self, prompt, heading):
-        # up to the next `## ` line, a fenced one too: no text a test publishes or reports may hold one
+        # up to the next `## ` line, a fenced one too: no text a test publishes or reports
+        # may hold one
         if m := re.search(rf"^## {re.escape(heading)}\n\n(.*?)(?=^## |\Z)", prompt, re.M | re.S):
             return m[1]
         self.fail(f"no `## {heading}` section in the prompt:\n{prompt}")

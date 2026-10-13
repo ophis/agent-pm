@@ -1,5 +1,6 @@
-"""orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event, plus FR-43's TUI close
-and --tui's show on a fake Driver api, each Linear call's identity and the usage-limit path (FR-59)."""
+"""orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event,
+plus FR-43's TUI close and --tui's show on a fake Driver api, each Linear call's identity and
+the usage-limit path (FR-59)."""
 
 import io
 import json
@@ -14,13 +15,13 @@ from unittest import mock
 from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
 from agent_pm.linear_orchestrator.engine import config, run
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import SIGNALS, DriverError
-
-from .board_ids import STATES
-from .config_support import GATE
-from .fake_api import FakeApi
-from .run_fixtures import (
+from orchestrator_test_helpers.unit.board_ids import STATES
+from orchestrator_test_helpers.unit.config_support import GATE
+from orchestrator_test_helpers.unit.fake_api import FakeApi
+from orchestrator_test_helpers.unit.run_fixtures import (
     ENGINEER,
     HARNESS,
     ID,
@@ -263,7 +264,7 @@ class Inner(Case):
         )
         self.assertEqual(set(self.handlers), {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})
         for sig, code in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
-            with self.assertRaises(SystemExit) as cm:
+            with self.assertRaises(Stopped) as cm:
                 self.handlers[sig](sig, None)
             self.assertEqual(cm.exception.code, code)
 

@@ -1,5 +1,5 @@
-"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call goes as the harness
-account."""
+"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call
+goes as the harness account."""
 
 import io
 import json
@@ -9,13 +9,13 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
-
-from . import run_fixtures
-from .board_ids import ACCOUNTS, HEADER, team_node
-from .board_ids import STATES as IDS_BY_KEY
-from .board_ids import role as role_table
-from .run_fixtures import logged, show
+from orchestrator_test_helpers.unit import run_fixtures
+from orchestrator_test_helpers.unit.board_ids import ACCOUNTS, HEADER, team_node
+from orchestrator_test_helpers.unit.board_ids import STATES as IDS_BY_KEY
+from orchestrator_test_helpers.unit.board_ids import role as role_table
+from orchestrator_test_helpers.unit.run_fixtures import logged, show
 
 NOW = datetime(2026, 9, 27, 15, 0, tzinfo=UTC)
 STATES = {
@@ -99,7 +99,7 @@ class FakeLinear:
         self.calls.append((query, v))
         self.services.append(service)
         if error := self.fail.get(query) or self.fail.get((query, v.get("i"))):
-            raise SystemExit(f"linear api error: {error}")
+            raise LinearError(f"linear api error: {error}")
         if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
         if query == linear.Q_USER:
