@@ -1875,6 +1875,14 @@ class ValidationTest(RosterCase):
                 self.assertEqual(sorted(os.listdir(self.dir)), ["roster.json", "roster.lock"])
 
 
+class LegacyCrewModule(Case):
+    def test_main_entry_validates_and_recovers_with_the_current_module(self):
+        old = ["/p", "-P", "-m", "agent_pm.manager.crew", "start", "w", "--client", "claude"]
+        value = roster.entry("worker", sid=None, cwd="/w", resume=old)
+        self.assertEqual(roster.recovery(value), ["/p", *roster.CREW_MODULE, *old[4:]])
+        self.assertEqual(value["resume"], old)
+
+
 class Rotation(Case):
     def test_a_roster_rotation_between_writes_loses_no_line(self):
         directory = os.path.join(self.agent_pm, "managers", "m1")

@@ -251,7 +251,7 @@ def _resume_fault(resume) -> str | None:
         return _want("resume", resume, "a list of 2 or more printable strings")
     if not os.path.isabs(resume[0]):
         return _want("resume[0]", resume[0], "an absolute path")
-    if tuple(resume[1:4]) in (CREW_MODULE, LEGACY_MODULE):
+    if tuple(resume[1:4]) in (CREW_MODULE, *LEGACY_MODULES):
         return None
     if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
         want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
@@ -518,7 +518,7 @@ def recovery(entry: dict) -> list[str] | None:
     resume = list(entry["resume"])
     if os.path.basename(resume[1]) in ("crew.py", LEGACY):
         resume[1:2] = CREW_MODULE
-    elif tuple(resume[1:4]) == LEGACY_MODULE:
+    elif tuple(resume[1:4]) in LEGACY_MODULES:
         resume[1:4] = CREW_MODULE
     options = resume[: resume.index("--")] if "--" in resume else resume
     start = 1 + (len(CREW_MODULE) if tuple(resume[1:4]) == CREW_MODULE else 1)
@@ -631,7 +631,7 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
             view = view[os.write(fd, view) :]
 
 
-LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
+LEGACY_MODULES = (("-P", "-m", "agent_pm.crew"), ("-P", "-m", "agent_pm.manager.crew"))
 
 
 def rotate(r: dict, directory: str, *, sleep=None) -> bool:
