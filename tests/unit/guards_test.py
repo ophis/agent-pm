@@ -128,13 +128,17 @@ class RealTree(Case):
 class EveryTest(Sample):
     def test_is_a_case(self):
         loader, found = unittest.TestLoader(), []
-        for suite in ("unit", "integration"):
-            tests = loader.discover(os.path.join(REPO, "tests", suite), "*_test.py", REPO)
-            found += [test.id() for test in flat(tests) if not isinstance(test, Case)]
+        for top in guards.TESTS:
+            for suite in ("unit", "integration"):
+                start = os.path.join(REPO, top, suite)
+                if os.path.isdir(start):
+                    tests = loader.discover(start, "*_test.py", REPO)
+                    found += [test.id() for test in flat(tests) if not isinstance(test, Case)]
         self.assertEqual((loader.errors, found), ([], []))
 
     def test_has_no_class_or_module_fixture(self):
-        self.assertEqual(fixtures(os.path.join(REPO, "tests")), [])
+        for tests in guards.TESTS:
+            self.assertEqual(fixtures(os.path.join(REPO, tests)), [])
         root = self.tree(
             {
                 "a.py": "class A:\n    @classmethod\n    def setUpClass(cls): pass\n"

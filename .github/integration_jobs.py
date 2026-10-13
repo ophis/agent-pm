@@ -1,6 +1,7 @@
-"""CI integration jobs: JOBS entries are directories ending in /, files, or <file>::<Class>.
-Exact classes outrank the longest matching path. --check rejects loader errors, unmatched classes/tests,
-empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests."""
+"""CI integration jobs over DIRECTORIES: JOBS entries, from the repo root, are directories ending in /, files,
+or <file>::<Class>. Exact classes outrank the longest matching path. --check rejects loader errors,
+unmatched classes/tests, empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job> runs
+that job's tests."""
 
 import json
 import re
@@ -10,26 +11,24 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRECTORY = "tests/integration"
+DIRECTORIES = tuple(
+    f"{project}tests/integration"
+    for project in ("", "delegate/", "linear-orchestrator/", "manager/", "session/")
+)
 WORKFLOW = ROOT / ".github/workflows/test.yml"
+CREW = "manager/tests/integration/crew_integration_test.py"
 JOBS = {
-    "driver": ["driver/"],
-    "adapters": ["adapters/"],
-    "delegate-composer": ["delegate/", "composer/"],
-    "orchestrator": ["orchestrator/"],
-    "crew-1": [
-        "tmux/crew_integration_test.py::ClaudeLifecycleTest",
-        "tmux/crew_integration_test.py::RuntimeTest",
+    "driver": ["session/tests/integration/"],
+    "adapters": ["session/tests/integration/adapters/"],
+    "delegate-composer": ["delegate/tests/integration/"],
+    "orchestrator": ["linear-orchestrator/tests/integration/"],
+    "crew-1": [f"{CREW}::ClaudeLifecycleTest", f"{CREW}::RuntimeTest"],
+    "crew-2": [f"{CREW}::CodexLifecycleTest", f"{CREW}::RosterTest"],
+    "crew-3": [f"{CREW}::ManagersTest", f"{CREW}::RosterRecoveryTest"],
+    "shared": [
+        "tests/integration/imports_integration_test.py",
+        "session/tests/integration/live_tmux_integration_test.py",
     ],
-    "crew-2": [
-        "tmux/crew_integration_test.py::CodexLifecycleTest",
-        "tmux/crew_integration_test.py::RosterTest",
-    ],
-    "crew-3": [
-        "tmux/crew_integration_test.py::ManagersTest",
-        "tmux/crew_integration_test.py::RosterRecoveryTest",
-    ],
-    "shared": ["imports_integration_test.py", "live_tmux_integration_test.py"],
 }
 
 
@@ -87,18 +86,15 @@ def validate(found, suites, labels):
         )
 
 
-def check(root, directory, jobs, workflow):
-    loader = unittest.TestLoader()
-    start = str(root / directory)
-    found = list(tests(loader.discover(start, pattern="*_test.py", top_level_dir=str(root))))
+def check(root, directories, jobs, workflow):
+    loader, found = unittest.TestLoader(), []
+    for directory in directories:
+        start = str(root / directory)
+        found += tests(loader.discover(start, pattern="*_test.py", top_level_dir=str(root)))
     if loader.errors:
         raise ValueError("\n".join(loader.errors))
     split, unassigned = {job: [] for job in jobs}, set()
-    prefix = directory.replace("/", ".") + "."
-    locations = [
-        (test, type(test).__module__.removeprefix(prefix).replace(".", "/") + ".py")
-        for test in found
-    ]
+    locations = [(test, type(test).__module__.replace(".", "/") + ".py") for test in found]
     classes = {f"{file}::{type(test).__name__}" for test, file in locations}
     missing_classes = sorted(
         {entry for entries in jobs.values() for entry in entries if "::" in entry} - classes
@@ -126,7 +122,7 @@ def run(suite):
 def main(argv):
     if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
         raise ValueError("give --check or a job name: " + ", ".join(JOBS))
-    split = check(ROOT, DIRECTORY, JOBS, WORKFLOW.read_text())
+    split = check(ROOT, DIRECTORIES, JOBS, WORKFLOW.read_text())
     if argv == ["--check"]:
         counts = ", ".join(f"{job} {len(suite)}" for job, suite in split.items())
         print(f"integration jobs match discovery and the workflow: {counts}")

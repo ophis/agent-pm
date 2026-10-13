@@ -1,5 +1,5 @@
-"""Case, every test's base, the session settings helpers (HOSTS, settings, committed) and the child helpers: namespace
-package agent_pm only from this tree's import roots (SRC, ROOTS, PYTHONPATH)."""
+"""Case, every test's base; session settings helpers (HOSTS, settings, committed); child helpers; this tree's import
+roots (SRC, ROOTS, PYTHONPATH)."""
 
 import os
 import sys
@@ -32,18 +32,18 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
 def settings(adapters, tmux=None) -> dict:
-    """Session.configure's keyword arguments: `adapters`, HOSTS with `tmux`'s keys in [hosts.tmux], default tmux."""
+    """Session.configure's arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default tmux."""
     hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
     return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
 
 
 def committed(local: str = os.devnull) -> dict:
-    """The core config's [adapters] tables, `local` merged (none by default), even under Case.configure_session."""
+    """The core config's [adapters], `local` merged (default none), even under Case.configure_session."""
     return _session_settings(read_config(agent_pm.delegate.engine.config.CONFIG, local))["adapters"]
 
 
 class Case(unittest.TestCase):
-    """Fails a test at once if any part of agent_pm is another tree's, else runs it (whatever its setUp)
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
     in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
 
     def run(self, result=None):

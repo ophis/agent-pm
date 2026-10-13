@@ -69,7 +69,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Unit tests
-        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
+        run: |
+          for tests in tests delegate/tests session/tests utils/tests manager/tests linear-orchestrator/tests; do
+            python3 -m unittest discover -s "$tests/unit" -t . -p "*_test.py"
+          done
 
   integration:
     name: Integration ${{ matrix.job }} v2.0 (Python 3.11)

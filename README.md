@@ -196,7 +196,8 @@ Paths from the repo root, where commands run. Each module's docstring states its
 | `linear-orchestrator/config.toml` | Linear ids, `[roles.<role>]`, `work_dir` and the `[core]` overlay on `delegate/config.toml`; `config.load` reads it once per entry's `main`; this machine's settings in `~/.agent-pm/linear-new.local.toml`: the file's header |
 | `delegate/skills/act-as/SKILL.md` | `/agent-pm:act-as` on the new core: the Delegate CLI as `env PYTHONPATH=${CLAUDE_SKILL_DIR}/../../src:<session's, utils', manager's src as ${CLAUDE_SKILL_DIR}/../../../<project>/src> python3 -P -m agent_pm.delegate.cli …`, runtime `print_prompt`. `env`, not a leading `PYTHONPATH=`: Claude Code's allow rule must match the whole command, which such an assignment prevents |
 | `manager/skills/manage/SKILL.md` | `/agent-pm:manage` (Install), text only |
-| `tests/` | `case.py` (`Case`, every test's base: a fresh temp HOME per test, none set at import), `unit/`, `integration/` (adapter tests in `adapters/<runtime>/`; the Linear orchestrator's in their `orchestrator/`; `integration/orchestrator/` also holds `fake_linear.py` and `fake_gh.py`), `fake_adapter/` (the test-only runtime `fake`), `integration/adapters/claude/fake_claude.py` (a fake `claude` for the integration tests), `live_tmux.py` (private tmux servers for them), `fakes/` (test doubles of the layers' ABCs and `fake-ctl`, a fake Record's `ctl`), `contracts/` (each ABC's contract cases, a mixin run on its implementations), `guards.py` |
+| `<project>/tests/` | each project's tests, `unit/` and `integration/` (where a test goes and the import scheme: `CLAUDE.md` › Tests); `session/tests/` also holds `fake_adapter/` (the test-only runtime `fake`), `live_tmux.py` (private tmux servers), `selection.py`, `integration/adapters/claude/fake_claude.py` (a fake `claude`), `fakes/` and `contracts/` (the Host's and Session's test doubles; their ABC contracts, a mixin run on each implementation), as `delegate/tests/` the Delegate's and `utils/tests/fakes/ctl.py` a fake Record's `ctl`; `linear-orchestrator/tests/integration/` also `fake_linear.py` and `fake_gh.py` |
+| `tests/` | repo-wide only: `case.py` (`Case`, every test's base: a fresh temp HOME per test, none set at import), `guards.py`, their tests and the namespace and imports checks |
 | `~/.agent-pm/tui/<name>/` | tui session `<name>`'s dir: `session.json` (its state, which `session.engine.api.attach` reads), `hooks.jsonl` (its hook records); `session.engine.api.close` removes it. `~/.agent-pm/tui/<name>.lock` serializes a name's starts, closes and stops |
 | `~/.agent-pm/workers/<sid>/` | crew worker `<sid>`'s dir, its `Spec.workdir`: `worker.json` (0600), its record for `agent_pm.manager.crew restart`, keeps the worker's flags and env in plain text |
 
@@ -219,9 +220,9 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 ## Tests
 
 ```bash
-export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src
-python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
-python3 .github/integration_jobs.py JOB  # one CI integration job, or --check
+export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src   # from the repo root
 ```
 
-CI (`.github/workflows/test.yml`) runs the unit tests in one job, integration tests across `.github/integration_jobs.py`'s `JOBS` (`--check` validates assignment), and Ruff over the whole repo (`CLAUDE.md` › Commands).
+Commands and where a test goes: `CLAUDE.md` › Tests.
+
+CI (`.github/workflows/test.yml`) runs every `tests/unit/` in one job, integration tests across `.github/integration_jobs.py`'s `JOBS` (`--check` validates assignment), and Ruff over the whole repo (`CLAUDE.md` › Commands).

@@ -1,12 +1,11 @@
-"""The repo's rules: each guard takes a root and returns its sorted violations; str constants include docstrings.
-A repo guard walks only TREES, or LOWER's projects but their tests/.
+"""The repo's rules: each guard takes a root, returns its sorted violations; str constants include docstrings.
+Only a TREES walk enters a project's tests/.
 
 layer_imports(repo)   imports go one way (README.md › Layout), a layer imports no package module outside LAYERS, SESSION
                       and SHARED, a session layer no delegate module, none imports TOOLS, ORCH or a BARE
                       name, nested, relative or import_module'd
 delegate_session(repo) delegate/ imports SESSION only by an __all__ name
-layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND (positional or args=), SESSION_SRC's
-                      but SESSION_COMMAND
+layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND, SESSION_SRC's but SESSION_COMMAND
 standalone(repo)      no file names LINEAR
 runtime_names(repo)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
@@ -14,7 +13,7 @@ session_only(repo)    session/ imports only stdlib, session and utils, names non
 adapters_key(repo)    no str constant "adapters" outside CONFIG_FILE
 syntax_311(repo)      every .py parses as Python 3.11
 pure_utils(repo)      each PURE unit imports only stdlib and its PURE entry
-manager_imports(repo) nothing else imports MANAGER; it imports stdlib, MANAGER_ALLOWED, MANAGER_EXCEPTIONS
+manager_imports(repo) nothing else imports MANAGER; it: stdlib, MANAGER_ALLOWED, MANAGER_EXCEPTIONS
 private_imports(root) no other module's _name
 modes_import_api(repo) MODES never imports SESSION_API
 tmux_calls(repo)      "tmux" only in TMUX_HOST
@@ -24,8 +23,7 @@ import_hygiene(repo)  no sys.path mutation, module-level environment write or E4
 namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
-                      (composer's and `from session import Session` in config.py only), no bare name; any module name
-                      (packages cannot clash)
+                      (composer's and `from session import Session` in config.py only), no bare name
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 """
@@ -126,6 +124,7 @@ PROJECTS = {
 }
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 TREES = (*PROJECTS, "tests")
+TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
@@ -139,7 +138,7 @@ COMMAND_SRC = (
 )
 MANAGER = "manager"
 MANAGER_ALLOWED = {"manager.crew": ("utils", "manager.roster"), "manager.roster": ("utils",)}
-# until TASK-371: Crew then reaches the layers only through commands
+# until TASK-371
 MANAGER_EXCEPTIONS = {
     "manager.crew": (f"{PKG}.{CONFIG}", f"{PKG}.session.Session", f"{PKG}.session.api"),
     "manager.roster": (f"{PKG}.{CONFIG}", f"{PKG}.session.api"),
@@ -556,7 +555,7 @@ def orchestrator_imports(orch: str) -> list[str]:
 
 def orchestrator_text(orch: str) -> list[str]:
     found = set()
-    for rel, text in _files(orch, (".py", ".toml")):
+    for rel, text in _files(orch, (".py", ".toml"), skip="tests/"):
         lines = text.splitlines()
         grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
         for number, line in enumerate(lines, 1):

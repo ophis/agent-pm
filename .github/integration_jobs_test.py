@@ -53,8 +53,11 @@ class Tree(unittest.TestCase):
                 (folder / "__init__.py").touch()
             path.write_text(text)
 
+    def at(self, jobs):
+        return {job: [f"{self.package}/{e}" for e in entries] for job, entries in jobs.items()}
+
     def check(self, jobs=JOBS, text=WORKFLOW):
-        split = gate.check(self.root, self.package, jobs, text)
+        split = gate.check(self.root, (self.package,), self.at(jobs), text)
         prefix = f"{self.package}."
         return {
             job: sorted(type(test).__module__.removeprefix(prefix) for test in tests)
@@ -66,7 +69,7 @@ class Assignment(Tree):
     def test_classes_in_one_file_can_belong_to_different_jobs(self):
         self.write({"x_test.py": PASS + PASS.replace("class T", "class U")})
         jobs = {"a": ["x_test.py::T"], "b": ["x_test.py::U"]}
-        split = gate.check(self.root, self.package, jobs, WORKFLOW)
+        split = gate.check(self.root, (self.package,), self.at(jobs), WORKFLOW)
         self.assertEqual(
             {job: [type(test).__name__ for test in suite] for job, suite in split.items()},
             {"a": ["T"], "b": ["U"]},
@@ -78,7 +81,7 @@ class Assignment(Tree):
         for fallback in ("a/", "a/x_test.py", "a/x_test.py::VeryLongClassName"):
             jobs = {"a": [fallback], "b": ["a/x_test.py::T"]}
             with self.subTest(fallback=fallback):
-                split = gate.check(self.root, self.package, jobs, WORKFLOW)
+                split = gate.check(self.root, (self.package,), self.at(jobs), WORKFLOW)
                 self.assertEqual(
                     {job: [type(test).__name__ for test in suite] for job, suite in split.items()},
                     {"a": ["VeryLongClassName"], "b": ["T"]},
@@ -97,14 +100,16 @@ class Assignment(Tree):
             with (
                 self.subTest(fallback=fallback),
                 self.assertRaisesRegex(
-                    ValueError, r"^no integration tests for: a/x_test\.py::Missing$"
+                    ValueError, rf"^no integration tests for: {self.package}/a/x_test\.py::Missing$"
                 ),
             ):
                 self.check({"a": [fallback, "a/x_test.py::Missing"], "b": ["b/"]})
 
     def test_an_unspecified_class_fails_naming_its_file(self):
         self.write({"a/x_test.py": PASS + PASS.replace("class T", "class U"), "b/y_test.py": PASS})
-        with self.assertRaisesRegex(ValueError, r"^no integration job for: a/x_test\.py$"):
+        with self.assertRaisesRegex(
+            ValueError, rf"^no integration job for: {self.package}/a/x_test\.py$"
+        ):
             self.check({"a": ["a/x_test.py::T"], "b": ["b/"]})
 
     def test_an_unassigned_file_fails_naming_its_path(self):
@@ -112,7 +117,8 @@ class Assignment(Tree):
             {"a/x_test.py": PASS, "b/y_test.py": PASS, "new_test.py": PASS, "c/d/z_test.py": PASS}
         )
         with self.assertRaisesRegex(
-            ValueError, r"^no integration job for: c/d/z_test\.py, new_test\.py$"
+            ValueError,
+            rf"^no integration job for: {self.package}/c/d/z_test\.py, {self.package}/new_test\.py$",
         ):
             self.check()
 
@@ -168,7 +174,7 @@ class Assignment(Tree):
 
     def test_a_job_runs_only_its_tests_verbosely_and_returns_1_on_a_failure(self):
         self.write({"a/x_test.py": PASS, "b/y_test.py": FAIL})
-        split = gate.check(self.root, self.package, JOBS, WORKFLOW)
+        split = gate.check(self.root, (self.package,), self.at(JOBS), WORKFLOW)
         for job, other, code in (("a", "b", 0), ("b", "a", 1)):
             err = io.StringIO()
             with self.subTest(job=job), contextlib.redirect_stderr(err):
@@ -201,15 +207,21 @@ class Repo(unittest.TestCase):
         self.enterContext(mock.patch.object(sys, "path", list(sys.path)))
 
     def test_every_integration_test_lands_in_exactly_one_job(self):
-        split = gate.check(gate.ROOT, gate.DIRECTORY, gate.JOBS, gate.WORKFLOW.read_text())
+        split = gate.check(gate.ROOT, gate.DIRECTORIES, gate.JOBS, gate.WORKFLOW.read_text())
         loader = unittest.TestLoader()
-        found = loader.discover(
-            str(gate.ROOT / gate.DIRECTORY), pattern="*_test.py", top_level_dir=str(gate.ROOT)
-        )
+        found = [
+            test
+            for directory in gate.DIRECTORIES
+            for test in gate.tests(
+                loader.discover(
+                    str(gate.ROOT / directory), pattern="*_test.py", top_level_dir=str(gate.ROOT)
+                )
+            )
+        ]
         self.assertEqual(loader.errors, [])
         self.assertEqual(
             Counter(test.id() for tests in split.values() for test in tests),
-            Counter(test.id() for test in gate.tests(found)),
+            Counter(test.id() for test in found),
         )
 
     def test_main_checks_or_names_the_jobs(self):

@@ -9,35 +9,35 @@ The new identity is one of:
 
 | Alias | Module or class |
 |---|---|
-| CLI | `tests.integration.delegate.cli_integration_test` |
-| DX | `tests.integration.delegate.codex_integration_test` |
-| DT | `tests.integration.delegate.tui_integration_test` |
-| DD | `tests.integration.delegate.detach_integration_test` |
-| DTD | `tests.integration.delegate.team_dirs_integration_test` |
-| CD | `tests.integration.composer.drive_integration_test` |
-| CR | `tests.integration.composer.resume_integration_test` |
-| CE | `tests.integration.composer.extension_runtime_integration_test` |
-| CTD | `tests.integration.composer.team_dirs_integration_test` |
-| DCL | `tests.integration.adapters.claude.claude_integration_test` |
-| DEA | `tests.integration.driver.extension_adapter_integration_test` |
-| H | `tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
-| T | `tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
-| K | `tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |
-| F | `tests.integration.adapters.claude.fake_claude_integration_test` |
-| L | `tests.integration.live_tmux_integration_test` |
-| C | `tests.integration.tmux.crew_integration_test` |
-| OGH | `tests.integration.orchestrator.fake_gh_integration_test` |
-| OFL | `tests.integration.orchestrator.fake_linear_integration_test` |
-| OPE | `tests.integration.orchestrator.pm_engineer_integration_test.PmToEngineer` |
-| OP | `tests.integration.orchestrator.promote_integration_test` |
-| ORP | `tests.integration.orchestrator.researcher_pm_integration_test.ResearcherToPm` |
-| ORT | `tests.integration.orchestrator.router_integration_test.Router` |
-| OTU | `tests.integration.orchestrator.run_tui_integration_test.Tui` |
-| DTH | `tests.integration.driver.tmux_host_integration_test` |
-| DCT | `tests.integration.adapters.claude.claude_tui_integration_test` |
-| UCR | `tests.unit.tmux.crew_test` |
-| URO | `tests.unit.roster_test` |
-| UDA | `tests.unit.driver.api_test` |
+| CLI | `delegate.tests.integration.cli_integration_test` |
+| DX | `delegate.tests.integration.codex_integration_test` |
+| DT | `delegate.tests.integration.tui_integration_test` |
+| DD | `delegate.tests.integration.detach_integration_test` |
+| DTD | `delegate.tests.integration.team_dirs_integration_test` |
+| CD | `delegate.tests.integration.composer.drive_integration_test` |
+| CR | `delegate.tests.integration.composer.resume_integration_test` |
+| CE | `delegate.tests.integration.composer.extension_runtime_integration_test` |
+| CTD | `delegate.tests.integration.composer.team_dirs_integration_test` |
+| DCL | `session.tests.integration.adapters.claude.claude_integration_test` |
+| DEA | `session.tests.integration.extension_adapter_integration_test` |
+| H | `session.tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
+| T | `session.tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
+| K | `session.tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |
+| F | `session.tests.integration.adapters.claude.fake_claude_integration_test` |
+| L | `session.tests.integration.live_tmux_integration_test` |
+| C | `manager.tests.integration.crew_integration_test` |
+| OGH | `linear-orchestrator.tests.integration.fake_gh_integration_test` |
+| OFL | `linear-orchestrator.tests.integration.fake_linear_integration_test` |
+| OPE | `linear-orchestrator.tests.integration.pm_engineer_integration_test.PmToEngineer` |
+| OP | `linear-orchestrator.tests.integration.promote_integration_test` |
+| ORP | `linear-orchestrator.tests.integration.researcher_pm_integration_test.ResearcherToPm` |
+| ORT | `linear-orchestrator.tests.integration.router_integration_test.Router` |
+| OTU | `linear-orchestrator.tests.integration.run_tui_integration_test.Tui` |
+| DTH | `session.tests.integration.tmux_host_integration_test` |
+| DCT | `session.tests.integration.adapters.claude.claude_tui_integration_test` |
+| UCR | `manager.tests.unit.crew_test` |
+| URO | `manager.tests.unit.roster_test` |
+| UDA | `session.tests.unit.api_test` |
 
 ## tests.integration.core.drive_integration_test
 
