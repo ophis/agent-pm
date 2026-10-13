@@ -350,3 +350,84 @@ class CommentWrap(Sample):
         ):
             with self.subTest(source=source):
                 self.assertEqual(self.check(source), [])
+
+
+class TestBoundaries(Sample):
+    def violations(self, sample, own, *, shipped=False):
+        return guards.test_boundaries(
+            self.tree(
+                {
+                    f"{own}/src/agent_pm/{own}/probe.py"
+                    if shipped
+                    else f"{own}/tests/probe.py": sample
+                }
+            )
+        )
+
+    def test_aliases_cannot_hide_own_module_mutation(self):
+        prefixes = (
+            "import agent_pm.session.engine.api as module\n",
+            "from agent_pm.session.engine import api as module\n",
+            "import agent_pm.session.engine.api as first\nmodule = first\n",
+        )
+        calls = (
+            "patch.object(module, 'start')",
+            "module.start = object()",
+            "del module.start",
+            "setattr(module, 'start', object())",
+        )
+        for prefix in prefixes:
+            for call in calls:
+                with self.subTest(prefix=prefix, call=call):
+                    sample = "from unittest.mock import patch\n" + prefix + call
+                    self.assertTrue(self.violations(sample, "session"))
+
+    def test_patch_aliases_and_concatenated_targets_are_rejected(self):
+        for call in (
+            "p('agent_pm.session.start')",
+            "p('agent_' + 'pm.session.start')",
+            "p.dict(modules, {})",
+        ):
+            sample = "from unittest.mock import patch as p\nfrom sys import modules\n" + call
+            with self.subTest(call=call):
+                self.assertTrue(self.violations(sample, "session"))
+
+    def test_standard_library_and_lower_layer_fakes_are_allowed(self):
+        sample = (
+            "from unittest.mock import patch\nimport os\n"
+            "from session.tests import fake_adapter\n"
+            "patch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\n"
+            "fake_adapter.start = object()\npatch.dict(os.environ, {})\n"
+        )
+        self.assertEqual(self.violations(sample, "delegate"), [])
+
+    def test_test_imports_are_rejected_including_dynamic_imports(self):
+        for statement in (
+            "import session.tests.unit.api_test as helper",
+            "from session.tests.unit import api_test",
+            "from .api_test import Helper",
+            "importlib.import_module('session.tests.unit.api_test')",
+        ):
+            with self.subTest(statement=statement):
+                self.assertTrue(self.violations(statement, "session"))
+
+    def test_shipped_test_switches_are_rejected(self):
+        for variable in ("ADAPTER_TEST", "FORCE_FAILED"):
+            sample = f"import os\nos.getenv({variable!r})"
+            with self.subTest(variable=variable):
+                self.assertTrue(self.violations(sample, "session", shipped=True))
+        self.assertEqual(self.violations("label = 'TEST_RESULT'", "session", shipped=True), [])
+
+    def test_nested_standard_library_boundaries_and_keyword_patch_targets(self):
+        root = self.tree(
+            {
+                "session/src/agent_pm/session/engine/api.py": "import time\n",
+                "session/tests/probe.py": "from unittest.mock import patch\nfrom agent_pm.session.engine import api\npatch.object(api.time, 'sleep')\n",
+            }
+        )
+        self.assertEqual(guards.test_boundaries(root), [])
+        self.assertTrue(
+            self.violations(
+                "from unittest.mock import patch\npatch(target='agent_pm.session.start')", "session"
+            )
+        )

@@ -11,6 +11,7 @@ from agent_pm.utils.config_file import LEVELS
 from tests.guard_ast import (
     _at_import,
     _bindings,
+    _boundary_violations,
     _changes,
     _comment_blocks,
     _doc_blocks,
@@ -18,6 +19,7 @@ from tests.guard_ast import (
     _files,
     _is,
     _private,
+    _source_modules,
     _spellings,
     _strings,
 )
@@ -480,3 +482,14 @@ def comment_wrap(repo: str) -> list[str]:
                     if len(lines[line - 1].rstrip()) + len(word) + 1 <= 100:
                         found.append(f"{rel}:{line}: next word {word!r} fits within 100 columns")
     return sorted(found)
+
+
+def test_boundaries(repo: str) -> list[str]:
+    modules = _source_modules(repo, PROJECTS)
+    return sorted(
+        f"{rel}:{line}: {reason}"
+        for rel, text in _tree_files(repo, ".py")
+        for line, reason in _boundary_violations(
+            text, rel.split("/")[0].replace("-", "_"), modules, shipped="/src/" in rel
+        )
+    )

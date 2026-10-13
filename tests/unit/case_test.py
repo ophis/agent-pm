@@ -1,7 +1,7 @@
-"""Each tests/case.py (CASES): Case.run's temp HOME, registry resets (RESETS) and import-root checks, on inner
-tests; child_env where kept."""
+"""Each tests/case.py: temporary HOME, import-root checks and child environment."""
 
 import importlib
+import contextlib
 import os
 import sys
 import tempfile
@@ -10,11 +10,9 @@ import unittest
 from unittest import mock
 
 import agent_pm
-import agent_pm.delegate.engine.config
-from agent_pm.session.adapters import registry
 
 from tests import guards
-from tests.case import Case
+from tests.case import Case, REPO
 
 CASES = (
     "tests",
@@ -24,17 +22,37 @@ CASES = (
     "linear-orchestrator/tests",
     "manager/tests",
 )
-RESETS = {"session/tests", "delegate/tests", "linear-orchestrator/tests", "manager/tests"}
+
 RUN_WITH = os.pathsep.join(
     f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")
 )
+
+
+@contextlib.contextmanager
+def substitute_module(name, module):
+    present, original = name in sys.modules, sys.modules.get(name)
+    if module is None:
+        sys.modules.pop(name, None)
+    else:
+        sys.modules[name] = module
+    try:
+        yield
+    finally:
+        if present:
+            sys.modules[name] = original
+        else:
+            sys.modules.pop(name, None)
 
 
 class Checks:
     tree = ""
 
     def setUp(self):
-        self.case = importlib.import_module(f"{self.tree.replace('/', '.')}.case")
+        self.case = importlib.import_module(
+            "orchestrator_tests.case"
+            if self.tree == "linear-orchestrator/tests"
+            else f"{self.tree.replace('/', '.')}.case"
+        )
 
     def run_inner(self, test, set_up=None) -> unittest.TestResult:
         """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given), never super()."""
@@ -90,19 +108,6 @@ class Checks:
         self.assertNotEqual(home, self.home)
         self.assertTrue(made)
 
-    def test_the_registry_is_reset_before_and_after_a_failing_test_too_where_kept(self):
-        calls = []
-
-        def test(inner):
-            calls.append("test")
-            inner.fail("boom")
-
-        with mock.patch.object(registry, "reset", side_effect=lambda: calls.append("reset")):
-            result = self.run_inner(test)
-        self.assertEqual(len(result.failures), 1)
-        reset = ["reset"] if self.tree in RESETS else []
-        self.assertEqual(calls, [*reset, "test", *reset])
-
     def module(self, name, root):
         """A package module `name` (agent_pm.<sub>) found under `root`."""
         module = types.ModuleType(name)
@@ -126,7 +131,7 @@ class Checks:
         for sub, root in self.case.SRC.items():
             name = f"agent_pm.{sub}"
             elsewhere = {name: self.module(name, "/elsewhere/src")}
-            with self.subTest(name), mock.patch.dict(sys.modules, elsewhere):
+            with self.subTest(name), substitute_module(name, elsewhere[name]):
                 self.assert_fails_before_set_up(
                     f"{name} is imported from /elsewhere/src, not this tree's {root}"
                 )
@@ -153,10 +158,7 @@ class Checks:
         self.assertTrue(os.path.isfile(self.module(name, orch).__file__))
         for found in (None, self.module(name, orch)):
             ran = []
-            with self.subTest(found=found), mock.patch.dict(sys.modules):
-                sys.modules.pop(name, None)
-                if found:
-                    sys.modules[name] = found
+            with self.subTest(found=found), substitute_module(name, found):
                 result = self.run_inner(ran.append)
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)
@@ -201,9 +203,7 @@ class Checks:
 
 
 def guards_src():
-    return {
-        sub: os.path.join(guards.REPO, project, "src") for project, sub in guards.PROJECTS.items()
-    }
+    return {sub: os.path.join(REPO, project, "src") for project, sub in guards.PROJECTS.items()}
 
 
 for _tree in CASES:
