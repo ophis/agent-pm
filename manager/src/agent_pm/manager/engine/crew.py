@@ -256,8 +256,6 @@ class Crew:
                 "-" if status is None else status.attach or "-",
             )
             output.append("\t".join(printable(field).replace("\t", " ") for field in fields))
-            if entry.state == State.GONE and record is not None:
-                output.append(printable(f"resume {name}: {shlex.join(record.resume)}"))
         output.extend(
             f"{cursor + i} {printable(line)}"
             for i, line in enumerate(backlog, 1)

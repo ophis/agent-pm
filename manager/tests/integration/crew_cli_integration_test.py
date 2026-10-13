@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -271,3 +272,23 @@ class Commands(Case):
             self.succeeded("next-event", "--manager", "mgr", "--after", "1", "--gen", "0"),
             "3 12:00:01 a blocked\n",
         )
+
+    def test_attach_prints_one_roster_resume_hint_and_monitoring_before_trailer(self):
+        crew = Crew(Roster(self.directory))
+        crew.run(Spec("needs resume", (self.command, "start", "actual")))
+        ctl.set_session(self.ctl_dir, "actual", alive=False)
+        Path(crew.roster.events).write_text("noise\n12:00:00 actual dead\n")
+        output = self.succeeded("attach", "--manager", "mgr")
+        resume = shlex.join(("agent-pm-crew", "resume", "--manager", "mgr", "needs resume"))
+        self.assertEqual(output.count(resume), 1)
+        self.assertNotIn("fake-ctl resume", output)
+        self.assertIn("2 12:00:00 actual dead\n", output)
+        self.assertNotIn("noise", output)
+        self.assertIn(f"monitor: tail -n +1 -F {shlex.quote(crew.roster.events)}\n", output)
+        self.assertIn(
+            "monitor expired: agent-pm-crew attach --manager mgr --after LINE --gen 0\n", output
+        )
+        self.assertIn(
+            "next-event: agent-pm-crew next-event --manager mgr --after 0 --gen 0\n", output
+        )
+        self.assertTrue(output.endswith("N=0 GEN=0\n"))

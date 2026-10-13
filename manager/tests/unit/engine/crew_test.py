@@ -344,11 +344,12 @@ class CrewTest(Case):
         self.assertEqual(self.crew.status(("alias",))[0].name, "alias")
 
     def test_resume_replays_exact_argv_and_preserves_display(self):
-        self.start("role", display="opaque")
+        original = self.start("role", display="opaque")
         ctl.set_session(self.ctl_dir, "role", alive=False)
         with self.listed():
             table = self.crew.attach()
-        self.assertIn("resume role: fake-ctl resume role", table)
+        self.assertNotIn("resume role: fake-ctl resume role", table)
+        self.assertIn(f"role\tfake\t{original.sid}\tgone\t", table)
         record = self.crew.resume("role")
         self.assertEqual(record.display, "opaque")
         self.assertEqual(self.calls("resume"), [{"argv": ["resume", "role"], "names": ["role"]}])

@@ -62,17 +62,25 @@ def _run(args) -> int:
 
 def _attach(args) -> int:
     crew = _crew(args)
-    print(crew.attach(after=args.after, gen=args.gen), end="")
+    lines = crew.attach(after=args.after, gen=args.gen).splitlines()
+    trailer = lines.pop()
+    cursor, generation = (field.partition("=")[2] for field in trailer.split())
+    manager = os.path.basename(crew.roster.directory)
+    named = (f"--manager={manager}",) if manager.startswith("-") else ("--manager", manager)
+    print("\n".join(lines))
     for name, entry in crew.roster.entries().items():
         if entry.state == State.GONE:
-            command = (
-                "agent-pm-crew",
-                "resume",
-                "--manager",
-                args.manager or os.environ["AGENT_PM_MANAGER"],
-                name,
-            )
+            command = ("agent-pm-crew", "resume", *named, name)
             print(f"resume: {shlex.join(command)}")
+    if os.path.isdir(crew.roster.directory):
+        print(f"monitor: tail -n +{int(cursor) + 1} -F {shlex.quote(crew.roster.events)}")
+        for label, verb, after in (
+            ("monitor expired", "attach", "LINE"),
+            ("next-event", "next-event", cursor),
+        ):
+            command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation)
+            print(f"{label}: {shlex.join(command)}")
+    print(trailer)
     return 0
 
 
