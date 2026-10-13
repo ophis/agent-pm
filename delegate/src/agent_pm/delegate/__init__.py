@@ -3,7 +3,7 @@ session from the Driver, read from its replies' progress marks and outcome block
 """
 
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
-from agent_pm.delegate.composer import RunConfig, trusted_dirs
+from agent_pm.delegate.composer import ConfigSource, RunConfig, RunOverrides, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
 from agent_pm.delegate.engine.config import CONFIG, IMPORT_ROOTS, PYTHONPATH, harness_host
@@ -44,6 +44,8 @@ __all__ = [
     "IDLE_TIMEOUT",
     "STATUSES",
     "RunConfig",
+    "ConfigSource",
+    "RunOverrides",
     "CONFIG",
     "IMPORT_ROOTS",
     "PYTHONPATH",

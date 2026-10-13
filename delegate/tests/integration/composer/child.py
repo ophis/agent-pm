@@ -17,8 +17,8 @@ COMPOSE = """import dataclasses
 req = json.loads(sys.argv[1])
 try:
     team = composer.team(composer.TEAM, composer.team_dirs())
-    run = composer.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()), team=team)
-    intent = composer.access(run, req["workdir"], cwd=req["cwd"], project=False, team=team)
+    run = composer.resolve(req["role"], req.get("task"), overrides=composer.RunOverrides(values=req.get("overlays", ())), team=team)
+    intent = composer.access(run, req["workdir"], composer.RunLocation(req["cwd"], project=False), team=team)
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
     writes += [("a dir the run adds", d) for d in intent.dirs]
     composer.check_team_dirs(team.dirs, writes=writes)

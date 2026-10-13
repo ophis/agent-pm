@@ -8,11 +8,11 @@ import functools
 import os
 import sys
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
+from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunLocation, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
@@ -104,10 +104,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     team, guarded = spec.team, ()
     if team is None:
         team = composer.team()
-        try:
+        with contextlib.suppress(ConfigError, OSError, ValueError):
             guarded = composer.team_dirs()
-        except (ConfigError, OSError, ValueError):
-            pass
     tasks = composer.index(run.role, team)
     if spec.task:
         if spec.task not in tasks:
@@ -125,7 +123,9 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     )
     resume = spec.sid if spec.resume else None
     here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
-    intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo, team=team)
+    intent = composer.access(
+        run, workdir, RunLocation(here, project=project, repo_dir=spec.repo), team=team
+    )
     access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),
@@ -148,10 +148,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
         team,
         guarded,
         intent.writes,
-        runtime=runtime,
-        spec=session,
-        resume=resume,
-        driver=driver,
+        session,
+        functools.partial(_runtime_writes, driver, runtime, session, resume),
     )
     params = RunParams(
         input=spec.input,
@@ -162,15 +160,18 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     return Plan(spec, session, composer.render(run, params, team=team), run, params, driver)
 
 
+def _runtime_writes(driver: Driver, runtime: str, spec: SessionSpec, resume: str | None):
+    return [
+        (f"a dir {runtime} can write", path) for path in driver.writable_dirs(runtime, spec, resume)
+    ]
+
+
 def _check_team_dirs(
     team: Team,
     guarded: tuple[str, ...],
     write_dirs: tuple[str, ...],
-    *,
-    runtime: str,
     spec: SessionSpec,
-    resume: str | None,
-    driver: Driver,
+    runtime_writes: Callable[[], list[tuple[str, str]]],
 ) -> None:
     """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
     spec.access.reads, read only, do not.
@@ -180,9 +181,7 @@ def _check_team_dirs(
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    writes += [
-        (f"a dir {runtime} can write", p) for p in driver.writable_dirs(runtime, spec, resume)
-    ]
+    writes += runtime_writes()
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

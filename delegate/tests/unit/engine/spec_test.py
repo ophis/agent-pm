@@ -23,6 +23,7 @@ SPEC = {
     "team": None,
 }
 
+
 class SpecTest(Case):
     def test_a_frozen_spec_its_fields_and_defaults(self):
         found = {

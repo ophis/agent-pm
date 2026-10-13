@@ -11,7 +11,14 @@ from dataclasses import fields, replace
 from unittest import mock
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams
+from agent_pm.delegate.composer import (
+    ConfigError,
+    ConfigSource,
+    RunConfig,
+    RunLocation,
+    RunOverrides,
+    RunParams,
+)
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
     access,
@@ -67,8 +74,16 @@ class Fake(Case):
         return team(self.root, (top,)), top
 
     def resolved(self, role="writer", task=None, found=None, **kw):
-        kw = {"config": self.config, "local": self.local_file, **kw}
-        return resolve(role, task, team=found or team(self.root), **kw)
+        source = ConfigSource(
+            path=kw.pop("config", self.config),
+            local=kw.pop("local", self.local_file),
+            table=kw.pop("cfg", None),
+        )
+        label = kw.pop("label", ("run overlay", "overlay"))
+        overrides = RunOverrides(values=kw.pop("overlays", ()), source=label[0], table=label[1])
+        return resolve(
+            role, task, team=found or team(self.root), source=source, overrides=overrides, **kw
+        )
 
     def refused(self, role="writer", task=None, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -388,7 +403,7 @@ class Runtime(Fake):
     def test_resolve_takes_no_runtime_client_or_trust(self):
         self.assertEqual(
             list(inspect.signature(resolve).parameters),
-            ["role", "task", "overlays", "label", "team", "config", "local", "cfg"],
+            ["role", "task", "overrides", "team", "source"],
         )
 
     def test_a_read_config_given_is_used_reading_no_file(self):
@@ -402,7 +417,11 @@ class Runtime(Fake):
             return original(path, *args, **kwargs)
 
         with mock.patch("builtins.open", side_effect=opened):
-            got = (resolve("pm", cfg=cfg), trusted_dirs(cfg=cfg), composer.index("pm", cfg=cfg))
+            got = (
+                resolve("pm", source=ConfigSource(table=cfg)),
+                trusted_dirs(cfg=cfg),
+                composer.index("pm", cfg=cfg),
+            )
         self.assertEqual(got, want)
 
 
@@ -488,7 +507,7 @@ class BadRead(Fake):
     def test_a_config_that_cannot_be_read_is_a_config_error_from_each_reader(self):
         found, c, lf = team(self.root), self.config, self.local_file
         calls = {
-            "resolve": lambda: resolve("writer", team=found, config=c, local=lf),
+            "resolve": lambda: resolve("writer", team=found, source=ConfigSource(path=c, local=lf)),
             "index": lambda: composer.index("nobody", found, c, lf),
             "catalog": lambda: composer.catalog(found, c, lf),
             "role_tables": lambda: role_tables(c, lf),
@@ -556,9 +575,7 @@ class Access(Fake):
         return access(
             run,
             self.work,
-            cwd=self.work if cwd is None else cwd,
-            project=project,
-            repo_dir=repo_dir,
+            RunLocation(cwd=self.work if cwd is None else cwd, project=project, repo_dir=repo_dir),
             team=found or team(self.root),
         )
 
