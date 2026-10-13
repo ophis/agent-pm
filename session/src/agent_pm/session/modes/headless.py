@@ -110,7 +110,7 @@ class HeadlessMode:
 
     def returncode(self, timeout: float) -> int | None:
         if self.proc is None:
-            return None
+            raise DriverError("headless process has not started")
         try:
             return self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
