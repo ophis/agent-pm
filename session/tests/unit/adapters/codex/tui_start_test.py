@@ -15,7 +15,7 @@ import types
 from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
-from agent_pm.session.engine.types import SessionRequest
+from agent_pm.session.engine.types import Spec
 
 from session.tests import case
 from session.tests.case import Case
@@ -170,7 +170,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         run = self.adapter.tui()
         hook = (sys.executable, "-I", "/protected/driver_hook.py")
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = run.launch("prompt", SessionRequest(self.spec, resumed=False), hook)
+            launch = run.launch("prompt", self.spec, hook, resume=False)
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
             contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
@@ -193,9 +193,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         spec = dataclasses.replace(self.spec, access=access)
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "prompt",
-                SessionRequest(spec, resumed=False),
-                (sys.executable, "-I", "/protected/hook.py"),
+                "prompt", spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         with (
             mock.patch.dict(os.environ, launch.env),
@@ -299,9 +297,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         run = self.adapter.tui()
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = run.launch(
-                "prompt",
-                SessionRequest(self.spec, resumed=False),
-                (sys.executable, "-I", "/protected/hook.py"),
+                "prompt", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
             with self.subTest(signum=signum):
@@ -331,9 +327,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
     def test_wrapper_checks_effective_tmpdir_before_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "hi",
-                SessionRequest(self.spec, resumed=False),
-                (sys.executable, "-I", "/protected/hook.py"),
+                "hi", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
@@ -349,11 +343,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
 class ProtectTest(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            return (
-                self.adapter.tui()
-                .launch("prompt", SessionRequest(spec, resumed=resume), HOOK)
-                .argv[-1]
-            )
+            return self.adapter.tui().launch("prompt", spec, HOOK, resume=resume).argv[-1]
 
     def test_the_recheck_keeps_carried_protect_paths_out_of_the_saved_roots(self):
         link = self.root / "protected-link"

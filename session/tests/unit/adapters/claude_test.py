@@ -11,7 +11,6 @@ from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Launch,
-    SessionRequest,
     SessionStatus,
     Usage,
     Window,
@@ -155,7 +154,7 @@ class WritableDirsTest(Base):
 
     def dirs(self, *, resume=False, workdir=None, **access) -> tuple[str, ...]:
         spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
-        return ClaudeAdapter(CONFIG).writable_dirs(SessionRequest(spec, resumed=resume))
+        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume=resume)
 
     def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
@@ -218,6 +217,6 @@ class WritableDirsTest(Base):
                         flags=given,
                     )
                     self.assertEqual(
-                        ClaudeAdapter(CONFIG).writable_dirs(SessionRequest(spec, resumed=resume)),
+                        ClaudeAdapter(CONFIG).writable_dirs(spec, resume=resume),
                         dirs,
                     )

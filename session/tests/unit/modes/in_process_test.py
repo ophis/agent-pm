@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter, InProcess
-from agent_pm.session.engine.types import DriverError, Reply, SessionRequest, Spec, Stderr
+from agent_pm.session.engine.types import DriverError, Reply, Spec, Stderr
 from agent_pm.session.modes.in_process import InProcessMode
 
 from session.tests.case import Case
@@ -36,9 +36,7 @@ class StubRun(InProcess):
         super().__init__(StubAdapter({}))
         self.script = script
 
-    def run(self, prompt, request: SessionRequest):
-        spec = request.spec
-        resume = request.resumed
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
         return self.script(prompt, spec, resume)
 
 
@@ -49,7 +47,7 @@ def ended(*_):
 class Base(Case):
     def begin(self, script, *, resume=False):
         self.mode = InProcessMode(StubRun(script))
-        self.mode.begin("hi", SessionRequest(SPEC, resumed=resume))
+        self.mode.begin("hi", SPEC, resume=resume)
         self.addCleanup(self.mode.stop)
 
     def held(self):
@@ -218,7 +216,7 @@ class Stop(Base):
         self.assertEqual(mode.state(), "absent")
         self.assertIsNone(mode.returncode(0))
         self.mode = mode
-        mode.begin("hi", SessionRequest(SPEC, resumed=False))
+        mode.begin("hi", SPEC, resume=False)
         self.addCleanup(mode.stop)
         self.assertEqual(self.drain(), [Reply("a")])
         self.assertEqual(mode.returncode(WAIT), 0)
@@ -259,7 +257,7 @@ class Begin(Base):
             ),
             self.assertRaises(DriverError) as caught,
         ):
-            mode.begin("hi", SessionRequest(SPEC, resumed=False))
+            mode.begin("hi", SPEC, resume=False)
         self.assertEqual(
             str(caught.exception), "cannot start the in_process run: can't start new thread"
         )
@@ -271,7 +269,7 @@ class Begin(Base):
         self.mode = InProcessMode(StubRun(ended))
         for when in ("before", "after"):
             if when == "after":
-                self.mode.begin("hi", SessionRequest(SPEC, resumed=False))
+                self.mode.begin("hi", SPEC, resume=False)
             for call, message in (
                 (lambda: self.mode.send("x"), "send: tui mode only"),
                 (self.mode.screen, "screen: tui mode only"),

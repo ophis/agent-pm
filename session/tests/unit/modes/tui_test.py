@@ -339,10 +339,12 @@ class BeginTest(Base):
             [
                 mock.call.start(
                     NAME,
-                    tmux_host.Command(argv=["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}),
+                    ["/bin/run", "a"],
                     events=self.events,
                     status_line=True,
                     tags={"@sid": SID, "@runtime": "fake"},
+                    cwd=self.tmp,
+                    env={"A": "1"},
                 ),
                 mock.call.pane(NAME),
             ],
@@ -352,10 +354,12 @@ class BeginTest(Base):
             self.host.start.call_args,
             mock.call(
                 NAME,
-                tmux_host.Command(argv=["/bin/run"], cwd=self.tmp, env={}),
+                ["/bin/run"],
                 events=None,
                 status_line=False,
                 tags={"@sid": SID, "@runtime": "fake"},
+                cwd=self.tmp,
+                env={},
             ),
         )
 

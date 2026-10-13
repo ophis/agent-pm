@@ -29,7 +29,6 @@ from agent_pm.session.engine.types import (
     Paste,
     Reply,
     SessionBound,
-    SessionRequest,
     SessionStatus,
     Spec,
     Stderr,
@@ -55,7 +54,7 @@ class StubAdapter(Adapter):
 
 
 class StubHeadless(Headless):
-    def launch(self, prompt, _request: SessionRequest):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch(("stub", prompt))
 
     def parse(self, record):
@@ -63,7 +62,7 @@ class StubHeadless(Headless):
 
 
 class StubTui(Tui):
-    def launch(self, prompt, _request: SessionRequest, hook):
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
         return Launch(("stub", *hook))
 
     def reply(self, payload):
@@ -71,12 +70,12 @@ class StubTui(Tui):
 
 
 class StubInProcess(InProcess):
-    def run(self, prompt, _request: SessionRequest):
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
         yield Reply(prompt)
 
 
 class CheckOnlyInProcess(InProcess):
-    def check(self, _request: SessionRequest):
+    def check(self, prompt: str, spec: Spec, *, resume: bool = False):
         return None
 
 
@@ -198,9 +197,7 @@ class AdapterTest(Refusals):
         spec = Spec(workdir="/w", access=Access(dirs=("/d",), cwd="/c"), sid="s")
         for resume in (False, True):
             with self.subTest(resume=resume):
-                self.assertEqual(
-                    StubAdapter({}).writable_dirs(SessionRequest(spec, resumed=resume)), ()
-                )
+                self.assertEqual(StubAdapter({}).writable_dirs(spec, resume=resume), ())
 
     def test_in_process_is_none_unless_overridden(self):
         self.assertEqual(Adapter.__abstractmethods__, frozenset({"headless", "tui"}))
@@ -243,9 +240,7 @@ class InProcessTest(Case):
         self.assertIs(run.adapter, adapter)
         for resume in (False, True):
             with self.subTest(resume=resume):
-                self.assertIsNone(
-                    run.check(SessionRequest(Spec(workdir="/w", sid="s"), resumed=resume))
-                )
+                self.assertIsNone(run.check("", Spec(workdir="/w", sid="s"), resume=resume))
 
 
 class TuiTest(Case):
@@ -378,7 +373,7 @@ class NoProcessTest(Case):
             adapter.usage("output")
             adapter.session_status("s", "/c")
             adapter.in_process()
-            StubInProcess(StubAdapter({})).check(SessionRequest(Spec(workdir="/w"), resumed=False))
+            StubInProcess(StubAdapter({})).check("", Spec(workdir="/w"), resume=False)
         popen.assert_not_called()
         run.assert_not_called()
 

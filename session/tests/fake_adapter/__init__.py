@@ -30,7 +30,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
+    Spec,
     Stderr,
     TurnEnd,
 )
@@ -95,9 +95,7 @@ def _parse(record):
 
 
 class FakeHeadless(Headless):
-    def launch(self, prompt, request: SessionRequest):
-        spec = request.spec
-        resume = request.resumed
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch(
             _argv(self.adapter, prompt, spec, resume),
             transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
@@ -109,9 +107,7 @@ class FakeHeadless(Headless):
 
 
 class FakeInProcess(InProcess):
-    def run(self, prompt, request: SessionRequest):
-        spec = request.spec
-        resume = request.resumed
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
         config = self.adapter.config
         with open(config["log"], "a", encoding="utf-8") as f:
             f.write(
@@ -148,9 +144,7 @@ class FakeInProcess(InProcess):
 class FakeTui(Tui):
     hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
 
-    def launch(self, prompt, request: SessionRequest, hook):
-        spec = request.spec
-        resume = request.resumed
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
         return Launch((*_argv(self.adapter, prompt, spec, resume), *hook))
 
     def reply(self, payload):

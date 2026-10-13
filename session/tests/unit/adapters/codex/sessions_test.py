@@ -2,7 +2,7 @@
 
 from agent_pm.session import Access, ConfigError
 from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
-from agent_pm.session.engine.types import SessionRequest
+from agent_pm.session.engine.types import Spec
 
 from session.tests.unit.adapters.codex.support import Base
 
@@ -26,7 +26,7 @@ BAD = (
 class SnapshotEnvTest(Base):
     def snapshot(self, **fields):
         return {
-            **self.common.prepare(SessionRequest(self.spec, resumed=False), persist=False).snapshot,
+            **self.common.prepare(self.spec, persist=False, resume=False).snapshot,
             **fields,
         }
 

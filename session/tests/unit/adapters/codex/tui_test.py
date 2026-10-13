@@ -19,7 +19,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Paste,
     SessionBound,
-    SessionRequest,
+    Spec,
     TurnEnd,
 )
 
@@ -38,9 +38,7 @@ class TuiTest(Base):
             mock.patch("shutil.which", return_value="/protected/codex"),
             mock.patch("subprocess.Popen") as proc,
         ):
-            launch = run.launch(
-                "quoted ' prompt\nnext", SessionRequest(self.spec, resumed=resume), HOOK
-            )
+            launch = run.launch("quoted ' prompt\nnext", self.spec, HOOK, resume=resume)
         proc.assert_not_called()
         return run, launch, json.loads(launch.argv[-1])
 
@@ -78,9 +76,7 @@ class TuiTest(Base):
             self.spec,
             flags=("-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false"),
         )
-        saved = CodexAdapter(self.adapter.config).common.prepare(
-            SessionRequest(self.spec, resumed=False)
-        )
+        saved = CodexAdapter(self.adapter.config).common.prepare(self.spec, resume=False)
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         other = CodexAdapter({"env": {"CODEX_HOME": str(self.extra)}})
@@ -109,7 +105,7 @@ class TuiTest(Base):
             mock.patch("shutil.which") as which,
             self.assertRaisesRegex(ConfigError, "missing.*state"),
         ):
-            self.adapter.tui().launch("again", SessionRequest(self.spec, resumed=True), HOOK)
+            self.adapter.tui().launch("again", self.spec, HOOK, resume=True)
         which.assert_not_called()
 
     def test_interactive_environment_preserves_external_default_values(self):
@@ -140,7 +136,7 @@ class TuiTest(Base):
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = adapter.tui().launch("hi", SessionRequest(second, resumed=False), HOOK)
+            launch = adapter.tui().launch("hi", second, HOOK, resume=False)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
         self.assertEqual(launch.env["PAGER"], "less")
@@ -233,7 +229,7 @@ class TuiTest(Base):
                 ),
                 self.assertRaisesRegex(ConfigError, "rewrite|writable"),
             ):
-                self.adapter.tui().launch("hi", SessionRequest(spec, resumed=False), hook)
+                self.adapter.tui().launch("hi", spec, hook, resume=False)
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_writable_symlink_to_protected_driver_hook_is_rejected(self):
@@ -244,9 +240,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "rewrite|writable"),
         ):
             self.adapter.tui().launch(
-                "hi",
-                SessionRequest(self.spec, resumed=False),
-                (sys.executable, "-I", str(link)),
+                "hi", self.spec, (sys.executable, "-I", str(link)), resume=False
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
@@ -299,9 +293,7 @@ class TuiTest(Base):
                     )
                     if resume:
                         with mock.patch("shutil.which", return_value="/protected/codex"):
-                            launch = adapter.tui().launch(
-                                "hi", SessionRequest(spec, resumed=True), HOOK
-                            )
+                            launch = adapter.tui().launch("hi", spec, HOOK, resume=True)
                             self.assertNotIn("TMPDIR", launch.env)
                         continue
                     with (
@@ -310,8 +302,9 @@ class TuiTest(Base):
                     ):
                         adapter.tui().launch(
                             "hi",
-                            SessionRequest(spec, resumed=resume),
+                            spec,
                             (sys.executable, "-I", "/driver-only/hook.py"),
+                            resume=resume,
                         )
                     if not resume:
                         self.assertIsNone(self.common.load(str(self.work), spec.sid))
@@ -329,13 +322,13 @@ class TuiTest(Base):
         run = adapter.tui()
         expected = [str(p) for p in (self.cwd, home, self.extra)]
         with mock.patch("subprocess.Popen") as proc:
-            roots = run.common.writable_dirs(SessionRequest(self.spec, resumed=False))
+            roots = run.common.writable_dirs(self.spec, resume=False)
             self.assertEqual(list(roots[:3]), expected)
             self.assertIn(str(temporary), roots)
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
             with mock.patch("shutil.which", return_value="/protected/codex"):
-                run.launch("hello", SessionRequest(self.spec, resumed=False), HOOK)
+                run.launch("hello", self.spec, HOOK, resume=False)
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
             changed = CodexAdapter(
@@ -347,7 +340,7 @@ class TuiTest(Base):
                 access=dataclasses.replace(self.spec.access, cwd=str(self.extra), dirs=()),
             )
             before = self.record().read_bytes()
-            resumed = changed.common.writable_dirs(SessionRequest(spec, resumed=True))
+            resumed = changed.common.writable_dirs(spec, resume=True)
             self.assertEqual(list(resumed[: len(saved)]), saved)
             self.assertNotIn(str(changed_tmp), resumed)
             self.assertNotIn(str(changed_home), resumed)
@@ -383,7 +376,7 @@ REFUSED = (
 class SuppliedFlagsTest(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch(PROMPT, SessionRequest(spec, resumed=resume), HOOK)
+            launch = self.adapter.tui().launch(PROMPT, spec, HOOK, resume=resume)
         return launch, json.loads(launch.argv[-1])
 
     def test_supplied_flags_env_and_hooks_share_one_path(self):
@@ -452,7 +445,7 @@ class SuppliedFlagsTest(Base):
 class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = adapter.tui().launch("hi", SessionRequest(spec, resumed=resume), HOOK)
+            launch = adapter.tui().launch("hi", spec, HOOK, resume=resume)
         return json.loads(launch.argv[-1])["argv"]
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):

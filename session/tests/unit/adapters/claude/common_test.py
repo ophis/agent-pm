@@ -9,7 +9,6 @@ from functools import partial
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
     Access,
-    SessionRequest,
     SessionStatus,
     Usage,
     Window,
@@ -64,8 +63,8 @@ class ReadRulesTest(Base):
         spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
         adapter = ClaudeAdapter({} if config is None else config)
         return (
-            lambda: adapter.headless().launch("hi", SessionRequest(spec, resumed=resume)),
-            lambda: adapter.tui().launch("hi", SessionRequest(spec, resumed=resume), HOOK),
+            lambda: adapter.headless().launch("hi", spec, resume=resume),
+            lambda: adapter.tui().launch("hi", spec, HOOK, resume=resume),
         )
 
     def both(self, *, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -160,11 +159,7 @@ class EnvTest(Base):
             (
                 ClaudeAdapter(config)
                 .tui()
-                .launch(
-                    "hi",
-                    SessionRequest(Spec(workdir=self.work, sid=SID, access=access), resumed=False),
-                    HOOK,
-                ),
+                .launch("hi", Spec(workdir=self.work, sid=SID, access=access), HOOK, resume=False),
                 {},
             ),
         ):

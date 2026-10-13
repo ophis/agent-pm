@@ -98,8 +98,7 @@ def checkout(ident, owner, name, *, work) -> str:
     return clone_checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
-def _branches(ident, repo: tuple[str, str], run, work, roles):
-    o, n = repo
+def _branches(ident, o, n, *, run, work, roles):
     # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run
     # could have changed
     path = checkout(ident, o, n, work=work)
@@ -174,7 +173,7 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{asked}: unsafe default branch name")
     ident = issue.identifier
-    names = _branches(ident, (o, n), run, work, roles)
+    names = _branches(ident, o, n, run=run, work=work, roles=roles)
     if isinstance(names, Transient):
         return names
     if len(names) > 1:

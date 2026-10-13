@@ -30,7 +30,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
     Spec,
     Stderr,
     TurnEnd,
@@ -57,10 +56,10 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
 
 
 class LaunchingRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, request: SessionRequest):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         config = self.adapter.config
         return dataclasses.replace(
-            super().launch(prompt, request),
+            super().launch(prompt, spec, resume=resume),
             env=config.get("env", {}),
             unset=tuple(config.get("unset", ())),
             cwd=config.get("cwd", ""),
@@ -81,7 +80,7 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
 
 
 class ScriptRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, _request: SessionRequest):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 

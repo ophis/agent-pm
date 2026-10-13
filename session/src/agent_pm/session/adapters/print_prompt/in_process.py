@@ -9,22 +9,19 @@ import os
 import tempfile
 
 from agent_pm.session.adapters.base import InProcess
-from agent_pm.session.engine.types import ConfigError, Reply, SessionRequest, TurnEnd
+from agent_pm.session.engine.types import ConfigError, Reply, Spec, TurnEnd
 
 START = "the composed prompt is handed to the caller"
 
 
 class PrintPromptInProcess(InProcess):
-    def check(self, request: SessionRequest):
-        spec = request.spec
-        resume = request.resumed
+    def check(self, prompt: str, spec: Spec, *, resume: bool = False):
         if resume:
             raise ConfigError("print_prompt has no session to resume")
         if spec.reply_tags is None:
             raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
 
-    def run(self, prompt, request: SessionRequest):
-        spec = request.spec
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
         assert spec.reply_tags is not None
         progress, outcome = spec.reply_tags
         tmp = os.path.join(spec.workdir, "tmp")

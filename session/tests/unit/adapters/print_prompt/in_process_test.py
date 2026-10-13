@@ -13,7 +13,6 @@ from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.engine.types import (
     ConfigError,
     Reply,
-    SessionRequest,
     Spec,
     TurnEnd,
 )
@@ -56,7 +55,7 @@ class Run(Case):
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
                 for target in SPAWNS
             ]
-            found = list(self.session.run(prompt, SessionRequest(self.spec, resumed=False)))
+            found = list(self.session.run(prompt, self.spec, resume=False))
         for spawn in spawns:
             spawn.assert_not_called()
         self.assertEqual((os.getcwd(), dict(os.environ)), (cwd, environ))
@@ -68,14 +67,14 @@ class Run(Case):
             return f.read()
 
     def test_check_refuses_resume_only(self):
-        self.assertIsNone(self.session.check(SessionRequest(self.spec, resumed=False)))
+        self.assertIsNone(self.session.check("", self.spec, resume=False))
         with self.assertRaises(ConfigError) as caught:
-            self.session.check(SessionRequest(self.spec, resumed=True))
+            self.session.check("", self.spec, resume=True)
         self.assertEqual(str(caught.exception), "print_prompt has no session to resume")
 
     def test_check_refuses_a_spec_without_the_reply_protocol(self):
         with self.assertRaises(ConfigError) as caught:
-            self.session.check(SessionRequest(Spec(workdir=self.workdir), resumed=False))
+            self.session.check("", Spec(workdir=self.workdir), resume=False)
         self.assertEqual(
             str(caught.exception),
             "print_prompt needs the caller's reply protocol (Spec.reply_tags)",
@@ -113,4 +112,4 @@ class Run(Case):
             mock.patch("tempfile.mkstemp", side_effect=OSError(28, "No space left on device")),
             self.assertRaises(OSError),
         ):
-            list(self.session.run(PROMPT, SessionRequest(self.spec, resumed=False)))
+            list(self.session.run(PROMPT, self.spec, resume=False))

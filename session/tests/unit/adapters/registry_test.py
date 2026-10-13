@@ -23,7 +23,7 @@ from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.session.engine.types import ConfigError, SessionRequest
+from agent_pm.session.engine.types import ConfigError
 from agent_pm.utils import read_project
 
 from session.tests import fake_adapter
@@ -414,12 +414,7 @@ class Committed(Case):
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (
             adapter.headless()
-            .launch(
-                "hi",
-                SessionRequest(
-                    Spec(workdir=tmp.name, tier=4, effort="low", sid=SID), resumed=False
-                ),
-            )
+            .launch("hi", Spec(workdir=tmp.name, tier=4, effort="low", sid=SID), resume=False)
             .argv
         )
         self.assertEqual(

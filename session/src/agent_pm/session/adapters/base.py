@@ -20,8 +20,8 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionBound,
     SessionInfo,
-    SessionRequest,
     SessionStatus,
+    Spec,
     Stderr,
     TurnEnd,
     Usage,
@@ -78,7 +78,7 @@ class Adapter(ABC):
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
-    def writable_dirs(self, _request: SessionRequest) -> tuple[str, ...]:
+    def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
         """Own write dirs (resume: request.spec.sid's)."""
         return ()
 
@@ -88,8 +88,8 @@ class Headless(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, request: SessionRequest) -> Launch:
-        """The command; request.resumed continues request.spec.sid."""
+    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
+        """The command; resume continues spec.sid."""
 
     @abstractmethod
     def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
@@ -107,7 +107,9 @@ class Tui(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, request: SessionRequest, hook: tuple[str, ...]) -> Launch:
+    def launch(
+        self, prompt: str, spec: Spec, hook: tuple[str, ...], *, resume: bool = False
+    ) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
         payload on stdin.
         """
@@ -158,8 +160,8 @@ class InProcess(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def run(self, prompt: str, request: SessionRequest) -> Iterable[Event | Stderr]:
-        """The session's events; request.resumed continues request.spec.sid."""
+    def run(self, prompt: str, spec: Spec, *, resume: bool = False) -> Iterable[Event | Stderr]:
+        """The session's events; resume continues spec.sid."""
 
-    def check(self, _request: SessionRequest) -> None:
+    def check(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
         return None

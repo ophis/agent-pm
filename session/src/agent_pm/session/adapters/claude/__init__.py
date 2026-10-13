@@ -8,7 +8,7 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon, added_dirs
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.engine.types import SessionRequest
+from agent_pm.session.engine.types import Spec
 
 
 class ClaudeAdapter(Adapter):
@@ -57,8 +57,7 @@ class ClaudeAdapter(Adapter):
     def session_status(self, sid, cwd):
         return self.common.session_status(sid, cwd)
 
-    def writable_dirs(self, request: SessionRequest):
-        spec = request.spec
+    def writable_dirs(self, spec: Spec, *, resume: bool = False):
         cwd = spec.access.cwd or spec.workdir
         dirs = (cwd, *spec.access.dirs, *(os.path.join(cwd, d) for d in added_dirs(spec.flags)))
         return tuple(dict.fromkeys(map(os.path.realpath, dirs)))

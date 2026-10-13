@@ -31,7 +31,6 @@ from agent_pm.session.engine.types import (
     Reply,
     SessionBound,
     SessionInfo,
-    SessionRequest,
     SessionRow,
     SessionStatus,
     Spec,
@@ -81,12 +80,11 @@ class _LaunchSteps(ABC):
     runtime: str
 
     @abstractmethod
-    def launch(self, prompt: str, request: SessionRequest) -> Launch: ...
+    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch: ...
 
-    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
-        spec = request.spec
+    def info(self, prompt: str, spec: Spec, *, resume: bool = False) -> SessionInfo:
         assert spec.sid is not None
-        self.command = launch = self.launch(prompt, request)
+        self.command = launch = self.launch(prompt, spec, resume=resume)
         if not launch.argv:
             raise ConfigError(f"runtime {self.runtime!r} gave no command")
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
@@ -125,8 +123,8 @@ class _HeadlessSteps(_LaunchSteps):
         _no_tui_keys(spec.name, events)
         self.run, self.runtime = run, runtime
 
-    def launch(self, prompt: str, request: SessionRequest) -> Launch:
-        return self.run.launch(prompt, request)
+    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
+        return self.run.launch(prompt, spec, resume=resume)
 
     def prepared(
         self, info: SessionInfo, workdir: str, /
@@ -175,8 +173,10 @@ class _TuiSteps(_LaunchSteps):
         )
         return replace(spec, name=self.name, protect=(*spec.protect, *hooks))
 
-    def launch(self, prompt: str, request: SessionRequest) -> Launch:
-        return self.run.launch(prompt, request, tui.hook_argv(tui.session_dir(self.name)))
+    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
+        return self.run.launch(
+            prompt, spec, tui.hook_argv(tui.session_dir(self.name)), resume=resume
+        )
 
     @contextlib.contextmanager
     def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:
@@ -223,11 +223,11 @@ class _InProcessSteps:
         _no_tui_keys(spec.name, events)
         self.run = run
 
-    def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
-        spec = request.spec
+    def info(self, prompt: str, spec: Spec, *, resume: bool = False) -> SessionInfo:
         assert spec.sid is not None
-        self.run.check(request)
-        self.args = prompt, request
+        self.run.check(prompt, spec, resume=resume)
+        self.args = prompt, spec
+        self.resume = resume
         return SessionInfo(
             spec.sid, "", spec.access.cwd or spec.workdir, spec.access.project, "", ""
         )
@@ -238,7 +238,7 @@ class _InProcessSteps:
         return contextlib.nullcontext(in_process.InProcessMode(self.run))
 
     def begin(self, host: in_process.InProcessMode) -> None:
-        host.begin(*self.args)
+        host.begin(*self.args, resume=self.resume)
 
 
 STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
@@ -567,7 +567,7 @@ class Driver:
         spec = steps.specced(spec)
         if spec.access.commands and adapter.runtime_note:
             prompt = prompt + "\n\n" + adapter.runtime_note
-        info = steps.info(prompt, SessionRequest(spec, resumed=resume is not None))
+        info = steps.info(prompt, spec, resume=resume is not None)
         with steps.prepared(info, spec.workdir) as host:
             os.makedirs(spec.workdir, exist_ok=True)
             records.note(
@@ -708,9 +708,7 @@ class Driver:
         adapter = self.registry.adapter(runtime)
         try:
             return tuple(
-                adapter.writable_dirs(
-                    SessionRequest(replace(spec, sid=resume), resumed=resume is not None)
-                )
+                adapter.writable_dirs(replace(spec, sid=resume), resume=resume is not None)
             )
         except OSError as e:
             raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
@@ -787,11 +785,6 @@ class Driver:
             raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
         validate_placement(None, None, opener)
         try:
-            self.host.detach(
-                name,
-                tmux_host.Command(argv=list(argv), cwd=cwd, env=dict(env)),
-                block=SIGNALS,
-                opener=opener,
-            )
+            self.host.detach(name, list(argv), block=SIGNALS, opener=opener, cwd=cwd, env=dict(env))
         except TuiError as e:
             raise DriverError(f"detach {name}: {e}") from e

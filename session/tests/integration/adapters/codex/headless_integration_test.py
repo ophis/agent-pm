@@ -23,7 +23,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
     Spec,
     Stderr,
     TurnEnd,
@@ -182,9 +181,7 @@ class HeadlessSessions(Case):
             },
         )
         run = adapter.headless()
-        launch = run.launch(
-            prompt, SessionRequest(dataclasses.replace(self.spec, sid=self.sid), resumed=resume)
-        )
+        launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume=resume)
         env = {key: value for key, value in os.environ.items() if key not in launch.unset}
         result = subprocess.run(
             launch.argv,

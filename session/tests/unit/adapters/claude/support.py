@@ -15,7 +15,6 @@ from agent_pm.session.adapters.selection import select
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
-    SessionRequest,
     Usage,
 )
 from agent_pm.session.engine.types import Spec as BaseSpec
@@ -114,7 +113,7 @@ class Base(Case):
 
     def launch(self, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
         spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless().launch(prompt, SessionRequest(spec, resumed=resume))
+        return ClaudeAdapter(config).headless().launch(prompt, spec, resume=resume)
 
 
 def stream_line(record) -> str:
@@ -223,7 +222,7 @@ WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, **spec})
-    return ClaudeAdapter(config).tui().launch(prompt, SessionRequest(spec, resumed=resume), HOOK)
+    return ClaudeAdapter(config).tui().launch(prompt, spec, HOOK, resume=resume)
 
 
 def said(mid, *blocks) -> dict:

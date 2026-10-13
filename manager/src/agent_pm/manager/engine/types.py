@@ -17,8 +17,6 @@ class Spec:
     client: str | None = None
     overrides: tuple[str, ...] = ()
     resume: str | None = None
-    split: str | None = None
-    split_from: str | None = None
 
 
 class RosterError(Exception):

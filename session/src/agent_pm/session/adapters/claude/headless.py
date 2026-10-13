@@ -11,7 +11,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
+    Spec,
     TurnEnd,
 )
 
@@ -22,16 +22,16 @@ class ClaudeHeadless(Headless):
         self.limit_sent = False
         self.resets_at = None
 
-    def launch(self, prompt, request: SessionRequest):
-        spec = request.spec
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         common = self.common
         return common.launch(
-            request,
+            spec,
             None,
             head=("-p",),
             output=("--output-format", "stream-json", "--verbose"),
             tail=(*spec.flags, "--", prompt),
             env=common.ENV,
+            resume=resume,
         )
 
     def parse(self, record):

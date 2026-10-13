@@ -19,7 +19,7 @@ from agent_pm.session.adapters.codex.common import (
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.codex.sessions import split_flags
-from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, SessionRequest
+from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
 from agent_pm.utils import import_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
@@ -43,11 +43,9 @@ class CodexTui(Tui):
         self.native = ""
         self.store = ""
 
-    def launch(self, prompt, request: SessionRequest, hook):
-        spec = request.spec
-        resume = request.resumed
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
         common = self.common
-        self.state = common.prepare(request, persist=False)
+        self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
         saved_flags = tuple(snapshot["flags"])
         refuse(saved_flags)

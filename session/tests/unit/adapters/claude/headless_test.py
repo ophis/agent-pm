@@ -12,7 +12,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
     TurnEnd,
 )
 
@@ -433,6 +432,6 @@ class SuppliedPolicy(Base):
         flags = CLAUDE
         adapter = ClaudeAdapter({})
         spec = Spec(workdir=str(self.work), sid=SID, flags=flags)
-        launch = adapter.headless().launch("hi", SessionRequest(spec, resumed=False))
+        launch = adapter.headless().launch("hi", spec, resume=False)
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)

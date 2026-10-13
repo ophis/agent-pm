@@ -17,7 +17,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
+    Spec,
     Stderr,
     TurnEnd,
 )
@@ -30,9 +30,8 @@ class CodexHeadless(Headless):
         self.last_reply = ""
         self.limit_sent = False
 
-    def launch(self, prompt, request: SessionRequest):
-        resume = request.resumed
-        self.state = self.common.prepare(request)
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+        self.state = self.common.prepare(spec, resume=resume)
         self.limit_sent = False
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *flags(snapshot, interactive=False)]

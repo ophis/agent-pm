@@ -35,7 +35,6 @@ from agent_pm.session.engine.types import (
     Reply,
     SessionBound,
     SessionInfo,
-    SessionRequest,
     SessionRow,
     SessionStatus,
     Spec,
@@ -68,7 +67,7 @@ class BlankAdapter(fake_adapter.FakeAdapter):
 
 
 class BlankRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, _request: SessionRequest):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch(())
 
 
@@ -82,7 +81,7 @@ class FailingRun(fake_adapter.FakeHeadless):
         super().__init__(adapter)
         self.failure = LookupError("no binding")
 
-    def launch(self, prompt, _request: SessionRequest):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         raise self.failure
 
 
@@ -102,10 +101,9 @@ class CheckedRun(fake_adapter.FakeInProcess):
         super().__init__(adapter)
         self.failure = ConfigError("tier 4 is unmapped")
 
-    def check(self, request: SessionRequest):
-        self.checked_request = request
-        spec = request.spec
-        resume = request.resumed
+    def check(self, prompt: str, spec: Spec, *, resume: bool = False):
+        self.checked = prompt, spec, resume
+
         LAUNCHED.append(spec)
         if spec.tier == 4:
             raise self.failure
@@ -122,9 +120,9 @@ class CheckedRun(fake_adapter.FakeInProcess):
                 + "\n"
             )
 
-    def run(self, prompt, request: SessionRequest):
-        assert request is self.checked_request
-        yield from super().run(prompt, request)
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
+        assert (prompt, spec, resume) == self.checked
+        yield from super().run(prompt, spec, resume=resume)
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
@@ -161,10 +159,9 @@ class InnerAdapter(fake_adapter.FakeAdapter):
 
 
 class InnerTui(fake_adapter.FakeTui):
-    def launch(self, prompt, request: SessionRequest, hook):
-        spec = request.spec
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
         LAUNCHED.append(spec)
-        launch = super().launch(prompt, request, hook)
+        launch = super().launch(prompt, spec, hook, resume=resume)
         env = {**spec.env, "LAUNCH_SET": "1"}
         return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
@@ -188,17 +185,15 @@ class EnvAdapter(ProbeAdapter):
 
 
 class EnvRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, request: SessionRequest):
-        spec = request.spec
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         LAUNCHED.append(spec)
-        launch = super().launch(prompt, request)
+        launch = super().launch(prompt, spec, resume=resume)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 class EnvTui(fake_adapter.FakeTui):
-    def launch(self, prompt, request: SessionRequest, hook):
-        spec = request.spec
-        launch = super().launch(prompt, request, hook)
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+        launch = super().launch(prompt, spec, hook, resume=resume)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
@@ -1059,10 +1054,10 @@ class WritableDirsTest(Base):
                 (self.dir, self.workdir),
             )
         self.assertEqual(
-            [c.args[1:] for c in dirs.call_args_list],
+            [(c.args[1:], c.kwargs) for c in dirs.call_args_list],
             [
-                (SessionRequest(dataclasses.replace(spec, sid="r1"), resumed=True),),
-                (SessionRequest(spec, resumed=False),),
+                ((dataclasses.replace(spec, sid="r1"),), {"resume": True}),
+                ((spec,), {"resume": False}),
             ],
         )
 
@@ -1376,10 +1371,7 @@ class DetachTest(TuiBase):
             self.host.mock_calls,
             [
                 mock.call.detach(
-                    "d1",
-                    tmux_host.Command(argv=["tool", "a b"], cwd=self.dir, env=env),
-                    block=api.SIGNALS,
-                    opener="mgr",
+                    "d1", ["tool", "a b"], block=api.SIGNALS, opener="mgr", cwd=self.dir, env=env
                 )
             ],
         )
@@ -1426,15 +1418,15 @@ class TuiStartTest(TuiBase):
                     name=f"w{resumed}",
                     **({"resume": SID} if resumed else {"sid": SID}),
                 )
-                argv = self.host.start.call_args.args[1].argv
+                argv = self.host.start.call_args.args[1]
                 self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
 
     def test_effective_project_override_reaches_info_record_and_tui_state(self):
         original = fake_adapter.FakeTui.launch
         for project in (True, False):
 
-            def launch(run, *args, project=project):
-                return dataclasses.replace(original(run, *args), project=project)
+            def launch(run, *args, project=project, **kwargs):
+                return dataclasses.replace(original(run, *args, **kwargs), project=project)
 
             with (
                 self.subTest(project=project),
@@ -1475,18 +1467,18 @@ class TuiStartTest(TuiBase):
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
-            call.args[1].argv[-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))]
+            call.args[1][-5:], ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))]
         )
-        self.assertEqual(call.args[1].cwd, self.workdir)
+        self.assertEqual(call.kwargs["cwd"], self.workdir)
         self.assertEqual(
-            call.kwargs,
+            {k: v for k, v in call.kwargs.items() if k not in ("cwd", "env")},
             {
                 "events": self.events,
                 "status_line": False,
                 "tags": {"@sid": SID, "@runtime": "fake"},
             },
         )
-        self.assertEqual(call.args[1].env["PWD"], self.workdir)
+        self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
             {
@@ -1617,7 +1609,7 @@ class EnvironmentTest(TuiBase):
 
     def env(self, name, **fields) -> dict[str, str]:
         self.tui(runtime="inner", name=name, spec=self.spec(**fields))
-        env = dict(self.host.start.call_args.args[1].env)
+        env = dict(self.host.start.call_args.kwargs["env"])
         self.assertEqual((env.pop("HOME"), env.pop("PWD")), (os.environ["HOME"], self.workdir))
         return env
 
@@ -1707,7 +1699,7 @@ class SessionEnvTest(TuiBase):
     def test_a_tui_session_gets_it(self):
         self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
         (call,) = self.host.start.call_args_list
-        self.assertEqual(call.args[1].env["PYTHONPATH"], PYTHONPATH)
+        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], PYTHONPATH)
 
 
 class AttachTest(TuiBase):

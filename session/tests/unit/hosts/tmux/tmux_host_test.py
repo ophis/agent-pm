@@ -499,11 +499,7 @@ class StartFixture(Case):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
             tmux_host.start(
-                session,
-                tmux_host.Command(argv=list(argv), cwd=self.cwd, env=env),
-                **kw,
-                proc=fake,
-                sleep=self.sleep,
+                session, list(argv), **kw, proc=fake, sleep=self.sleep, cwd=self.cwd, env=env
             )
 
 
@@ -1043,9 +1039,7 @@ class CliTest(Case):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
                 start.assert_called_once_with(
-                    session,
-                    tmux_host.Command(argv=command, cwd=os.getcwd(), env=dict(os.environ)),
-                    events=events,
+                    session, command, events=events, cwd=os.getcwd(), env=dict(os.environ)
                 )
 
     def test_start_usage_errors(self):
@@ -1260,11 +1254,7 @@ class DetachTest(StartFixture):
     def detach(self, fake, session="d", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         tmux_host.detach(
-            session,
-            tmux_host.Command(argv=list(argv), cwd=self.cwd, env=env),
-            **kw,
-            proc=fake,
-            sleep=self.sleep,
+            session, list(argv), **kw, proc=fake, sleep=self.sleep, cwd=self.cwd, env=env
         )
 
     def test_new_session_runs_the_wrapper_and_returns_once_argv_execd(self):
@@ -4482,9 +4472,11 @@ class StartTest(StartFixture):
                     lambda *, fake=fake, name=name: tmux_host.status(name, proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.detach(
                         name,
-                        tmux_host.Command(argv=["tool"], cwd=self.cwd, env={"PATH": self.bin}),
+                        ["tool"],
                         proc=fake,
                         sleep=self.sleep,
+                        cwd=self.cwd,
+                        env={"PATH": self.bin},
                     ),
                     lambda *, fake=fake, name=name: tmux_host.kill(name, proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.send(

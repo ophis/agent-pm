@@ -13,8 +13,8 @@ from agent_pm.session.adapters.selection import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
-    SessionRequest,
     SessionStatus,
+    Spec,
     Usage,
     Window,
 )
@@ -190,9 +190,10 @@ class ClaudeCommon:
 
     def launch(
         self,
-        request: SessionRequest,
+        spec: Spec,
         settings: Mapping | None,
         *,
+        resume: bool = False,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
@@ -202,8 +203,7 @@ class ClaudeCommon:
         under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
         spec.flags would drop.
         """
-        spec = request.spec
-        resume = request.resumed
+
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access

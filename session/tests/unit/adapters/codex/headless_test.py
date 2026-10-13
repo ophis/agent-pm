@@ -12,7 +12,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
-    SessionRequest,
+    Spec,
     Stderr,
     TurnEnd,
 )
@@ -27,7 +27,7 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 class HeadlessTest(Base):
     def run_instance(self):
         run = self.adapter.headless()
-        run.launch("hello", SessionRequest(self.spec, resumed=False))
+        run.launch("hello", self.spec, resume=False)
         return run
 
     def test_native_binding_precedes_event(self):
@@ -122,7 +122,7 @@ class HeadlessTest(Base):
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        run.launch("again", SessionRequest(self.spec, resumed=True))
+        run.launch("again", self.spec, resume=True)
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
 
     def test_source_quota_error_emits_limit(self):
@@ -186,7 +186,7 @@ class HeadlessTest(Base):
 
 class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
-        return list(adapter.headless().launch("hi", SessionRequest(spec, resumed=resume)).argv)
+        return list(adapter.headless().launch("hi", spec, resume=resume).argv)
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):
         mode = "headless"
@@ -251,14 +251,14 @@ class PolicyReplay(Base):
             str(self.extra),
         )
         spec = dataclasses.replace(self.spec, flags=flags, env={"K": "saved"})
-        first = self.adapter.headless().launch("one", SessionRequest(spec, resumed=False))
+        first = self.adapter.headless().launch("one", spec, resume=False)
         state = self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
-        resumed = adapter.headless().launch("two", SessionRequest(changed, resumed=True))
+        resumed = adapter.headless().launch("two", changed, resume=True)
         self.assertEqual(state.snapshot["flags"], list(flags))
         self.assertEqual(first.env["K"], "saved")
         self.assertEqual(resumed.env["K"], "saved")
@@ -271,6 +271,6 @@ class SuppliedPolicy(Base):
         flags = CODEX
         adapter = self.adapter
         spec = dataclasses.replace(self.spec, flags=flags)
-        launch = adapter.headless().launch("hi", SessionRequest(spec, resumed=False))
+        launch = adapter.headless().launch("hi", spec, resume=False)
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)

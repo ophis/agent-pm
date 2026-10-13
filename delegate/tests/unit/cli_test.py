@@ -73,7 +73,7 @@ class RefusingRun(fake_adapter.FakeInProcess):
         super().__init__(adapter)
         self.refusal = ConfigError("refused by check")
 
-    def check(self, _request, /):
+    def check(self, prompt, spec, *, resume=False):
         raise self.refusal
 
 

@@ -154,7 +154,7 @@ def row(name, sid=None, *, view: SessionView | None = None):
 
 
 def start(name, directory, *, own, **kw):
-    place = {k: kw.pop(k) for k in ("own_runtime", "driver") if k in kw}
+    place = {k: kw.pop(k) for k in ("own_runtime", "split", "split_from", "driver") if k in kw}
     return crew.start(Spec(name, **kw), directory=directory, own=own, **place)
 
 

@@ -31,7 +31,6 @@ from agent_pm.session.engine.types import (
     Exited,
     LimitHit,
     SessionBound,
-    SessionRequest,
     Spec,
     TurnEnd,
 )
@@ -409,8 +408,9 @@ class HookTrustIntegrationTest(Live):
         run = self.driver.registry.adapter("codex").tui()
         launch = run.launch(
             "hello",
-            SessionRequest(dataclasses.replace(self.spec, sid=self.sid), resumed=False),
+            dataclasses.replace(self.spec, sid=self.sid),
             (sys.executable, "-V"),
+            resume=False,
         )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}

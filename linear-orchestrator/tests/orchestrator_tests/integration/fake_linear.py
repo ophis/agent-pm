@@ -39,13 +39,6 @@ class InjectedFailure:
     seconds: float
 
 
-@dataclass(frozen=True)
-class HttpReply:
-    status: int
-    payload: dict
-    delay: float = 0
-
-
 KEY = "TASK"
 
 BACKLOG = "00000000-0000-4000-8000-000000000017"
@@ -646,34 +639,44 @@ class FakeLinear(Operations):
             account = caller and caller["email"]
             if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
                 return self._log(
-                    Request(None, account, {}, "error"),
-                    HttpReply(
-                        400,
-                        error_payload(
-                            "fake: bad request: not a query string and a variables object"
-                        ),
+                    op=None,
+                    account=account,
+                    variables={},
+                    result="error",
+                    status=400,
+                    body=error_payload(
+                        "fake: bad request: not a query string and a variables object"
                     ),
                 )
             variables, op = variables or {}, self.ops.get(query)
             if caller is None:
                 return self._log(
-                    Request(op or query, None, variables, "unauthorized"),
-                    HttpReply(401, error_payload("fake: unauthorized")),
+                    op=op or query,
+                    account=None,
+                    variables=variables,
+                    result="unauthorized",
+                    status=401,
+                    body=error_payload("fake: unauthorized"),
                 )
             if op is None:
                 return self._log(
-                    Request(query, account, variables, "unknown"),
-                    HttpReply(200, error_payload("fake: unknown query")),
+                    op=query,
+                    account=account,
+                    variables=variables,
+                    result="unknown",
+                    status=200,
+                    body=error_payload("fake: unknown query"),
                 )
             failure = self._failure(op, account)
             kind = failure.kind if failure else "ok"
             if kind in ("error", "503"):
                 return self._log(
-                    Request(op, account, variables, kind),
-                    HttpReply(
-                        int(kind) if kind == "503" else 200,
-                        error_payload(f"fake: {op}: injected {kind}"),
-                    ),
+                    op=op,
+                    account=account,
+                    variables=variables,
+                    result=kind,
+                    status=int(kind) if kind == "503" else 200,
+                    body=error_payload(f"fake: {op}: injected {kind}"),
                 )
             try:
                 sel = selection(query)
@@ -687,11 +690,21 @@ class FakeLinear(Operations):
                     str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
                 )
                 return self._log(
-                    Request(op, account, variables, "error"), HttpReply(200, error_payload(message))
+                    op=op,
+                    account=account,
+                    variables=variables,
+                    result="error",
+                    status=200,
+                    body=error_payload(message),
                 )
             return self._log(
-                Request(op, account, variables, kind),
-                HttpReply(200, {"data": data}, failure.seconds if kind == "hang" else 0),
+                op=op,
+                account=account,
+                variables=variables,
+                result=kind,
+                status=200,
+                body={"data": data},
+                delay=failure.seconds if kind == "hang" else 0,
             )
 
     def __call__(self, query, *, timeout=30, service=None, **variables):
@@ -718,9 +731,9 @@ class FakeLinear(Operations):
             raise LinearError(f"linear api error: {body['errors']}")
         return body["data"]
 
-    def _log(self, request: Request, reply: HttpReply):
-        self.requests.append(request)
-        return reply.status, reply.payload, reply.delay
+    def _log(self, *, op, account, variables, result, status, body, delay=0):
+        self.requests.append(Request(op, account, variables, result))
+        return status, body, delay
 
     def _failure(self, op, account):
         for f in self.failures:

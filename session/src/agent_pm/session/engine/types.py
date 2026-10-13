@@ -128,14 +128,6 @@ class Spec:
 
 
 @dataclass(frozen=True)
-class SessionRequest:
-    """A session's validated specification and explicit fresh/resumed selection."""
-
-    spec: Spec
-    resumed: bool = field(kw_only=True)
-
-
-@dataclass(frozen=True)
 class Launch:
     argv: tuple[str, ...]
     env: Mapping[str, str] = field(default_factory=dict)

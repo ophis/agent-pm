@@ -81,9 +81,7 @@ class Live(Case):
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
         """Session `name` started with no pane, then show()n; show's stderr."""
-        tmux_host.start(
-            name, tmux_host.Command(argv=list(live_tmux.IDLE), cwd=self.cwd, env=self.server.env())
-        )
+        tmux_host.start(name, list(live_tmux.IDLE), cwd=self.cwd, env=self.server.env())
         return self.show(name, inside, **kwargs)
 
     def tmux(self, *args: str) -> str:
@@ -239,11 +237,7 @@ class StartTest(Live):
     def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
         events = os.path.join(self.cwd, "events")
         tmux_host.start(
-            "s1",
-            tmux_host.Command(
-                argv=["/bin/sh", "-c", "exit 3"], cwd=self.cwd, env=self.server.env()
-            ),
-            events=events,
+            "s1", ["/bin/sh", "-c", "exit 3"], events=events, cwd=self.cwd, env=self.server.env()
         )
 
         def dead():

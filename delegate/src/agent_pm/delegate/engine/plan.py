@@ -8,7 +8,7 @@ import functools
 import os
 import sys
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
@@ -150,8 +150,10 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
         team,
         guarded,
         intent.writes,
-        session,
-        functools.partial(_runtime_writes, driver, runtime, session, resume),
+        runtime=runtime,
+        spec=session,
+        resume=resume,
+        driver=driver,
     )
     params = RunParams(
         input=spec.input,
@@ -162,18 +164,15 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     return Plan(spec, session, composer.render(run, params, team=team), run, params, driver)
 
 
-def _runtime_writes(driver: Driver, runtime: str, spec: SessionSpec, resume: str | None):
-    return [
-        (f"a dir {runtime} can write", path) for path in driver.writable_dirs(runtime, spec, resume)
-    ]
-
-
 def _check_team_dirs(
     team: Team,
     guarded: tuple[str, ...],
     write_dirs: tuple[str, ...],
+    *,
+    runtime: str,
     spec: SessionSpec,
-    runtime_writes: Callable[[], list[tuple[str, str]]],
+    resume: str | None,
+    driver: Driver,
 ) -> None:
     """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
     spec.access.reads, read only, do not.
@@ -183,7 +182,9 @@ def _check_team_dirs(
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    writes += runtime_writes()
+    writes += [
+        (f"a dir {runtime} can write", p) for p in driver.writable_dirs(runtime, spec, resume)
+    ]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

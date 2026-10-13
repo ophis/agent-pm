@@ -57,21 +57,6 @@ class Slot(NamedTuple):
     children: tuple[Slot, ...] = ()
 
 
-@dataclass(frozen=True, kw_only=True)
-class Command:
-    argv: Sequence[str]
-    cwd: str
-    env: Mapping[str, str]
-
-
-@dataclass(frozen=True)
-class Rectangle:
-    w: int
-    h: int
-    x: int
-    y: int
-
-
 def mark(
     word: str,
     events: str | None,
@@ -761,7 +746,10 @@ def grid_layout(
             layout_slots(
                 columns,
                 LEFT_RIGHT,
-                Rectangle(width - mw - 1, height, mw + 1, 0),
+                w=width - mw - 1,
+                h=height,
+                x=mw + 1,
+                y=0,
             ),
         ),
     )
@@ -775,13 +763,12 @@ def minimum_width(s: Slot) -> int:
     return least if s.pane is None else 2 * least + 1
 
 
-def place_slot(s: Slot, rect: Rectangle) -> Cell:
+def place_slot(s: Slot, *, w: int, h: int, x: int, y: int) -> Cell:
     """A pane takes the left half, its children stack right; an orphan group stacks."""
-    w, h, x, y = rect.w, rect.h, rect.x, rect.y
     if not s.children:
         return Cell(w, h, x, y, s.pane)
     if s.pane is None:
-        return layout_slots(s.children, TOP_BOTTOM, rect)
+        return layout_slots(s.children, TOP_BOTTOM, w=w, h=h, x=x, y=y)
     left = w // 2
     return Cell(
         w,
@@ -794,26 +781,26 @@ def place_slot(s: Slot, rect: Rectangle) -> Cell:
             layout_slots(
                 s.children,
                 TOP_BOTTOM,
-                Rectangle(w - left - 1, h, x + left + 1, y),
+                w=w - left - 1,
+                h=h,
+                x=x + left + 1,
+                y=y,
             ),
         ),
     )
 
 
-def layout_slots(slots: tuple[Slot, ...], kind: str, rect: Rectangle) -> Cell:
+def layout_slots(slots: tuple[Slot, ...], kind: str, *, w: int, h: int, x: int, y: int) -> Cell:
     """Side by side or stacked, equal sizes, the remainder to the first."""
-    w, h, x, y = rect.w, rect.h, rect.x, rect.y
     if len(slots) == 1:
-        return place_slot(slots[0], rect)
+        return place_slot(slots[0], w=w, h=h, x=x, y=y)
     across = kind == LEFT_RIGHT
     size, extra = divmod((w if across else h) - len(slots) + 1, len(slots))
     children, at = [], x if across else y
     for i, s in enumerate(slots):
         n = size + (i < extra)
         children.append(
-            place_slot(s, Rectangle(n, h, at, y))
-            if across
-            else place_slot(s, Rectangle(w, n, x, at))
+            place_slot(s, w=n, h=h, x=at, y=y) if across else place_slot(s, w=w, h=n, x=x, y=at)
         )
         at += n + 1
     return Cell(w, h, x, y, kind=kind, children=tuple(children))
@@ -1130,8 +1117,10 @@ def grid_sessions(proc):
 
 def start(
     session: str,
-    command: Command,
+    argv: Sequence[str],
     *,
+    cwd: str,
+    env: Mapping[str, str],
     events: str | None = None,
     status_line: bool = False,
     tags: Mapping[str, str] | None = None,
@@ -1145,7 +1134,6 @@ def start(
     replaced; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
     raising, it leaves no session of its own.
     """
-    argv, cwd, env = command.argv, command.cwd, command.env
     session_name(session)
     tag_options = session_tags(session, tags or {})
     argv = prepare_command(argv, env)
@@ -1210,8 +1198,10 @@ def start(
 
 def detach(
     session: str,
-    command: Command,
+    argv: Sequence[str],
     *,
+    cwd: str,
+    env: Mapping[str, str],
     block: tuple[int, ...] = (),
     opener: str | None = None,
     proc=subprocess.run,
@@ -1221,7 +1211,6 @@ def detach(
     $ITERM_SESSION_ID stays and opener becomes @opener. No decoration, no kept pane. An existing
     session is refused untouched.
     """
-    argv, cwd, env = command.argv, command.cwd, command.env
     session_name(session)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(
@@ -1703,9 +1692,7 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
         if a.cmd == "start":
             assert command is not None
             actions["start"](
-                a.session,
-                Command(argv=command, cwd=os.getcwd(), env=dict(os.environ)),
-                events=a.events,
+                a.session, command, events=a.events, cwd=os.getcwd(), env=dict(os.environ)
             )
         elif a.cmd == "send":
             actions["send"](a.session, a.text)
