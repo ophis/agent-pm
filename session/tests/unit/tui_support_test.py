@@ -1,4 +1,4 @@
-"""tui_support.Stream's managed worker preserves events and original failures."""
+"""tui_support.Stream's daemon and scoped exception hook preserve events and failures."""
 
 from types import SimpleNamespace
 
@@ -25,10 +25,13 @@ class FakeHandle:
 class StreamTest(Case):
     def stream(self, handle):
         cleanups = []
-        case = SimpleNamespace(addCleanup=lambda call, *args: cleanups.append((call, args)))
+        case = SimpleNamespace(
+            addCleanup=lambda call, *args: cleanups.append((call, args)),
+            enterContext=self.enterContext,
+        )
         stream = Stream(case, handle)
-        self.addCleanup(stream.executor.shutdown, wait=False, cancel_futures=True)
         self.assertEqual(cleanups, [(stream.close, (handle,))])
+        self.assertTrue(stream.thread.daemon)
         return stream
 
     def test_event_and_managed_cleanup(self):
@@ -38,7 +41,7 @@ class StreamTest(Case):
         stream.close(handle)
         self.assertTrue(handle.stopped)
 
-    def test_future_forwards_the_original_error(self):
+    def test_exception_hook_forwards_the_original_error(self):
         error = ValueError("worker failed")
         handle = FakeHandle(error)
         stream = self.stream(handle)
@@ -46,7 +49,5 @@ class StreamTest(Case):
         with self.assertRaises(ValueError) as caught:
             stream.next()
         self.assertIs(caught.exception, error)
-        with self.assertRaises(ValueError) as caught:
-            stream.close(handle)
-        self.assertIs(caught.exception, error)
+        stream.close(handle)
         self.assertTrue(handle.stopped)

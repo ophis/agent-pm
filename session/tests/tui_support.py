@@ -4,8 +4,8 @@ import json
 import os
 import queue
 import tempfile
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import Driver
@@ -19,6 +19,7 @@ from agent_pm.session.engine.types import (
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import Case, settings
 from session.tests.modules import adapter_loader
+from session.tests.threads import capture_errors
 
 MANAGER = "mgr"
 
@@ -32,13 +33,14 @@ DIALOG = "Pick one: 1. this 2. that"
 
 
 class Stream:
-    """A Handle's events drained by a managed worker; its Future carries failures."""
+    """A Handle's events drained by a daemon; its scoped exception hook carries failures."""
 
     def __init__(self, case, handle: api.Handle):
         self.queue = queue.Queue()
-        self.executor = ThreadPoolExecutor(max_workers=1)
-        self.result = self.executor.submit(self._drain, handle)
+        self.thread = threading.Thread(target=self._drain, args=(handle,), daemon=True)
+        case.enterContext(capture_errors(self.thread, self.queue.put))
         case.addCleanup(self.close, handle)
+        self.thread.start()
 
     def _drain(self, handle):
         for event in handle.events():
@@ -46,14 +48,9 @@ class Stream:
 
     def close(self, handle):
         handle.stop()
-        try:
-            self.result.result(timeout=WAIT)
-        except TimeoutError:
-            if self.result.done():
-                raise
-            raise AssertionError(f"events() did not finish within {WAIT}s") from None
-        finally:
-            self.executor.shutdown(wait=False, cancel_futures=True)
+        self.thread.join(WAIT)
+        if self.thread.is_alive():
+            raise AssertionError(f"events() did not finish within {WAIT}s")
 
     def next(self, poke=None, *, idle=True):
         """The next event within WAIT s; idle=False skips IdleTimeout, poke runs between checks."""
@@ -62,8 +59,6 @@ class Stream:
             try:
                 item = self.queue.get(timeout=live_tmux.POLL)
             except queue.Empty:
-                if self.result.done():
-                    self.result.result()
                 if time.monotonic() > deadline:
                     raise AssertionError(f"no event within {WAIT} s") from None
                 if poke:
