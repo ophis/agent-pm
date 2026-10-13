@@ -32,11 +32,11 @@ SECTIONS = ("## Source", "## Instructions", "## Comments")
 COMMENTS = re.compile(rf"^{re.escape(SECTIONS[2])}\r?$", re.M)
 
 
-def description_lines(description):
+def _lines(description):
     return re.split(r"\r?\n", description or "")
 
 
-def section_starts(lines):
+def _starts(lines):
     # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
     # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
     # last after Instructions.
@@ -62,11 +62,11 @@ def section_starts(lines):
 
 
 def parse_handoff(description) -> Handoff | None:
-    lines = description_lines(description)
+    lines = _lines(description)
     m = HANDOFF.fullmatch(lines[0])
     if not m:
         return None
-    starts = section_starts(lines)
+    starts = _starts(lines)
 
     def body(header):
         if header not in starts:
@@ -119,11 +119,11 @@ def read_issue(gql, ident) -> Issue:
 
 def head(description) -> str:
     text = description or ""
-    lines = description_lines(text)
+    lines = _lines(text)
     if not HANDOFF.fullmatch(lines[0]):
         m = COMMENTS.search(text)
         return text[: m.start()] if m else text
-    i = section_starts(lines).get(SECTIONS[2])
+    i = _starts(lines).get(SECTIONS[2])
     return text if i is None else text[: list(re.finditer(r"\r?\n", text))[i - 1].end()]
 
 

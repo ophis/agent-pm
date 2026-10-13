@@ -411,8 +411,8 @@ class SettleTest(Live):
             self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
             [w2, w1, self.manager],
         )
-        old = layout.render_layout(
-            layout.parse_layout(
+        old = layout._render_layout(
+            layout._parse_layout(
                 f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
             )
         )
@@ -425,7 +425,7 @@ class SettleTest(Live):
     def grid_up(self) -> None:
         with self.inside(MANAGER):
             self.assertIsNone(
-                grids.open_grid(
+                grids._grid_up(
                     self.window,
                     self.manager,
                     per_column=1,

@@ -68,42 +68,42 @@ class Refused(WorkersError):
     pass
 
 @contextlib.contextmanager
-def driver_errors() -> Iterator[None]:
+def _driver() -> Iterator[None]:
     try:
         yield
     except (ConfigError, DriverError) as e:
         raise WorkersError(str(e)) from e
 
 
-def check_name(name: str) -> None:
+def _check(name: str) -> None:
     if not NAME.fullmatch(name):
         raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
-def sessions(match: str | None = None, *, driver=None) -> list[SessionRow]:
-    driver = configure() if driver is None else driver
-    with driver_errors():
+def _rows(match: str | None = None, *, driver=None) -> list[SessionRow]:
+    driver = _configure() if driver is None else driver
+    with _driver():
         return driver.sessions(match)
 
 
-def session(name: str, *, driver=None) -> SessionRow | None:
-    return next(iter(sessions(re.escape(name), driver=driver)), None)
+def _row(name: str, *, driver=None) -> SessionRow | None:
+    return next(iter(_rows(re.escape(name), driver=driver)), None)
 
 
-def live_sessions(*, driver=None) -> dict[str, SessionRow]:
-    return {row.name: row for row in sessions(driver=driver)}
+def _live(*, driver=None) -> dict[str, SessionRow]:
+    return {row.name: row for row in _rows(driver=driver)}
 
 
-def caller(*, driver=None) -> SessionRow | None:
-    return next((row for row in sessions(driver=driver) if row.own), None)
+def _caller(*, driver=None) -> SessionRow | None:
+    return next((row for row in _rows(driver=driver) if row.own), None)
 
 
-def own_session(*, driver=None) -> str | None:
-    row = caller(driver=driver)
+def _own(*, driver=None) -> str | None:
+    row = _caller(driver=driver)
     return None if row is None else row.name
 
 
-def placed(e: dict, row: SessionRow) -> dict:
+def _placed(e: dict, row: SessionRow) -> dict:
     for key in ("pane", "opener"):
         if getattr(row, key) is not None:
             with contextlib.suppress(RosterError):
@@ -111,17 +111,17 @@ def placed(e: dict, row: SessionRow) -> dict:
     return e
 
 
-def place(r: dict, name: str, row: SessionRow) -> None:
-    r["entries"][name] = placed(r["entries"][name], row)
+def _place(r: dict, name: str, row: SessionRow) -> None:
+    r["entries"][name] = _placed(r["entries"][name], row)
 
 
-def entry_sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
+def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
     pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
     return (pane if pane in live else None), (driver if driver in live else None)
 
 
 @contextlib.contextmanager
-def leased(directory: str, own: str | None, *, write: bool = True, driver=None):
+def _leased(directory: str, own: str | None, *, write: bool = True, driver=None):
     try:
         with roster.locked(directory, write=write) as r:
             roster.check(r, directory, own, driver=driver)
@@ -130,7 +130,7 @@ def leased(directory: str, own: str | None, *, write: bool = True, driver=None):
         raise WorkersError(str(e)) from e
 
 
-def manager_directory(name: str | None, *, driver=None) -> str:
+def _directory(name: str | None, *, driver=None) -> str:
     try:
         directory = roster.directory(name, driver=driver)
     except RosterError as e:
@@ -140,7 +140,7 @@ def manager_directory(name: str | None, *, driver=None) -> str:
     return directory
 
 
-def configure() -> Driver:
+def _configure() -> Driver:
     try:
         return Driver.from_config(read_project("session"))
     except (OSError, ValueError, ConfigError) as e:
@@ -199,25 +199,25 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
 
 
 def content(event: str, *, driver=None) -> str:
-    driver = configure() if driver is None else driver
+    driver = _configure() if driver is None else driver
     name, kind = event.split(" ")[1:3]
     if kind not in ("done", "blocked", "dead"):
         return ""
     if kind == "done":
-        driver = configure() if driver is None else driver
+        driver = _configure() if driver is None else driver
         try:
             text = driver.attach(name).reply
         except (ConfigError, DriverError):
             text = None
         if text is not None:
             return "\n".join(text.split("\n")[:REPLY_LINES])
-    row = session(name, driver=driver)
+    row = _row(name, driver=driver)
     if row is None:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
-    driver = configure() if driver is None else driver
-    with driver_errors():
+    driver = _configure() if driver is None else driver
+    with _driver():
         return driver.attach(name).screen(PANE_LINES)
 
 
@@ -262,14 +262,14 @@ def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
     panes = {}
     for name in sorted(entries):
         e = entries[name]
-        pane, driver = entry_sessions(name, e, live)
+        pane, driver = _sessions(name, e, live)
         if pane is None and driver is None:
             status = None if e["kind"] == "worker" else _status(e["cwd"])
             e["state"] = ENDED.get(status, "gone") if status is not None else "gone"
             continue
         e["state"] = live[pane].state if pane else "working"
         if pane:
-            place(r, name, live[pane])
+            _place(r, name, live[pane])
             panes[name] = pane
     return panes
 
@@ -277,7 +277,7 @@ def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
 def _reopen(
     panes: dict, entries: dict, live: dict[str, SessionRow], *, driver=None
 ) -> tuple[dict, list]:
-    driver = configure() if driver is None else driver
+    driver = _configure() if driver is None else driver
     shown, opened = {}, []
     for name in sorted(panes):
         session, e = panes[name], entries[name]
@@ -285,13 +285,13 @@ def _reopen(
             shown[name] = live[session].shown or "a terminal"
             continue
         print(f"tui: session {session}: {driver.attach_command(session)}", file=sys.stderr)
-        with driver_errors():
+        with _driver():
             driver.show(session, split=e["split"], split_from=e["split_from"])
         opened.append((name, e["kind"], e["sid"], session))
     return shown, opened
 
 
-def worker_environment(argv: list[str]) -> dict[str, str]:
+def _pythonpath(argv: list[str]) -> dict[str, str]:
     if tuple(argv[1:4]) != roster.CREW_MODULE:
         return {}
     user = os.environ.get("PYTHONPATH")
@@ -299,7 +299,7 @@ def worker_environment(argv: list[str]) -> dict[str, str]:
 
 
 def _command(argv: list[str]) -> str:
-    env = "".join(f"{k}={shlex.quote(v)} " for k, v in worker_environment(argv).items())
+    env = "".join(f"{k}={shlex.quote(v)} " for k, v in _pythonpath(argv).items())
     return (f"env {env}" if env else "") + shlex.join(argv)
 
 
@@ -354,18 +354,18 @@ def attach(
             if after is not None:
                 roster.advance(r, directory, after, gen)
             # before the rotation: a raise after its rename would drop the new cursor and gen
-            live = live_sessions(driver=driver)
+            live = _live(driver=driver)
             roster.rotate(r, directory)
             panes = _sync(r, live)
             backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
         shown, opened = _reopen(panes, r["entries"], live, driver=driver)
         if opened:
-            live = live_sessions(driver=driver)
+            live = _live(driver=driver)
             with roster.locked(directory) as r:
                 for name, kind, sid, session in opened:
                     e = r["entries"].get(name)
                     if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
-                        place(r, name, live[session])
+                        _place(r, name, live[session])
         table = _table(r["entries"], shown)
     except RosterError as e:
         raise WorkersError(str(e)) from e
@@ -382,10 +382,10 @@ def attach(
     return table + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
 
 
-def record_cursor(
+def _record(
     directory: str, own: str | None, after: int | None, gen: int, *, driver=None
 ) -> tuple[str, int, bool]:
-    with leased(directory, own, driver=driver) as r:
+    with _leased(directory, own, driver=driver) as r:
         try:
             after = roster.advance(r, directory, after, gen)
         except Stale as e:
@@ -433,7 +433,7 @@ def _override(item: str) -> tuple[str, str]:
     return key, value
 
 
-def note_text(text: str) -> str | None:
+def _note_text(text: str) -> str | None:
     if len(text) > roster.NOTE_MAX:
         raise WorkersError(f"note: {len(text)} characters: want at most {roster.NOTE_MAX}")
     if not roster.printable(text):
@@ -461,7 +461,7 @@ def _worker_dir(sid: str) -> str:
 
 def _spec(record: dict, workdir: str) -> SessionSpec:
     protect = (roster.ROOT, roster.WORKERS, roster.CREW)
-    with driver_errors():
+    with _driver():
         return SessionSpec(
             workdir=workdir,
             sid=record["sid"],
@@ -496,11 +496,11 @@ def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> 
         *(["--", *record["flags"]] if record["flags"] else []),
     ]
     try:
-        row = session(name, driver=driver)
+        row = _row(name, driver=driver)
     except WorkersError:
         row = None
     try:
-        with leased(directory, own, driver=driver) as r:
+        with _leased(directory, own, driver=driver) as r:
             value = roster.entry(
                 "worker",
                 sid=record["sid"],
@@ -510,13 +510,13 @@ def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> 
                 split=split,
                 split_from=split_from,
             )
-            roster.record(r, name, value if row is None else placed(value, row))
+            roster.record(r, name, value if row is None else _placed(value, row))
     except WorkersError as e:
         roster.unwritten(name, e)
 
 
 def _died(name: str, runtime: str, code: int, *, driver=None) -> str:
-    row = session(name, driver=driver)
+    row = _row(name, driver=driver)
     if row is None:
         return f"{name}: session ended at once"
     lines = [x for x in (row.last_lines or "").splitlines() if x.strip()]
@@ -527,7 +527,7 @@ def _died(name: str, runtime: str, code: int, *, driver=None) -> str:
 
 def _early(name: str, runtime: str, handle: Handle, *, driver=None) -> None:
     deadline = time.monotonic() + EARLY
-    with driver_errors():
+    with _driver():
         for event in handle.events():
             if isinstance(event, Exited):
                 raise WorkersError(_died(name, runtime, event.returncode, driver=driver))
@@ -548,9 +548,9 @@ def _launch(
     note: str | None,
     driver=None,
 ) -> None:
-    driver = configure() if driver is None else driver
+    driver = _configure() if driver is None else driver
     name = record["name"]
-    with driver_errors():
+    with _driver():
         handle = driver.start(
             record["runtime"],
             "tui",
@@ -568,7 +568,7 @@ def _launch(
             driver.close(name)
         raise WorkersError(f"{path}: {e.strerror or e}; start undone") from e
     print(f"tui: session {name}: {driver.attach_command(name)}", file=sys.stderr)
-    with driver_errors():
+    with _driver():
         driver.show(name, split=record["split"], split_from=record["split_from"])
     _enroll(record, own, note, driver=driver)
     _early(name, record["runtime"], handle, driver=driver)
@@ -584,14 +584,14 @@ def start(
     split_from: str | None = None,
     driver=None,
 ) -> str:
-    check_name(spec.name)
+    _check(spec.name)
     if split_from is not None:
-        check_name(split_from)
+        _check(split_from)
     if spec.resume is not None and not roster.SID.fullmatch(spec.resume):
         raise WorkersError(f"--resume {spec.resume}: not a session id")
-    note = None if spec.note is None else note_text(spec.note)
+    note = None if spec.note is None else _note_text(spec.note)
     env = dict(_override(item) for item in spec.overrides)
-    with leased(directory, own, write=False, driver=driver):
+    with _leased(directory, own, write=False, driver=driver):
         pass
     cwd = os.path.abspath(spec.cwd)
     if not os.path.isdir(cwd):
@@ -672,23 +672,23 @@ def _recorded(workdir: str, name: str, sid: str) -> dict:
 
 
 def restart(name: str, *, own: str | None, driver=None) -> None:
-    driver = configure() if driver is None else driver
-    check_name(name)
-    row = session(name, driver=driver)
+    driver = _configure() if driver is None else driver
+    _check(name)
+    row = _row(name, driver=driver)
     if row is None or row.sid is None or not roster.SID.fullmatch(row.sid):
         raise NotAWorker(f"{name}: not a worker")
     workdir = _worker_dir(row.sid)
     record = _recorded(workdir, name, row.sid)
     spec = _spec(record, workdir)
-    with driver_errors():
+    with _driver():
         driver.close(name)
     _launch(record, spec, own, prompt="", resume=row.sid, note=None, driver=driver)
 
 
 def reply(name: str, *, driver=None) -> str | None:
-    driver = configure() if driver is None else driver
-    check_name(name)
-    with driver_errors():
+    driver = _configure() if driver is None else driver
+    _check(name)
+    with _driver():
         return driver.attach(name).reply
 
 
@@ -708,7 +708,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             res = subprocess.run(
                 argv,
                 cwd=e["cwd"],
-                env={**os.environ, **worker_environment(argv)},
+                env={**os.environ, **_pythonpath(argv)},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -732,21 +732,21 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
 
 
 def release(directory: str, own: str | None, *, driver=None) -> None:
-    with leased(directory, own, driver=driver) as r:
+    with _leased(directory, own, driver=driver) as r:
         r["holder"] = None
 
 
 def note(directory: str, own: str | None, name: str, text: str, *, driver=None) -> None:
-    check_name(name)
-    with leased(directory, own, driver=driver) as r:
+    _check(name)
+    with _leased(directory, own, driver=driver) as r:
         if name not in r["entries"]:
             raise WorkersError(f"{name} not in roster")
-        r["entries"][name]["note"] = note_text(text)
+        r["entries"][name]["note"] = _note_text(text)
 
 
 def stop(directory: str, own: str | None, name: str, *, driver=None) -> None:
-    check_name(name)
-    with leased(directory, own, driver=driver) as r:
+    _check(name)
+    with _leased(directory, own, driver=driver) as r:
         roster.stop(r, name, driver=driver)
 
 
@@ -779,12 +779,12 @@ def _entries(directory: str) -> dict:
 
 
 def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[list[str], list[str]]:
-    driver = configure() if driver is None else driver
+    driver = _configure() if driver is None else driver
     if own is None:
         raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
     home = roster.directory(own, driver=driver)
     if os.path.isdir(home):
-        with leased(home, own, write=False, driver=driver):
+        with _leased(home, own, write=False, driver=driver):
             pass
     read: dict[str, dict] = {}
 
@@ -793,7 +793,7 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
             read[session] = _entries(roster.directory(session, driver=driver))
         return read[session]
 
-    chosen = opened(own, live_sessions(driver=driver), entries)
+    chosen = opened(own, _live(driver=driver), entries)
     pipelines = {k for es in read.values() for k, e in es.items() if e["kind"] == "pipeline"}
     verb, left = "would stop", []
     if not dry_run:
@@ -801,13 +801,13 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
         for name in chosen:
             with contextlib.suppress(DriverError):
                 driver.close(name)
-        after = live_sessions(driver=driver)
+        after = _live(driver=driver)
         left = [n for n in chosen if n in after]
         gone = set(chosen) - set(left)
         for session in [s for s, es in read.items() if es]:
             d = roster.directory(session, driver=driver)
             try:
-                with leased(d, own, driver=driver) if session == own else roster.locked(d) as r:
+                with _leased(d, own, driver=driver) if session == own else roster.locked(d) as r:
                     for k in [
                         k
                         for k, e in r["entries"].items()
@@ -825,10 +825,10 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
 
 
 def forget(directory: str, own: str | None, name: str, *, driver=None) -> None:
-    check_name(name)
-    with leased(directory, own, driver=driver) as r:
-        pane, session_driver = entry_sessions(
-            name, roster.remove(r, name), live_sessions(driver=driver)
+    _check(name)
+    with _leased(directory, own, driver=driver) as r:
+        pane, session_driver = _sessions(
+            name, roster.remove(r, name), _live(driver=driver)
         )
         live_session = pane or session_driver
         if live_session is not None:
@@ -949,10 +949,10 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
         ap.error("--after and --gen go together")
     try:
         if a.cmd in STARTS:
-            driver = configure() if driver is None else driver
+            driver = _configure() if driver is None else driver
         if a.cmd == "start":
-            directory = manager_directory(a.manager, driver=driver)
-            parent = caller(driver=driver)
+            directory = _directory(a.manager, driver=driver)
+            parent = _caller(driver=driver)
             spec = Spec(
                 a.name,
                 a.cwd or os.getcwd(),
@@ -974,15 +974,15 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
             )
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":
-            restart(a.name, own=own_session(driver=driver), driver=driver)
+            restart(a.name, own=_own(driver=driver), driver=driver)
         elif a.cmd == "reply":
             text = reply(a.name, driver=driver)
             if text:
                 print(text)
         elif a.cmd == "next-event":
-            events, after, due = record_cursor(
-                manager_directory(a.manager, driver=driver),
-                own_session(driver=driver),
+            events, after, due = _record(
+                _directory(a.manager, driver=driver),
+                _own(driver=driver),
                 a.after,
                 a.gen,
                 driver=driver,
@@ -1000,8 +1000,8 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
                 print(text)
         elif a.cmd == "attach":
             text, entries = attach(
-                manager_directory(a.manager, driver=driver),
-                own_session(driver=driver),
+                _directory(a.manager, driver=driver),
+                _own(driver=driver),
                 after=a.after,
                 gen=a.gen,
                 driver=driver,
@@ -1014,7 +1014,7 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
                     failed = failed or not ok
             return int(failed)
         elif a.cmd == "stop-all":
-            lines, left = stop_all(own_session(driver=driver), dry_run=a.dry_run, driver=driver)
+            lines, left = stop_all(_own(driver=driver), dry_run=a.dry_run, driver=driver)
             for line in lines or ([] if left else ["workers: stop-all: nothing to stop"]):
                 print(line)
             if left:
@@ -1022,8 +1022,8 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
                     f"stop-all: still live after tmux kill-session: {', '.join(left)}"
                 )
         else:
-            directory = manager_directory(a.manager, driver=driver)
-            own = own_session(driver=driver)
+            directory = _directory(a.manager, driver=driver)
+            own = _own(driver=driver)
             if a.cmd == "release":
                 release(directory, own, driver=driver)
                 print(f"workers: released {directory}")

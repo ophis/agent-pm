@@ -101,7 +101,7 @@ def _or(words) -> str:
     return f"{', '.join(words[:-1])} or {words[-1]}"
 
 
-def matches(pattern: re.Pattern, value) -> bool:
+def _match(pattern: re.Pattern, value) -> bool:
     return isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
@@ -143,7 +143,7 @@ def _keys(value: dict, want: tuple) -> str | None:
     return f"keys: {', '.join(parts)}" if parts else None
 
 
-_NAME_OR_NULL = (lambda v: v is None or matches(NAME, v), "a session name or null")
+_NAME_OR_NULL = (lambda v: v is None or _match(NAME, v), "a session name or null")
 
 
 _ID = (_id, f"null or a printable string of 1–{ID_MAX} characters without whitespace")
@@ -151,7 +151,7 @@ _ID = (_id, f"null or a printable string of 1–{ID_MAX} characters without whit
 
 _CHECKS = {
     "kind": (lambda v: v in KINDS, _or(KINDS)),
-    "sid": (lambda v: v is None or matches(SID, v), "a session id or null"),
+    "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
     "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
     "note": (
         lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
@@ -180,7 +180,7 @@ def _resume_fault(resume) -> str | None:
     return None
 
 
-def value_fault(value) -> str | None:
+def _value_fault(value) -> str | None:
     if not isinstance(value, dict):
         return _want("value", value, "an object")
     if bad := _keys(value, FIELDS):
@@ -196,10 +196,10 @@ def value_fault(value) -> str | None:
     return None
 
 
-def entry_fault(name, value) -> str | None:
-    if not matches(NAME, name):
+def _fault(name, value) -> str | None:
+    if not _match(NAME, name):
         return f"name: want {NAME.pattern}"
-    return value_fault(value)
+    return _value_fault(value)
 
 
 def _holder_fault(holder) -> str | None:
@@ -209,7 +209,7 @@ def _holder_fault(holder) -> str | None:
         return "holder: want null or an object with session and since"
     if bad := _keys(holder, ("session", "since")):
         return f"holder: {bad}"
-    if not matches(NAME, holder["session"]):
+    if not _match(NAME, holder["session"]):
         return _want("holder.session", holder["session"], "a session name")
     if not _time(holder["since"]):
         return _want("holder.since", holder["since"], _TIME)
@@ -231,12 +231,12 @@ def _top_fault(data) -> str | None:
     return None if isinstance(data["entries"], dict) else "entries: want an object"
 
 
-def validated(data, path: str, *, strict: bool) -> dict:
+def _validated(data, path: str, *, strict: bool) -> dict:
     if bad := _top_fault(data):
         raise RosterError(f"{path}: {bad}")
     entries = {}
     for name, value in data["entries"].items():
-        if bad := entry_fault(name, value):
+        if bad := _fault(name, value):
             if strict:
                 raise RosterError(f"{path}: entry {name!r}: {bad}")
             print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
@@ -274,12 +274,12 @@ def directory(manager: str | None = None, *, driver=None) -> str | None:
             raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
             return None
-    elif not matches(NAME, manager):
+    elif not _match(NAME, manager):
         raise RosterError(f"manager {manager!r}: want [A-Za-z0-9_-]+")
     return os.path.join(os.path.abspath(os.path.expanduser(ROOT)), manager)
 
 
-def checked(path: str, *, private: bool = False, what: str = MANAGER_DIR) -> None:
+def _checked(path: str, *, private: bool = False, what: str = MANAGER_DIR) -> None:
     try:
         st = os.lstat(path)
     except OSError as e:
@@ -308,7 +308,7 @@ def _made(levels: tuple[str, ...], private: tuple[str, ...], what: str) -> None:
                 pass
         except OSError as e:
             raise RosterError(f"{what} {path}: {e.strerror}") from e
-        checked(path, private=path in private, what=what)
+        _checked(path, private=path in private, what=what)
 
 
 def ensure(directory: str) -> None:
@@ -316,7 +316,7 @@ def ensure(directory: str) -> None:
 
 
 def worker_dir(sid) -> str:
-    if not matches(SID, sid):
+    if not _match(SID, sid):
         raise RosterError(f"worker sid {sid!r}: want a session id")
     workers = os.path.abspath(os.path.expanduser(WORKERS))
     path = os.path.join(workers, sid)
@@ -471,13 +471,13 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
         raise RosterError(f"manager directory {directory} not attached: run crew.py attach first")
-    checked(os.path.dirname(directory))
-    checked(directory, private=True)
+    _checked(os.path.dirname(directory))
+    _checked(directory, private=True)
     path = os.path.join(directory, "roster.json")
     with _locked(os.path.join(directory, "roster.lock")):
         data = _read(path)
         missing = data is None
-        r = validated(
+        r = _validated(
             {"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
             if missing
             else data,
@@ -487,7 +487,7 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
         before = _dump(r)
         yield r
         if write:
-            validated(r, path, strict=True)
+            _validated(r, path, strict=True)
             text = _dump(r)
             if missing or text != before:
                 _write(directory, path, text)
@@ -556,13 +556,13 @@ def entry(
         "state": state,
         "started": now() if started is None else started,
     }
-    if bad := value_fault(value):
+    if bad := _value_fault(value):
         raise RosterError(f"entry: {bad}")
     return value
 
 
 def set_entry(r: dict, name: str, value: dict) -> None:
-    if bad := entry_fault(name, value):
+    if bad := _fault(name, value):
         raise RosterError(f"entry {name!r}: {bad}")
     r["entries"][name] = value
 
