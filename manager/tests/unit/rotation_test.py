@@ -27,9 +27,9 @@ class Rotation(Case):
         self.assertGreater(os.path.getsize(events.path), roster.EVENTS_MAX)
         r = {"version": 1, "holder": None, "cursor": len(lines) - 3, "gen": 0, "entries": {}}
         with mock.patch.object(time, "strftime", return_value=AT):
-            rotated = roster.rotate(r, directory, sleep=lambda seconds: events.write("w2", "done"))
+            rotated = roster.rotate(r, directory, sleep=lambda _seconds: events.write("w2", "done"))
             events.write("w3", "exited", 0)
-        self.assertIs(rotated, True)
+        self.assertIs(rotated, expr2=True)
         self.assertEqual((r["cursor"], r["gen"]), (0, 1))
         with open(events.path) as f:
             self.assertEqual(
