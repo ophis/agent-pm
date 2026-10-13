@@ -819,7 +819,7 @@ class TuiPolicy(Base):
         with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
-    def test_the_policys_values(self):
+    def test_the_policies_values(self):
         self.assertEqual(STOP_LIMIT, 3)
         self.assertEqual(
             NUDGE,

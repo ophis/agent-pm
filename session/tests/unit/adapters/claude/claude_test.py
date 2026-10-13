@@ -1592,7 +1592,7 @@ class LimitTest(Case):
             )
         )
 
-    def test_an_unparseable_reset_is_none(self):
+    def test_an_unparsable_reset_is_none(self):
         self.check(
             (
                 ("You've hit your session limit", None),
