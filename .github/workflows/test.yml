@@ -49,6 +49,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m tests.checks
       - name: Protect shipped source
+        if: ${{ !cancelled() }}
         run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Repository import integration tests
         if: ${{ !cancelled() }}
