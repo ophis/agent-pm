@@ -118,7 +118,10 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
 
     def post(rc=None, *, outcome=None, limit=False):
         if error := sessions.post(
-            a.issue, rec, rc, gql=harness, ended_at=now(), outcome=outcome, limit=limit
+            a.issue,
+            rec,
+            gql=harness,
+            end=sessions.SessionEnd(returncode=rc, ended_at=now(), outcome=outcome, limit=limit),
         ):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
 

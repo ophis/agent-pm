@@ -284,9 +284,11 @@ class Promoter:
                 self.gql,
                 src["id"],
                 body,
-                self.states["in_review"],
-                self.states["handoff"],
-                self.cfg.human_members,
+                linear.Transition(
+                    to=self.states["in_review"],
+                    frm=self.states["handoff"],
+                    emails=self.cfg.human_members,
+                ),
             ),
         )
 

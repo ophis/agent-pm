@@ -92,10 +92,10 @@ class Record(Case):
                     sessions.post(
                         ISSUE,
                         self.record(),
-                        3,
                         gql=fake,
-                        ended_at=T2,
-                        outcome=Outcome(status, "title", "summary"),
+                        end=sessions.SessionEnd(
+                            returncode=3, ended_at=T2, outcome=Outcome(status, "title", "summary")
+                        ),
                     )
                 )
                 line = fake.only()["body"].splitlines()[0]
@@ -114,7 +114,12 @@ class Record(Case):
         )
         fake = FakeLinear()
         self.assertIsNone(
-            sessions.post(ISSUE, self.record(), -9, gql=fake, ended_at=T2, limit=True)
+            sessions.post(
+                ISSUE,
+                self.record(),
+                gql=fake,
+                end=sessions.SessionEnd(returncode=-9, ended_at=T2, limit=True),
+            )
         )
         self.assertEqual(fake.only()["body"], text(f"limit · #1 · {T1} → {T2} · exit -9"))
 
@@ -129,7 +134,11 @@ class Record(Case):
 
     def test_end_defaults_to_now(self):
         fake = FakeLinear()
-        self.assertIsNone(sessions.post(ISSUE, self.record(), 0, gql=fake, ended_at=T2))
+        self.assertIsNone(
+            sessions.post(
+                ISSUE, self.record(), gql=fake, end=sessions.SessionEnd(returncode=0, ended_at=T2)
+            )
+        )
         self.assertEqual(fake.only()["body"], sessions.body(self.record(), 0, T2))
 
     def test_now_is_local_iso_with_offset(self):
@@ -300,7 +309,11 @@ class Failure(Case):
         self.addCleanup(release.set)
         t = time.monotonic()
         out = sessions.post(
-            ISSUE, self.record(), 0, gql=lambda _q, **_v: release.wait(30), timeout=0.1
+            ISSUE,
+            self.record(),
+            gql=lambda _q, **_v: release.wait(30),
+            timeout=0.1,
+            end=sessions.SessionEnd(returncode=0),
         )
         self.assertLess(time.monotonic() - t, 5)
         self.assertEqual(out, "timed out after 0.1s")
@@ -370,7 +383,12 @@ class Repair(Case):
     def test_a_limit_end_is_rewritten_as_limit(self):
         down = FakeLinear(fail={"commentCreate": RuntimeError("down")})
         self.assertEqual(
-            sessions.post(ISSUE, self.rec, -9, gql=down, ended_at=T2, limit=True),
+            sessions.post(
+                ISSUE,
+                self.rec,
+                gql=down,
+                end=sessions.SessionEnd(returncode=-9, ended_at=T2, limit=True),
+            ),
             "RuntimeError: down",
         )
         self.assertIsNone(self.repair())

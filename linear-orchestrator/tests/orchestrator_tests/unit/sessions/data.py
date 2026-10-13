@@ -39,4 +39,6 @@ def start(gql, rec, timeout=sessions.LIMIT):
 
 
 def end(gql, rec, rc, ended_at=T2):
-    return sessions.post(ISSUE, rec, rc, gql=gql, ended_at=ended_at)
+    return sessions.post(
+        ISSUE, rec, gql=gql, end=sessions.SessionEnd(returncode=rc, ended_at=ended_at)
+    )

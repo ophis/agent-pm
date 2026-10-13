@@ -3,6 +3,8 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from agent_pm.delegate import Outcome
+
 
 @dataclass(frozen=True)
 class Context:
@@ -29,3 +31,18 @@ class RunIdentity:
     resume: bool
     project: str | None
     target: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class Transition:
+    to: str
+    frm: str
+    emails: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True)
+class SessionEnd:
+    returncode: int | None = None
+    ended_at: str | None = None
+    outcome: Outcome | None = None
+    limit: bool = False

@@ -96,7 +96,10 @@ class Writes(Case):
         gql = Gql()
         self.assertIsNone(
             linear.comment_and_move(
-                gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com", "b@x.com")
+                gql,
+                "I",
+                "body",
+                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
             )
         )
         self.assertEqual(
@@ -110,7 +113,7 @@ class Writes(Case):
             ],
         )
         gql = Gql()
-        linear.comment_and_move(gql, "I", "body", TODO, IN_PROGRESS)
+        linear.comment_and_move(gql, "I", "body", linear.Transition(to=TODO, frm=IN_PROGRESS))
         self.assertEqual([n for n, _ in gql.calls], ["read", "move", "comment"])
 
     def test_skipped_or_failed_move_posts_no_comment(self):
@@ -118,7 +121,12 @@ class Writes(Case):
             with self.subTest(state=state):
                 gql = Gql(state)
                 self.assertEqual(
-                    linear.comment_and_move(gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com",)),
+                    linear.comment_and_move(
+                        gql,
+                        "I",
+                        "body",
+                        linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com",)),
+                    ),
                     state,
                 )
                 self.assertEqual([n for n, _ in gql.calls], ["subscribe", "read"])
@@ -126,7 +134,9 @@ class Writes(Case):
             fail=lambda name, _v: LinearError("linear api error: boom") if name == "move" else None
         )
         with self.assertRaises(LinearError):
-            linear.comment_and_move(gql, "I", "body", IN_REVIEW, IN_PROGRESS)
+            linear.comment_and_move(
+                gql, "I", "body", linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS)
+            )
         self.assertEqual([n for n, _ in gql.calls], ["read", "move"])
 
     def test_subscribe_failures_noted_in_the_comment(self):
@@ -137,7 +147,10 @@ class Writes(Case):
         gql = Gql(fail=fail)
         self.assertIsNone(
             linear.comment_and_move(
-                gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com", "b@x.com")
+                gql,
+                "I",
+                "body",
+                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
             )
         )
         self.assertEqual(
@@ -158,7 +171,10 @@ class Writes(Case):
         gql = Gql(fail=lambda name, _v: Stopped(130) if name == "subscribe" else None)
         with self.assertRaises(Stopped) as cm:
             linear.comment_and_move(
-                gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com", "b@x.com")
+                gql,
+                "I",
+                "body",
+                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
             )
         self.assertEqual(cm.exception.code, 130)
         self.assertEqual(gql.calls, [("subscribe", {"i": "I", "e": "a@x.com"})])

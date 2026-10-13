@@ -225,9 +225,11 @@ class Board:
             self.gql,
             issue["id"],
             body,
-            self.states[state],
-            self.states[frm],
-            self.cfg.human_members if state == "in_review" else (),
+            linear.Transition(
+                to=self.states[state],
+                frm=self.states[frm],
+                emails=self.cfg.human_members if state == "in_review" else (),
+            ),
         )
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
