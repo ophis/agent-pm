@@ -214,6 +214,54 @@ class ImportHygiene(Sample):
         )
 
 
+class StandaloneImports(Sample):
+    def found(self, source):
+        files = dict.fromkeys(guards.STANDALONE, source)
+        return guards.standalone_imports(self.tree(files))
+
+    def test_stdlib_imports_aliases_and_nested_imports_are_clean(self):
+        self.assertEqual(
+            self.found(
+                "from __future__ import annotations\nimport os.path as path, sys\n"
+                "from collections.abc import Mapping\nimport builtins\n"
+                "def load():\n    import json as j\n    from pathlib import Path\n"
+            ),
+            [],
+        )
+
+    def test_third_party_own_package_and_relative_imports_are_reported(self):
+        source = (
+            "import requests as r, agent_pm.utils\n"
+            "from agent_pm.session import Driver\n"
+            "from . import sibling\n"
+            "def load():\n    from unknown.child import thing\n"
+        )
+        self.assertEqual(
+            self.found(source),
+            sorted(
+                f"{path}:{line}: non-stdlib import {name}"
+                for path in guards.STANDALONE
+                for line, name in (
+                    (1, "requests"),
+                    (1, "agent_pm.utils"),
+                    (2, "agent_pm.session"),
+                    (3, "."),
+                    (5, "unknown.child"),
+                )
+            ),
+        )
+
+    def test_missing_inventory_file_is_reported(self):
+        missing = min(guards.STANDALONE)
+        root = self.tree({path: "" for path in guards.STANDALONE if path != missing})
+        self.assertEqual(guards.standalone_imports(root), [f"{missing}: missing standalone script"])
+
+    def test_unlisted_module_is_not_a_standalone_script(self):
+        files = dict.fromkeys(guards.STANDALONE, "")
+        files[f"{guards.SESSION_SRC}engine/ordinary.py"] = "import agent_pm.utils\n"
+        self.assertEqual(guards.standalone_imports(self.tree(files)), [])
+
+
 class SharedTypes(Sample):
     DATA = "from dataclasses import dataclass\n\n\n@dataclass\nclass A:\n    x: int\n"
     UTILS = f"utils/{PKG}/utils"
@@ -310,6 +358,35 @@ class SharedTypes(Sample):
                     }
                 )
                 self.assertEqual(guards.shared_types(root), [])
+
+    def test_standalone_definitions_and_consumers_keep_local_data_types(self):
+        for path in guards.STANDALONE:
+            with self.subTest(path=path):
+                module = path.split("/src/")[1].removesuffix(".py").replace("/", ".")
+                root = self.tree(
+                    {
+                        path: self.DATA,
+                        f"{guards.SESSION_SRC}engine/ordinary.py": f"from {module} import A\n",
+                    }
+                )
+                self.assertEqual(guards.shared_types(root), [])
+                root = self.tree(
+                    {
+                        path: "from agent_pm.session.engine.ordinary import A\n",
+                        f"{guards.SESSION_SRC}engine/ordinary.py": self.DATA,
+                        f"{guards.SESSION_SRC}engine/consumer.py": (
+                            "from agent_pm.session.engine.ordinary import A\n"
+                        ),
+                    }
+                )
+                self.assertEqual(
+                    guards.shared_types(root),
+                    [
+                        f"{guards.SESSION_SRC}engine/consumer.py:1: "
+                        "agent_pm.session.engine.ordinary.A: "
+                        "a shared data type belongs in a types.py"
+                    ],
+                )
 
 
 class TypesOnly(Sample):

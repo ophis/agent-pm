@@ -87,6 +87,20 @@ LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
+STANDALONE = frozenset(
+    f"{SESSION_SRC}{path}"
+    for path in (
+        "hosts/tmux/tmux_host.py",
+        "modes/tui_hook.py",
+        "adapters/codex/app_server.py",
+        "adapters/codex/hook_schema.py",
+        "adapters/codex/sessions.py",
+        "adapters/codex/tui_start.py",
+        "adapters/codex/tui_hook.py",
+    )
+)
+
+
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 
 
@@ -470,6 +484,31 @@ def standalone(repo: str) -> list[str]:
     return sorted(found)
 
 
+def standalone_imports(repo: str) -> list[str]:
+    found = []
+    standard = sys.stdlib_module_names | {"__future__", "builtins"}
+    for rel in sorted(STANDALONE):
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            found.append(f"{rel}: missing standalone script")
+            continue
+        with open(path, encoding="utf-8") as file:
+            tree = ast.parse(file.read(), rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = ["." * node.level + (node.module or "")]
+            else:
+                continue
+            found.extend(
+                f"{rel}:{node.lineno}: non-stdlib import {name}"
+                for name in names
+                if name.split(".")[0] not in standard
+            )
+    return sorted(found)
+
+
 def package_top(repo: str) -> list[str]:
     found = set()
     for project in (p for p in PROJECTS if p != "utils"):
@@ -629,6 +668,7 @@ def shared_types(repo: str) -> list[str]:
         trees = {
             rel[:-3].replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text, rel))
             for rel, text in _files(src, ".py")
+            if f"{project}/src/{rel}" not in STANDALONE
         }
         data = {
             f"{module}.{node.name}"
