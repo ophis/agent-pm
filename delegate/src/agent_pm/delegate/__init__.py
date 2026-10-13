@@ -6,7 +6,6 @@ from agent_pm.delegate.composer import ConfigError as ComposerConfigError
 from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
-from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import CONFIG, IMPORT_ROOTS, PYTHONPATH, harness_host
 from agent_pm.delegate.engine.plan import configure, plan
 from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, run
@@ -45,7 +44,6 @@ __all__ = [
     "Event",
     "IDLE_TIMEOUT",
     "STATUSES",
-    "Delegate",
     "RunConfig",
     "DelegateEvent",
     "CONFIG",

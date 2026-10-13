@@ -16,7 +16,7 @@ from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import MODES, Access, Driver, Session, session_record
+from agent_pm.session import MODES, Access, Driver, parse_hosts, session_record
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, read_project, under
@@ -26,7 +26,7 @@ def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> Driver:
     """The session from its config once harness_host (`cfg`, else read) names its host."""
     with _config("session"):
         table = read_project("session", local=local)
-        hosts = Session.parse_hosts(table.get("hosts")).tables
+        hosts = parse_hosts(table.get("hosts")).tables
     with _config("delegate"):
         config.harness_host(read_project("delegate", local=local) if cfg is None else cfg, hosts)
     with _config("session"):

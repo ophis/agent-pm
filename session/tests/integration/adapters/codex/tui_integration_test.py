@@ -41,7 +41,7 @@ WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
 from agent_pm.session.engine import api
-from agent_pm.session import Driver, Session, TurnEnd
+from agent_pm.session import Driver, TurnEnd
 driver = Driver(**json.loads(sys.argv[1]))
 h = driver.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]

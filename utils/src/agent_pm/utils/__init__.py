@@ -8,7 +8,6 @@ from agent_pm.utils.git import GUARD, common_dir
 from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import STATE, import_roots, printable_abs, real_dirs, temp_dirs, under
-from agent_pm.utils.record import Display, Record, Status
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
 from agent_pm.utils.repos import NAME, OWNER, Invalid, Repo, check_slug, checkout, origin, resolve
@@ -17,7 +16,6 @@ from agent_pm.utils.text import printable
 
 __all__ = [
     "CLASS_PATH",
-    "Display",
     "GUARD",
     "Invalid",
     "LOCAL",
@@ -25,12 +23,10 @@ __all__ = [
     "NAME",
     "OWNER",
     "Once",
-    "Record",
     "Repo",
     "Runner",
     "SHORT",
     "STATE",
-    "Status",
     "append_line",
     "check_slug",
     "checkout",
