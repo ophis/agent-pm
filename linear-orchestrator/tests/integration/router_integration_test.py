@@ -12,8 +12,7 @@ import unittest
 
 from agent_pm.linear_orchestrator.engine import config
 
-from delegate.tests.integration.cli_integration_test import mark, option
-from delegate.tests.unit.runner_test import block
+from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
 
 from ..case import PYTHONPATH

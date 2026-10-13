@@ -18,15 +18,9 @@ from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
 
-from delegate.tests.integration.cli_integration_test import (
-    DONE,
-    SID,
-    UNSAVED,
-    UNSAVED_ERROR,
-    mark,
-    prompt,
-)
-from delegate.tests.unit.runner_test import GAVE_UP, block
+from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
+from delegate.tests.replies import block, mark, prompt
+from delegate.tests.unit.runs import GAVE_UP
 from session.tests.integration import tui_integration_test as tui_live
 from session.tests.integration.adapters.claude import fake_claude
 

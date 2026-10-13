@@ -3,22 +3,17 @@
 import os
 import unittest
 
-import agent_pm.delegate.engine.config
 from agent_pm.delegate.composer import base
 
-from delegate.tests.case import REPO, SRC, Case
+from delegate.tests.case import SRC, Case
 
 
 class Paths(Case):
-    def test_team_root_schema_and_config_and_no_src(self):
+    def test_team_root_and_no_src(self):
         delegate = os.path.join(SRC["delegate"], "agent_pm", "delegate")
         self.assertEqual(base.TEAM, os.path.join(delegate, "team"))
         self.assertTrue(os.path.isfile(os.path.join(base.TEAM, "guide.md")))
-        self.assertEqual(base.SCHEMA, os.path.join(delegate, "event", "outcome.schema.json"))
-        self.assertTrue(os.path.isfile(base.SCHEMA))
         self.assertFalse(hasattr(base, "SRC"))
-        self.assertEqual(base.CONFIG, agent_pm.delegate.engine.config.CONFIG)
-        self.assertEqual(base.CONFIG, os.path.join(REPO, "delegate", "config.toml"))
 
 
 class NoCopy(Case):

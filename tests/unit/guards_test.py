@@ -393,7 +393,6 @@ class LayerImports(Sample):
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n",
-                f"delegate/{PKG}/delegate/event/outcome.py": "from agent_pm.delegate.composer import SCHEMA\n",
                 f"delegate/{PKG}/delegate/composer/teams.py": "from agent_pm.delegate.event import PROGRESS\n"
                 "from agent_pm.delegate.engine import plan\n",
                 f"delegate/{PKG}/delegate/engine/plan.py": "from agent_pm.delegate.event.outcome import Outcome\n"
@@ -436,7 +435,7 @@ class PureUtils(Sample):
             ],
         )
 
-    def test_only_outcome_in_delegate_event_imports_the_composer(self):
+    def test_nothing_in_delegate_event_imports_the_composer(self):
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n"
@@ -448,7 +447,8 @@ class PureUtils(Sample):
         self.assertEqual(
             guards.pure_utils(root),
             [
-                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event.outcome imports agent_pm.delegate.engine.plan",
+                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event imports agent_pm.delegate.composer.SCHEMA",
+                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event imports agent_pm.delegate.engine.plan",
                 f"delegate/{PKG}/delegate/event/reply.py: delegate.event imports agent_pm.delegate.composer.RunConfig",
             ],
         )
@@ -560,7 +560,7 @@ class ManagerImports(Sample):
     def test_each_named_exception_is_allowed(self):
         root = self.tree(
             {
-                f"manager/{PKG}/manager/crew.py": "import os\nimport agent_pm.delegate.engine.config\n"
+                f"manager/{PKG}/manager/crew.py": "import os\nfrom agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH\n"
                 "from agent_pm.manager import roster\nfrom agent_pm.session import Session, api\n"
                 "from agent_pm.utils.files import save\nfrom . import roster\n",
                 f"manager/{PKG}/manager/roster.py": "import json\nfrom agent_pm.session import api\n"

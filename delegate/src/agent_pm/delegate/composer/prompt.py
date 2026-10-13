@@ -76,7 +76,9 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     if not (charter := teams.charter(team, run.role)):
         raise ConfigError(f"missing file roles/{run.role}.md")
     role, rel = charter
-    guide, principles = _read(team.root, "guide.md"), _read(team.root, "principles.md")
+    guide, principles = (
+        read_text(os.path.join(team.root, f)) for f in ("guide.md", "principles.md")
+    )
     if not run.language:
         principles = _without(principles, "{{language}}")
     texts = {
@@ -94,8 +96,10 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
         raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     inside = os.path.relpath(os.path.realpath(params.deliverable), os.path.realpath(params.workdir))
     texts |= {
-        "output.md": fill(_read(output, "output.md"), {}, "output.md"),
-        dest: fill(_read(output, dest), {"deliverable": f"<Workdir>/{inside}"}, dest),
+        "output.md": fill(read_text(os.path.join(output, "output.md")), {}, "output.md"),
+        dest: fill(
+            read_text(os.path.join(output, dest)), {"deliverable": f"<Workdir>/{inside}"}, dest
+        ),
         "Return": RETURN,
     }
     parts += [("output.md", texts["output.md"] + "\n" + texts[dest]), ("Return", RETURN)]
@@ -240,7 +244,9 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     }
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
     texts |= {
-        rel: _read(team.root, rel) for rel in named if os.path.isfile(os.path.join(team.root, rel))
+        rel: read_text(path)
+        for rel in named
+        if os.path.isfile(path := os.path.join(team.root, rel))
     }
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
@@ -261,14 +267,6 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
         if where or name in ("<Workdir>", "<tasks>"):
             lines.append(f"- `{name}`: {values[source]}\n")
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)
-
-
-def _read(root: str, rel: str) -> str:
-    path = os.path.join(root, rel)
-    if not os.path.isfile(path):
-        raise ConfigError(f"missing file {rel}")
-    with open(path) as f:
-        return f.read().strip() + "\n"
 
 
 def _without(text: str, placeholder: str) -> str:

@@ -20,7 +20,6 @@ import unittest
 import uuid
 from unittest import mock
 
-import agent_pm.delegate.engine.config
 from agent_pm.manager import crew, roster
 from agent_pm.manager.engine.types import Spec
 from agent_pm.session import (
@@ -2858,8 +2857,8 @@ class CursorTest(RosterCase):
         root = os.path.join(self.dir, "my src")
         with (
             mock.patch.dict(os.environ, {"HOME": home, "PYTHONPATH": root}),
-            mock.patch.object(agent_pm.delegate.engine.config, "PYTHONPATH", root),
-            mock.patch.object(agent_pm.delegate.engine.config, "IMPORT_ROOTS", (root,)),
+            mock.patch.object(crew, "PYTHONPATH", root),
+            mock.patch.object(crew, "IMPORT_ROOTS", (root,)),
         ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))

@@ -4,7 +4,6 @@ drive_test Start, HostFailure and Sinks cases: records, saving, the missing star
 policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
 in_process-only fake, with no child process."""
 
-import contextlib
 import dataclasses
 import io
 import json
@@ -36,7 +35,6 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from agent_pm.delegate.event.outcome import save
 from agent_pm.session import (
     Activity,
     Blocked,
@@ -45,35 +43,35 @@ from agent_pm.session import (
     IdleTimeout,
     LimitHit,
     Session,
-    TurnEnd,
     api,
 )
 from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
+from agent_pm.utils.files import save
 
 from delegate.tests.case import Case
+from delegate.tests.replies import bare, block, running
+from delegate.tests.unit.runs import (
+    DONE,
+    GAVE_UP,
+    NAME,
+    START,
+    STOP,
+    FakeHandle,
+    limit,
+    no_child,
+    said,
+    turn,
+)
 from session.tests import fake_adapter
-from session.tests.unit.api_test import SPAWNS
 
 SID = "11111111-2222-3333-4444-555555555555"
-NAME = "fake-11111111"
-DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
 FAILED = {**DONE, "status": "failed", "deliverable": ""}
 INVALID = {**DONE, "status": "maybe"}
 INVALID_ERROR = "status 'maybe' is not one of done, needs_input, failed"
-START = "[agent-pm-progress:start] go"
 GH = {"type": "github", "repo": "o/docs", "branch": "main", "dir": "R/"}
 PR = {"type": "pull-request"}
-
-
-def block(data) -> str:
-    return f"```agent-pm-outcome\n{json.dumps(data)}\n```"
-
-
-def said(*lines) -> dict:
-    """A step printing a message record (Reply) of `lines`."""
-    return {"out": {"type": "message", "text": "\n".join(lines)}}
 
 
 def ended(text) -> dict:
@@ -81,73 +79,7 @@ def ended(text) -> dict:
     return {"out": {"type": "result", "text": text}}
 
 
-def limit(resets_at) -> dict:
-    return {"out": {"type": "limit", "resets_at": resets_at}}
-
-
-def running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-def bare(record: dict) -> dict:
-    return {k: v for k, v in record.items() if k != "ts"}
-
-
-@contextlib.contextmanager
-def no_child():
-    """Each of SPAWNS fails inside, and none was called."""
-    with contextlib.ExitStack() as stack:
-        spawns = [
-            stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
-            for target in SPAWNS
-        ]
-        yield
-    for spawn in spawns:
-        spawn.assert_not_called()
-
-
-def turn(*lines, pending=0) -> TurnEnd:
-    return TurnEnd("\n".join(lines), pending)
-
-
-STOP = turn("Working.")
 PENDING = turn("Waiting for the build.", pending=1)
-
-
-class FakeHandle:
-    """session.engine.api.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
-    left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
-    session.engine.api.start's stand-in."""
-
-    def __init__(self, events, fail=None, stop_fail=None):
-        self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
-        self.name, self.sid = NAME, None
-
-    def start(self, runtime, mode, prompt, spec, **kw):
-        os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = spec.name or NAME, kw["resume"] or spec.sid
-        return self
-
-    def events(self):
-        for event in self.left:
-            yield event
-            if isinstance(event, Exited):
-                return
-        raise AssertionError("no event left")
-
-    def send(self, text):
-        self.calls.append(("send", text))
-        if self.fail:
-            raise self.fail
-
-    def stop(self):
-        self.calls.append(("stop",))
-        if self.stop_fail:
-            raise self.stop_fail
 
 
 class Base(Case):
@@ -853,7 +785,6 @@ class Terminal(Base):
         self.assertFalse([c for c in self.err if not c.isprintable() and c not in "\t\n"])
 
 
-GAVE_UP = Result(0, None, "the agent run returned no outcome")
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 

@@ -17,7 +17,7 @@ from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, api
 
 from delegate.tests.case import Case
-from delegate.tests.unit.plan_test import SID, Base
+from delegate.tests.unit.plans import SID, Base
 
 TUI = "dummy-tester-11111111"
 DRIVER = f"{TUI}-drive"
@@ -78,7 +78,7 @@ class Detach(Base):
         return str(cm.exception)
 
     def test_headless_runs_the_driver_form_with_the_import_root_and_the_cwd(self):
-        self.assertEqual(self.detached(self.plan(), "events"), detach.Detached(DRIVER, None, None))
+        self.assertEqual(self.detached(self.plan(), "events"), detach.Detached(DRIVER, None))
         self.layout.assert_not_called()
         self.started.assert_called_once_with(
             DRIVER,
@@ -92,7 +92,7 @@ class Detach(Base):
 
     def test_tui_passes_each_option_given_and_the_layouts_opener(self):
         got = self.detached(self.plan("tui", repo="-r"), split="right", split_from="mgr")
-        self.assertEqual(got, detach.Detached(DRIVER, TUI, "mgr"))
+        self.assertEqual(got, detach.Detached(DRIVER, TUI))
         self.layout.assert_called_once_with("right", "mgr")
         self.assertEqual(
             self.started.call_args.args[1],
@@ -111,7 +111,7 @@ class Detach(Base):
     def test_no_pane_without_split_from_is_no_opener(self):
         self.layout.side_effect = DriverError("no pane to show the TUI beside (x)")
         self.assertEqual(
-            self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI, None)
+            self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI)
         )
         self.assertEqual(self.started.call_args.args[1], self.argv("tui", "--split=below"))
         self.assertIsNone(self.started.call_args.kwargs["opener"])

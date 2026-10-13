@@ -12,7 +12,6 @@ import tomllib
 import unittest
 from unittest import mock
 
-import agent_pm.delegate.engine.config
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config
@@ -62,7 +61,7 @@ GATE = (
     "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 )
 LABEL = ("linear-orchestrator/config.toml", "core")
-CORE = agent_pm.delegate.engine.config.CONFIG
+CORE = delegate.CONFIG
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 
@@ -548,14 +547,14 @@ class Runnable(ConfigFile, Case):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(agent_pm.delegate.engine.config.CONFIG) as f:
+        with open(delegate.CONFIG) as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
         with open(os.path.join(composer.TEAM, "output", "destinations", "github.md")) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(
-            agent_pm.delegate.engine.config.CONFIG,
+            delegate.CONFIG,
             os.path.join(config.ROOT, "delegate", "config.toml"),
         )
 
@@ -661,7 +660,7 @@ class OtherRoot(ConfigFile, Case):
             with self.subTest(text):
                 self.core(CORE_TOML + text)
                 registry.reset()
-                self.fails(f"core: {want}", PIPELINE)
+                self.fails(f"delegate config: {want}", PIPELINE)
                 with self.assertRaisesRegex(ConfigError, "not configured"):
                     registry.configured()
 
@@ -716,7 +715,7 @@ class OtherRoot(ConfigFile, Case):
 
     def test_a_bad_session_config_stops_the_caller(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), '[hosts]\ndefault = "nope"\n')
-        self.fails("session: [hosts] default: want one of tmux", PIPELINE)
+        self.fails("session config: [hosts] default: want one of tmux", PIPELINE)
         self.refused_unconfigured()
 
     def refused_unconfigured(self):

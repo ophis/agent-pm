@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
+DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 
@@ -74,7 +75,7 @@ class RunParams:
         out = os.path.abspath(self.out)
         if Path(os.path.realpath(out)).is_relative_to(os.path.realpath(self.workdir)):
             return out
-        return os.path.join(os.path.abspath(self.workdir), "tmp", "deliverable.md")
+        return os.path.join(os.path.abspath(self.workdir), DELIVERABLE)
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
-"""delegate/outcome.py: main's drive.validate cases with the same results (FR-20) and read with deliverable_file (FR-19);
-main's save cases: unit/utils/files_test.py."""
+"""delegate/event/outcome.py: SCHEMA beside it; main's drive.validate cases with the same results (FR-20) and read
+with deliverable_file (FR-19); main's save cases: unit/utils/files_test.py."""
 
 import dataclasses
 import json
@@ -10,11 +10,15 @@ import threading
 import unittest
 import unittest.mock
 
-from agent_pm.delegate import composer
-from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.event import outcome
-from agent_pm.delegate.event.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
-from agent_pm.utils import files
+from agent_pm.delegate.event.outcome import (
+    SCHEMA,
+    STATUSES,
+    InvalidOutcome,
+    Outcome,
+    read,
+    validate,
+)
 
 from delegate.tests.case import Case
 
@@ -22,21 +26,11 @@ DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}
 
 
-def run(**kw):
-    return RunConfig(
-        **{
-            "role": "r",
-            "tier": 2,
-            "effort": "high",
-            "runtime": "fake",
-            "output": {"type": "local"},
-            **kw,
-        }
-    )
+LOCAL = {"type": "local"}
 
 
 def schema():
-    with open(composer.SCHEMA) as f:
+    with open(SCHEMA) as f:
         return json.load(f)
 
 
@@ -48,7 +42,7 @@ class Base(Case):
         self.work = os.path.join(self.tmp, "work")
 
     def check(self, data, output=None):
-        return validate(data, run(output=output or {"type": "local"}), self.work)
+        return validate(data, output or LOCAL, self.work)
 
     def fails(self, data, msg, output=None):
         with self.assertRaises(InvalidOutcome) as cm:
@@ -185,7 +179,7 @@ class Read(Base):
 
     def read(self, data, output=None):
         body = data if isinstance(data, str) else json.dumps(data)
-        return read(body, run(output=output or {"type": "local"}), self.work)
+        return read(body, output or LOCAL, self.work)
 
     def refused(self, data, msg):
         with self.assertRaises(InvalidOutcome) as cm:
@@ -294,7 +288,7 @@ class ReadRace(Base):
 
         with unittest.mock.patch("os.open", side_effect=open_):
             with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), run(), self.work)
+                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertEqual(len(done), 1)
         self.assertIn("deliverable_file ", str(cm.exception))
         self.assertIn(reason, str(cm.exception))
@@ -348,13 +342,13 @@ class ReadRace(Base):
 
         with unittest.mock.patch("os.open", side_effect=open_):
             with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), run(), self.work)
+                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertIn("replaced while it was opened", str(cm.exception))
 
 
-class Save(Case):
-    def test_is_the_utils_one(self):
-        self.assertIs(outcome.save, files.save)
+class SchemaFile(Case):
+    def test_is_beside_outcome_py(self):
+        self.assertEqual(os.path.dirname(SCHEMA), os.path.dirname(outcome.__file__))
 
 
 if __name__ == "__main__":

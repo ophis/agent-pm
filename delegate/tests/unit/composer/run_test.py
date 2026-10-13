@@ -25,29 +25,8 @@ from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import config_file
 
 from delegate.tests.case import Case
-from delegate.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
+from delegate.tests.unit.composer.teams import EDITOR, FILES, POET, RUN_CONFIG, VERSE
 
-CONFIG = """\
-tier = 2
-effort = "high"
-runtime = "a"
-
-[output]
-type = "local"
-
-[roles.writer]
-effort = "medium"
-templates = ["note"]
-read = ["repo"]
-
-[roles.editor]
-tier = 1
-
-[roles.editor.output]
-type = "github"
-repo = "o/docs"
-branch = "main"
-"""
 TIER = "tier must be an integer 1–4"
 RUNTIME = "runtime must be a non-empty one-line name, got "
 
@@ -63,7 +42,7 @@ class Fake(Case):
         self.config = os.path.join(self.tmp, "config.toml")
         self.local_file = os.path.join(self.tmp, "config.local.toml")
         self.write(FILES)
-        self.configure(CONFIG)
+        self.configure(RUN_CONFIG)
 
     def write(self, files, top=None):
         for rel, text in files.items():
@@ -124,12 +103,16 @@ class Resolve(Fake):
         self.assertEqual(self.resolved().gate, "")
         gate = "python3 /u/usage.py --below 80 *"
         self.assertEqual(self.resolved(overlays=[{"roles": {"writer": {"gate": gate}}}]).gate, gate)
-        self.configure(CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"'))
+        self.configure(
+            RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\ngate = "make gate"')
+        )
         self.assertEqual(self.resolved().gate, "make gate")
 
     def test_language_at_any_level(self):
         self.assertEqual(self.resolved("editor").language, "")
-        self.configure(CONFIG.replace('effort = "high"', 'effort = "high"\nlanguage = "French"'))
+        self.configure(
+            RUN_CONFIG.replace('effort = "high"', 'effort = "high"\nlanguage = "French"')
+        )
         self.assertEqual(self.resolved("editor").language, "French")
         overlay = {"roles": {"editor": {"language": "German"}}}
         self.assertEqual(self.resolved("editor", overlays=[overlay]).language, "German")
@@ -263,7 +246,7 @@ class Validate(Fake):
             ('effort = "medium"', 'effort = "ultra"', "effort must be one of", "writer", ()),
         ):
             with self.subTest(new=new):
-                self.configure(CONFIG.replace(old, new))
+                self.configure(RUN_CONFIG.replace(old, new))
                 self.assertIn(msg, self.refused(role, overlays=overlays))
 
     def test_the_local_file_is_checked_with_the_config(self):
@@ -271,7 +254,7 @@ class Validate(Fake):
         self.assertEqual(self.refused("editor"), "unknown key 'model' in roles.editor")
 
     def test_config_errors_come_before_a_missing_charter_or_task_file(self):
-        self.configure(CONFIG.replace("tier = 1", "tier = 9"))
+        self.configure(RUN_CONFIG.replace("tier = 1", "tier = 9"))
         os.remove(os.path.join(self.root, "tasks", "long-note.md"))
         os.remove(os.path.join(self.root, "roles", "editor.md"))
         self.assertIn(TIER, self.refused("editor"))
@@ -337,7 +320,7 @@ class OwnedKeys(Fake):
     def test_another_layers_global_keys_are_left_alone(self):
         self.configure(
             "surprise = 1\n"
-            + CONFIG
+            + RUN_CONFIG
             + '\n[adapters.x]\nimplementation = "adapters.x:XAdapter"\nmodel = "m"\n'
         )
         self.assertEqual(self.resolved().runtime, "a")
@@ -376,24 +359,24 @@ class Runtime(Fake):
         )
 
     def test_the_configs_role_table_per_role(self):
-        self.configure(CONFIG + '\n[roles.pm]\nruntime = "x"\n')
+        self.configure(RUN_CONFIG + '\n[roles.pm]\nruntime = "x"\n')
         self.assertEqual([self.resolved(role).runtime for role in ("pm", "researcher")], ["x", "a"])
 
     def test_an_overlays_global_value_beats_the_configs_role_value(self):
-        self.configure(CONFIG.replace('effort = "medium"', 'effort = "medium"\nruntime = "w"'))
+        self.configure(RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\nruntime = "w"'))
         self.assertEqual(self.resolved().runtime, "w")
         self.assertEqual(self.resolved(overlays=({"runtime": "x"},)).runtime, "x")
 
     def test_missing_or_not_a_one_line_name_after_any_layer(self):
-        unset = CONFIG.replace('runtime = "a"\n', "")
+        unset = RUN_CONFIG.replace('runtime = "a"\n', "")
         for config, overlays, got in (
             (unset, (), "''"),
-            (CONFIG.replace('"a"', '""'), (), "''"),
-            (CONFIG.replace('"a"', '"  "'), (), "'  '"),
-            (CONFIG.replace('"a"', '"a\\nb"'), (), "'a\\nb'"),
-            (CONFIG.replace('"a"', "3"), (), "3"),
-            (CONFIG, ({"runtime": ""},), "''"),
-            (CONFIG, ({"roles": {"writer": {"runtime": ["x"]}}},), "['x']"),
+            (RUN_CONFIG.replace('"a"', '""'), (), "''"),
+            (RUN_CONFIG.replace('"a"', '"  "'), (), "'  '"),
+            (RUN_CONFIG.replace('"a"', '"a\\nb"'), (), "'a\\nb'"),
+            (RUN_CONFIG.replace('"a"', "3"), (), "3"),
+            (RUN_CONFIG, ({"runtime": ""},), "''"),
+            (RUN_CONFIG, ({"roles": {"writer": {"runtime": ["x"]}}},), "['x']"),
         ):
             with self.subTest(got=got, overlays=overlays):
                 self.configure(config)

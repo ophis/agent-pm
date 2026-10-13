@@ -20,15 +20,8 @@ import unittest
 from agent_pm.session.engine import records
 
 from delegate.tests.case import PYTHONPATH, Case
-from delegate.tests.integration.cli_integration_test import (
-    ASKING,
-    CLI,
-    DONE,
-    SID,
-    mark,
-    running,
-)
-from delegate.tests.unit.runner_test import block
+from delegate.tests.integration.cli import ASKING, CLI, DONE, SID
+from delegate.tests.replies import block, mark, running
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 

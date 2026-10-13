@@ -67,7 +67,6 @@ CONFIG = "delegate.engine.config"
 ALLOWED = {
     ("delegate", "delegate.composer"),
     ("delegate", SESSION),
-    ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
     *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
     ("session.adapters", SESSION_TYPES),
@@ -75,6 +74,7 @@ ALLOWED = {
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
     ("session.engine.base", HOSTS),  # Session.parse_hosts
     (OUTSIDE, SESSION),
+    ("manager.crew", "delegate"),  # until TASK-371
 }
 SESSION_INTERNAL = (SESSION_API, SESSION_TYPES)
 SHARED = ("utils", CONFIG, "delegate.event")
@@ -85,7 +85,6 @@ PURE = {
     "utils": ("utils",),
     CONFIG: ("utils", CONFIG),
     "delegate.event": SHARED,
-    "delegate.event.outcome": (*SHARED, "delegate.composer"),
     TOOLS: ("utils", CONFIG),
 }
 BARE = (
@@ -171,7 +170,9 @@ MANAGER_ALLOWED = {
     "manager.crew": ("utils", "manager.roster", "manager.engine.types"),
     "manager.roster": ("utils", "manager.engine.types"),
 }
-MANAGER_EXCEPTIONS = {"manager.crew": (f"{PKG}.{CONFIG}",)}  # until TASK-371
+MANAGER_EXCEPTIONS = {
+    "manager.crew": tuple(f"{PKG}.delegate.{n}" for n in ("IMPORT_ROOTS", "PYTHONPATH"))
+}  # until TASK-371
 MANAGER_SESSION = ("manager.crew", "manager.roster")  # session names, until TASK-371
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
