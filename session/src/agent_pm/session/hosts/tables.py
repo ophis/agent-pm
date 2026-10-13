@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from agent_pm.session.hosts.types import Hosts
 from agent_pm.utils import CLASS_PATH
 
-
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 
