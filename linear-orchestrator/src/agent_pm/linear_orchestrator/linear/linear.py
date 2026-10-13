@@ -17,10 +17,10 @@ import urllib.request
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID as ISSUE_ID
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
+    STATES,
     ConfigError,
     LinearError,
     Team,
@@ -350,13 +350,13 @@ def team(gql, cfg):
         raise LinearError(f"linear-orchestrator/config.toml: team {cfg.team} not found in Linear")
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
-    if bad := [f"{k} {cfg.states[k]}" for k in config.STATES if cfg.states[k] not in ids]:
+    if bad := [f"{k} {cfg.states[k]}" for k in STATES if cfg.states[k] not in ids]:
         error_t_name = t["name"]
         error_join_bad = ", ".join(bad)
         raise LinearError(
             f"linear-orchestrator/config.toml: [states] not workflow states of team {error_t_name!r}: {error_join_bad}"
         )
-    return Team(t["id"], t["name"], {k: cfg.states[k] for k in config.STATES})
+    return Team(t["id"], t["name"], {k: cfg.states[k] for k in STATES})
 
 
 Q_TASK_GROUP = (

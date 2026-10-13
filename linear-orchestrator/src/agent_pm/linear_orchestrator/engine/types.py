@@ -9,6 +9,15 @@ from typing import Any, Literal
 from agent_pm import delegate
 from agent_pm.session import Driver
 
+STATES = {
+    "todo": "Todo",
+    "in_progress": "In Progress",
+    "in_review": "In Review",
+    "handoff": "Handoff",
+    "done": "Done",
+    "canceled": "Canceled",
+}
+
 
 class ConfigError(Exception):
     def __init__(self, msg: str, logs_dir: str | None = None):

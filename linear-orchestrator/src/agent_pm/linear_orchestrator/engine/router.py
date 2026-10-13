@@ -31,7 +31,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import PYTHONPATH
-from agent_pm.linear_orchestrator.engine import config, inputs, startup, target
+from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
@@ -866,7 +866,7 @@ def main(
     try:
         cfg = config.load(path=config_path)
     except ConfigError as error:
-        startup.report_error("router", error, dry=opts["dry"])
+        config.report_error("router", error, dry=opts["dry"])
         return 1
     linear.use_logs(cfg.logs_dir)
     cfg = replace(cfg, driver=driver) if driver is not None else cfg

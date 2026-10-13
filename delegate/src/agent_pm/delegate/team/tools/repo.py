@@ -29,11 +29,10 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
-from agent_pm.delegate.team.tools.types import BranchSelection, RepoCommandError, Worktree
 from agent_pm.utils import (
     LOCAL,
     LONG,
@@ -58,6 +57,26 @@ from agent_pm.utils import run_git as git
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
+
+
+@dataclass(frozen=True)
+class Worktree:
+    repository: Repo
+    clone: str | None
+    path: str
+    exists: bool
+    symlinks: str
+
+
+@dataclass(frozen=True)
+class BranchSelection:
+    options: tuple[str, ...]
+    start: str
+    registered: bool
+
+
+class RepoCommandError(RuntimeError):
+    pass
 
 
 def gh_json(run: Runner, argv: list[str]):

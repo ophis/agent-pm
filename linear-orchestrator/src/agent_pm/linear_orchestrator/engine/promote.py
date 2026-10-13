@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import config, startup
+from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import (
     CALL_ERRORS,
     SERVICE_ERRORS,
@@ -325,7 +325,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     try:
         cfg = config.load(path=config_path)
     except ConfigError as error:
-        startup.report_error("promote", error, dry=dry)
+        config.report_error("promote", error, dry=dry)
         return 1
     linear.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)

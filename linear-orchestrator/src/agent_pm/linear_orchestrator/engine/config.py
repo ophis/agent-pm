@@ -9,12 +9,14 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from types import MappingProxyType
 from typing import Any
 
 import agent_pm.utils as utils
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine.types import (
+    STATES,
     Config,
     ConfigError,
     Docs,
@@ -22,6 +24,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Task,
     TuiError,
 )
+from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
@@ -45,14 +48,6 @@ TOP_KEYS = {
     "local_clones",
     "core",
     "work_dir",
-}
-STATES = {
-    "todo": "Todo",
-    "in_progress": "In Progress",
-    "in_review": "In Review",
-    "handoff": "Handoff",
-    "done": "Done",
-    "canceled": "Canceled",
 }
 ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 REQUIRED = (
@@ -83,6 +78,13 @@ TASKS = {
 # Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the
 # github destination's `<Workdir>/publish`.
 CLONES = ("src", "publish")
+
+
+def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
+    if not error.logs_dir:
+        print(error.msg, file=sys.stderr)
+    else:
+        linear.config_error(src, error, dry=dry)
 
 
 def load(
