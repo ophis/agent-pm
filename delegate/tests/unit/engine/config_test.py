@@ -21,7 +21,7 @@ from agent_pm.delegate.engine.config import (
     policy,
     trusted_dirs,
 )
-from agent_pm.session import parse_hosts
+from agent_pm.session import Session
 from agent_pm.utils import read_project
 
 from delegate.tests import case
@@ -41,7 +41,7 @@ per_column = 2
 implementation = "pkg.b:BHost"
 """
 NAMES = "a, b_2"
-HOSTS = parse_hosts(tomllib.loads(TWO)["hosts"]).tables
+HOSTS = Session.parse_hosts(tomllib.loads(TWO)["hosts"]).tables
 
 
 def parsed(text: str = "") -> dict:
@@ -78,7 +78,7 @@ class HarnessHostTest(Case):
         self.assertEqual(harness_host(parsed('[delegates]\nharness_host = "b_2"\n'), HOSTS), "b_2")
 
     def test_the_committed_config_has_no_harness_host(self):
-        hosts = parse_hosts(read_project("session")["hosts"]).tables
+        hosts = Session.parse_hosts(read_project("session")["hosts"]).tables
         self.assertIsNone(harness_host(read_project("delegate"), hosts))
 
     def test_delegates_takes_only_harness_host(self):

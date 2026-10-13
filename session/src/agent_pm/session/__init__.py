@@ -45,7 +45,6 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, NotDisplayable, Terminal
-from agent_pm.session.hosts.tables import parse_hosts
 
 __all__ = [
     "Driver",
@@ -56,7 +55,6 @@ __all__ = [
     "note",
     "session_record",
     "Session",
-    "parse_hosts",
     "Spec",
     "Access",
     "Host",

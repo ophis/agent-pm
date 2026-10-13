@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
 from agent_pm.session.engine.types import (
+    ConfigError,
     Event,
     IdleTimeout,
     SessionInfo,
@@ -17,6 +18,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.base import Host
+from agent_pm.session.hosts.tables import Hosts
 from agent_pm.utils import Display, Record
 
 
@@ -75,7 +77,13 @@ class Session(ABC):
     @abstractmethod
     def screen(self, lines: int | None = None) -> str: ...
 
-    parse_hosts = staticmethod(tables.parse_hosts)
+    @staticmethod
+    def parse_hosts(table) -> Hosts:
+        """An already-read [hosts] table as Hosts(default, tables); else ConfigError."""
+        try:
+            return tables.parse(table)
+        except ValueError as error:
+            raise ConfigError(str(error)) from None
 
     @classmethod
     def start(
