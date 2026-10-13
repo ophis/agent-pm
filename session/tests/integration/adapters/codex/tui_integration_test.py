@@ -734,10 +734,7 @@ class TuiLaunchIntegrationTest(Live):
     def test_realistic_usage_limit_screen_emits_reset_and_deduplicates(self):
         release = self.root / "release"
         reset = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        screen = (
-            "Codex > gpt-test\n■ You've hit your usage limit. Try again at Jan 2nd,"
-            " 2027 3:04 AM.\n› "
-        )
+        screen = "Codex > gpt-test\n■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM.\n› "
         self.scene([[{"kind": "screen", "text": screen}, {"kind": "pause", "file": str(release)}]])
         handle = self.start()
         stream = Stream(self, handle)
@@ -762,10 +759,7 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(Stream(self, self.start()).until(LimitHit)[-1], LimitHit())
 
     def test_quoted_assistant_limit_screen_does_not_emit_limit_hit(self):
-        screen = (
-            "Codex > gpt-test\n• You have asked me to quote this error.\n• You've "
-            "hit your usage limit. is a quoted example\n› "
-        )
+        screen = "Codex > gpt-test\n• You have asked me to quote this error.\n• You've hit your usage limit. is a quoted example\n› "
         self.scene([[{"kind": "screen", "text": screen}, "quoted reply"]])
         stream = Stream(self, self.start())
         self.assertEqual(

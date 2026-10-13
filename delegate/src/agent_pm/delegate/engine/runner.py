@@ -48,17 +48,12 @@ from agent_pm.utils import printable, save
 IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
 FIX = (
-    f"The outcome block in your last reply is invalid: {{error}}. Fix it: end your reply "
-    f"with one corrected "
-    f"{OUTCOME}"
-    f" block; change nothing else."
+    "The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
+    f"{OUTCOME} block; change nothing else."
 )
 NUDGE = (
-    f"Finish your task, then end your last reply with your outcome block "
-    f"(`"
-    f"{OUTCOME}"
-    f"`), as your instructions' Return says. If you are waiting for background work, "
-    f"wait for it first."
+    f"Finish your task, then end your last reply with your outcome block (`{OUTCOME}`), as your instructions' "
+    "Return says. If you are waiting for background work, wait for it first."
 )
 END = "end"
 
@@ -319,8 +314,7 @@ class _Attempts:
                 name = handle.name
                 assert name is not None
                 say(
-                    f"delegate: {answer.reason}; session {name} left open: "
-                    f"{self.plan.driver.attach_command(name)}"
+                    f"delegate: {answer.reason}; session {name} left open: {self.plan.driver.attach_command(name)}"
                 )
                 return 0, None, None
             if answer == END:

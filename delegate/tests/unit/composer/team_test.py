@@ -329,22 +329,15 @@ class TeamDirs(Fake):
             (
                 (a,),
                 (
-                    f"{a}"
-                    f"/roles/poet.md: lists 'long-note', whose file tasks/long-note.md is "
-                    f"not in "
-                    f"{a}"
-                    f"/tasks: a role runs only its own tasks"
+                    f"{a}/roles/poet.md: lists 'long-note', whose file tasks/long-note.md is not in {a}/tasks: a "
+                    "role runs only its own tasks"
                 ),
             ),
             (
                 (b, c),
                 (
-                    f"{b}"
-                    f"/roles/poet.md: lists 'verse', whose file "
-                    f"{c}"
-                    f"/tasks/verse.md is not in "
-                    f"{b}"
-                    f"/tasks: a role runs only its own tasks"
+                    f"{b}/roles/poet.md: lists 'verse', whose file {c}/tasks/verse.md is not in {b}/tasks: a role "
+                    "runs only its own tasks"
                 ),
             ),
         ):
@@ -401,10 +394,8 @@ class TeamDirs(Fake):
         self.assertEqual(
             self.refused(self.tasks_of, "poet", team(self.root, (a, b))),
             (
-                f"{b}"
-                f"/roles/poet.md: role 'poet' is also defined by "
-                f"{a}"
-                f"/roles/poet.md; team dir files only add"
+                f"{b}/roles/poet.md: role 'poet' is also defined by {a}/roles/poet.md; team dir files only "
+                "add"
             ),
         )
 
@@ -483,9 +474,8 @@ class TeamDirs(Fake):
                 self.assertEqual(
                     self.refused(call, self.with_dir(files, name)),
                     (
-                        f"{self.path(rel, name)}"
-                        f": front matter (---) is not read: team dir files hold text only; "
-                        f"run keys go in ~/.agent-pm/config.local.toml"
+                        f"{self.path(rel, name)}: front matter (---) is not read: team dir files hold text "
+                        "only; run keys go in ~/.agent-pm/config.local.toml"
                     ),
                 )
 
@@ -700,13 +690,7 @@ class TeamDirChecks(Fake):
         self.assertEqual(
             self.checked([("the workdir", work)]),
             (
-                f"team_dirs: "
-                f"{tasks}"
-                f" ("
-                f"{moved}"
-                f") overlaps the workdir "
-                f"{work}"
-                f": the agent run can write there"
+                f"team_dirs: {tasks} ({moved}) overlaps the workdir {work}: the agent run can write there"
             ),
         )
         os.chmod(os.path.join(elsewhere, "verse.md"), 0o666)

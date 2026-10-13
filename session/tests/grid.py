@@ -67,8 +67,7 @@ class GridCheck:
 
     def fail(self, problem):
         self.case.fail(
-            f"grid: {problem}\n want {self.columns!r}\n"
-            f" window {self.window} {self.width} wide:\n{self.layout}"
+            f"grid: {problem}\n want {self.columns!r}\n window {self.window} {self.width} wide:\n{self.layout}"
         )
 
     def box(self, name):
@@ -118,8 +117,7 @@ class GridCheck:
         manager = Box(x, y, x + w, y + h)
         if manager.left != 0 or manager_width not in (None, manager.width):
             self.fail(
-                f"manager at left {manager.left}, {manager.width} wide; "
-                f"want left 0, width {manager_width or 'any'}"
+                f"manager at left {manager.left}, {manager.width} wide; want left 0, width {manager_width or 'any'}"
             )
         return manager
 
@@ -136,8 +134,7 @@ class GridCheck:
         boxes = [_union(column) for column in cells]
         if boxes and (boxes[0].left != manager.right + 1 or boxes[-1].right != int(self.width)):
             self.fail(
-                f"the columns span {boxes[0].left} to {boxes[-1].right}; "
-                f"want {manager.right + 1} to {self.width}"
+                f"the columns span {boxes[0].left} to {boxes[-1].right}; want {manager.right + 1} to {self.width}"
             )
         if any(a.right >= b.left for a, b in zip(boxes, boxes[1:], strict=False)):
             self.fail("the columns overlap or are out of order")
@@ -150,8 +147,7 @@ class GridCheck:
         self.stacked(cells, f"column {number}")
         if (cells[0].top, cells[-1].bottom) != (manager.top, manager.bottom):
             self.fail(
-                f"column {number}: spans {cells[0].top} to {cells[-1].bottom}; "
-                f"want the manager's {manager.top} to {manager.bottom}"
+                f"column {number}: spans {cells[0].top} to {cells[-1].bottom}; want the manager's {manager.top} to {manager.bottom}"
             )
         if max(c.height for c in cells) - min(c.height for c in cells) > 1:
             self.fail(

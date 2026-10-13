@@ -115,8 +115,7 @@ class PartialPromotion(Base):
         self.assertEqual(src["state"], "Done")
         self.assertEqual(
             self.out.splitlines()[-1],
-            "handoff-error DR-1 reason=promoted, but the comment failed "
-            "error=LinearError: linear api error: comment failed",
+            "handoff-error DR-1 reason=promoted, but the comment failed error=LinearError: linear api error: comment failed",
         )
 
     def test_failed_bounce_posts_no_comment_and_stays_in_handoff(self):
@@ -223,8 +222,7 @@ class ConfigurationFailures(Base):
         self.assertEqual(
             self.err,
             (
-                "linear-orchestrator/config.toml: work_dir must be a printable absolute"
-                " or ~ path: 'w'\n"
+                "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n"
             ),
         )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
@@ -477,8 +475,7 @@ class HandoffPromotion(Base):
         some, only = (c["description"] for c in self.fake.children.values())
         self.assertIn(
             (
-                "## Source\n- Report: https://gh/r.md\n- Run rate analysis: "
-                "https://gh/rate.md\n\n## Instructions\n"
+                "## Source\n- Report: https://gh/r.md\n- Run rate analysis: https://gh/rate.md\n\n## Instructions\n"
             ),
             some,
         )

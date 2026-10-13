@@ -83,8 +83,8 @@ PROBE = (
 )
 
 NOTE = (
-    "Pre-approved commands match on their exact text and each shell call "
-    "starts fresh, so anything else waits on a permission prompt."
+    "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits on a "
+    "permission prompt."
 )
 
 CONFIG = {
@@ -193,10 +193,7 @@ HOOKS = {
     "UserPromptSubmit": ACTIVITY,
 }
 
-MATCHER = (
-    "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_need"
-    "s_input|quota_auto_resume_stale)$"
-)
+MATCHER = "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|quota_auto_resume_stale)$"
 
 WAITING = (
     "permission_prompt",
@@ -1639,8 +1636,7 @@ class LimitTest(Case):
                 ),
                 (
                     (
-                        "You've hit your weekly limit · resets Oct 15, 9am (America/"
-                        "Los_Angeles) · progress saved"
+                        "You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles) · progress saved"
                     ),
                     epoch("2026-10-15 09:00"),
                 ),
@@ -1654,8 +1650,7 @@ class LimitTest(Case):
                 ),
                 (
                     (
-                        "You've hit your org's monthly spend limit · your session limit "
-                        "resets 4pm (Asia/Tokyo)"
+                        "You've hit your org's monthly spend limit · your session limit resets 4pm (Asia/Tokyo)"
                     ),
                     epoch("2026-10-12 16:00", "Asia/Tokyo"),
                 ),
@@ -1669,8 +1664,7 @@ class LimitTest(Case):
                 ),
                 (
                     (
-                        "> go on\n\n  ⎿  You've hit your\n   session  limit ·\n resets 3pm"
-                        "\n  (America/Los_Angeles)\n"
+                        "> go on\n\n  ⎿  You've hit your\n   session  limit ·\n resets 3pm\n  (America/Los_Angeles)\n"
                     ),
                     epoch("2026-10-11 15:00"),
                 ),
@@ -1728,9 +1722,7 @@ class LimitTest(Case):
             (
                 (
                     (
-                        f"{session}"
-                        f" … You've hit your weekly limit · resets Oct 15, 9am (America/"
-                        f"Los_Angeles)"
+                        f"{session} … You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles)"
                     ),
                     epoch("2026-10-15 09:00"),
                 ),

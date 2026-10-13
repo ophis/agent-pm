@@ -23,8 +23,7 @@ def install(bin_dir: str) -> str:
     path = os.path.join(bin_dir, "gh")
     with open(path, "w") as f:
         f.write(
-            f"#!/bin/sh\nexec {shlex.quote(sys.executable)} "
-            f'{shlex.quote(os.path.abspath(__file__))} "$@"\n'
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))} "$@"\n'
         )
     os.chmod(path, 0o755)
     return path
@@ -75,8 +74,7 @@ def scenario() -> dict:
         sys.exit(f"fake_gh.py: {ENV}: {e}")
     if not isinstance(data, dict) or not {"repos"} <= set(data) <= {"repos", "contents"}:
         sys.exit(
-            'fake_gh.py: the scenario is no JSON object with the key "repos" and '
-            'optionally "contents"'
+            'fake_gh.py: the scenario is no JSON object with the key "repos" and optionally "contents"'
         )
     if not isinstance(data["repos"], dict) or not all(
         isinstance(v, dict) for v in data["repos"].values()
@@ -101,8 +99,7 @@ def main(argv: list[str]) -> None:
     m = API.fullmatch(rest[0]) if argv[:1] == ["api"] and len(rest) == 1 else None
     if not m or (raw and not m[3]):
         sys.exit(
-            f"fake_gh.py: usage: gh api [-H '{RAW}"
-            f"'] repos/<owner>/<name>[/contents/<path>?ref=<branch>]"
+            f"fake_gh.py: usage: gh api [-H '{RAW}'] repos/<owner>/<name>[/contents/<path>?ref=<branch>]"
         )
     data, repo = scenario(), f"{m[1]}/{m[2]}"
     if not m[3]:

@@ -68,8 +68,7 @@ class ExtensionAdapterIntegration(Case):
             )
         self.table(
             '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
-            f"scenario = {json.dumps(scenario)}\n"
-            f"log = {json.dumps(os.path.join(self.root, 'log.jsonl'))}\n"
+            f"scenario = {json.dumps(scenario)}\nlog = {json.dumps(os.path.join(self.root, 'log.jsonl'))}\n"
         )
 
     def package(self, name: str) -> None:

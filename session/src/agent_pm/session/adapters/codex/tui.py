@@ -89,13 +89,8 @@ class CodexTui(Tui):
             for word in (
                 "-c",
                 (
-                    f"hooks."
-                    f"{event}"
-                    f'=[{{hooks=[{{type="command",command='
-                    f"{json.dumps(command, ensure_ascii=False)}"
-                    f",timeout="
-                    f"{(3 if event == 'Interrupt' else 10)}"
-                    f"}}]}}]"
+                    f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
+                    f"timeout={3 if event == 'Interrupt' else 10}}}]}}]"
                 ),
             )
         ]

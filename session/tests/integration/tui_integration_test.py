@@ -50,11 +50,7 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = (
-    "import sys; from agent_pm.session import Driver; Driver(adapters={}, "
-    "hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, "
-    "default_host='tmux').close(sys.argv[1])"
-)
+CLOSE = "import sys; from agent_pm.session import Driver; Driver(adapters={}, hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, default_host='tmux').close(sys.argv[1])"
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
 from agent_pm.session import Driver

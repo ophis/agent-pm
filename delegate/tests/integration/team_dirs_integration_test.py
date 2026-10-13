@@ -146,11 +146,8 @@ class ComposerTeamDirs(child.Case):
             got,
             {
                 ("error"): (
-                    f"team_dirs: "
-                    f"{self.team}"
-                    f" overlaps a dir the run adds "
-                    f"{self.team}"
-                    f": the agent run can write there"
+                    f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
+                    "run can write there"
                 )
             },
         )

@@ -65,18 +65,19 @@ PROBE = [
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
-CALLER = (
-    "import json, signal, sys, time\nfrom agent_pm.session.engine import "
-    "api\nfrom agent_pm.session import Driver, Spec\n"
-    "signal.signal(signal.SIGINT, signal.default_int_handler)\ndriver = "
-    'Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": '
-    '{"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, '
-    'default_host="tmux")\nhandle = driver.start("claude", "headless", '
-    '"hello", Spec(workdir=sys.argv[2]))\ntry:\n    for event in '
-    "handle.events():\n        print(type(event).__name__, flush=True)\n"
-    'except KeyboardInterrupt:\n    print("KeyboardInterrupt", flush=True)'
-    "\n    time.sleep(60)\n"
-)
+CALLER = """import json, signal, sys, time
+from agent_pm.session.engine import api
+from agent_pm.session import Driver, Spec
+signal.signal(signal.SIGINT, signal.default_int_handler)
+driver = Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
+handle = driver.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
+try:
+    for event in handle.events():
+        print(type(event).__name__, flush=True)
+except KeyboardInterrupt:
+    print("KeyboardInterrupt", flush=True)
+    time.sleep(60)
+"""
 
 
 def running(pid: int) -> bool:

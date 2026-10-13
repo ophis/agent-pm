@@ -36,10 +36,7 @@ POET = (
 )
 
 
-STEPS = (
-    "\n## Steps\n\n1. **Report progress**:\n   [agent-pm-progress:start] the "
-    "topic.\n\n## Resume\n\nGo on.\n"
-)
+STEPS = "\n## Steps\n\n1. **Report progress**:\n   [agent-pm-progress:start] the topic.\n\n## Resume\n\nGo on.\n"
 
 
 VERSE = "# Verse\n" + STEPS

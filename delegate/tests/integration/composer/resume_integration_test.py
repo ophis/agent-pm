@@ -62,8 +62,8 @@ class Draft(child.Case):
                 self.assertIn(f"\n- `<Workdir>`: `{self.work}`\n", prompt)
                 self.assertIn(
                     (
-                        "\nWrite the deliverable to `<Workdir>/out.md` and name that file "
-                        "in the outcome's `deliverable_file`;"
+                        "\nWrite the deliverable to `<Workdir>/out.md` and name that file in the outcome's "
+                        "`deliverable_file`;"
                     ),
                     prompt,
                 )

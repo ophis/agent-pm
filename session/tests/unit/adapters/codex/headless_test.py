@@ -65,13 +65,11 @@ class HeadlessTest(Base):
         messages = (
             "You’ve hit your usage limit. Try again later.",
             (
-                "You’ve hit your usage limit for GPT-5. Switch to another model now, or"
-                " try again later."
+                "You’ve hit your usage limit for GPT-5. Switch to another model now, or try again later."
             ),
             "Your workspace is out of credits. Add credits to continue.",
             (
-                "You hit your spend cap set by the owner of your workspace. Ask an "
-                "owner to increase your spend cap to continue."
+                "You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue."
             ),
         )
         for kind in ("error", "turn.failed"):
@@ -144,8 +142,7 @@ class HeadlessTest(Base):
             ("You’ve hit your usage limit. Try again at 4:30 PM.", expected_today),
             (
                 (
-                    "You’ve hit your usage limit. Upgrade to Pro, or try again at Oct 12th,"
-                    " 2026 4:30 PM."
+                    "You’ve hit your usage limit. Upgrade to Pro, or try again at Oct 12th, 2026 4:30 PM."
                 ),
                 datetime(2026, 10, 12, 16, 30, tzinfo=UTC).timestamp(),
             ),

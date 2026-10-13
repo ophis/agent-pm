@@ -130,24 +130,21 @@ REPO_ARGS = {
 
 
 CHECKOUT_RULE = (
-    "- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, "
-    "`<checkout>` the input's `Checkout:`; no `Checkout:` → drop "
-    "it."
+    "- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
+    "`Checkout:`; no `Checkout:` → drop it."
 )
 
 
 PICK = (
-    "**Your task**: pick it from your charter's Tasks section as its opening sentence "
-    "says; a task the input names wins. Read that task's file (no other task's), "
-    "`<tasks>/<task>.md`, and follow its steps in order; its links (`#…`) point to "
-    "sections of this prompt."
+    "**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
+    "wins. Read that task's file (no other task's), `<tasks>/<task>.md`, and follow its steps in order; its links "
+    "(`#…`) point to sections of this prompt."
 )
 
 
 COMMANDS_RULE = (
-    "- **Commands**: run each command this prompt gives exactly, written as Parameters "
-    "says, as its own command (no `cd`, pipe, redirect or "
-    "`&&`)."
+    "- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
+    "command (no `cd`, pipe, redirect or `&&`)."
 )
 
 
@@ -280,8 +277,8 @@ class Acceptance(Case):
                 destination = section(prompt, "Destination")
                 self.assertIn(
                     (
-                        "Write the deliverable to `<Workdir>/out.md` and name that file in "
-                        "the outcome's `deliverable_file`"
+                        "Write the deliverable to `<Workdir>/out.md` and name that file in the outcome's "
+                        "`deliverable_file`"
                     ),
                     destination,
                 )
@@ -290,10 +287,9 @@ class Acceptance(Case):
                 self.assertEqual(prompt.count("`<Workdir>/out.md`"), 1)
                 self.assertIn(
                     (
-                        "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the "
-                        "deliverable, in place of `deliverable`, when [Output › "
-                        "Destination](#destination) says so or the deliverable is "
-                        "long.\n"
+                        "\n- `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place "
+                        "of `deliverable`, when [Output › Destination](#destination) says so or the deliverable "
+                        "is long.\n"
                     ),
                     prompt,
                 )
@@ -463,8 +459,8 @@ class Shipped(Case):
         )
         lines = (
             (
-                "Work only in `<worktree>` on branch `<branch>`, with absolute paths; "
-                "create no other clone, worktree or branch."
+                "Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree "
+                "or branch."
             ),
             "Commits merged from `origin/<base>` are not this build's work.",
             "Skip S7; keep the commits. After <your task's push points>, run exactly "
@@ -478,8 +474,8 @@ class Shipped(Case):
     def test_a_builds_files_are_its_spec_and_plan_doc(self):
         self.assertIn(
             (
-                "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan "
-                "doc (on failure, those that exist);"
+                "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc (on failure, those "
+                "that exist);"
             ),
             task_text("build"),
         )
@@ -489,18 +485,16 @@ class Shipped(Case):
             text = task_text(task)
             self.assertIn(
                 (
-                    "**Report progress** at the end of each build step (`S<i>`) you run "
-                    "and of each S5 task:"
+                    "**Report progress** at the end of each build step (`S<i>`) you run and of each S5 task:"
                 ),
                 text,
                 task,
             )
             self.assertIn(
                 (
-                    f"[agent-pm-progress:step] the step and its result; an S5 task as `S5 "
-                    f"task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` "
-                    f"{doc}"
-                    f" task count (its `### Task` headings)"
+                    "[agent-pm-progress:step] the step and its result; an S5 task as "
+                    f"`S5 task <k>/<n> done: <commit>; <checks run>`, `<k>` its number, `<n>` {doc} task count "
+                    "(its `### Task` headings)"
                 ),
                 text,
                 task,
@@ -509,15 +503,15 @@ class Shipped(Case):
     def test_light_build_always_writes_a_state_file_with_a_task_list(self):
         self.assertIn(
             (
-                'docs line "The state file goes where the repo keeps design docs, else in '
-                '`docs/.autopilot/`; never `git add -f` it."'
+                'docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; '
+                'never `git add -f` it."'
             ),
             task_text("light-build"),
         )
         self.assertIn(
             (
-                "(a task list in its state file, implementation, verification, a light "
-                "review, no spec or plan docs)"
+                "(a task list in its state file, implementation, verification, a light review, no spec or plan "
+                "docs)"
             ),
             catalog()["engineer"]["light-build"],
         )
@@ -548,9 +542,8 @@ class RealCore(Case):
     def test_fixed_labels_are_translated_and_template_headings_say_so(self):
         self.assertIn(
             (
-                "- Reports and PRDs, headings and fixed labels included, are in Chinese; a "
-                "`<X, translated>` in a template or task is X in "
-                "Chinese."
+                "- Reports and PRDs, headings and fixed labels included, are in Chinese; a `<X, translated>` in "
+                "a template or task is X in Chinese."
             ),
             composed("researcher")[0],
         )
@@ -561,8 +554,7 @@ class RealCore(Case):
         for role, task in runs():
             self.assertIn(
                 (
-                    "Its headings are fixed apart from their language ([Principles › "
-                    "Writing](#writing))"
+                    "Its headings are fixed apart from their language ([Principles › Writing](#writing))"
                 ),
                 guide(composed(role, task)[0]),
                 (role, task),
@@ -575,9 +567,8 @@ class RealCore(Case):
             self.assertNotIn("the first mention adds the", prompt, (role, task))
             self.assertIn(
                 (
-                    "A term's first mention adds one gloss, its Chinese rendering (for an "
-                    "acronym, of its full name); none when the term is common in Chinese, "
-                    "and none in a heading."
+                    "A term's first mention adds one gloss, its Chinese rendering (for an acronym, of its full "
+                    "name); none when the term is common in Chinese, and none in a heading."
                 ),
                 writing,
             )
@@ -638,9 +629,8 @@ class RealCore(Case):
 
     def test_a_local_files_other_layers_keys_are_left_alone(self):
         self.local(
-            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = '
-            '"none"\n[hosts.tmux]\nworkers_per_column = 2\ngrid_retile = "off"\nteam = '
-            '"T"\n[roles.pm]\naccount = "pm@x"\n'
+            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
+            'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
         )
         for role, task in role_tasks():
             run = composer.resolve(role, task)
@@ -915,11 +905,10 @@ class RealCore(Case):
         merge = item(section(composed("engineer")[0], "Repo"), "Merge")
         self.assertIn(
             (
-                "One failing: during [Engineer › Finish › Done](#finish) → [Engineer › "
-                "Finish › Failure](#finish); before the build → the failing checks go into "
-                "the build's requirement; on [Engineer › Repo › Resume](#repo) → into the "
-                "requirement of the build left, none left → [Engineer › Finish › "
-                "Failure](#finish)."
+                "One failing: during [Engineer › Finish › Done](#finish) → "
+                "[Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on "
+                "[Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → "
+                "[Engineer › Finish › Failure](#finish)."
             ),
             merge,
         )

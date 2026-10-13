@@ -66,16 +66,15 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 def missing(keys):
     return (
-        f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml "
-        f"(linear-orchestrator/config.toml's `# local:` lines)"
+        f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's "
+        "`# local:` lines)"
     )
 
 
 def old_key(key):
     return (
-        f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}"
-        f": task-level config and default_task are gone; set run keys in "
-        f"[core.roles.researcher] (a run without a task picks one)"
+        f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
+        "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
     )
 
 
@@ -139,8 +138,8 @@ DEPLOYMENT = {
 }
 
 STEPS = (
-    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] "
-    "the topic\n2. **Write.** Write it.\n\n## Resume\n\nRedo step 2.\n"
+    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
+    "## Resume\n\nRedo step 2.\n"
 )
 
 
@@ -150,17 +149,19 @@ def git(*args):
     )
 
 
-IMPORT_ALONE = (
-    "import json, os, sys\nopened = []\nsys.addaudithook(lambda event, "
-    'args: event == "open" and opened.append(str(args[0])))\nfrom '
-    "agent_pm.linear_orchestrator.engine import config\nimport "
-    'agent_pm.session\nhome, front = os.environ["HOME"], '
-    'os.environ["AGENT_PM_PATH"]\nos.environ.update(HOME="/later", '
-    'AGENT_PM_PATH="/later/bin")\nprint(json.dumps({\n    "read": [p for p '
-    'in opened if p.endswith(".toml") or p.startswith(home)],\n    "kept": '
-    "sorted(k for k, v in vars(config).items() if isinstance(v, str) and "
-    '(home in v or front in v)),\n    "path": config.path(),\n}))\n'
-)
+IMPORT_ALONE = """import json, os, sys
+opened = []
+sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
+from agent_pm.linear_orchestrator.engine import config
+import agent_pm.session
+home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
+os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
+print(json.dumps({
+    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
+    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
+    "path": config.path(),
+}))
+"""
 
 ID = "TASK-12"
 
@@ -406,8 +407,8 @@ class ConfigurationLoading(ConfigFile, Case):
             (
                 body,
                 missing(
-                    "team, harness_key, task_label_group, states.todo, states.in_progress, "
-                    "states.in_review, states.handoff, states.done, states.canceled"
+                    "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
+                    "states.handoff, states.done, states.canceled"
                 ),
             ),
             (
@@ -461,8 +462,7 @@ class ConfigurationLoading(ConfigFile, Case):
             (
                 label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
                 (
-                    f"task_labels.light-research and task_labels.deep-research have the same"
-                    f" label id {LABEL1}"
+                    f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}"
                 ),
             ),
             ('logs_dir = "/x"\n' + BASE, "unknown keys: logs_dir"),
@@ -651,8 +651,7 @@ class ConfigurationLoading(ConfigFile, Case):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
         code = (
             "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "try:\n    config.load()\nexcept config.ConfigError as e:\n    "
-            "print(json.dumps([e.msg, e.logs_dir]))"
+            "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
         )
         res = subprocess.run(
             [*PY, "-c", code],
@@ -703,9 +702,8 @@ class CommittedConfiguration(Case):
             str(cm.exception),
             "linear-orchestrator/config.toml: "
             + missing(
-                "team, harness_key, task_label_group, states.todo, states.in_progress, "
-                "states.in_review, states.handoff, states.done, states.canceled, "
-                "roles.researcher.account, roles.pm.account, roles.engineer.account, "
+                "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
+                "states.done, states.canceled, roles.researcher.account, roles.pm.account, roles.engineer.account, "
                 "roles.researcher.key, roles.pm.key, roles.engineer.key"
             ),
         )
@@ -760,9 +758,8 @@ class TeamDirectoryIsolation(ConfigFile, Case):
         super().setUp()
         self.team = os.path.realpath(os.path.join(self.agent_pm, "team"))
         writer = (
-            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits "
-            "the input; unsure → `one-pager` (`<tasks>/one-pager.md`).\n\n- "
-            "`one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
+            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
+            "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
         )
         for rel, text in (
             ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
@@ -938,8 +935,7 @@ class ExecutablePath(Case):
                     "read": [],
                     "kept": [],
                     "path": (
-                        "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/"
-                        "bin:/bin"
+                        "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/bin:/bin"
                     ),
                 },
             )
@@ -1079,8 +1075,7 @@ class RunnableRoles(ConfigFile, Case):
                 (
                     text + f'[task_labels]\n{task} = "{LABEL1}"\n',
                     (
-                        f"task_labels.{task}"
-                        f" is not a task of a role in linear-orchestrator/config.toml"
+                        f"task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
                     ),
                 )
                 for task, text in (
@@ -1221,8 +1216,7 @@ class ConfigurationRoot(ConfigFile, Case):
             PIPELINE
             + (
                 '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
-                '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n'
-                '[core.roles.pm]\nlanguage = "French"\n'
+                '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n[core.roles.pm]\nlanguage = "French"\n'
             )
         )
         q = shlex.quote(self.root)
@@ -1249,8 +1243,7 @@ class ConfigurationRoot(ConfigFile, Case):
         write(
             os.path.join(self.agent_pm, "config.local.toml"),
             (
-                '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\n'
-                "status_line = true\n"
+                '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n'
             ),
         )
         cfg = self.load(PIPELINE)
@@ -1351,8 +1344,8 @@ class ConfigurationRoot(ConfigFile, Case):
 
     def test_docs_mismatch(self):
         message = (
-            "core: document roles must publish to one github.com repo and branch "
-            "(their [output] in ~/.agent-pm/config.local.toml)"
+            "core: document roles must publish to one github.com repo and branch (their [output] in "
+            "~/.agent-pm/config.local.toml)"
         )
         for design in (
             DESIGN.replace("acme/notes", "acme/other"),
@@ -1376,9 +1369,8 @@ class LocalOverlay(ConfigFile, Case):
             + f'[project_repos]\n"{P2}" = "ophis/y"\n'
         )
         cfg = self.load(
-            f'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = '
-            f'"pm"\nmax_runs = 3\n[project_repos]\n"{P1}'
-            f'" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
+            'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
+            f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
         )
         self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
         self.assertEqual(
@@ -1417,8 +1409,7 @@ class LocalOverlay(ConfigFile, Case):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
         self.fails(
             (
-                "linear-orchestrator/config.toml: states.done must be a Linear workflow"
-                " state id (UUID): 'Done'"
+                "linear-orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'"
             ),
             BASE,
         )

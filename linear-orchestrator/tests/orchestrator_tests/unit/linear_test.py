@@ -167,8 +167,7 @@ class RoleIds(Case):
         self.assertEqual(
             str(cm.exception),
             (
-                "linear-orchestrator/config.toml [roles.engineer]: account "
-                "'engineer@agents.test' not found in Linear"
+                "linear-orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear"
             ),
         )
 
@@ -212,8 +211,7 @@ class TeamCheck(Case):
         cases = {
             f"team {TEAM} not found in Linear": [],
             (
-                f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}"
-                f", done {STATES['done']}"
+                f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}, done {STATES['done']}"
             ): [team_node(other)],
         }
         for message, nodes in cases.items():
@@ -846,15 +844,13 @@ class Writes(Case):
         self.assertEqual(
             linear.M_SUBSCRIBE,
             (
-                "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail:"
-                " $e) { success } }"
+                "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }"
             ),
         )
         self.assertEqual(
             linear.M_COMMENT,
             (
-                "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: "
-                "$i, body: $b }) { success } }"
+                "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
             ),
         )
         self.assertEqual(
@@ -870,8 +866,7 @@ class Writes(Case):
         self.assertEqual(
             linear.M_STATE,
             (
-                "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { "
-                "stateId: $s }) { success } }"
+                "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }"
             ),
         )
         self.assertEqual(
@@ -880,8 +875,7 @@ class Writes(Case):
         self.assertEqual(
             linear.HISTORY,
             (
-                "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId "
-                "fromStateId toStateId } }"
+                "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId fromStateId toStateId } }"
             ),
         )
 

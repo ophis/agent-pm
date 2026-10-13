@@ -198,12 +198,7 @@ def listing(team: Team) -> str:
         config = composer.resolve(role, team=team)
         composer.render(config, LIST_PARAMS, team=team)
         lines.append(
-            f"{role}"
-            f"  "
-            f"{config.output['type']}"
-            f"  "
-            f"{team.source(composer.path_for(team, 'roles', role))}"
-            f"\n"
+            f"{role}  {config.output['type']}  {team.source(composer.path_for(team, 'roles', role))}\n"
         )
         lines += [
             f"  {t}: {what}  [{team.source(composer.path_for(team, 'tasks', t))}]\n"

@@ -183,8 +183,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
         return (
             None,
             (
-                f"Several task labels ({', '.join(n['name'] for n in found)}"
-                f"); keep one, then move the issue back to Todo."
+                f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
             ),
         )
     name = found[0]["name"]
@@ -193,8 +192,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
         return (
             None,
             (
-                f'Task label "{name}" is not in {config.LOCAL}'
-                f"'s [task_labels]. Fix the label, then move the issue back to Todo."
+                f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
             ),
         )
     if task not in role_tasks:
@@ -208,9 +206,8 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 def q_issues(fields=""):
     return (
         (
-            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id "
-            "identifier url priority createdAt updatedAt project { id name } "
-            "assignee { id email } "
+            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+            "updatedAt project { id name } assignee { id email } "
         )
         + fields
         + " } } }"
@@ -517,10 +514,7 @@ BRAKE_5H = 80
 
 BUSY = "another router is running"
 
-USAGE = (
-    "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router "
-    "[--now] [--dry-run] [--issue ID] | --brake ROLE"
-)
+USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 
 FLAGS = {"--dry-run": "dry", "--now": "now"}
 

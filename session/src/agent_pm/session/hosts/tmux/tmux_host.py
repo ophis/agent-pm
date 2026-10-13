@@ -128,11 +128,7 @@ GRID_WINDOW = (
     f"#{{{GRID_MANAGER}}}\t#{{{GRID_PER_COLUMN}}}\t#{{{GRID_PANES_SET}}}\t#{{{GRID_TILES}}}"
 )
 
-GRID_PANES = (
-    f"#{{window_id}}\t#{{"
-    f"{GRID_MANAGER}"
-    f"}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
-)
+GRID_PANES = f"#{{window_id}}\t#{{{GRID_MANAGER}}}\t#{{pane_id}}\t#{{pane_width}}\t#{{pane_height}}\t#{{socket_path}}"
 
 GRID_ROW = re.compile(r"(@[0-9]+)\t([^\t]*)\t(%[0-9]+)\t([0-9]+)\t([0-9]+)\t([^\t]+)")
 
@@ -154,26 +150,33 @@ LAYOUT_CELL = re.compile(r"([0-9]+)x([0-9]+),([0-9]+),([0-9]+)(?:,([0-9]+)|([{[]
 
 PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 
-APPLESCRIPT = (
-    "on run argv\n  set {splitDir, anchorKind, tmuxPath, sessionName} to "
-    "items 1 thru 4 of argv\n  set paneCommand to (quoted form of tmuxPath) "
-    '& " attach -t " & (quoted form of ("=" & sessionName))\n  if '
-    'application "iTerm2" is running then\n    tell application "iTerm2"\n   '
-    "   repeat with i from 5 to count of argv\n        set anchorValue to "
-    "item i of argv\n        repeat with w in windows\n          repeat with "
-    "t in tabs of w\n            repeat with s in sessions of t\n            "
-    '  if (anchorKind is "id" and unique id of s is anchorValue) or '
-    '(anchorKind is "tty" and tty of s is anchorValue) then\n                '
-    'if splitDir is "right" then\n                  tell s to set newSession '
-    "to split vertically with default profile command paneCommand\n          "
-    "      else\n                  tell s to set newSession to split "
-    "horizontally with default profile command paneCommand\n                "
-    'end if\n                return "ok " & (unique id of newSession)\n      '
-    "        end if\n            end repeat\n          end repeat\n        "
-    'end repeat\n      end repeat\n    end tell\n    return "no iTerm2 pane '
-    'shows the anchor"\n  end if\n  return "iTerm2 is not running"\nend '
-    "run"
-)
+APPLESCRIPT = """on run argv
+  set {splitDir, anchorKind, tmuxPath, sessionName} to items 1 thru 4 of argv
+  set paneCommand to (quoted form of tmuxPath) & " attach -t " & (quoted form of ("=" & sessionName))
+  if application "iTerm2" is running then
+    tell application "iTerm2"
+      repeat with i from 5 to count of argv
+        set anchorValue to item i of argv
+        repeat with w in windows
+          repeat with t in tabs of w
+            repeat with s in sessions of t
+              if (anchorKind is "id" and unique id of s is anchorValue) or (anchorKind is "tty" and tty of s is anchorValue) then
+                if splitDir is "right" then
+                  tell s to set newSession to split vertically with default profile command paneCommand
+                else
+                  tell s to set newSession to split horizontally with default profile command paneCommand
+                end if
+                return "ok " & (unique id of newSession)
+              end if
+            end repeat
+          end repeat
+        end repeat
+      end repeat
+    end tell
+    return "no iTerm2 pane shows the anchor"
+  end if
+  return "iTerm2 is not running"
+end run"""
 
 TERMINAL_KEYS = (
     "TMUX",
@@ -1161,14 +1164,8 @@ def tile(
         if len(times) > TILE_LIMIT:
             remove_grid(window, proc)
             line = (
-                f"tui: grid "
-                f"{window}"
-                f": auto re-tiling stopped: "
-                f"{len(times)}"
-                f" re-tiles in "
-                f"{TILE_WINDOW}"
-                f" s; the next worker that opens rebuilds "
-                f"it"
+                f"tui: grid {window}: auto re-tiling stopped: {len(times)} re-tiles in {TILE_WINDOW} s; the next "
+                "worker that opens rebuilds it"
             )
             with contextlib.suppress(TuiError):
                 call_tmux(["display-message", "-d", "10000", "-t", window, line], proc)
@@ -1873,9 +1870,8 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
         "--if-panes-changed",
         action="store_true",
         help=(
-            "lay out only when the window's panes are not those of its last tile "
-            "(open-close's hooks pass it: a drag or resize keeps the "
-            "layout)"
+            "lay out only when the window's panes are not those of its last tile (open-close's hooks "
+            "pass it: a drag or resize keeps the layout)"
         ),
     )
     p.add_argument("window", help="its id, @N")
@@ -1952,10 +1948,8 @@ def _show_options(p: argparse.ArgumentParser) -> None:
         choices=RETILES,
         default=RETILE,
         help=(
-            f"when the grid re-tiles by itself: "
-            f"{RETILE}"
-            f" (default) when a pane opens or closes; all also on a drag or a window "
-            f"resize; off never (tile @N)"
+            f"when the grid re-tiles by itself: {RETILE} (default) when a pane opens or closes; all also "
+            "on a drag or a window resize; off never (tile @N)"
         ),
     )
 

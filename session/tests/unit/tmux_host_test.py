@@ -541,9 +541,8 @@ class TileFixture(Case):
         "-t",
         "@3",
         (
-            "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t"
-            "#{window_layout}\t#{@grid-manager}\t#{@grid-per-column}\t"
-            "#{@grid-panes}\t#{@grid-tiles}"
+            "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
+            "#{@grid-per-column}\t#{@grid-panes}\t#{@grid-tiles}"
         ),
     ]
 
@@ -1617,11 +1616,7 @@ class ExecTest(Case):
         self.assertTrue(os.path.exists(self.path))
 
     def test_block_signals_stay_blocked_in_argv(self):
-        code = (
-            "import json, signal; "
-            "print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, "
-            "[]))))"
-        )
+        code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
         for extra, want in (
             ({}, set()),
             ({"block": [signal.SIGHUP, signal.SIGTERM]}, {signal.SIGHUP, signal.SIGTERM}),
@@ -2453,8 +2448,8 @@ class GridTreeTest(Case):
                 cycle,
                 ["%0", "%1", "%2", "%3", "%4"],
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39"
-                    "x12,121,0,3,39x11,121,13,4]},80x23,80,25,2]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39x12,121,0,3,39x11,121,13,4]},"
+                    "80x23,80,25,2]}"
                 ),
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2")],
             ),
@@ -2462,8 +2457,8 @@ class GridTreeTest(Case):
                 [*cycle, (6, "x", "a", "%5")],
                 ["%0", "%1", "%2", "%3", "%4", "%5"],
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39"
-                    "x8,121,0,3,39x7,121,9,4]},80x15,80,17,1,80x15,80,33,2]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39x8,121,0,3,39x7,121,9,4]},"
+                    "80x15,80,17,1,80x15,80,33,2]}"
                 ),
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2"), slot("%5")],
             ),
@@ -2478,8 +2473,7 @@ class GridTreeTest(Case):
             (
                 "main cell",
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,"
-                    "80x7,80,25,5],80x15,80,33,3]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}"
                 ),
                 [
                     (2, "w1", "mgr", "%1"),
@@ -2494,8 +2488,7 @@ class GridTreeTest(Case):
             (
                 "place by name",
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33"
-                    "[80x7,80,33,4,80x7,80,41,5]]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33[80x7,80,33,4,80x7,80,41,5]]}"
                 ),
                 [
                     (2, "engineer-1", "mgr", "%1"),
@@ -2510,8 +2503,8 @@ class GridTreeTest(Case):
             (
                 "sub cell",
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[3"
-                    "9x12,121,0,4,39x11,121,13,5],39x23,121,25,3]}}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,4,"
+                    "39x11,121,13,5],39x23,121,25,3]}}"
                 ),
                 [
                     (2, "w1", "mgr", "%1"),
@@ -2527,8 +2520,8 @@ class GridTreeTest(Case):
             (
                 "skipping a manual pane's cell",
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9"
-                    ",39x15,121,17[39x7,121,17,4,39x7,121,25,5]},80x15,80,33,3]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
+                    "39x7,121,25,5]},80x15,80,33,3]}"
                 ),
                 [
                     (2, "w1", "mgr", "%1"),
@@ -2830,25 +2823,23 @@ class GridLayoutTest(Case):
                 3,
                 4,
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,"
-                    "40x15,80,33,3],39x48,121,0,4}}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,40x15,80,33,3],"
+                    "39x48,121,0,4}}"
                 ),
             ),
             (
                 3,
                 7,
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,"
-                    "26x15,80,33,3],26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],"
-                    "26x48,134,0,7}}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,26x15,80,33,3],"
+                    "26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],26x48,134,0,7}}"
                 ),
             ),
             (
                 2,
                 3,
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2]"
-                    ",39x48,121,0,3}}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2],39x48,121,0,3}}"
                 ),
             ),
         ):
@@ -2911,9 +2902,8 @@ class GridLayoutTest(Case):
                 "a grandchild halves the child's cell",
                 [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")],
                 (
-                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2"
-                    ",39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},8"
-                    "0x15,80,33,5]}"
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
+                    "39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},80x15,80,33,5]}"
                 ),
             ),
             (
@@ -4541,10 +4531,7 @@ class TileApplicationTest(TileFixture):
     def test_swaps_and_select_layout_sent_muted_then_unmuted(self):
         # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second
         # column
-        layout = (
-            "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,"
-            "17,2,80x15,80,33,3]}"
-        )
+        layout = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
         fake = self.tile(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3)
         self.assertEqual(
             fake.calls,
@@ -4735,8 +4722,7 @@ class TileApplicationTest(TileFixture):
                 [("$2", "w1", "old2", "%1"), ("$3", "w2", "old1", "%2"), ("$4", "w3", "w2", "%3")],
                 ("%2", "%3"),
                 (
-                    "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151"
-                    ",0,3},100x24,100,26,1]}"
+                    "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151,0,3},100x24,100,26,1]}"
                 ),
             ),
         ):
@@ -4768,10 +4754,7 @@ class TileApplicationTest(TileFixture):
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
-        split = (
-            "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,"
-            "17,2,80x15,80,33,3]}"
-        )
+        split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
         for layout, panes, zoomed, want, reads in (
             (
                 split,
@@ -4856,8 +4839,8 @@ class TileApplicationTest(TileFixture):
 
     def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
         layout = dump(
-            "116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x"
-            "3,52,4{32x3,52,4,4,31x3,85,4,5},64x3,52,8{32x3,52,8,6,31x3,85,8,2}]}"
+            "116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x3,52,4{32x3,52,4,4,"
+            "31x3,85,4,5},64x3,52,8{32x3,52,8,6,31x3,85,8,2}]}"
         )
         rows = [
             ("$2", "w1", "mgr", "%1"),
@@ -4936,8 +4919,7 @@ class TileApplicationTest(TileFixture):
                     "-t",
                     "@3",
                     (
-                        "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,1"
-                        "21,0,3},80x23,80,25,2]}"
+                        "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0,3},80x23,80,25,2]}"
                     ),
                 ]
             ),
@@ -5103,10 +5085,7 @@ class TileCoordinationTest(TileFixture):
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
         self.assertEqual((tmux_model.TILE_LIMIT, tmux_model.TILE_WINDOW), (50, 10))
-        line = (
-            "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next "
-            "worker that opens rebuilds it"
-        )
+        line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
         recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
             with self.subTest(message=message):

@@ -251,10 +251,7 @@ class TuiTest(Base):
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        screen = (
-            "■ You hit your spend cap set by the owner\n  of your workspace. Try "
-            "again at Jan\n  2nd, 2027 3:04 AM.\n› "
-        )
+        screen = "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› "
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
 
     def test_dialogs_preserve_main_worker_cases(self):
@@ -276,8 +273,7 @@ class TuiTest(Base):
         run = self.adapter.tui()
         for screen in (
             (
-                "Codex > gpt-test • You have asked me to quote this error. • You've hit"
-                " your usage limit. is a quoted example › "
+                "Codex > gpt-test • You have asked me to quote this error. • You've hit your usage limit. is a quoted example › "
             ),
             "• You've hit your usage limit. is a quoted example\n› ",
             "You've hit your usage limit. is a quoted example",

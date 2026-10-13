@@ -328,9 +328,10 @@ class PayloadTest(HookBase):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                'def on_hook(label, payload, state):\n    payload["original_length"] = '
-                'len(payload.get("text", ""))\n    return label != '
-                '"ask"\n'
+                """def on_hook(label, payload, state):
+    payload["original_length"] = len(payload.get("text", ""))
+    return label != "ask"
+"""
             )
         self.state["adapter_hook"] = callback
         write_state(self.dir, self.state)

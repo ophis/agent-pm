@@ -408,9 +408,8 @@ class RunExecution(Case):
                 bad_config,
                 {},
                 (
-                    "linear-orchestrator/config.toml: required, unset: harness_key: set "
-                    "them in ~/.agent-pm/config.local.toml "
-                    "(linear-orchestrator/config.toml's `# local:` lines)"
+                    "linear-orchestrator/config.toml: required, unset: harness_key: set them in "
+                    "~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's `# local:` lines)"
                 ),
             ),
         ]  # last: it changes the config
@@ -439,8 +438,7 @@ class RunExecution(Case):
         self.assertEqual(
             self.err,
             (
-                "linear-orchestrator/config.toml: work_dir must be a printable absolute"
-                " or ~ path: 'w'\n"
+                "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n"
             ),
         )
         self.nothing_ran()
@@ -612,8 +610,7 @@ class RunUsageLimits(Case):
                 f"run end TASK-7 sid={SID} exit=-9",
                 f"writeback step TASK-7 sid={SID} step=limit",
                 (
-                    f"run run-error TASK-7 error=IsADirectoryError: [Errno 21] Is a directory: '"
-                    f"{self.runs}'"
+                    f"run run-error TASK-7 error=IsADirectoryError: [Errno 21] Is a directory: '{self.runs}'"
                 ),
             ],
         )

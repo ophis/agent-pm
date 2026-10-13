@@ -29,9 +29,8 @@ from session.tests.modules import module_slot
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 MISSING = (
-    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import "
-    "agent_pm.session.adapters.{n}: No module named "
-    "'agent_pm.session.adapters.{n}'"
+    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
+    "No module named 'agent_pm.session.adapters.{n}'"
 )
 
 
@@ -160,11 +159,7 @@ class ConfigureTest(Base):
 
 
 class SettingsTest(Base):
-    TWO = (
-        '[hosts]\ndefault = "a"\n[hosts.a]\nimplementation = '
-        '"pkg.mod:AHost"\n[hosts.b]\nimplementation = '
-        '"p.b:B"\n'
-    )
+    TWO = '[hosts]\ndefault = "a"\n[hosts.a]\nimplementation = "pkg.mod:AHost"\n[hosts.b]\nimplementation = "p.b:B"\n'
 
     def test_the_adapters_hosts_and_default_of_a_read_config(self):
         config = tomllib.loads(self.TWO + FAKE)
@@ -339,8 +334,8 @@ class AdapterTest(Base):
                     self.driver.registry.adapter("broken")
                 self.assertTrue(
                     str(caught.exception).startswith(
-                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: "
-                        f"cannot import agent_pm.session.adapters.broken: {shown}"
+                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
+                        f"agent_pm.session.adapters.broken: {shown}"
                     ),
                     caught.exception,
                 )
@@ -350,8 +345,8 @@ class AdapterTest(Base):
         self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
         self.refused(
             (
-                "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: "
-                "agent_pm.session.adapters.empty has no EmptyAdapter"
+                "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
+                "no EmptyAdapter"
             ),
             lambda: self.driver.registry.adapter("empty"),
         )
@@ -363,8 +358,7 @@ class AdapterTest(Base):
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused(
                     (
-                        "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a "
-                        "concrete Adapter subclass"
+                        "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass"
                     ),
                     lambda: self.driver.registry.adapter("odd"),
                 )

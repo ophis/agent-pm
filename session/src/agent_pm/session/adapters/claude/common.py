@@ -115,9 +115,8 @@ class ClaudeCommon:
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
     NOTE = (
-        "Pre-approved commands match on their exact text and each shell call starts "
-        "fresh, so anything else waits on a permission "
-        "prompt."
+        "Pre-approved commands match on their exact text and each shell call starts fresh, so anything else waits "
+        "on a permission prompt."
     )
     PROBE = (
         "claude",

@@ -101,10 +101,7 @@ LIGHT, DEEP, STRAY, ORPHAN_LABEL = (
     f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24)
 )
 
-TASK_LABELS = (
-    f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}'
-    f'"\nproduct-design = "{ORPHAN_LABEL}"\n'
-)
+TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
 
 RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
@@ -718,9 +715,8 @@ class OuterBase(TickBase):
 
 class TaskLabelsScenario(Base):
     ORPHAN = (
-        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, '
-        "light-research). Fix the label or the assignee, then move the issue "
-        "back to Todo."
+        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
+        "Fix the label or the assignee, then move the issue back to Todo."
     )
 
     def setUp(self):
@@ -1134,8 +1130,7 @@ class IssueBlockers(Base):
             self.assertEqual(len(reads["Todo"]), 1, argv)
             self.assertIn(
                 (
-                    "inverseRelations(first: 50) { nodes { type issue { identifier state { "
-                    "type } } } }"
+                    "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
                 ),
                 reads["Todo"][0],
                 argv,
@@ -1325,8 +1320,7 @@ class RouterEntry(OuterBase):
             (self.err, self.said()),
             (
                 (
-                    "linear-orchestrator/config.toml: work_dir must be a printable absolute"
-                    " or ~ path: 'w'\n"
+                    "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n"
                 ),
                 [],
             ),
@@ -1383,8 +1377,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router "
-            "[--now] [--dry-run] [--issue ID] | --brake ROLE",
+            "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
@@ -1897,10 +1890,7 @@ class TaskSelection(TaskLabelsScenario):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = (
-            "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the "
-            "label, then move the issue back to Todo."
-        )
+        absent = "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
         cases = (
             ([], (None, None)),
             (outside, (None, None)),
@@ -1915,8 +1905,7 @@ class TaskSelection(TaskLabelsScenario):
                 (
                     None,
                     (
-                        f"""Task label "Orphan" is not one of researcher's tasks (deep-research, """
-                        f"light-research). {fix}"
+                        f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}'
                     ),
                 ),
             ),
@@ -1925,8 +1914,7 @@ class TaskSelection(TaskLabelsScenario):
                 (
                     None,
                     (
-                        "Several task labels (Light Research, Deep Research); keep one, then "
-                        "move the issue back to Todo."
+                        "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo."
                     ),
                 ),
             ),
@@ -2238,8 +2226,7 @@ class ScheduledTaskSelection(TickBase):
             self.said(),
             [
                 (
-                    "recover TASK-1 to=in_review reason=role (researcher) is not the "
-                    "assignee's (engineer)"
+                    "recover TASK-1 to=in_review reason=role (researcher) is not the assignee's (engineer)"
                 )
             ],
         )
@@ -2494,9 +2481,8 @@ class RunLaunching(OuterBase):
                             {
                                 "i": UUID,
                                 "b": (
-                                    f"Question: repo check failed: {reason}"
-                                    f". Fix the description's `Repo:` line, then move this"
-                                    f" issue back to Todo."
+                                    f"Question: repo check failed: {reason}. Fix the description's "
+                                    "`Repo:` line, then move this issue back to Todo."
                                 ),
                             },
                         ),
@@ -2563,8 +2549,7 @@ class RunLaunching(OuterBase):
             (
                 [
                     (
-                        f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] "
-                        f"File exists: '{self.rd}'"
+                        f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"
                     )
                 ],
                 "",
@@ -2653,13 +2638,11 @@ class ExplicitIssueRuns(TickBase):
                 issue("TASK-1", "In Progress", "researcher"),
                 lambda: self.resumable("TASK-1", "a", 60, "engineer"),
                 (
-                    "recover TASK-1 to=in_review reason=role (engineer) is not the "
-                    "assignee's (researcher)"
+                    "recover TASK-1 to=in_review reason=role (engineer) is not the assignee's (researcher)"
                 ),
                 "In Review",
                 (
-                    "The interrupted agent run's role (engineer) is not the assignee's "
-                    "(researcher); needs a look."
+                    "The interrupted agent run's role (engineer) is not the assignee's (researcher); needs a look."
                 ),
             ),
             (

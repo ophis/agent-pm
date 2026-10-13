@@ -75,12 +75,10 @@ def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
 
 
 HANDOFF = (
-    f"Handoff from ENG-3: {URL}"
-    f"\n\n## Source\n- Spec: https://github.com/o/r/blob/main/a.md\n- Plan: "
-    f"https://github.com/o/r/blob/main/b.md\n\n## Instructions\nAnn, "
-    f"2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:"
-    f"\nAlso this.\n\n## Comments\n- Ann, 2026-09-01T00:00:00.000Z:\n  > "
-    f"hello\n  > ## Source\n"
+    f"Handoff from ENG-3: {URL}\n\n"
+    "## Source\n- Spec: https://github.com/o/r/blob/main/a.md\n- Plan: https://github.com/o/r/blob/main/b.md\n\n"
+    "## Instructions\nAnn, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this.\n\n"
+    "## Comments\n- Ann, 2026-09-01T00:00:00.000Z:\n  > hello\n  > ## Source\n"
 )
 
 
@@ -224,10 +222,7 @@ class ReadIssue(Case):
 
 class ParseHandoff(Case):
     def test_sections(self):
-        inner = (
-            "Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n"
-            "## Comments\nnor this\n\nMore."
-        )
+        inner = "Bob, t:\nFirst.\n## Source\nnot a header\n## Instructions\nnor this\n## Comments\nnor this\n\nMore."
         inside = (
             "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments\n",
             "- Ann, t:\n  > x\n- Bob, t:\n  > ## Comments",
@@ -237,8 +232,7 @@ class ParseHandoff(Case):
                 "full",
                 HANDOFF,
                 (
-                    "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, "
-                    "2026-09-01T01:00:00.000Z:\nAlso this."
+                    "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this."
                 ),
                 "- Ann, 2026-09-01T00:00:00.000Z:\n  > hello\n  > ## Source",
             ),
@@ -280,8 +274,7 @@ class ParseHandoff(Case):
             (
                 "crlf",
                 (
-                    f"Handoff from ENG-3: {URL}"
-                    f"\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n"
+                    f"Handoff from ENG-3: {URL}\r\n\r\n## Source\r\n- A: u\r\n\r\n## Instructions\r\nGo.\r\n"
                 ),
                 "Go.",
                 "",
@@ -417,8 +410,7 @@ class Brief(Case):
             (
                 HANDOFF,
                 (
-                    "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, "
-                    "2026-09-01T01:00:00.000Z:\nAlso this."
+                    "Ann, 2026-09-01T00:00:00.000Z:\nBuild it.\n\nBob, 2026-09-01T01:00:00.000Z:\nAlso this."
                 ),
             ),
             (f"Handoff from ENG-3: {URL}", ""),

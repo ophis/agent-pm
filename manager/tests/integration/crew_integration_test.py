@@ -404,8 +404,7 @@ class RosterLive(Live):
         h = self.roster()["holder"]
         self.assertEqual(h["session"], holder)
         return (
-            f"workers: manager directory {self.directory}: held by tmux session {holder} "
-            f"since {h['since']}; ask "
+            f"workers: manager directory {self.directory}: held by tmux session {holder} since {h['since']}; ask "
             "that manager to run crew.py release, or end that session\n"
         )
 
@@ -693,8 +692,7 @@ class RuntimeTest(Live):
             (
                 1,
                 "",
-                f"workers: Codex tui writable root {workers} could rewrite "
-                f"hook dependency {workers}\n",
+                f"workers: Codex tui writable root {workers} could rewrite hook dependency {workers}\n",
             ),
         )
         self.assertTrue(self.gone("w1"))
@@ -946,10 +944,7 @@ class RosterRecoveryTest(RosterLive):
         self.assertTrue(has_pair(self.calls("w1")[-1]["argv"], "--resume", sid))
         self.grid([["w1"]])
         pane = self.server.pane_of("w1")
-        table = (
-            f"{monitor.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}"
-            f"\tshown in {MANAGER}\n"
-        )
+        table = f"{monitor.HEADER}\nw1\tworker\t{sid}\tworking\t-\t{self.cwd}\t{pane}\tshown in {MANAGER}\n"
         out = self.attach().stdout
         self.assertEqual(out[: len(table)], table, out)
         self.assertEqual(list(self.roster()["entries"]), ["w1"])

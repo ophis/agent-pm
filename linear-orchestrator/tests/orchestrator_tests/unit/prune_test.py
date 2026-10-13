@@ -406,20 +406,16 @@ class RepositoryCleanup(PruneScenario):
             out.splitlines(),
             [
                 (
-                    "prune-skip entry=TASK-48/src/o/repo reason=not a real directory inside"
-                    " TASK-48/src/o/, refusing to touch"
+                    "prune-skip entry=TASK-48/src/o/repo reason=not a real directory inside TASK-48/src/o/, refusing to touch"
                 ),
                 (
-                    "prune-skip entry=TASK-49/src/file reason=not a real directory inside "
-                    "TASK-49/src/, refusing to touch"
+                    "prune-skip entry=TASK-49/src/file reason=not a real directory inside TASK-49/src/, refusing to touch"
                 ),
                 (
-                    "prune-skip entry=TASK-49/src/link reason=not a real directory inside "
-                    "TASK-49/src/, refusing to touch"
+                    "prune-skip entry=TASK-49/src/link reason=not a real directory inside TASK-49/src/, refusing to touch"
                 ),
                 (
-                    "prune-skip entry=TASK-49/publish reason=not a real directory inside "
-                    "TASK-49/, refusing to touch"
+                    "prune-skip entry=TASK-49/publish reason=not a real directory inside TASK-49/, refusing to touch"
                 ),
             ],
         )
@@ -483,16 +479,13 @@ class RepositoryCleanup(PruneScenario):
             out.splitlines(),
             [
                 (
-                    "prune-skip entry=TASK-48/src/o/file reason=not a real directory inside"
-                    " TASK-48/src/o/, refusing to touch"
+                    "prune-skip entry=TASK-48/src/o/file reason=not a real directory inside TASK-48/src/o/, refusing to touch"
                 ),
                 (
-                    "prune-skip entry=TASK-48/src/o/n reason=not a real directory inside "
-                    "TASK-48/src/o/, refusing to touch"
+                    "prune-skip entry=TASK-48/src/o/n reason=not a real directory inside TASK-48/src/o/, refusing to touch"
                 ),
                 (
-                    "prune-skip entry=TASK-49/src/o reason=not a real directory inside "
-                    "TASK-49/src/, refusing to touch"
+                    "prune-skip entry=TASK-49/src/o reason=not a real directory inside TASK-49/src/, refusing to touch"
                 ),
             ],
         )
@@ -545,8 +538,7 @@ class RepositoryCleanup(PruneScenario):
                 0,
                 [
                     (
-                        "prune-skip entry=TASK-49/tmp reason=not a real directory inside "
-                        "TASK-49/, refusing to touch"
+                        "prune-skip entry=TASK-49/tmp reason=not a real directory inside TASK-49/, refusing to touch"
                     )
                 ],
             ),
@@ -713,8 +705,7 @@ class RetentionCleanup(PruneScenario):
                 [
                     "prune-plan entry=TASK-49/src/o/n what=delete the worktree",
                     (
-                        f"prune-plan TASK-49 what=prune {clone}"
-                        f"'s worktree records and pushed TASK-49-* branches"
+                        f"prune-plan TASK-49 what=prune {clone}'s worktree records and pushed TASK-49-* branches"
                     ),
                 ],
             ),

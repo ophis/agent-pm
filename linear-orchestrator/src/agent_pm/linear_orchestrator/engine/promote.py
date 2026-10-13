@@ -24,34 +24,27 @@ from agent_pm.linear_orchestrator.linear.linear import (
     team,
 )
 
-HELP = (
-    "Promote issues in Handoff to the next role.\n\nFor each Handoff issue "
-    "in a project, assigned to a role account whose [roles.<role>] in "
-    "linear-orchestrator/config.toml has a next:\ncreate that role's issue "
-    "in the same project, assigned to its account, in Todo with the source "
-    "links and the\nhuman instructions, relate it, and move the source to "
-    "Done.\n--dry-run   Change nothing; print what would happen.\n--now"
-    "       Skip the 10-minute wait in Handoff (for a manual run).\nNeeds "
-    "Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, "
-    "src promote); an idle run writes none; a\nconfig error or Linear "
-    "unavailable exits 1, logged once a day (linear.config_error, "
-    "linear.linear_error).\n\nAt the end of every tick, prune.py's Pruner "
-    "removes the worktrees and clones of finished issues (TASK-49), closes"
-    "\ntheir left-open TUI sessions and archives finished pm and engineer "
-    "issues; a prune failure is logged and never breaks\nthe Handoff work."
-    "\n"
-)
+HELP = """Promote issues in Handoff to the next role.
+
+For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in linear-orchestrator/config.toml has a next:
+create that role's issue in the same project, assigned to its account, in Todo with the source links and the
+human instructions, relate it, and move the source to Done.
+--dry-run   Change nothing; print what would happen.
+--now       Skip the 10-minute wait in Handoff (for a manual run).
+Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
+config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
+
+At the end of every tick, prune.py's Pruner removes the worktrees and clones of finished issues (TASK-49), closes
+their left-open TUI sessions and archives finished pm and engineer issues; a prune failure is logged and never breaks
+the Handoff work.
+"""
 GRACE = timedelta(hours=1)
 MATURE = timedelta(minutes=10)
 NO_INSTRUCTIONS = "Handoff needs a comment saying what to build next. Moving back to In Review."
 
-Q_HANDOFF = (
-    "query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: "
-    "$t } }, state: { id: { eq: $s } },\n  project: { null: false }, "
-    "assignee: { id: { in: $a } } }, first: 100) {\n  nodes { id identifier"
-    " url title priority createdAt project { id name } assignee { id } "
-    "attachments { nodes { title url } } } } }"
-)
+Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: { eq: $t } }, state: { id: { eq: $s } },
+  project: { null: false }, assignee: { id: { in: $a } } }, first: 100) {
+  nodes { id identifier url title priority createdAt project { id name } assignee { id } attachments { nodes { title url } } } } }"""
 Q_DETAIL = (
     """query($i: String!) { issue(id: $i) { state { id }
   """
@@ -61,14 +54,8 @@ Q_DETAIL = (
   relations(first: 250) { nodes { relatedIssue { id } } }
   inverseRelations(first: 250) { nodes { issue { id } } } } }"""
 )
-Q_CHILD = (
-    "query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: "
-    "true) { nodes { id identifier } } }"
-)
-M_CREATE = (
-    "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success "
-    "issue { id identifier } } }"
-)
+Q_CHILD = """query($c: ID!) { issues(filter: { id: { eq: $c } }, includeArchived: true) { nodes { id identifier } } }"""
+M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success issue { id identifier } } }"
 M_RELATE = (
     "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
 )

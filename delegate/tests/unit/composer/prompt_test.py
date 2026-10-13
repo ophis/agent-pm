@@ -32,9 +32,8 @@ from delegate.tests.unit.composer.teams import FILES, INTRO, POET, RUN_CONFIG, V
 
 TEXTS = {
     "guide.md": (
-        "# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in "
-        "`<tasks>`.\n\nOn conflict: [Principles](#principles) > [{{role}} "
-        "rules](#{{role_anchor}}) > your task's.\n"
+        "# Guide\n\nYou are {{role}}. Task: {{task|pick one}}; files in `<tasks>`.\n\n"
+        "On conflict: [Principles](#principles) > [{{role}} rules](#{{role_anchor}}) > your task's.\n"
     ),
     "principles.md": "# Principles\n",
     "output/output.md": "# Output\n\nWrite `Output:`.\n",
@@ -228,9 +227,8 @@ class Methods(Case):
                 self.assertEqual(len(rule(text, name)), 1, f"{m}: {name}")
             self.assertTrue(
                 rule(text, "Pipeline")[0].startswith(
-                    "- **Pipeline**: ≤ 10 subagents running at once. Each result of a "
-                    "stage goes to the next stage as soon as it arrives, never in "
-                    "batches;"
+                    "- **Pipeline**: ≤ 10 subagents running at once. Each result of a stage goes to the next stage as soon "
+                    "as it arrives, never in batches;"
                 ),
                 m,
             )
@@ -299,10 +297,7 @@ class Methods(Case):
                 self.assertNotIn(phrase, method("deep-research"))
 
     def test_private_detail_has_its_home_in_the_researcher_charter(self):
-        home = (
-            "with no **private detail** in queries: internal names, paths, "
-            "permalinks, private repo names, "
-        )
+        home = "with no **private detail** in queries: internal names, paths, permalinks, private repo names, "
         with open(os.path.join(TEAM, "roles", "researcher.md")) as f:
             self.assertIn(home, f.read())
         link = "private detail ([Researcher › Type and target › Agents](#type-and-target))"
@@ -416,15 +411,13 @@ class Prompt(Fake):
         self.assertEqual(OUTCOME, "agent-pm-outcome")
         for literal in (
             (
-                "at each `[agent-pm-progress:<name>] …` line in your steps, before calling "
-                "the next tool, write that line in a reply as a line of its own, outside "
-                "any code block"
+                "at each `[agent-pm-progress:<name>] …` line in your steps, before calling the next tool, "
+                "write that line in a reply as a line of its own, outside any code block"
             ),
             "`[agent-pm-progress:start] <what that line asks you to report>`",
             "all background work and every agent you spawned have finished",
             (
-                "end your last reply with one fenced code block whose info string is "
-                "`agent-pm-outcome`"
+                "end your last reply with one fenced code block whose info string is `agent-pm-outcome`"
             ),
             "one JSON object of the fields in [Output](#output)",
             "`deliverable_file`",
@@ -479,9 +472,8 @@ class Prompt(Fake):
     ):
         self.assertIn(
             (
-                "Continue the task this session already picked or was given, following "
-                "your task file's `## Resume` section; never pick it "
-                "again."
+                "Continue the task this session already picked or was given, following your task file's "
+                "`## Resume` section; never pick it again."
             ),
             RESUME,
         )

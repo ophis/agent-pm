@@ -14,10 +14,7 @@ class Marks(Case):
         self.assertEqual(marks(text), [("start", "first build of the PRD")])
 
     def test_a_mark_and_an_outcome_block_are_one_mark_and_the_block(self):
-        text = (
-            '[agent-pm-progress:start] the build\nDone.\n```agent-pm-outcome\n{"stat'
-            'us": "done"}\n```\n'
-        )
+        text = '[agent-pm-progress:start] the build\nDone.\n```agent-pm-outcome\n{"status": "done"}\n```\n'
         self.assertEqual(marks(text), [("start", "the build")])
         self.assertEqual(outcome_block(text), '{"status": "done"}')
 
@@ -32,10 +29,7 @@ class Marks(Case):
                 self.assertEqual(marks(text), [])
 
     def test_a_bullet_or_leading_whitespace_is_accepted(self):
-        text = (
-            "- [agent-pm-progress:a] one\n* [agent-pm-progress:b] two\n   "
-            "[agent-pm-progress:c] three"
-        )
+        text = "- [agent-pm-progress:a] one\n* [agent-pm-progress:b] two\n   [agent-pm-progress:c] three"
         self.assertEqual(marks(text), [("a", "one"), ("b", "two"), ("c", "three")])
 
     def test_a_mark_not_at_the_line_start_is_none(self):
@@ -70,10 +64,7 @@ class Marks(Case):
         )
 
     def test_several_marks_in_order(self):
-        text = (
-            "[agent-pm-progress:start] a\nx\n[agent-pm-progress:step] "
-            "b\n[agent-pm-progress:start] c"
-        )
+        text = "[agent-pm-progress:start] a\nx\n[agent-pm-progress:step] b\n[agent-pm-progress:start] c"
         self.assertEqual(marks(text), [("start", "a"), ("step", "b"), ("start", "c")])
 
     def test_no_text_is_no_mark(self):

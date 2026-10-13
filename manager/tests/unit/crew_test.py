@@ -456,8 +456,7 @@ class RosterCase(CrewCase):
 
     def held(self):
         return (
-            f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; "
-            "ask that manager to "
+            f"workers: manager directory {self.mdir}: held by tmux session other since {WHEN}; ask that manager to "
             "run crew.py release, or end that session\n"
         )
 
@@ -572,8 +571,7 @@ class MainTest(WorkerCase):
         self.assertEqual(
             [x for x in err.splitlines() if not x.startswith("tui: ")],
             [
-                f"manager: entry w1 not written: entry: resume: {resume!r}: "
-                "want a list of 2 or more "
+                f"manager: entry w1 not written: entry: resume: {resume!r}: want a list of 2 or more "
                 "printable strings"
             ],
         )
@@ -885,8 +883,7 @@ class ManagerDirTest(CrewCase):
                     (
                         1,
                         [
-                            f"workers: manager directory {self.managers}: "
-                            "not a directory owned by you"
+                            f"workers: manager directory {self.managers}: not a directory owned by you"
                         ],
                         None,
                     ),
@@ -2455,8 +2452,7 @@ class RestartTest(WorkerCase):
         with contextlib.redirect_stderr(err):
             crew.restart("w1", own=None, driver=self.api)
         self.assertIn(
-            f"manager: entry w1 not written: manager directory {self.directory}: "
-            "held by tmux session "
+            f"manager: entry w1 not written: manager directory {self.directory}: held by tmux session "
             f"other since {WHEN}; ask that manager to run crew.py release, or end that session\n",
             err.getvalue(),
         )
@@ -2770,8 +2766,7 @@ class StartTest(WorkerCase):
         for kw, msg in (
             (
                 {"directory": os.path.join(self.dir, "m9")},
-                f"manager directory {os.path.join(self.dir, 'm9')} not attached: "
-                "run crew.py attach first",
+                f"manager directory {os.path.join(self.dir, 'm9')} not attached: run crew.py attach first",
             ),
             ({"cwd": nope}, f"--cwd {nope}: not a directory"),
         ):

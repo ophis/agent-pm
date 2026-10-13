@@ -48,10 +48,7 @@ PLAN_TEXT = "# Plan\n\nRESUME: phase=2\n\n- [ ] task 1\n"
 
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 
-APPROVE = (
-    "**🔴 To approve, move this issue to Handoff with a comment `Repo: "
-    "<owner>/<name>` naming the target repo.**"
-)
+APPROVE = "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
 
 NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 
@@ -534,8 +531,8 @@ class IssueBounce(Base):
             gql.calls[-3:],
             [
                 comment(
-                    self.question("r") + "\n\nCould not subscribe ann@example.com: "
-                    "LinearError: issueSubscribe: success: false"
+                    self.question("r")
+                    + "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
                 ),
                 reread(),
                 move("in_review"),
@@ -694,8 +691,7 @@ class UsageLimitReporting(Base):
             post(
                 "limit",
                 (
-                    "Usage limit, reset time unknown.\n\nCould not subscribe "
-                    "ann@example.com: LinearError: issueSubscribe: success: false"
+                    "Usage limit, reset time unknown.\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
                 ),
             ),
         )
@@ -866,10 +862,7 @@ class CompletionSteps(Base):
                 ),
             )
         )
-        body = (
-            "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: "
-            "LinearError: linear api error: body too long"
-        )
+        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: LinearError: linear api error: body too long"
         self.assertEqual(
             gql.calls,
             expect(
@@ -882,8 +875,7 @@ class CompletionSteps(Base):
         )
         self.assertIn(
             (
-                f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)}"
-                f" error=LinearError: linear api error: body too long"
+                f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=LinearError: linear api error: body too long"
             ),
             self.lines(),
         )
@@ -949,10 +941,7 @@ class OutcomeFiles(Base):
                 self.assertEqual(
                     [c for c in gql.calls if c[0] == "comment"], [post("comment", body)]
                 )
-                note = (
-                    f"Build failed: push not permitted\n\nCould not post the file `"
-                    f"{os.path.basename(path)}`: {reason}"
-                )
+                note = f"Build failed: push not permitted\n\nCould not post the file `{os.path.basename(path)}`: {reason}"
                 self.assertTrue(
                     body.startswith(note) if reason == "OSError: " else body == note, body
                 )
@@ -1046,15 +1035,13 @@ class ApprovalMessages(Base):
         self.assertEqual(
             writeback.M_TITLE,
             (
-                "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { "
-                "title: $t }) { success } }"
+                "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
             ),
         )
         self.assertEqual(
             writeback.M_ATTACH,
             (
-                "mutation($i: String!, $u: String!, $t: String) { "
-                "attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+                "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
             ),
         )
         self.assertEqual(

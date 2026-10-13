@@ -24,8 +24,7 @@ from agent_pm.utils import Display, Record
 
 def _later(method: str) -> NotImplementedError:
     return NotImplementedError(
-        f"Session.{method}: the session layer's own implementation comes with "
-        "HostedSession (TASK-365)"
+        f"Session.{method}: the session layer's own implementation comes with HostedSession (TASK-365)"
     )
 
 

@@ -273,8 +273,7 @@ class Segment(BoardExpectations):
         """
         if self.pending:
             self.fail(
-                f"a claim or resume of {ident} while {self.pending.ident}"
-                f"'s run is pending: agent_run() first"
+                f"a claim or resume of {ident} while {self.pending.ident}'s run is pending: agent_run() first"
             )
         self.n_gates += 1
         gate = os.path.join(self.root, f"gate-{self.n_gates}")
@@ -283,8 +282,7 @@ class Segment(BoardExpectations):
         res = self.router("--issue", ident)
         if res.returncode != 0:
             self.fail(
-                f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events "
-                f"{self.logged()[events:]}"
+                f"router.py exit {res.returncode}: {res.stderr.strip()!r}; events {self.logged()[events:]}"
             )
         added = self.runs()[lines:]
         self.assertEqual(len(added), 1, f"runs.jsonl lines added: {added}")
@@ -565,9 +563,8 @@ class Segment(BoardExpectations):
             runs.parse_log(os.path.join(self.logs, "runs.jsonl")),
         )
         return (
-            f"{routing.attempt_count(entries, ident, moved)}"
-            f" attempts since the human's move to Todo at {moved.isoformat()}"
-            f"; runs.jsonl at {[e.ts.isoformat() for e in entries]}"
+            f"{routing.attempt_count(entries, ident, moved)} attempts since the human's move to Todo at "
+            f"{moved.isoformat()}; runs.jsonl at {[e.ts.isoformat() for e in entries]}"
         )
 
     def prompt(self, ident, sid):
@@ -616,10 +613,7 @@ class Segment(BoardExpectations):
                 project=PROJECT,
                 description=RESEARCH[1],
             )
-            path = (
-                f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}"
-                f"-session-registries.md"
-            )
+            path = f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}-session-registries.md"
             report = {"url": self.doc_url(path), "title": RESEARCH[0]}
             self.publish(path, REPORT)
             with self.fake.lock:

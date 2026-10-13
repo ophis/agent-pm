@@ -51,25 +51,22 @@ MANAGER, SID, IDLE, WAIT, Stream = (
 TABLE = {
     "implementation": "adapters.claude:ClaudeAdapter",
 }
-TRUST = (
-    "Quick safety check: Is this a project you created or one you trust? 1."
-    " Yes, I trust this folder 2. No, exit"
-)
+TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
 RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first
 # TurnEnd, reply].
-ATTACH = (
-    "import json, sys\ntable, name, text = sys.argv[1:]\nfrom "
-    "agent_pm.session.engine import api\nfrom agent_pm.session import "
-    'Driver, TurnEnd\ndriver = Driver(adapters={"claude": '
-    'json.loads(table)}, hosts={"tmux": {"implementation": '
-    '"agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")\nhandle'
-    " = driver.attach(name)\nbefore = [handle.sid, handle.state(), "
-    "handle.reply, handle.info().native_id]\nhandle.send(text)\nevent = "
-    "next(e for e in handle.events() if isinstance(e, TurnEnd))\n"
-    "print(json.dumps([*before, repr(event), handle.reply]))\n"
-)
+ATTACH = """import json, sys
+table, name, text = sys.argv[1:]
+from agent_pm.session.engine import api
+from agent_pm.session import Driver, TurnEnd
+driver = Driver(adapters={"claude": json.loads(table)}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
+handle = driver.attach(name)
+before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]
+handle.send(text)
+event = next(e for e in handle.events() if isinstance(e, TurnEnd))
+print(json.dumps([*before, repr(event), handle.reply]))
+"""
 
 
 class Live(tui_live.Live):

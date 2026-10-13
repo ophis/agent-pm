@@ -419,8 +419,7 @@ class SettleTest(Live):
         )
         old = layout.render_layout(
             layout.parse_layout(
-                f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},"
-                f"99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
+                f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
             )
         )
         self.tmux("select-layout", "-t", self.window, old)
@@ -453,15 +452,7 @@ class SettleTest(Live):
         # even-vertical: even-horizontal of these three panes already is their grid
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         end = time.monotonic() + RETILE_WAIT
-        state = (
-            f"#{{"
-            f"{tmux_model.GRID_MANAGER}"
-            f"}}\t#{{"
-            f"{tmux_model.GRID_BUSY}"
-            f"}}\t#{{"
-            f"{tmux_model.GRID_TILES}"
-            f"}}"
-        )
+        state = f"#{{{tmux_model.GRID_MANAGER}}}\t#{{{tmux_model.GRID_BUSY}}}\t#{{{tmux_model.GRID_TILES}}}"
         while True:
             manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split(
                 "\t"
@@ -539,17 +530,8 @@ class SettleTest(Live):
                 elapsed,
                 BREAKER_TIMEOUT,
                 (
-                    f"still a grid after "
-                    f"{elapsed:.0f}"
-                    f" s: "
-                    f"{seen}"
-                    f" re-tiles seen, "
-                    f"{seen / elapsed:.1f}"
-                    f"/s; it trips past "
-                    f"{tmux_model.TILE_LIMIT}"
-                    f" in "
-                    f"{tmux_model.TILE_WINDOW}"
-                    f" s"
+                    f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
+                    f"trips past {tmux_model.TILE_LIMIT} in {tmux_model.TILE_WINDOW} s"
                 ),
             )
         # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one

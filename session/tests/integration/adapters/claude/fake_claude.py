@@ -162,8 +162,7 @@ def parse(argv: list[str]) -> argparse.Namespace:
     a = ap.parse_args(argv)
     if a.output_format != ("stream-json" if a.print else None):
         ap.error(
-            "this fake models -p with --output-format stream-json, and interactive "
-            "mode without either"
+            "this fake models -p with --output-format stream-json, and interactive mode without either"
         )
     if a.print and (not a.prompt):
         sys.exit("Error: no prompt")
