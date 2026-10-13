@@ -101,6 +101,12 @@ STANDALONE = frozenset(
 )
 
 
+NOQA_ALLOWED = {
+    (f"{SESSION_SRC}modes/headless.py", "BLE001"): "Forward failures to the caller thread.",
+    (f"{SESSION_SRC}modes/in_process.py", "BLE001"): "Forward failures to the caller thread.",
+}
+
+
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 
 
@@ -465,6 +471,43 @@ def layer_commands(repo: str) -> list[str]:
                         if not (scanned == SESSION_SRC and word == SESSION_COMMAND)
                     )
     return sorted(found)
+
+
+def source_suppressions(repo: str) -> list[str]:
+    """Source suppressions have an explicit rule, recorded reason and exactly one use."""
+    found, seen = [], set()
+    for project in PROJECTS:
+        for rel, text in _files(os.path.join(repo, project, "src"), (".py",)):
+            path = f"{project}/src/{rel}"
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type != tokenize.COMMENT or not re.search(
+                    r"#\s*(?:noqa\b|type\s*:\s*ignore\b)", token.string, re.I
+                ):
+                    continue
+                at = f"{path}:{token.start[0]}"
+                match = re.fullmatch(
+                    r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
+                    token.string,
+                    re.I,
+                )
+                if not match:
+                    found.append(f"{at}: suppression needs explicit codes and a recorded reason")
+                    continue
+                for code in re.split(r"\s*,\s*", match[1].upper()):
+                    key = (path, code)
+                    if key not in NOQA_ALLOWED:
+                        found.append(f"{at}: suppression {code} is not allowed")
+                    elif match[2] != NOQA_ALLOWED[key]:
+                        found.append(f"{at}: suppression {code} reason differs from NOQA_ALLOWED")
+                    elif key in seen:
+                        found.append(f"{at}: duplicate suppression {code}")
+                    else:
+                        seen.add(key)
+    found.extend(
+        f"{path}: suppression {code} has no matching comment"
+        for path, code in sorted(NOQA_ALLOWED.keys() - seen)
+    )
+    return found
 
 
 def standalone(repo: str) -> list[str]:

@@ -127,6 +127,106 @@ class EveryTest(Sample):
         )
 
 
+class SourceSuppressions(Sample):
+    def found(self, extra=None, *, replace=None):
+        files = {
+            path: f"value = 1  # noqa: {code}  # {reason}\n"
+            for (path, code), reason in guards.NOQA_ALLOWED.items()
+        }
+        files.update(extra or {})
+        if replace is not None:
+            files.pop(replace)
+        return guards.source_suppressions(self.tree(files))
+
+    def test_the_real_inventory_has_matching_comments(self):
+        self.assertEqual(guards.source_suppressions(REPO), [])
+
+    def test_strings_docstrings_and_unrelated_comments_are_ignored(self):
+        self.assertEqual(
+            self.found(
+                {
+                    f"{PKG}/utils/unused.py": "# noqa\n",
+                    "utils/src/agent_pm/utils/strings.py": (
+                        '"""Example: # noqa and # type: ignore."""\n'
+                        "value = '# noqa: F401'\n"
+                        "# Suppressions are checked elsewhere.\n"
+                    ),
+                }
+            ),
+            [],
+        )
+
+    def test_bare_noqa_empty_codes_and_missing_reasons_are_rejected(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        for comment in ("# noqa", "# noqa:", "# noqa: F401", "# noqa: BLE001"):
+            with self.subTest(comment):
+                self.assertEqual(
+                    self.found({path: f"value = 1  {comment}\n"}),
+                    [f"{path}:1: suppression needs explicit codes and a recorded reason"],
+                )
+
+    def test_type_ignores_are_rejected_with_or_without_codes(self):
+        path = "delegate/src/agent_pm/delegate/a.py"
+        for comment in ("# type: ignore", "# type: ignore[assignment]", "#type:ignore"):
+            with self.subTest(comment):
+                self.assertEqual(
+                    self.found({path: f"value = 1  {comment}\n"}),
+                    [f"{path}:1: suppression needs explicit codes and a recorded reason"],
+                )
+
+    def test_a_rule_in_the_wrong_file_is_rejected(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        self.assertEqual(
+            self.found({path: "value = 1  # noqa: BLE001  # Forward failures.\n"}),
+            [f"{path}:1: suppression BLE001 is not allowed"],
+        )
+
+    def test_compound_codes_cannot_hide_an_unlisted_rule(self):
+        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        self.assertEqual(
+            self.found({path: f"value = 1  # noqa: {code}, F401  # {reason}\n"}),
+            [f"{path}:1: suppression F401 is not allowed"],
+        )
+
+    def test_reason_must_match_the_inventory(self):
+        (path, code), _ = next(iter(guards.NOQA_ALLOWED.items()))
+        self.assertEqual(
+            self.found({path: f"value = 1  # noqa: {code}  # Different reason.\n"}),
+            [
+                f"{path}:1: suppression {code} reason differs from NOQA_ALLOWED",
+                f"{path}: suppression {code} has no matching comment",
+            ],
+        )
+
+    def test_each_inventory_entry_needs_a_comment(self):
+        path, code = next(iter(guards.NOQA_ALLOWED))
+        for files, replace in (({path: "value = 1\n"}, None), ({}, path)):
+            with self.subTest(replace=replace):
+                self.assertEqual(
+                    self.found(files, replace=replace),
+                    [f"{path}: suppression {code} has no matching comment"],
+                )
+
+    def test_duplicate_comments_cannot_reuse_an_entry(self):
+        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        comment = f"value = 1  # noqa: {code}  # {reason}\n"
+        self.assertEqual(
+            self.found({path: comment * 2}),
+            [f"{path}:2: duplicate suppression {code}"],
+        )
+
+    def test_whitespace_case_and_comment_only_lines_are_checked(self):
+        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        self.assertEqual(self.found({path: f"#  NOQA : {code.lower()} # {reason}\n"}), [])
+        self.assertEqual(
+            self.found({path: f"# noqa: {code} # {reason} # type: ignore\n"}),
+            [
+                f"{path}:1: suppression {code} reason differs from NOQA_ALLOWED",
+                f"{path}: suppression {code} has no matching comment",
+            ],
+        )
+
+
 class PrivateImports(Sample):
     def test_an_underscore_name_from_another_module(self):
         root = self.tree(

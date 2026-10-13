@@ -90,7 +90,7 @@ class HeadlessMode:
             with pipe:
                 for event in events:
                     self.items.put(event)
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             self.items.put(e)
         else:
             eof.set()

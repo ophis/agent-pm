@@ -38,7 +38,7 @@ class InProcessMode:
                         break
                     self.items.put(item)
             code = 0
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             lines = "".join(traceback.format_exception(e)).rstrip().split("\n")
             with self.lock:
                 if not self.stopped:
