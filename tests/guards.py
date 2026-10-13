@@ -628,15 +628,27 @@ def shared_types(repo: str) -> list[str]:
             for rel, text in _files(src, ".py")
         }
         data = {
-            f"{module}.{n.name}"
+            f"{module}.{node.name}"
             for module, (_, tree) in trees.items()
-            for n in tree.body
-            if isinstance(n, ast.ClassDef)
+            for bound in (_bindings(tree),)
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and _data_type(node, bound)
         }
         for module, (rel, tree) in trees.items():
             if not rel.endswith("__init__.py"):
                 found += _type_uses(project, rel, module, tree, data)
     return sorted(found)
+
+
+def _data_type(node, bound):
+    return any(
+        _dotted(decorator.func if isinstance(decorator, ast.Call) else decorator, bound)
+        == "dataclasses.dataclass"
+        for decorator in node.decorator_list
+    ) or any(
+        _dotted(base, bound) in {"typing.NamedTuple", "enum.Enum", "typing.TypedDict"}
+        for base in node.bases
+    )
 
 
 def _type_uses(project, rel, module, tree, data):
@@ -659,7 +671,7 @@ def _type_uses(project, rel, module, tree, data):
     used += [(n.lineno, _dotted(n, bound)) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
     return sorted(
         {
-            f"{project}/src/{rel}:{line}: {key}: a shared class belongs in a types.py"
+            f"{project}/src/{rel}:{line}: {key}: a shared data type belongs in a types.py"
             for line, key in used
             if key in data
             and (source := key.rpartition(".")[0]) != module

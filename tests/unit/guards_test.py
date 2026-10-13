@@ -233,7 +233,7 @@ class SharedTypes(Sample):
     def test_a_dataclass_another_module_imports_lives_in_a_types_py(self):
         self.assertEqual(
             self.found("a.py"),
-            [f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: a shared class belongs in a types.py"],
+            [f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: a shared data type belongs in a types.py"],
         )
         self.assertEqual(self.found("types.py"), [])
 
@@ -242,16 +242,16 @@ class SharedTypes(Sample):
             with self.subTest(user):
                 root = self.tree({f"{self.UTILS}/a.py": self.DATA, f"{self.UTILS}/b.py": user})
                 ((found,),) = [guards.shared_types(root)]
-                self.assertIn(": agent_pm.utils.a.A: a shared class", found)
+                self.assertIn(": agent_pm.utils.a.A: a shared data type", found)
 
     def test_a_package_re_export_is_clean(self):
         self.assertEqual(self.found("a.py", "__init__.py"), [])
 
-    def test_plain_namedtuple_and_enum_classes_are_counted(self):
+    def test_namedtuple_enum_and_typeddict_are_counted(self):
         for source in (
-            "class A:\n    pass\n",
             "from typing import NamedTuple\nclass A(NamedTuple):\n    value: int\n",
             "from enum import Enum\nclass A(Enum):\n    value = 1\n",
+            "from typing import TypedDict\nclass A(TypedDict):\n    value: int\n",
         ):
             with self.subTest(source=source):
                 root = self.tree(
@@ -264,9 +264,52 @@ class SharedTypes(Sample):
                     guards.shared_types(root),
                     [
                         f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: "
-                        "a shared class belongs in a types.py"
+                        "a shared data type belongs in a types.py"
                     ],
                 )
+
+    def test_data_type_import_aliases_and_qualified_names_are_counted(self):
+        for source in (
+            "from dataclasses import dataclass as dc\n@dc(frozen=True)\nclass A:\n    value: int\n",
+            "import dataclasses as dc\n@dc.dataclass\nclass A:\n    value: int\n",
+            "from typing import NamedTuple as NT\nclass A(NT):\n    value: int\n",
+            "import typing as t\nclass A(t.NamedTuple):\n    value: int\n",
+            "from enum import Enum as E\nclass A(E):\n    value = 1\n",
+            "import enum as e\nclass A(e.Enum):\n    value = 1\n",
+            "from typing import TypedDict as TD\nclass A(TD):\n    value: int\n",
+            "import typing as t\nclass A(t.TypedDict):\n    value: int\n",
+        ):
+            with self.subTest(source=source):
+                root = self.tree(
+                    {
+                        f"{self.UTILS}/a.py": source,
+                        f"{self.UTILS}/b.py": "from agent_pm.utils.a import A\n",
+                    }
+                )
+                self.assertEqual(
+                    guards.shared_types(root),
+                    [
+                        f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: "
+                        "a shared data type belongs in a types.py"
+                    ],
+                )
+
+    def test_behavior_classes_and_interfaces_stay_in_named_modules(self):
+        for source in (
+            "class A:\n    def run(self):\n        return 1\n",
+            "from abc import ABC, abstractmethod\nclass A(ABC):\n"
+            "    @abstractmethod\n    def run(self):\n        pass\n",
+            "from typing import Protocol\nclass A(Protocol):\n    def run(self): ...\n",
+            "class A(Exception):\n    pass\n",
+        ):
+            with self.subTest(source=source):
+                root = self.tree(
+                    {
+                        f"{self.UTILS}/a.py": source,
+                        f"{self.UTILS}/b.py": "from agent_pm.utils.a import A\n",
+                    }
+                )
+                self.assertEqual(guards.shared_types(root), [])
 
 
 class NamespacePackage(Sample):

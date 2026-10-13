@@ -18,7 +18,7 @@
 
 Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Cross-layer imports use the lower layer's public package. Layer skipping remains permitted until TASK-371 and TASK-372. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
-Repository design rules live in `tests/guards.py`: namespace and subsystem placement, shared types, runtime ownership, configuration and import side effects. Shared classes used across their layer live in a `types.py` module. Standalone hooks use only the standard library.
+Repository design rules live in `tests/guards.py`: namespace and subsystem placement, shared types, runtime ownership, configuration and import side effects. Shared data types used across their layer live in a `types.py` module. Standalone hooks use only the standard library.
 
 ## Domain docs
 
