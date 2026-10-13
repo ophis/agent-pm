@@ -2,6 +2,8 @@
 tui_hook.py appends to its session dir, and from its pane.
 """
 
+from __future__ import annotations
+
 import contextlib
 import fcntl
 import json
@@ -151,7 +153,7 @@ class TuiMode:
         workdir: str,
         tmux: str,
         host=tmux_host,
-    ) -> "TuiMode":
+    ) -> TuiMode:
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
             "runtime": runtime,
@@ -244,7 +246,7 @@ class TuiMode:
             _remove(self.dir, self._made)
 
     @classmethod
-    def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> "TuiMode":
+    def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> TuiMode:
         """read_state's session, bound to the name's pane if tagged with its sid; reply: last
         TURN_END's; blocked: last kind BLOCKED or @state blocked; events from its next record.
         """
