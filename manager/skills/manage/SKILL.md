@@ -30,6 +30,7 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - Delegate the work itself: long or interactive work to a worker, a bounded task to a sub-agent. Keep your own context for coordination.
 - A role run is tui (a visible pane) unless the user asks for headless.
 - Message a worker with the text alone, no sender label.
+- Before `tui_claude.py send` to a worker, read its pane: if a sub-agent's view is selected (input box `Message @<agent>…`), the text goes to that sub-agent, not the worker. Send only from the main view, then confirm it reached the worker's transcript.
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
 - Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `/agent-pm:tmux` › Direct › Stop, the only way to close its pane.
 - The user saying to stop everything: `/agent-pm:tmux` › Direct › Stop all.
