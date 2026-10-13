@@ -809,31 +809,35 @@ class PaneAnchorTest(PaneFixture):
         mixed = self.clients((5, "/dev/ttys004", "%9"), (3, "/dev/ttys006", "%8", "1"))
         nested = expected_panes(("0", "/dev/ttys001", "%1"), ("0", "/dev/ttys004", "%5"))
         cases = [
-            (ITERM, {}, None, tmux_host.Anchor(("id", ["ABC"]))),
+            (ITERM, {}, None, tmux_host.ItermAnchor(("id", ["ABC"]))),
             (
                 INSIDE,
                 {**own, "list-clients": shown},
                 None,
-                tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%3", SOCK, "own"),
+                tmux_host.ItermAnchor(
+                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%3", SOCK, "own")
+                ),
             ),
             (
                 INSIDE,
                 {**own, "list-clients": shown, "list-panes": nested},
                 None,
-                tmux_host.Anchor(None, "%5", SOCK, "own"),
+                tmux_host.TmuxAnchor("%5", SOCK, "own"),
             ),
-            (INSIDE, own, None, tmux_host.Anchor(("id", ["ABC"]))),
+            (INSIDE, own, None, tmux_host.ItermAnchor(("id", ["ABC"]))),
             (
                 {},
                 {"list-clients": shown},
                 "b",
-                tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"),
+                tmux_host.ItermAnchor(
+                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
+                ),
             ),
             (
                 {},
                 {"list-clients": shown, "list-panes": nested},
                 "b",
-                tmux_host.Anchor(None, "%5", SOCK, "b"),
+                tmux_host.TmuxAnchor("%5", SOCK, "b"),
             ),
             (
                 {},
@@ -845,25 +849,29 @@ class PaneAnchorTest(PaneFixture):
                     )
                 },
                 "b",
-                tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"),
+                tmux_host.ItermAnchor(
+                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
+                ),
             ),
             (
                 INSIDE,
                 {**own, "list-clients": control, "list-panes": nested},
                 None,
-                tmux_host.Anchor(None, "%3", SOCK, "own"),
+                tmux_host.TmuxAnchor("%3", SOCK, "own"),
             ),
             (
                 {},
                 {"list-clients": control, "list-panes": nested},
                 "b",
-                tmux_host.Anchor(None, "%9", SOCK, "b"),
+                tmux_host.TmuxAnchor("%9", SOCK, "b"),
             ),
             (
                 {},
                 {"list-clients": mixed},
                 "b",
-                tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b"),
+                tmux_host.ItermAnchor(
+                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
+                ),
             ),
         ]
         for env, results, split_from, want in cases:
@@ -896,8 +904,13 @@ class PaneAnchorTest(PaneFixture):
         shown = self.clients((5, "/dev/ttys004", "%9"))
         live, dead = ("0", "/dev/ttys004", "%5"), ("1", "/dev/ttys004", "%6")
         for rows, want in (
-            ([live, dead], tmux_host.Anchor(None, "%5", SOCK, "b")),
-            ([dead], tmux_host.Anchor(("tty", ["/dev/ttys004"]), "%9", SOCK, "b")),
+            ([live, dead], tmux_host.TmuxAnchor("%5", SOCK, "b")),
+            (
+                [dead],
+                tmux_host.ItermAnchor(
+                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
+                ),
+            ),
         ):
             with self.subTest(rows=rows), environ():
                 fake = Tmux(results={"list-clients": shown, "list-panes": expected_panes(*rows)})

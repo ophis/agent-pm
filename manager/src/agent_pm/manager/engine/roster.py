@@ -26,7 +26,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
-from typing import NoReturn, overload
+from typing import Literal, NoReturn, overload
 
 from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import DriverError
@@ -320,7 +320,17 @@ def _check(data, path: str, *, strict: bool) -> dict:
 _NOT_REGULAR = "not a regular file owned by you"
 
 
-def _open(path: str, flags: int) -> int | None:
+@overload
+def _open(path: str, flags: int, *, create: Literal[True]) -> int: ...
+
+
+@overload
+def _open(path: str, flags: int, *, create: bool = False) -> int | None: ...
+
+
+def _open(path: str, flags: int, *, create: bool = False) -> int | None:
+    if create:
+        flags |= os.O_CREAT
     try:
         fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
     except FileNotFoundError as e:
@@ -343,9 +353,7 @@ def _open(path: str, flags: int) -> int | None:
 
 @contextlib.contextmanager
 def _locked(path: str) -> Iterator[None]:
-    fd = _open(path, os.O_RDWR | os.O_CREAT)
-    if fd is None:
-        raise RosterError(f"{path}: {os.strerror(errno.ENOENT)}")
+    fd = _open(path, os.O_RDWR, create=True)
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT
         while True:

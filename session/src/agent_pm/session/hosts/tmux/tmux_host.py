@@ -152,15 +152,18 @@ class TuiError(Exception):
     pass
 
 
-class Anchor(NamedTuple):
-    """The pane a show goes beside: iterm (("tty", ttys) or ("id", [unique id]); None in tmux), else
-    `pane` on `socket`.
-    """
-
-    iterm: tuple[str, list[str]] | None
-    pane: str | None = None
-    socket: str | None = None
+class TmuxAnchor(NamedTuple):
+    pane: str
+    socket: str
     session: str | None = None
+
+
+class ItermAnchor(NamedTuple):
+    iterm: tuple[str, list[str]]
+    tmux: TmuxAnchor | None = None
+
+
+Anchor = TmuxAnchor | ItermAnchor
 
 
 class Cell(NamedTuple):
@@ -851,7 +854,7 @@ def _grid(
         return None
     try:
         found = _window(row[3], None, proc) if PANE.fullmatch(row[3]) else None
-        if found is None or found[1] is None:
+        if found is None:
             clients = [] if OPENER.fullmatch(row[2]) else _clients(opener, proc)
             if not clients:
                 return None
@@ -864,22 +867,18 @@ def _grid(
     if found is None:
         return None
     window, manager, areas, socket = found
-    if manager is None:
-        return None
     workers = [p for p in areas if p != manager]
     if not workers:
-        return window, manager, Anchor(None, manager, socket), "right"
+        return window, manager, TmuxAnchor(manager, socket), "right"
     return (
         window,
         manager,
-        Anchor(None, max(workers, key=lambda p: (areas[p], int(p[1:]))), socket),
+        TmuxAnchor(max(workers, key=lambda p: (areas[p], int(p[1:]))), socket),
         "below",
     )
 
 
-def _window(
-    pane: str, manager: str | None, proc
-) -> tuple[str, str | None, dict[str, int], str] | None:
+def _window(pane: str, manager: str | None, proc) -> tuple[str, str, dict[str, int], str] | None:
     """pane's window id, manager, pane areas and socket; None when tmux fails."""
     res = _tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
     rows = []
@@ -894,7 +893,8 @@ def _window(
         return None
     areas = {m[3]: int(m[4]) * int(m[5]) for m in rows}
     window, stored = rows[0].group(1, 2)
-    return window, stored if stored in areas else manager, areas, rows[0][6]
+    manager = stored if stored in areas else manager
+    return None if manager is None else (window, manager, areas, rows[0][6])
 
 
 def _grid_up(
@@ -989,14 +989,16 @@ def _stack(
         group = list(group)
         if not is_tmux:  # open iff the AppleScript finds it: one try covers them, newest first
             with contextlib.suppress(TuiError):
-                return _split(session, "below", Anchor(("id", [r[1] for r in group])), tmux, proc)
+                return _split(
+                    session, "below", ItermAnchor(("id", [r[1] for r in group])), tmux, proc
+                )
             continue
         if live is None:
             res = _tmux(["list-panes", "-a", "-F", "#{pane_id}"], proc)
             live = set(res.stdout.split("\n")) if res.returncode == 0 else set()
         for _, pane, socket in group:
             if pane in live:
-                return _split(session, "below", Anchor(None, pane, socket), tmux, proc)
+                return _split(session, "below", TmuxAnchor(pane, socket), tmux, proc)
     return None
 
 
@@ -1004,14 +1006,13 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
     """(new pane, None) or (None, tmux's failure), in iTerm2 when one shows a's pane; TuiError with
     no pane.
     """
-    if a.iterm:
+    if isinstance(a, ItermAnchor):
         try:
             return _iterm(session, side, tmux, a.iterm, proc), None
         except TuiError:
-            if a.pane is None:
+            if a.tmux is None:
                 raise
-    if a.pane is None or a.socket is None:
-        raise TuiError(NO_PANE.format("no tmux pane"))
+            a = a.tmux
     command = [
         "env",
         "-u",
@@ -1732,7 +1733,7 @@ def anchor(split_from: str | None = None, *, proc=subprocess.run) -> Anchor:
 
 def _opener_pane(opener: str, proc, *, own: bool | None) -> Anchor:
     if ":" in opener:
-        return Anchor(("id", [opener.partition(":")[2]]))
+        return ItermAnchor(("id", [opener.partition(":")[2]]))
     if own is None:
         own = own_session(proc=proc) == opener
     return _shown(opener, proc, own=own) or _iterm_pane(f"no terminal shows tmux session {opener}")
@@ -1748,7 +1749,7 @@ def _shown(session: str, proc, *, own: bool) -> Anchor | None:
     _, tty, pane, control, socket = clients[0]
     pane = os.environ["TMUX_PANE"] if own else pane
     if control == "1":
-        return Anchor(None, pane, socket, session)
+        return TmuxAnchor(pane, socket, session)
     hosts = {
         f[1]: f[2]
         for f in (
@@ -1758,8 +1759,10 @@ def _shown(session: str, proc, *, own: bool) -> Anchor | None:
         if len(f) == 3 and f[0] != "1"
     }
     if PANE.fullmatch(hosts.get(tty, "")):
-        return Anchor(None, hosts[tty], socket, session)
-    return Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
+        return TmuxAnchor(hosts[tty], socket, session)
+    return ItermAnchor(
+        ("tty", [c[1] for c in clients if c[3] == "0"]), TmuxAnchor(pane, socket, session)
+    )
 
 
 def _clients(session: str, proc) -> list[list[str]]:
@@ -1784,7 +1787,7 @@ def _iterm_pane(why: str) -> Anchor:
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
         raise TuiError(NO_PANE.format(why))
-    return Anchor(("id", [unique]))
+    return ItermAnchor(("id", [unique]))
 
 
 def _show_options(p: argparse.ArgumentParser) -> None:
