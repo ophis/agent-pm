@@ -5,14 +5,29 @@ kind (render).
 import fnmatch
 import json
 import re
+from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
 from agent_pm.linear_orchestrator.engine.config import TASKS, sh_run
 from agent_pm.linear_orchestrator.engine.target import pr_title
-from agent_pm.linear_orchestrator.engine.types import Doc, InputError, Sources
+from agent_pm.linear_orchestrator.engine.types import InputError
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.linear_orchestrator.linear.linear import parse_time
 from agent_pm.utils import SHORT, err_text
+
+
+@dataclass(frozen=True)
+class Doc:
+    url: str
+    path: str
+    text: str | None
+
+
+@dataclass(frozen=True)
+class Sources:
+    docs: tuple[Doc, ...]
+    earlier: Doc | None
+
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 RAW = "Accept: application/vnd.github.raw+json"

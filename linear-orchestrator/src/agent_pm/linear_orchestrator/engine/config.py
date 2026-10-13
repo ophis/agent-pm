@@ -15,17 +15,14 @@ from typing import Any
 
 import agent_pm.utils as utils
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine.types import (
-    STATES,
-    Config,
-    ConfigError,
-    Docs,
-    Role,
-    Task,
-    TuiError,
-)
+from agent_pm.linear_orchestrator.engine.types import STATES, Config, ConfigError, Docs, Role, Task
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
+
+
+class TuiError(ValueError):
+    pass
+
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")

@@ -14,17 +14,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID as ISSUE_ID
-from agent_pm.linear_orchestrator.engine.types import (
-    STATES,
-    ConfigError,
-    LinearError,
-    Team,
-    Unavailable,
-)
+from agent_pm.linear_orchestrator.engine.types import STATES, ConfigError, LinearError, Unavailable
 from agent_pm.utils import append_line, printable
+
+
+@dataclass(frozen=True)
+class Team:
+    id: str
+    name: str
+    states: dict[str, str]
+
 
 URL = "https://api.linear.app/graphql"
 SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keychain

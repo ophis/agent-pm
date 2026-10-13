@@ -9,18 +9,15 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.target import MAPPED
-from agent_pm.linear_orchestrator.engine.types import (
-    FileError,
-    LinearError,
-    Stopped,
-    Unavailable,
-)
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
     client_id,
@@ -31,8 +28,30 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
     subscribe,
 )
-from agent_pm.linear_orchestrator.linear.types import Context, Issue
+from agent_pm.linear_orchestrator.linear.types import Issue
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
+
+
+@dataclass(frozen=True)
+class Context:
+    ident: str
+    issue_id: str
+    role: str
+    sid: str
+    resume: bool
+    project: str | None
+    workdir: str
+    gql: Callable[..., dict]
+    humans: tuple[str, ...]
+    states: Mapping[str, str]
+    repos: Mapping[str, str]
+    team: str
+    target: tuple[str, str] | None
+
+
+class FileError(ValueError):
+    pass
+
 
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"

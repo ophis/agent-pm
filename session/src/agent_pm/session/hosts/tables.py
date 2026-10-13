@@ -5,9 +5,17 @@ module.path:Class form, never imported.
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 
-from agent_pm.session.hosts.types import Hosts, HostsError
+from agent_pm.session.hosts.types import HostsError
 from agent_pm.utils import CLASS_PATH
+
+
+@dataclass(frozen=True)
+class Hosts:
+    default: str
+    tables: dict[str, dict]
+
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 

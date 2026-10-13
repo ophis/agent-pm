@@ -3,16 +3,13 @@ import functools
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
+from typing import Any
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import (
-    ConfigError,
-    LinearError,
-    Promotion,
-    Unavailable,
-)
+from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from agent_pm.linear_orchestrator.linear.linear import (
     linear_error,
@@ -23,6 +20,19 @@ from agent_pm.linear_orchestrator.linear.linear import (
     role_ids,
     team,
 )
+
+
+@dataclass
+class Promotion:
+    source: dict[str, Any]
+    detail: dict[str, Any]
+    role: str
+    next: str
+    cutoff: str | None
+    first: str
+    latest: str
+    child: dict[str, Any] | None = None
+
 
 HELP = """Promote issues in Handoff to the next role.
 

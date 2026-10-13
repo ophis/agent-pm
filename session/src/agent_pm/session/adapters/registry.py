@@ -3,15 +3,32 @@
 import copy
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.types import Settings, TuiSettings
 from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.types import HostsError
 from agent_pm.utils import load_class as load
+
+
+@dataclass(frozen=True)
+class TuiSettings:
+    """tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
+
+    status_line: bool = False
+    per_column: int | None = None
+    retile: str | None = None
+
+
+@dataclass(frozen=True)
+class Settings:
+    adapters: dict[str, dict]
+    hosts: dict[str, dict]
+    default_host: str
+
 
 PACKAGE = "agent_pm.session"
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[^:]+):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")

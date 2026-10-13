@@ -3,7 +3,7 @@
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from agent_pm import delegate
 from agent_pm.session import Driver
@@ -37,14 +37,6 @@ class Unavailable(Exception):
 
 
 class IssueError(LookupError):
-    pass
-
-
-class FileError(ValueError):
-    pass
-
-
-class TuiError(ValueError):
     pass
 
 
@@ -127,44 +119,12 @@ class Config:
         return os.path.join(self.runs_dir, issue)
 
 
-@dataclass
-class Promotion:
-    source: dict[str, Any]
-    detail: dict[str, Any]
-    role: str
-    next: str
-    cutoff: str | None
-    first: str
-    latest: str
-    child: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class Team:
-    id: str
-    name: str
-    states: dict[str, str]
-
-
 @dataclass(frozen=True)
 class Target:
     owner: str
     name: str
     branch: str = ""
     clone: str = ""
-
-
-@dataclass(frozen=True)
-class Doc:
-    url: str
-    path: str
-    text: str | None
-
-
-@dataclass(frozen=True)
-class Sources:
-    docs: tuple[Doc, ...]
-    earlier: Doc | None
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
