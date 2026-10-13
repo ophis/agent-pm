@@ -1,4 +1,6 @@
-"""utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset."""
+"""
+utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset.
+"""
 
 import copy
 import os
@@ -55,8 +57,16 @@ class ConfigFileTest(Case):
 
 
 SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'
-DELEGATE = 'runtime = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
-ORCH = 'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = 3\n[core.roles.pm]\ngate = "g"\n'
+DELEGATE = (
+    'runtime = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = '
+    "2\n[roles.pm.output]\ntype = "
+    '"local"\n'
+)
+ORCH = (
+    'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = '
+    "3\n[core.roles.pm]\ngate = "
+    '"g"\n'
+)
 MANAGER = 'runtime = "m"\n'
 
 
@@ -137,9 +147,11 @@ class Projects(Case):
 
     def test_a_project_takes_only_the_local_keys_owned_at_or_below_it(self):
         self.local(
-            'team = "T"\nshow = "none"\n[hosts.tmux]\nstatus_line = true\n[core.roles.pm]\ncwd = "/c"\n'
-            '[roles.pm]\naccount = "pm@x"\ncwd = "/p"\n[roles.new]\naccount = "n@x"\nmax_runs = 2\ntier = 3\n'
-            '[roles.pm.output]\ntype = "github"\n'
+            'team = "T"\nshow = "none"\n[hosts.tmux]\nstatus_line = '
+            'true\n[core.roles.pm]\ncwd = "/c"\n[roles.pm]\naccount = "pm@x"\ncwd = '
+            '"/p"\n[roles.new]\naccount = "n@x"\nmax_runs = 2\ntier = '
+            "3\n[roles.pm.output]\ntype = "
+            '"github"\n'
         )
         session, delegate = self.read("session"), self.read("delegate")
         self.assertEqual(session["hosts"]["tmux"], {"status_line": True})
@@ -157,8 +169,9 @@ class Projects(Case):
 
     def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
         self.local(
-            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n'
-            '[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = "github"\n'
+            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = '
+            '1\nunknown_field = "typo"\n[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = '
+            '"github"\n'
         )
         self.write("delegate", 'cwd = ""\n' + DELEGATE)
         self.assertEqual(
@@ -188,7 +201,11 @@ class Projects(Case):
                 self.subTest(name),
                 self.assertRaisesRegex(
                     ValueError,
-                    r"^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's config.toml has it$",
+                    (
+                        "^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's "
+                        "config.toml has "
+                        "it$"
+                    ),
                 ),
             ):
                 self.read(name)

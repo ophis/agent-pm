@@ -42,7 +42,7 @@ class TempFinder:
     def __init__(self, folder):
         self.folder = folder
 
-    def find_spec(self, fullname, path=None, target=None):
+    def find_spec(self, fullname, path=None, _target=None):
         if path is not None:
             return None
         return importlib.machinery.PathFinder.find_spec(fullname, [self.folder])

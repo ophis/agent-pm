@@ -160,9 +160,11 @@ class AppendLine(Base):
 
     def test_own_refuses_another_owners_file_and_writes_nothing(self):
         files.append_line(self.path, "keep\n")
-        with unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
-            with self.assertRaises(OSError) as e:
-                files.append_line(self.path, "x\n", own=True)
+        with (
+            unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
+            self.assertRaises(OSError) as e,
+        ):
+            files.append_line(self.path, "x\n", own=True)
         self.assertEqual(
             (e.exception.errno, e.exception.strerror, e.exception.filename),
             (errno.EPERM, "not owned by you", self.path),
@@ -211,9 +213,11 @@ class Save(Base):
 
     def test_no_temp_is_left_when_the_replace_fails(self):
         files.save(self.path, "old\n")
-        with unittest.mock.patch.object(os, "replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                files.save(self.path, "new\n")
+        with (
+            unittest.mock.patch.object(os, "replace", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            files.save(self.path, "new\n")
         with open(self.path) as f:
             self.assertEqual(
                 (f.read(), os.listdir(os.path.dirname(self.path))), ("old\n", ["f.txt"])

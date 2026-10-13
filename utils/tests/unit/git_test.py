@@ -122,7 +122,7 @@ class Retry(Case):
         """(stdout or the RuntimeError, the argvs run, the mocked sleep)."""
         calls, answers = [], list(results)
 
-        def run(argv, timeout):
+        def run(argv, _timeout):
             calls.append(argv)
             return answers.pop(0)
 

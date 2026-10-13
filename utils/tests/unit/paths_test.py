@@ -1,4 +1,6 @@
-"""utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs, printable_abs and import_roots."""
+"""
+utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs, printable_abs and import_roots.
+"""
 
 import os
 import subprocess
