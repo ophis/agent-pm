@@ -1,3 +1,8 @@
+"""The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
+comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a promote
+tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed requests, and
+verify() compares them when the step ends."""
+
 import contextlib
 import copy
 import os
@@ -102,7 +107,7 @@ class Pending(NamedTuple):
     resumed: bool
 
 
-class BoardExpectations(TmuxFlow):
+class Segment(TmuxFlow):
     def setUp(self):
         super().setUp()
         self.want, self.want_runs, self.want_problems, self.texts = {}, [], [], {}
@@ -240,8 +245,6 @@ class BoardExpectations(TmuxFlow):
         if found:
             self.fail("; ".join(found))
 
-
-class Segment(BoardExpectations):
     def agent_script(self, role, outcome, ident, url=None):
         """outcome: done, needs_input, failed, or none (no outcome block)."""
         self.n_scripts += 1

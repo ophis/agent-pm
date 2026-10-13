@@ -1,3 +1,7 @@
+"""composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old
+composer's Index, TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns).
+"""
+
 import os
 import re
 import tempfile
@@ -41,8 +45,6 @@ effort = "medium"
 [roles.editor]
 tier = 1
 """
-
-
 BUILT_IN = {
     "writer": {
         "short-note": "a note; most times; light.",
@@ -50,14 +52,8 @@ BUILT_IN = {
     },
     "editor": {"long-note": "a long note; always; heavy."},
 }
-
-
 TINY = "# Tiny Note\n" + STEPS
-
-
 TINY_LINE = "- `tiny-note` (`<tasks>/tiny-note.md`): a tiny note; rarely; light.\n"
-
-
 FRONT = '---\ncommands: ["rm *"]\n---\n'
 
 

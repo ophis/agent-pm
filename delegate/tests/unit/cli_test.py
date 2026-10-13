@@ -1,3 +1,9 @@
+"""delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and
+messages; main's drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process
+over the in_process-only fake; --detach over a patched detach, and the driver form with signal's
+calls recorded.
+"""
+
 import errno
 import io
 import json
@@ -25,8 +31,6 @@ from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
-
-
 KEYS = {
     "runtime",
     "mode",
@@ -41,20 +45,10 @@ KEYS = {
     "effort",
     "prompt",
 }
-
-
 TUI = "dummy-tester-11111111"
-
-
 DRIVER = f"{TUI}-drive"
-
-
 SPLIT = "--split and --split-from need --detach --mode tui"
-
-
 DONE_RESULT = Result(0, Outcome("done", "t", "s"))
-
-
 HEADS = [
     "researcher  local  built-in",
     "pm  local  built-in",

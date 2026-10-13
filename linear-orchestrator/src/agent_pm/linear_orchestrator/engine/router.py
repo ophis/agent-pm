@@ -60,9 +60,65 @@ from agent_pm.linear_orchestrator.linear.linear import (
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
 
+STALE = timedelta(hours=2)
+LIVE = timedelta(minutes=30)
+CAP = 4
+SKEW = timedelta(minutes=5)
 MAX_5H = 90
-
+BRAKE_5H = 80
 MAX_WEEK = 100
+CAP_COMMENT = "Tried 4 times without finishing; needs a look."
+INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
+BUSY = "another router is running"
+USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
+FLAGS = {"--dry-run": "dry", "--now": "now"}
+RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
+SESSIONS = "agent-pm-"
+SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
+DONE = {"completed", "canceled", "duplicate"}
+UNREADABLE = "(unreadable)"
+RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
+Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
+Q_RECHECK = (
+    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
+    "labels { nodes { id name parent { id } } } } }"
+)
+Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
+
+
+def latest_sid(entries, issue):
+    return next((e.sid for e in reversed(entries) if e.issue == issue), None)
+
+
+def sid_times(entries, sid):
+    return [e.ts for e in entries if e.sid == sid]
+
+
+def first_line_time(entries, sid):
+    return next(
+        (e.ts for e in entries if e.sid == sid and e.kind == "start"), sid_times(entries, sid)[0]
+    )
+
+
+def attempt_count(entries, issue, since=None):
+    return sum(1 for e in entries if e.issue == issue and (since is None or e.ts > since))
+
+
+def live_sessions(roles, *, driver):
+    try:
+        names = [row.name for row in driver.sessions(re.escape(SESSIONS) + ".*")]
+    except DriverError:
+        return None
+    live = {}
+    for r in roles:
+        prefix = config.session(r, "")
+        ids = [n.removeprefix(prefix) for n in names if n.startswith(prefix)]
+        live[r] = sorted(i for i in ids if re.fullmatch(ISSUE_ID, i))
+    return live
+
+
+def full_roles(roles, live):
+    return {r for r in roles if len(live[r]) >= roles[r].max_runs}
 
 
 def summary(usage):
@@ -114,52 +170,6 @@ class Gate:
         if self.dry:
             self.say("usage", runtime=runtime, **shown, allowed=reason is None)
         return reason, fields
-
-
-STALE = timedelta(hours=2)
-
-LIVE = timedelta(minutes=30)
-
-CAP = 4
-
-SKEW = timedelta(minutes=5)
-
-CAP_COMMENT = "Tried 4 times without finishing; needs a look."
-
-INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
-
-DONE = {"completed", "canceled", "duplicate"}
-
-UNREADABLE = "(unreadable)"
-
-RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
-
-Q_RELATIONS = "query($i: String!) { issue(id: $i) { " + RELATIONS + " } }"
-
-Q_RECHECK = (
-    "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
-    "labels { nodes { id name parent { id } } } } }"
-)
-
-Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
-
-
-def latest_sid(entries, issue):
-    return next((e.sid for e in reversed(entries) if e.issue == issue), None)
-
-
-def sid_times(entries, sid):
-    return [e.ts for e in entries if e.sid == sid]
-
-
-def first_line_time(entries, sid):
-    return next(
-        (e.ts for e in entries if e.sid == sid and e.kind == "start"), sid_times(entries, sid)[0]
-    )
-
-
-def attempt_count(entries, issue, since=None):
-    return sum(1 for e in entries if e.issue == issue and (since is None or e.ts > since))
 
 
 def rank(issue):
@@ -468,76 +478,6 @@ class Board:
         return taken, task, role, runtime
 
 
-class Held:
-    """A tick's walk log: plan, pick, usage-skip, pick-none and skip lines wait, written before the
-    next other line. At the walk's end, waiting usage-skips mean a usage-blocked walk: only they are
-    written; else all are. A dry run and an exception wait for nothing.
-    """
-
-    WAIT = {"plan", "pick", "usage-skip", "pick-none", "skip"}
-
-    def __init__(self, dry):
-        self.dry, self.waiting = dry, []
-
-    def __call__(self, kind, issue=None, **fields):
-        if not self.dry and kind in self.WAIT:
-            self.waiting.append((kind, issue, fields))
-            return
-        self.write()
-        log("router", kind, issue, dry=self.dry, **fields)
-
-    def write(self, kinds=WAIT):
-        for kind, issue, fields in self.waiting:
-            if kind in kinds:
-                log("router", kind, issue, **fields)
-        self.waiting = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, error, *_):
-        blocked = error is None and any(w[0] == "usage-skip" for w in self.waiting)
-        self.write({"usage-skip"} if blocked else self.WAIT)
-
-
-RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
-
-SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
-
-
-def fail(ident, kind, reason, rc):
-    log("router", kind, ident, reason=reason)
-    return rc
-
-
-BRAKE_5H = 80
-
-BUSY = "another router is running"
-
-USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
-
-FLAGS = {"--dry-run": "dry", "--now": "now"}
-
-SESSIONS = "agent-pm-"
-
-
-def live_sessions(roles, *, driver):
-    try:
-        names = [row.name for row in driver.sessions(re.escape(SESSIONS) + ".*")]
-    except DriverError:
-        return None
-    live = {}
-    for r in roles:
-        prefix = config.session(r, "")
-        ids = [n.removeprefix(prefix) for n in names if n.startswith(prefix)]
-        live[r] = sorted(i for i in ids if re.fullmatch(ISSUE_ID, i))
-    return live
-
-
-def full_roles(roles, live):
-    return {r for r in roles if len(live[r]) >= roles[r].max_runs}
-
-
 def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
     ident = issue["identifier"]
     kind = "resume" if mode == "resume" else "start"
@@ -551,6 +491,11 @@ def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
         mode=mode,
         runtime=runtime,
     )
+
+
+def fail(ident, kind, reason, rc):
+    log("router", kind, ident, reason=reason)
+    return rc
 
 
 def outer(a, cfg, *, gql, run, keychain):
@@ -674,6 +619,38 @@ def lock(runs, dry):
         yield free
 
 
+class Held:
+    """A tick's walk log: plan, pick, usage-skip, pick-none and skip lines wait, written before the
+    next other line. At the walk's end, waiting usage-skips mean a usage-blocked walk: only they are
+    written; else all are. A dry run and an exception wait for nothing.
+    """
+
+    WAIT = {"plan", "pick", "usage-skip", "pick-none", "skip"}
+
+    def __init__(self, dry):
+        self.dry, self.waiting = dry, []
+
+    def __call__(self, kind, issue=None, **fields):
+        if not self.dry and kind in self.WAIT:
+            self.waiting.append((kind, issue, fields))
+            return
+        self.write()
+        log("router", kind, issue, dry=self.dry, **fields)
+
+    def write(self, kinds=WAIT):
+        for kind, issue, fields in self.waiting:
+            if kind in kinds:
+                log("router", kind, issue, **fields)
+        self.waiting = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error, *_):
+        blocked = error is None and any(w[0] == "usage-skip" for w in self.waiting)
+        self.write({"usage-skip"} if blocked else self.WAIT)
+
+
 def choose(board, gate, live_ids, full, counts):
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
@@ -739,21 +716,6 @@ def tick(opts, cfg, gql, *, start, now, hour):
             )
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
-
-
-def start_run(start, args, say):
-    try:
-        result = start(args)
-    except (Exception, SystemExit) as error:  # noqa: BLE001  # A recorded launch may fail.
-        say(
-            "launch-error",
-            args.issue,
-            error=one_line(error),
-            traceback="".join(format_exception(error)),
-        )
-    else:
-        say("launch", args.issue, exit=result)
-    return 0
 
 
 def run_issue(opts, cfg, gql, now, start):
@@ -878,6 +840,21 @@ def main(
         return linear.config_error("router", e, dry=opts["dry"])
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
+
+
+def start_run(start, args, say):
+    try:
+        result = start(args)
+    except (Exception, SystemExit) as error:  # noqa: BLE001  # A recorded launch may fail.
+        say(
+            "launch-error",
+            args.issue,
+            error=one_line(error),
+            traceback="".join(format_exception(error)),
+        )
+    else:
+        say("launch", args.issue, exit=result)
+    return 0
 
 
 if __name__ == "__main__":

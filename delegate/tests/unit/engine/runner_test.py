@@ -1,3 +1,11 @@
+"""delegate/engine/runner.py over the fake runtime (session/tests/fake_adapter/, registered in-
+process): callbacks and replies (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21),
+idle (FR-22), a usage limit (FR-58), and main's drive_test Start, HostFailure and Sinks cases:
+records, saving, the missing start mark, stops, printable lines. The tui policy (FR-21, FR-23,
+FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the in_process-only
+fake, with no child process.
+"""
+
 import dataclasses
 import io
 import json
@@ -52,23 +60,11 @@ from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
-
-
 NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
-
-
 FAILED = {**DONE, "status": "failed", "deliverable": ""}
-
-
 INVALID = {**DONE, "status": "maybe"}
-
-
 INVALID_ERROR = "status 'maybe' is not one of done, needs_input, failed"
-
-
 GH = {"type": "github", "repo": "o/docs", "branch": "main", "dir": "R/"}
-
-
 PR = {"type": "pull-request"}
 
 

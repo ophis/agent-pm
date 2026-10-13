@@ -1,3 +1,6 @@
+"""orchestrator config.py, ported from the old config_test (less its clients layer and transcript
+cases) onto load()'s frozen Config, plus the old attended name cases (TUI names)."""
+
 import builtins
 import dataclasses
 import json

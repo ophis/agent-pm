@@ -1,3 +1,6 @@
+"""orchestrator linear.py, ported from the old linear_test (every call names its service; the log dir
+is a setting), plus client ids and comments found by id."""
+
 import http.client
 import io
 import json

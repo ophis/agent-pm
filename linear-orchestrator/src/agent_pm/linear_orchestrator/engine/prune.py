@@ -35,19 +35,12 @@ from agent_pm.utils import GUARD, SHORT, GitError, common_dir, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
-
 IDENT_RE = re.compile(ISSUE_ID)
-
 ARCHIVE_ROLES = ("pm", "engineer")
-
 FOLDERS = (CLONES[0],)
-
 PUBLISH = CLONES[1]
-
 TMP = "tmp"  # delegate/team/principles.md: an agent run's temp files
-
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
-
 Q_FINISHED = (
     """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
   state: { id: { in: $s } }, assignee: { id: { in: $a } } }, first: 50, after: $c) {
@@ -56,7 +49,6 @@ Q_FINISHED = (
     + """ }
   pageInfo { hasNextPage endCursor } } }"""
 )
-
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 
 

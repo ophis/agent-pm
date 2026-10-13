@@ -1,3 +1,9 @@
+"""composer/prompt.py: render on a fake team (ported from the old composer's Prompt, Anchors,
+Parameters and Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral
+Return, the resume prefix, and reference_errors and the method files on the real team (its
+References and Methods tests).
+"""
+
 import inspect
 import os
 import re
@@ -57,11 +63,7 @@ TEXTS = {
     "output/destinations/local.md": "## Destination\n\nKeep it local.\n",
     "output/destinations/github.md": "## Destination\n\nPush to `<out-repo>` on `<out-branch>`.\n",
 }
-
-
 PARAMS = RunParams(input="Research X.", out="/w/out.md", workdir="/w")
-
-
 METHOD_NAMES = ("deep-research", "ultracode")
 
 

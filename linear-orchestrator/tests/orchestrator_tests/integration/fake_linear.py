@@ -1,3 +1,7 @@
+"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over HTTP through the
+integration transport: each exact query text is an op (OPS; BUILT: the router's issue lists, built
+by router.q_issues), its answer projected to the query's selection."""
+
 import functools
 import hashlib
 import io
@@ -31,7 +35,7 @@ class Request:
 
 
 @dataclass
-class InjectedFailure:
+class _Failure:
     op: str
     kind: str
     account: str | None
@@ -94,15 +98,15 @@ def stamp(t=None):
     return t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}Z"
 
 
-def credential_key(service):
+def _key(service):
     return "lin_api_" + hashlib.sha256(service.encode()).hexdigest()[:32]
 
 
-def error_payload(message):
+def _errors(message):
     return {"data": None, "errors": [{"message": message}]}
 
 
-def newest(nodes):
+def _newest(nodes):
     return sorted(reversed(nodes), key=lambda n: n["createdAt"], reverse=True)
 
 
@@ -146,7 +150,247 @@ def project(value, sel, op):
     return {f: project(value[f], s, op) for f, s in sel.items()}
 
 
-class Operations:
+def texts():
+    return {
+        op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1])
+        for op in OPS
+    }
+
+
+def index(named):
+    out = {}
+    for name, text in named.items():
+        if text in out:
+            raise ValueError(f"one query text, two ops: {out[text]}, {name}")
+        out[text] = name
+    return out
+
+
+class FakeLinear:
+    def __init__(self, harness=None):
+        self.harness, self.lock = harness, threading.RLock()
+        self.ops = dict(TABLE)
+        self.requests, self.failures = [], []
+        self.users, self.issues, self.labels, self.projects, self.relations = {}, {}, {}, {}, []
+
+    def user(self, email, name, service=None):
+        with self.lock:
+            if any(
+                u["email"].lower() == email.lower() or (service and u["service"] == service)
+                for u in self.users.values()
+            ):
+                raise ValueError(f"user {email} or service {service} seeded twice")
+            uid = str(uuid.uuid4())
+            self.users[uid] = {"id": uid, "email": email, "name": name, "service": service}
+            return uid
+
+    def keys(self):
+        with self.lock:
+            return {u["service"]: _key(u["service"]) for u in self.users.values() if u["service"]}
+
+    def label_group(self, id, name, labels):
+        with self.lock:
+            self.labels[id] = {"id": id, "name": name, "isGroup": True, "parent": None}
+            for lid, lname in labels.items():
+                self.labels[lid] = {"id": lid, "name": lname, "isGroup": False, "parent": id}
+
+    def issue(
+        self,
+        title="Issue",
+        *,
+        identifier=None,
+        id=None,
+        state="todo",
+        assignee=None,
+        project=None,
+        description="",
+        priority=0,
+        labels=(),
+        created=None,
+        updated=None,
+    ):
+        with self.lock:
+            if (
+                assignee is not None
+                and assignee not in self.users
+                or any(i not in self.labels for i in labels)
+            ):
+                raise ValueError("assignee or a label not seeded")
+            if project:
+                self.projects[project["id"]] = project["name"]
+            at = stamp(created)
+            try:
+                return self._add(
+                    id or str(uuid.uuid4()),
+                    identifier,
+                    title=title,
+                    description=description,
+                    priority=priority,
+                    state=IDS[state],
+                    assignee=assignee,
+                    project=project and dict(project),
+                    labels=list(labels),
+                    createdAt=at,
+                    updatedAt=stamp(updated) if updated else at,
+                )
+            except Problem as e:
+                raise ValueError(str(e)) from None
+
+    def comment(self, issue, user, body, *, at=None):
+        with self.lock:
+            if user is not None and user not in self.users:
+                raise ValueError(f"user {user} not seeded")
+            return self._comment(self._get(issue), user, body, stamp(at))
+
+    def move(self, issue, to, *, actor, at=None):
+        with self.lock:
+            self._move(self._get(issue), IDS[to], actor, stamp(at))
+
+    def relate(self, type, issue, related):
+        with self.lock:
+            a, b = self.find(issue), self.find(related)
+            if a is None or b is None:
+                raise ValueError(f"issue {(issue if a is None else related)} not seeded")
+            self.relations.append((type, a["id"], b["id"]))
+
+    def find(self, ref):
+        with self.lock:
+            return self.issues.get(ref) or next(
+                (i for i in self.issues.values() if i["identifier"] == ref), None
+            )
+
+    def fail(self, op, kind, *, account=None, times=1, seconds=3):
+        with self.lock:
+            if (
+                op not in OPS
+                or kind not in KINDS
+                or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
+                or times < 1
+                or (
+                    account is not None
+                    and not any(
+                        u["service"] and u["email"].lower() == account.lower()
+                        for u in self.users.values()
+                    )
+                )
+            ):
+                raise ValueError(
+                    f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse"
+                )
+            self.failures.append(_Failure(op, kind, account, times, seconds))
+
+    def answer(self, query, variables, key):
+        with self.lock:
+            caller = next(
+                (u for u in self.users.values() if u["service"] and _key(u["service"]) == key),
+                None,
+            )
+            account = caller and caller["email"]
+            if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
+                return self._log(
+                    op=None,
+                    account=account,
+                    variables={},
+                    result="error",
+                    status=400,
+                    body=_errors("fake: bad request: not a query string and a variables object"),
+                )
+            variables, op = variables or {}, self.ops.get(query)
+            if caller is None:
+                return self._log(
+                    op=op or query,
+                    account=None,
+                    variables=variables,
+                    result="unauthorized",
+                    status=401,
+                    body=_errors("fake: unauthorized"),
+                )
+            if op is None:
+                return self._log(
+                    op=query,
+                    account=account,
+                    variables=variables,
+                    result="unknown",
+                    status=200,
+                    body=_errors("fake: unknown query"),
+                )
+            failure = self._failure(op, account)
+            kind = failure.kind if failure else "ok"
+            if kind in ("error", "503"):
+                return self._log(
+                    op=op,
+                    account=account,
+                    variables=variables,
+                    result=kind,
+                    status=int(kind) if kind == "503" else 200,
+                    body=_errors(f"fake: {op}: injected {kind}"),
+                )
+            try:
+                sel = selection(query)
+                if kind == "unsuccessful":
+                    top = next(iter(sel))
+                    data = {top: {f: False if f == "success" else None for f in sel[top]}}
+                else:
+                    data = project(OPS[op](self, caller, variables), sel, op)
+            except (Problem, KeyError, TypeError, ValueError, LookupError, AttributeError) as e:
+                message = (
+                    str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
+                )
+                return self._log(
+                    op=op,
+                    account=account,
+                    variables=variables,
+                    result="error",
+                    status=200,
+                    body=_errors(message),
+                )
+            return self._log(
+                op=op,
+                account=account,
+                variables=variables,
+                result=kind,
+                status=200,
+                body={"data": data},
+                delay=failure.seconds if kind == "hang" else 0,
+            )
+
+    def __call__(self, query, *, timeout=30, service=None, **variables):
+        service = service or self.harness
+        keys = self.keys()
+        if service not in keys:
+            raise LinearError(f"fake transport: no key for {service}")
+        status, body, delay = self.answer(query, variables, keys[service])
+        if delay:
+            time.sleep(min(delay, timeout))
+            if delay >= timeout:
+                raise linear.Unavailable(linear.operation(query), reason="TimeoutError: timed out")
+        if status >= 500:
+            raise linear.Unavailable(linear.operation(query), status=status)
+        if status != 200:
+            raise urllib.error.HTTPError(
+                "fake_linear",
+                status,
+                HTTPStatus(status).phrase,
+                None,
+                io.BytesIO(json.dumps(body).encode()),
+            )
+        if body.get("errors"):
+            raise LinearError(f"linear api error: {body['errors']}")
+        return body["data"]
+
+    def _log(self, *, op, account, variables, result, status, body, delay=0):
+        self.requests.append(Request(op, account, variables, result))
+        return status, body, delay
+
+    def _failure(self, op, account):
+        for f in self.failures:
+            if f.op == op and (f.account is None or f.account.lower() == account.lower()):
+                f.times -= 1
+                if f.times <= 0:
+                    self.failures.remove(f)
+                return f
+        return None
+
     def _get(self, ref):
         if (rec := self.find(ref)) is None:
             raise Problem(f"Entity not found: {'Issue'}")
@@ -243,12 +487,12 @@ class Operations:
             "assignee": self._person(rec["assignee"], caller),
             "labels": {"nodes": [self._label(i) for i in rec["labels"]]},
             "comments": {
-                "nodes": newest(
+                "nodes": _newest(
                     [{**c, "user": self._person(c["user"], caller)} for c in rec["comments"]]
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
-            "history": {"nodes": newest(rec["history"])},
+            "history": {"nodes": _newest(rec["history"])},
             "relations": {
                 "nodes": [
                     {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
@@ -301,15 +545,15 @@ class Operations:
                     return False
         return True
 
-    def handle_issue(self, caller, v):
-        return {"issue": self._view(self._get(v["i"]), caller)}
-
     def _comment_of(self, cid):
         return next(
             ((i, c) for i in self.issues.values() for c in i["comments"] if c["id"] == cid), None
         )
 
-    def handle_users(self, caller, v):
+    def _issue(self, caller, v):
+        return {"issue": self._view(self._get(v["i"]), caller)}
+
+    def _users(self, caller, v):
         return {
             "users": {
                 "nodes": [
@@ -320,19 +564,19 @@ class Operations:
             }
         }
 
-    def handle_teams(self, caller, v):
+    def _teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
-    def handle_label_group(self, caller, v):
+    def _label_group(self, caller, v):
         if v["i"] not in self.labels:
             raise Problem(f"Entity not found: {'IssueLabel'}")
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
         return {"issueLabel": {**self._label(v["i"]), "children": {"nodes": children}}}
 
-    def handle_board(self, caller, v):
+    def _board(self, caller, v):
         return self._list(caller, v.get("f") or {}, 100)
 
-    def handle_handoff(self, caller, v):
+    def _handoff(self, caller, v):
         return self._list(
             caller,
             {
@@ -344,10 +588,10 @@ class Operations:
             100,
         )
 
-    def handle_child(self, caller, v):
+    def _child(self, caller, v):
         return self._list(caller, {"id": {"eq": v["c"]}}, 50, archived=True)
 
-    def handle_finished(self, caller, v):
+    def _finished(self, caller, v):
         return self._list(
             caller,
             {
@@ -359,14 +603,14 @@ class Operations:
             v.get("c"),
         )
 
-    def handle_comment_create(self, caller, v, cid=None):
+    def _comment_create(self, caller, v, cid=None):
         self._comment(self._get(v["i"]), caller["id"], v["b"], stamp(), cid)
         return {"commentCreate": {"success": True}}
 
-    def handle_comment_create_id(self, caller, v):
-        return self.handle_comment_create(caller, v, v["c"])
+    def _comment_create_id(self, caller, v):
+        return self._comment_create(caller, v, v["c"])
 
-    def handle_comment_by_id(self, caller, v):
+    def _comment_by_id(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
             raise Problem(f"Entity not found: {'Comment'}")
         rec, c = found
@@ -374,7 +618,7 @@ class Operations:
             "comment": {**c, "issue": {"id": rec["id"]}, "user": self._person(c["user"], caller)}
         }
 
-    def handle_comment_update(self, caller, v):
+    def _comment_update(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
             raise Problem(f"Entity not found: {'Comment'}")
         _, c = found
@@ -383,18 +627,18 @@ class Operations:
         c["body"] = v["b"]
         return {"commentUpdate": {"success": True}}
 
-    def handle_set_state(self, caller, v):
+    def _set_state(self, caller, v):
         if v["s"] not in NAMES:
             raise Problem(f"Entity not found: {'WorkflowState'}")
         self._move(self._get(v["i"]), v["s"], caller["id"], stamp())
         return {"issueUpdate": {"success": True}}
 
-    def handle_set_title(self, caller, v):
+    def _set_title(self, caller, v):
         rec = self._get(v["i"])
         rec["title"], rec["updatedAt"] = v["t"], stamp()
         return {"issueUpdate": {"success": True}}
 
-    def handle_subscribe(self, caller, v):
+    def _subscribe(self, caller, v):
         rec = self._get(v["i"])
         user = next((u for u in self.users.values() if u["email"].lower() == v["e"].lower()), None)
         if user is None:
@@ -403,21 +647,21 @@ class Operations:
             rec["subscribers"].append(user["email"])
         return {"issueSubscribe": {"success": True}}
 
-    def handle_attach(self, caller, v):
+    def _attach(self, caller, v):
         rec = self._get(v["i"])
         if all(a["url"] != v["u"] for a in rec["attachments"]):
             rec["attachments"].append({"url": v["u"], "title": v.get("t")})
         return {"attachmentLinkURL": {"success": True}}
 
-    def handle_archive(self, caller, v):
+    def _archive(self, caller, v):
         self._get(v["i"])["archived"] = True
         return {"issueArchive": {"success": True}}
 
-    def handle_unarchive(self, caller, v):
+    def _unarchive(self, caller, v):
         self._get(v["i"])["archived"] = False
         return {"issueUnarchive": {"success": True}}
 
-    def handle_create(self, caller, v):
+    def _create(self, caller, v):
         new, now = v["in"], stamp()
         pid, uid, sid = (
             new.get("projectId"),
@@ -450,7 +694,7 @@ class Operations:
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
-    def handle_relate(self, caller, v):
+    def _relate(self, caller, v):
         new = v["in"]
         self.relations.append(
             (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])
@@ -458,291 +702,39 @@ class Operations:
         return {"issueRelationCreate": {"success": True}}
 
 
-def texts():
-    return {
-        op: BUILT[op] if op in BUILT else getattr(MODULES[op.split(".")[0]], op.split(".")[1])
-        for op in OPS
-    }
-
-
-def index(named):
-    out = {}
-    for name, text in named.items():
-        if text in out:
-            raise ValueError(f"one query text, two ops: {out[text]}, {name}")
-        out[text] = name
-    return out
-
-
 OPS = {
-    "linear.M_COMMENT": Operations.handle_comment_create,
-    "linear.M_COMMENT_ID": Operations.handle_comment_create_id,
-    "linear.Q_COMMENT": Operations.handle_comment_by_id,
-    "linear.M_STATE": Operations.handle_set_state,
-    "linear.M_SUBSCRIBE": Operations.handle_subscribe,
-    "linear.Q_ISSUE_STATE": Operations.handle_issue,
-    "linear.Q_USER": Operations.handle_users,
-    "linear.Q_TEAM": Operations.handle_teams,
-    "linear.Q_TASK_GROUP": Operations.handle_label_group,
-    "router.Q_RELATIONS": Operations.handle_issue,
-    "router.Q_RECHECK": Operations.handle_issue,
-    "router.Q_HISTORY": Operations.handle_issue,
-    "router.issues": Operations.handle_board,
-    "router.issues+relations": Operations.handle_board,
-    "issues.Q_ISSUE": Operations.handle_issue,
-    "sessions.M_UPDATE": Operations.handle_comment_update,
-    "writeback.M_TITLE": Operations.handle_set_title,
-    "writeback.M_ATTACH": Operations.handle_attach,
-    "writeback.M_UNARCHIVE": Operations.handle_unarchive,
-    "writeback.Q_ATTACHED": Operations.handle_issue,
-    "writeback.Q_ID": Operations.handle_issue,
-    "promote.Q_HANDOFF": Operations.handle_handoff,
-    "promote.Q_DETAIL": Operations.handle_issue,
-    "promote.Q_CHILD": Operations.handle_child,
-    "promote.M_CREATE": Operations.handle_create,
-    "promote.M_RELATE": Operations.handle_relate,
-    "prune.Q_ISSUE": Operations.handle_issue,
-    "prune.Q_FINISHED": Operations.handle_finished,
-    "prune.M_ARCHIVE": Operations.handle_archive,
+    "linear.M_COMMENT": FakeLinear._comment_create,
+    "linear.M_COMMENT_ID": FakeLinear._comment_create_id,
+    "linear.Q_COMMENT": FakeLinear._comment_by_id,
+    "linear.M_STATE": FakeLinear._set_state,
+    "linear.M_SUBSCRIBE": FakeLinear._subscribe,
+    "linear.Q_ISSUE_STATE": FakeLinear._issue,
+    "linear.Q_USER": FakeLinear._users,
+    "linear.Q_TEAM": FakeLinear._teams,
+    "linear.Q_TASK_GROUP": FakeLinear._label_group,
+    "router.Q_RELATIONS": FakeLinear._issue,
+    "router.Q_RECHECK": FakeLinear._issue,
+    "router.Q_HISTORY": FakeLinear._issue,
+    "router.issues": FakeLinear._board,
+    "router.issues+relations": FakeLinear._board,
+    "issues.Q_ISSUE": FakeLinear._issue,
+    "sessions.M_UPDATE": FakeLinear._comment_update,
+    "writeback.M_TITLE": FakeLinear._set_title,
+    "writeback.M_ATTACH": FakeLinear._attach,
+    "writeback.M_UNARCHIVE": FakeLinear._unarchive,
+    "writeback.Q_ATTACHED": FakeLinear._issue,
+    "writeback.Q_ID": FakeLinear._issue,
+    "promote.Q_HANDOFF": FakeLinear._handoff,
+    "promote.Q_DETAIL": FakeLinear._issue,
+    "promote.Q_CHILD": FakeLinear._child,
+    "promote.M_CREATE": FakeLinear._create,
+    "promote.M_RELATE": FakeLinear._relate,
+    "prune.Q_ISSUE": FakeLinear._issue,
+    "prune.Q_FINISHED": FakeLinear._finished,
+    "prune.M_ARCHIVE": FakeLinear._archive,
 }
 
 TABLE = index(texts())
-
-
-class FakeLinear(Operations):
-    def __init__(self, harness=None):
-        self.harness, self.lock = harness, threading.RLock()
-        self.ops = dict(TABLE)
-        self.requests, self.failures = [], []
-        self.users, self.issues, self.labels, self.projects, self.relations = {}, {}, {}, {}, []
-
-    def user(self, email, name, service=None):
-        with self.lock:
-            if any(
-                u["email"].lower() == email.lower() or (service and u["service"] == service)
-                for u in self.users.values()
-            ):
-                raise ValueError(f"user {email} or service {service} seeded twice")
-            uid = str(uuid.uuid4())
-            self.users[uid] = {"id": uid, "email": email, "name": name, "service": service}
-            return uid
-
-    def keys(self):
-        with self.lock:
-            return {
-                u["service"]: credential_key(u["service"])
-                for u in self.users.values()
-                if u["service"]
-            }
-
-    def label_group(self, id, name, labels):
-        with self.lock:
-            self.labels[id] = {"id": id, "name": name, "isGroup": True, "parent": None}
-            for lid, lname in labels.items():
-                self.labels[lid] = {"id": lid, "name": lname, "isGroup": False, "parent": id}
-
-    def issue(
-        self,
-        title="Issue",
-        *,
-        identifier=None,
-        id=None,
-        state="todo",
-        assignee=None,
-        project=None,
-        description="",
-        priority=0,
-        labels=(),
-        created=None,
-        updated=None,
-    ):
-        with self.lock:
-            if (
-                assignee is not None
-                and assignee not in self.users
-                or any(i not in self.labels for i in labels)
-            ):
-                raise ValueError("assignee or a label not seeded")
-            if project:
-                self.projects[project["id"]] = project["name"]
-            at = stamp(created)
-            try:
-                return self._add(
-                    id or str(uuid.uuid4()),
-                    identifier,
-                    title=title,
-                    description=description,
-                    priority=priority,
-                    state=IDS[state],
-                    assignee=assignee,
-                    project=project and dict(project),
-                    labels=list(labels),
-                    createdAt=at,
-                    updatedAt=stamp(updated) if updated else at,
-                )
-            except Problem as e:
-                raise ValueError(str(e)) from None
-
-    def comment(self, issue, user, body, *, at=None):
-        with self.lock:
-            if user is not None and user not in self.users:
-                raise ValueError(f"user {user} not seeded")
-            return self._comment(self._get(issue), user, body, stamp(at))
-
-    def move(self, issue, to, *, actor, at=None):
-        with self.lock:
-            self._move(self._get(issue), IDS[to], actor, stamp(at))
-
-    def relate(self, type, issue, related):
-        with self.lock:
-            a, b = self.find(issue), self.find(related)
-            if a is None or b is None:
-                raise ValueError(f"issue {(issue if a is None else related)} not seeded")
-            self.relations.append((type, a["id"], b["id"]))
-
-    def find(self, ref):
-        with self.lock:
-            return self.issues.get(ref) or next(
-                (i for i in self.issues.values() if i["identifier"] == ref), None
-            )
-
-    def fail(self, op, kind, *, account=None, times=1, seconds=3):
-        with self.lock:
-            if (
-                op not in OPS
-                or kind not in KINDS
-                or (kind == "unsuccessful" and not texts()[op].startswith("mutation"))
-                or times < 1
-                or (
-                    account is not None
-                    and not any(
-                        u["service"] and u["email"].lower() == account.lower()
-                        for u in self.users.values()
-                    )
-                )
-            ):
-                raise ValueError(
-                    f"fail({op!r}, {kind!r}, account={account!r}, times={times!r}): a misuse"
-                )
-            self.failures.append(InjectedFailure(op, kind, account, times, seconds))
-
-    def answer(self, query, variables, key):
-        with self.lock:
-            caller = next(
-                (
-                    u
-                    for u in self.users.values()
-                    if u["service"] and credential_key(u["service"]) == key
-                ),
-                None,
-            )
-            account = caller and caller["email"]
-            if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
-                return self._log(
-                    op=None,
-                    account=account,
-                    variables={},
-                    result="error",
-                    status=400,
-                    body=error_payload(
-                        "fake: bad request: not a query string and a variables object"
-                    ),
-                )
-            variables, op = variables or {}, self.ops.get(query)
-            if caller is None:
-                return self._log(
-                    op=op or query,
-                    account=None,
-                    variables=variables,
-                    result="unauthorized",
-                    status=401,
-                    body=error_payload("fake: unauthorized"),
-                )
-            if op is None:
-                return self._log(
-                    op=query,
-                    account=account,
-                    variables=variables,
-                    result="unknown",
-                    status=200,
-                    body=error_payload("fake: unknown query"),
-                )
-            failure = self._failure(op, account)
-            kind = failure.kind if failure else "ok"
-            if kind in ("error", "503"):
-                return self._log(
-                    op=op,
-                    account=account,
-                    variables=variables,
-                    result=kind,
-                    status=int(kind) if kind == "503" else 200,
-                    body=error_payload(f"fake: {op}: injected {kind}"),
-                )
-            try:
-                sel = selection(query)
-                if kind == "unsuccessful":
-                    top = next(iter(sel))
-                    data = {top: {f: False if f == "success" else None for f in sel[top]}}
-                else:
-                    data = project(OPS[op](self, caller, variables), sel, op)
-            except (Problem, KeyError, TypeError, ValueError, LookupError, AttributeError) as e:
-                message = (
-                    str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
-                )
-                return self._log(
-                    op=op,
-                    account=account,
-                    variables=variables,
-                    result="error",
-                    status=200,
-                    body=error_payload(message),
-                )
-            return self._log(
-                op=op,
-                account=account,
-                variables=variables,
-                result=kind,
-                status=200,
-                body={"data": data},
-                delay=failure.seconds if kind == "hang" else 0,
-            )
-
-    def __call__(self, query, *, timeout=30, service=None, **variables):
-        service = service or self.harness
-        keys = self.keys()
-        if service not in keys:
-            raise LinearError(f"fake transport: no key for {service}")
-        status, body, delay = self.answer(query, variables, keys[service])
-        if delay:
-            time.sleep(min(delay, timeout))
-            if delay >= timeout:
-                raise linear.Unavailable(linear.operation(query), reason="TimeoutError: timed out")
-        if status >= 500:
-            raise linear.Unavailable(linear.operation(query), status=status)
-        if status != 200:
-            raise urllib.error.HTTPError(
-                "fake_linear",
-                status,
-                HTTPStatus(status).phrase,
-                None,
-                io.BytesIO(json.dumps(body).encode()),
-            )
-        if body.get("errors"):
-            raise LinearError(f"linear api error: {body['errors']}")
-        return body["data"]
-
-    def _log(self, *, op, account, variables, result, status, body, delay=0):
-        self.requests.append(Request(op, account, variables, result))
-        return status, body, delay
-
-    def _failure(self, op, account):
-        for f in self.failures:
-            if f.op == op and (f.account is None or f.account.lower() == account.lower()):
-                f.times -= 1
-                if f.times <= 0:
-                    self.failures.remove(f)
-                return f
-        return None
 
 
 class _Server(ThreadingHTTPServer):
@@ -752,7 +744,7 @@ class _Server(ThreadingHTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/graphql":
-            return self._send(404, error_payload("fake: not found"))
+            return self._send(404, _errors("fake: not found"))
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
         except ValueError:
@@ -766,7 +758,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(status, body)
 
     def do_GET(self):
-        self._send(405, error_payload("fake: POST only"))
+        self._send(405, _errors("fake: POST only"))
 
     do_PUT = do_PATCH = do_DELETE = do_GET
 

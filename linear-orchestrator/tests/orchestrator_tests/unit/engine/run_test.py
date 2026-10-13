@@ -1,3 +1,7 @@
+"""orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event, plus
+FR-43's TUI close and --tui's show on a fake Driver api, each Linear call's identity and the usage-
+limit path (FR-59)."""
+
 import io
 import json
 import os

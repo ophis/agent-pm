@@ -1,3 +1,7 @@
+"""orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id,
+numbered `#<seq>`, repaired at the end after a late write; the resume command is the Driver's
+session_status."""
+
 import subprocess
 import threading
 import time

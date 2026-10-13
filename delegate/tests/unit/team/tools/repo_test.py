@@ -1,3 +1,8 @@
+"""delegate/src/agent_pm/delegate/team/tools/repo.py, loaded by file path as agent runs run it, ported
+from the old core's tests (its tmux display helpers dropped; its config, path, shell, git and repo
+spec helpers' cases: unit/utils/).
+"""
+
 import importlib.util
 import io
 import json
@@ -14,23 +19,11 @@ from agent_pm.delegate.composer import TEAM
 from delegate.tests.case import Case
 
 LOCAL = "config.local.toml"
-
-
 SHA = "a" * 40
-
-
 URL = "https://github.com/o/n.git"
-
-
 SPEC = importlib.util.spec_from_file_location("repo", os.path.join(TEAM, "tools", "repo.py"))
-
-
 repo = importlib.util.module_from_spec(SPEC)
-
-
 SPEC.loader.exec_module(repo)
-
-
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 
 
@@ -96,14 +89,8 @@ def info(*, push=True, default="main"):
 
 
 HEAD = (lambda a: a[3:] == ["rev-parse", "HEAD"], ok(SHA + "\n"))
-
-
 LOGIN = (["gh", "api", "--hostname", "github.com", "user"], ok('{"login": "me"}'))
-
-
 NO_FEEDBACK = (lambda a: "--paginate" in a, ok("[[]]"))
-
-
 REPO_API = ("gh", "api", "--hostname", "github.com", "repos/o/n")
 
 

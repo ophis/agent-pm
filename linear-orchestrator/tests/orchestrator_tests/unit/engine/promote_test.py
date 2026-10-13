@@ -1,3 +1,6 @@
+"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call goes
+as the harness account."""
+
 import functools
 import io
 import json

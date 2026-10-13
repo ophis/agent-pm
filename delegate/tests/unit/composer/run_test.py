@@ -1,3 +1,8 @@
+"""composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and
+Validate tests, less the client layer and the prompt), the opaque runtime key, run params,
+trusted_dirs, bind and the access intent (the old driver's access tests, less the report command).
+"""
+
 import inspect
 import os
 import tempfile
@@ -33,8 +38,6 @@ from delegate.tests.unit.composer.shipped import (
 from delegate.tests.unit.composer.teams import EDITOR, FILES, POET, RUN_CONFIG, VERSE
 
 TIER = "tier must be an integer 1–4"
-
-
 RUNTIME = "runtime must be a non-empty one-line name, got "
 
 

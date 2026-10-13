@@ -1,3 +1,8 @@
+"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and
+prompt; main's team dir checks (TeamRuns), for a custom team and for the configured team dirs,
+Codex's own writable dirs included, read dirs (the tasks dir among them) never added nor counted.
+"""
+
 import io
 import json
 import os
@@ -25,17 +30,9 @@ from delegate.tests.unit.engine.plans import SID, Base
 from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
 
 TASKS = os.path.join(composer.TEAM, "tasks")
-
-
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-
-
 TEAM_FILES = {"roles/poet.md": POET, "tasks/verse.md": VERSE}
-
-
 TEAMS = os.path.join(REPO, "work", "new-team-dirs-tests")
-
-
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 
 

@@ -1,4 +1,6 @@
-"""Session behavior tests with caller-owned dependencies."""
+"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
+start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
+file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
 import ast
 import contextlib
@@ -22,10 +24,6 @@ import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux import tmux_host as grids
-from agent_pm.session.hosts.tmux import tmux_host as tmux_layout
-from agent_pm.session.hosts.tmux import tmux_host as tmux_model
-from agent_pm.session.hosts.tmux import tmux_host as validation
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 
 from session.tests.case import Case
@@ -273,7 +271,7 @@ def which(tmux=TMUX):
 
 
 def osa(split, kind, session, *anchors):
-    return ["osascript", "-e", tmux_model.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+    return ["osascript", "-e", tmux_host.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
 def decorations(session, events=None, status="off"):
@@ -439,19 +437,19 @@ def slot(pane, *children):
 
 
 def body(cell):
-    return tmux_layout._render_layout(cell).split(",", 1)[1]
+    return tmux_host._render_layout(cell).split(",", 1)[1]
 
 
 def dump(text):
     """A layout body as #{window_layout} prints it, with its checksum."""
-    return f"{tmux_layout._checksum(text)},{text}"
+    return f"{tmux_host._checksum(text)},{text}"
 
 
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
         cells = [slot(f"%{i}") for i in range(1, cells + 1)]
-    return tmux_layout._grid_layout(
+    return tmux_host._grid_layout(
         cells, "%0", width=width, height=height, manager_width=manager_width, per_column=per_column
     )
 
@@ -1289,7 +1287,7 @@ class DetachTest(StartFixture):
             "HOME": "/h",
             "CHILD_SESSION": "1",
             "PWD": "/elsewhere",
-            **{k: "x" for k in tmux_model.TERMINAL_KEYS},
+            **{k: "x" for k in tmux_host.TERMINAL_KEYS},
         }
         for block, want in (((), []), ((signal.SIGHUP, signal.SIGTERM, signal.SIGINT), SIGNALS)):
             with self.subTest(block=block):
@@ -1388,7 +1386,7 @@ class DetachTest(StartFixture):
                 self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
                 self.assertIs(fake.dir_at_kill, expr2=False)
                 self.assertAlmostEqual(
-                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
+                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
                 )
                 self.assertEqual(os.listdir(self.temp), [])
 
@@ -1410,7 +1408,7 @@ class DetachTest(StartFixture):
         os.close(fake.writer)
         self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
         self.assertAlmostEqual(
-            sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
         )
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -2295,11 +2293,11 @@ class RetileTest(Case):
     def test_modes(self):
         self.assertEqual(tmux_host.RETILES, ("all", "open-close", "off"))
         self.assertEqual(tmux_host.RETILE, "open-close")
-        self.assertEqual(tmux_model.RETILE_HOOKS, MODE_HOOKS)
-        self.assertEqual(tmux_model.GRID_PANES_SET, "@grid-panes")
+        self.assertEqual(tmux_host.RETILE_HOOKS, MODE_HOOKS)
+        self.assertEqual(tmux_host.GRID_PANES_SET, "@grid-panes")
         for retile in (None, *tmux_host.RETILES):
             with self.subTest(retile=retile):
-                self.assertIsNone(validation._retile(retile))
+                self.assertIsNone(tmux_host._retile(retile))
         for bad in ("x", True, 1, "", "ALL"):
             with (
                 self.subTest(retile=bad),
@@ -2307,7 +2305,7 @@ class RetileTest(Case):
                     tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
                 ),
             ):
-                validation._retile(bad)
+                tmux_host._retile(bad)
 
 
 class GridTreeTest(Case):
@@ -2319,8 +2317,8 @@ class GridTreeTest(Case):
         if layout is None:
             layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
         else:
-            layout = tmux_layout._parse_layout(layout)
-        return tmux_layout._grid_tree("%0", panes, [self.MGR, *rows], layout)
+            layout = tmux_host._parse_layout(layout)
+        return tmux_host._grid_tree("%0", panes, [self.MGR, *rows], layout)
 
     def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = [
@@ -2534,7 +2532,7 @@ class GridTreeTest(Case):
         ]
         orphans = slot(None, slot("%3"), slot("%4"))
         for layout in (
-            tmux_layout._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+            tmux_host._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
             "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
             "39x11,121,13,4],39x23,121,25,5]}}",
         ):
@@ -2548,7 +2546,7 @@ class GridTreeTest(Case):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved
         # first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
-        layout = tmux_layout._render_layout(grid([slot("%1"), *groups], 1))
+        layout = tmux_host._render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [
@@ -2574,7 +2572,7 @@ class GridTreeTest(Case):
                 layout = grid([slot(p) for p in panes[1:]], per_column)
                 rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
                 self.assertEqual(
-                    self.tree(rows, panes, tmux_layout._render_layout(layout)),
+                    self.tree(rows, panes, tmux_host._render_layout(layout)),
                     [slot(p) for p in panes[1:]],
                 )
 
@@ -2762,10 +2760,10 @@ class GridLayoutTest(Case):
 
     def tiles(self, cell):
         """Each container's children tile it exactly, one-cell borders between them."""
-        if cell.kind == tmux_model.LEAF:
+        if cell.kind == tmux_host.LEAF:
             return
         self.assertGreaterEqual(len(cell.children), 2)
-        across = cell.kind == tmux_model.LEFT_RIGHT
+        across = cell.kind == tmux_host.LEFT_RIGHT
         at = cell.x if across else cell.y
         for child in cell.children:
             if across:
@@ -2783,18 +2781,18 @@ class GridLayoutTest(Case):
         self.tiles(root)
         self.assertEqual(
             (root.kind, root.w, root.h, root.x, root.y),
-            (tmux_model.LEFT_RIGHT, width, height, 0, 0),
+            (tmux_host.LEFT_RIGHT, width, height, 0, 0),
         )
         manager, area = root.children
         self.assertEqual((manager.pane, manager.h), ("%0", height))
         c = -(-n // per_column)
         if c > 1:
-            self.assertEqual(area.kind, tmux_model.LEFT_RIGHT)
+            self.assertEqual(area.kind, tmux_host.LEFT_RIGHT)
         columns = list(area.children) if c > 1 else [area]
         self.assertEqual(len(columns), c)
         self.assertLessEqual(max(col.w for col in columns) - min(col.w for col in columns), 1)
         for j, column in enumerate(columns):
-            cells = list(column.children) if column.kind == tmux_model.TOP_BOTTOM else [column]
+            cells = list(column.children) if column.kind == tmux_host.TOP_BOTTOM else [column]
             self.assertEqual(
                 [cell.pane for cell in cells],
                 [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))],
@@ -2920,7 +2918,7 @@ class GridLayoutTest(Case):
             [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")]
         )
         self.assertEqual(
-            [leaf.pane for leaf in tmux_layout._leaves(root)],
+            [leaf.pane for leaf in tmux_host._leaves(root)],
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
 
@@ -2930,7 +2928,7 @@ class SwapsTest(Case):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
             with self.subTest(want=want):
-                swaps = tmux_layout._swaps(have, list(want))
+                swaps = tmux_host._swaps(have, list(want))
                 order = list(have)
                 for source, target in swaps:
                     i, j = order.index(source), order.index(target)
@@ -2949,10 +2947,10 @@ class LayoutStringTest(Case):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
-            self.assertEqual(tmux_layout._checksum(text), csum)
+            self.assertEqual(tmux_host._checksum(text), csum)
 
     def test_parse(self):
-        Cell, lr, tb = tmux_host.Cell, tmux_model.LEFT_RIGHT, tmux_model.TOP_BOTTOM
+        Cell, lr, tb = tmux_host.Cell, tmux_host.LEFT_RIGHT, tmux_host.TOP_BOTTOM
         want = Cell(
             160,
             48,
@@ -2971,12 +2969,12 @@ class LayoutStringTest(Case):
                 ),
             ),
         )
-        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL), want)
-        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
 
     def test_round_trip(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            self.assertEqual(tmux_layout._render_layout(tmux_layout._parse_layout(sample)), sample)
+            self.assertEqual(tmux_host._render_layout(tmux_host._parse_layout(sample)), sample)
 
     def test_malformed(self):
         text = MAIN_VERTICAL.split(",", 1)[1]
@@ -2997,7 +2995,7 @@ class LayoutStringTest(Case):
             "160x48,0,0,1\n",
         ):
             with self.subTest(bad=bad):
-                self.assertIsNone(tmux_layout._parse_layout(bad))
+                self.assertIsNone(tmux_host._parse_layout(bad))
 
 
 class ContainerTest(Case):
@@ -3148,7 +3146,7 @@ class ListingTest(Case):
         )
         self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES, captured("w1")])
         self.assertEqual(fake.kwargs, [TMUX_KW] * 4)
-        self.assertEqual(tmux_model.LAST_LINES, 2000)
+        self.assertEqual(tmux_host.LAST_LINES, 2000)
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(
@@ -3648,7 +3646,7 @@ class PanePlacementTest(PaneFixture):
                 self.assertNotIn("set-option", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = tmux_model.APPLESCRIPT
+        script = tmux_host.APPLESCRIPT
         self.assertNotIn(TMUX, script)
         for part in (
             "on run argv",
@@ -4111,7 +4109,7 @@ class StartTest(StartFixture):
             "HOME": "/h",
             "CHILD_SESSION": "1",
             "PWD": "/elsewhere",
-            **{k: "x" for k in tmux_model.TERMINAL_KEYS},
+            **{k: "x" for k in tmux_host.TERMINAL_KEYS},
         }
         for argv in (("tool", "-x", "a b"), ("tool", "--settings", "s.json")):
             with self.subTest(argv=argv):
@@ -4140,7 +4138,7 @@ class StartTest(StartFixture):
 
     def test_terminal_keys(self):
         self.assertEqual(
-            set(tmux_model.TERMINAL_KEYS),
+            set(tmux_host.TERMINAL_KEYS),
             {
                 "TMUX",
                 "TMUX_PANE",
@@ -4358,7 +4356,7 @@ class StartTest(StartFixture):
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
                 self.assertIs(fake.dir_at_kill, expr2=False)
                 self.assertAlmostEqual(
-                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
+                    sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
                 )
                 self.assertEqual(os.listdir(self.temp), [])
                 self.assertEqual(self.stderr.getvalue(), "")
@@ -4404,7 +4402,7 @@ class StartTest(StartFixture):
 
     def test_a_handover_at_its_last_poll_still_gets_the_whole_exec_wait(self):
         fake, slept = Tmux(hand_over=False), []
-        last = round(tmux_model.HANDOVER_TIMEOUT / tmux_model.POLL)
+        last = round(tmux_host.HANDOVER_TIMEOUT / tmux_host.POLL)
 
         def sleep(seconds):
             slept.append(seconds)
@@ -4440,7 +4438,7 @@ class StartTest(StartFixture):
         os.close(fake.writer)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertAlmostEqual(
-            sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
+            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
         )
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -4581,7 +4579,7 @@ class TileApplicationTest(TileFixture):
         # gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
         fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
-        want = tmux_layout._render_layout(grid([slot("%2"), slot("%1")]))
+        want = tmux_host._render_layout(grid([slot("%2"), slot("%1")]))
         self.assertEqual(
             fake.calls[4:],
             self.applied(
@@ -4621,7 +4619,7 @@ class TileApplicationTest(TileFixture):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
         # --if-panes-changed tile skips a drag
         panes = ["%0", "%9", "%10"]
-        layout = tmux_layout._render_layout(grid([slot("%9"), slot("%10")]))
+        layout = tmux_host._render_layout(grid([slot("%9"), slot("%10")]))
         record = ["tmux", "set-option", "-w", "-t", "@3", "@grid-panes", "%0 %9 %10"]
         for recorded in (
             "",
@@ -4736,7 +4734,7 @@ class TileApplicationTest(TileFixture):
                         ]
                     ),
                 )
-                after = [leaf.pane for leaf in tmux_layout._leaves(tmux_layout._parse_layout(want))]
+                after = [leaf.pane for leaf in tmux_host._leaves(tmux_host._parse_layout(want))]
                 fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
@@ -4749,7 +4747,7 @@ class TileApplicationTest(TileFixture):
                 "0",
                 (
                     [("%2", "%4"), ("%3", "%4")],
-                    tmux_layout._parse_layout(tmux_layout._render_layout(grid(4))),
+                    tmux_host._parse_layout(tmux_host._render_layout(grid(4))),
                     "1 x 2",
                     "%0 %1 %2 %3 %4",
                 ),
@@ -4760,7 +4758,9 @@ class TileApplicationTest(TileFixture):
         ):
             with self.subTest(layout=layout, zoomed=zoomed):
                 fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
-                self.assertEqual(grids._grid_pass("@3", None, fake, if_panes_changed=False), want)
+                self.assertEqual(
+                    tmux_host._grid_pass("@3", None, fake, if_panes_changed=False), want
+                )
                 self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
@@ -4776,7 +4776,7 @@ class TileApplicationTest(TileFixture):
                     "select-layout",
                     "-t",
                     "@3",
-                    tmux_layout._render_layout(grid([slot("%2"), slot("%3")])),
+                    tmux_host._render_layout(grid([slot("%2"), slot("%3")])),
                 ]
             ),
         )
@@ -4924,10 +4924,10 @@ class TileApplicationTest(TileFixture):
         ]
         panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
         fake = self.tile(
-            tmux_layout._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
+            tmux_host._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
         )
         cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
-        self.assertEqual(fake.calls[4][-1], tmux_layout._render_layout(grid(cells, 6)))
+        self.assertEqual(fake.calls[4][-1], tmux_host._render_layout(grid(cells, 6)))
 
     def test_per_column_argument_else_the_window_option_else_the_default(self):
         panes = ["%0", "%1", "%2", "%3", "%4"]
@@ -4945,8 +4945,8 @@ class TileApplicationTest(TileFixture):
             ("x", {}, None),
         ):
             with self.subTest(n=n, **kw):
-                fake = self.tile(tmux_layout._render_layout(grid(4)), panes, rows, n=n, **kw)
-                want = tmux_layout._render_layout(grid(4, per_column)) if per_column else None
+                fake = self.tile(tmux_host._render_layout(grid(4)), panes, rows, n=n, **kw)
+                want = tmux_host._render_layout(grid(4, per_column)) if per_column else None
                 self.assertEqual(
                     fake.calls[4:],
                     self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [],
@@ -4976,7 +4976,7 @@ class TileCoordinationTest(TileFixture):
 
         slept = clock(self, poll)
         tmux_host.tile("@3", proc=fake)
-        self.assertEqual(slept, [tmux_model.TILE_POLL] * 3)
+        self.assertEqual(slept, [tmux_host.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
         self.assertEqual(
             fake.calls,
@@ -4990,14 +4990,14 @@ class TileCoordinationTest(TileFixture):
         )
 
     def test_an_explicit_tile_gives_up_after_tile_wait(self):
-        self.assertEqual((tmux_model.TILE_POLL, tmux_model.TILE_WAIT), (0.05, 5))
+        self.assertEqual((tmux_host.TILE_POLL, tmux_host.TILE_WAIT), (0.05, 5))
         hold(self, self.lock)
         slept = clock(self)
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(tmux_host.TuiError, "^grid @3: busy$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
-        self.assertEqual(set(slept), {tmux_model.TILE_POLL})
+        self.assertEqual(set(slept), {tmux_host.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)  # float steps: one poll more
 
     def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
@@ -5012,7 +5012,9 @@ class TileCoordinationTest(TileFixture):
             unittest.mock.patch.object(sys, "executable", PY),
         ):
             self.assertRegex(
-                grids._grid_up("@3", "%0", per_column=3, retile="all", proc=fake, script=SCRIPT),
+                tmux_host._grid_up(
+                    "@3", "%0", per_column=3, retile="all", proc=fake, script=SCRIPT
+                ),
                 want,
             )
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
@@ -5071,7 +5073,7 @@ class TileCoordinationTest(TileFixture):
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
-        self.assertEqual((tmux_model.TILE_LIMIT, tmux_model.TILE_WINDOW), (50, 10))
+        self.assertEqual((tmux_host.TILE_LIMIT, tmux_host.TILE_WINDOW), (50, 10))
         line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
         recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
@@ -5107,7 +5109,7 @@ class TileCoordinationTest(TileFixture):
             contextlib.nullcontext(unittest.mock.Mock()) as tile,
         ):
             self.assertIsNone(
-                grids._grid_up(
+                tmux_host._grid_up(
                     "@3",
                     "%0",
                     per_column=3,
@@ -5142,7 +5144,7 @@ class TileCoordinationTest(TileFixture):
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with grids._grid_lock(self.sock, "@3", wait=False) as held:
+        with tmux_host._grid_lock(self.sock, "@3", wait=False) as held:
             self.assertTrue(held)
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))

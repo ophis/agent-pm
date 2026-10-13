@@ -1,3 +1,8 @@
+"""orchestrator router.py, ported from the old router_test (Plan, Claim, Blockers, TaskLabels, Gate
+over Usage, Tick, IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's headless parts
+as Entry) onto config.load() and a fake Driver api, plus FR-44 to FR-48, FR-56 and FR-60. A tick's
+start is injected but in Entry, which runs main's own outer."""
+
 import argparse
 import contextlib
 import fcntl
@@ -16,8 +21,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, target
-from agent_pm.linear_orchestrator.engine import router as routing
-from agent_pm.linear_orchestrator.engine import router as runtime_usage
 from agent_pm.linear_orchestrator.engine import run as run_py
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear
@@ -539,15 +542,13 @@ class Base(run_fixtures.Base):
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=again):
             out = use(
-                routing.Board(
+                router.Board(
                     functools.partial(fake, service=HARNESS),
                     runs.parse_log(self.runs),
                     cfg,
                     now=NOW,
                     dry=dry,
-                    gate=runtime_usage.Gate(self.runs, NOW, dry=dry, driver=self.api)
-                    if gate
-                    else None,
+                    gate=router.Gate(self.runs, NOW, dry=dry, driver=self.api) if gate else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -879,7 +880,7 @@ class IssueClaims(Base):
             self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
         self.assertEqual(
             (fake.issues["TASK-1"]["assignee"], fake.issues["TASK-1"]["subscribers"]),
             (who("researcher"), ["me@x.com"]),
@@ -1102,7 +1103,7 @@ class IssueBlockers(Base):
                 "claim TASK-3 role=researcher runtime=a",
             ],
         )
-        self.assertEqual(fake.reads(), [routing.q_issues(routing.RELATIONS), routing.q_issues()])
+        self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
         self.assertEqual(
             [v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q],
             ["TASK-1", "TASK-2", "TASK-3"],
@@ -1483,7 +1484,7 @@ class RouterOutages(TickBase):
                     self.tick(
                         fake,
                         "--now",
-                        now=NOW + routing.STALE + timedelta(minutes=1),
+                        now=NOW + router.STALE + timedelta(minutes=1),
                     ),
                     0,
                 )
@@ -1497,7 +1498,7 @@ class RouterOutages(TickBase):
                         "launch TASK-1 exit=0",
                     ],
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])
+                self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
 
 
 class RuntimeUsage(Base):
@@ -1505,19 +1506,17 @@ class RuntimeUsage(Base):
 
     def gate(self):
         self.write_runs()
-        return runtime_usage.Gate(self.runs, NOW, dry=False, driver=self.api)
+        return router.Gate(self.runs, NOW, dry=False, driver=self.api)
 
     def test_a_usage_probe_defect_is_not_unknown_usage(self):
         error = AttributeError("adapter defect")
         self.api.usages["a"] = error
         with self.assertRaises(AttributeError) as caught:
-            runtime_usage.read_usage("a", driver=self.api)
+            router.read_usage("a", driver=self.api)
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):
-        self.assertEqual(
-            (runtime_usage.MAX_5H, router.BRAKE_5H, runtime_usage.MAX_WEEK), (90, 80, 100)
-        )
+        self.assertEqual((router.MAX_5H, router.BRAKE_5H, router.MAX_WEEK), (90, 80, 100))
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),
@@ -1555,7 +1554,7 @@ class RuntimeUsage(Base):
             (reading(89.94, None), "five_hour=89.94% weekly=none"),
         )
         for usage, out in rows:
-            self.assertEqual(runtime_usage.summary(usage), out)
+            self.assertEqual(router.summary(usage), out)
 
 
 class ClaimUsageGates(Base):
@@ -1910,7 +1909,7 @@ class TaskSelection(TaskLabelsScenario):
         )
         for labels, want in cases:
             self.assertEqual(
-                routing.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks),
+                router.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks),
                 want,
                 labels,
             )
@@ -1977,7 +1976,7 @@ class TaskSelection(TaskLabelsScenario):
         )
         self.assertEqual(
             {i: fake.issues[i].get("comments") for i in ("TASK-1", "TASK-2")},
-            {"TASK-1": [routing.CAP_COMMENT], "TASK-2": [self.ORPHAN]},
+            {"TASK-1": [router.CAP_COMMENT], "TASK-2": [self.ORPHAN]},
         )
         self.assertEqual([i for op, i in writes(fake) if op == "read"], ["TASK-1", "TASK-2"])
         self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-2", "TASK-3"])
@@ -2232,7 +2231,7 @@ class ScheduledTaskSelection(TickBase):
         self.moved("TASK-1", 61)
         self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=60)
         self.tick(fake)
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
         self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())
         (launch,) = self.start.launches
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
@@ -2620,7 +2619,7 @@ class ExplicitIssueRuns(TickBase):
                 capped,
                 "recover TASK-1 to=in_review reason=reached 4 attempts",
                 "In Review",
-                routing.CAP_COMMENT,
+                router.CAP_COMMENT,
             ),
             (
                 "role",
@@ -2640,7 +2639,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: self.add(kind="start", ident="TASK-1", sid="n", minutes_ago=5),
                 "recover TASK-1 to=todo reason=not resumable sid=n",
                 "Todo",
-                routing.INTERRUPTED,
+                router.INTERRUPTED,
             ),
             (
                 "no sid",
@@ -2648,7 +2647,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: None,
                 f"recover TASK-1 to=todo reason=no session updated={ago(minutes=5)}",
                 "Todo",
-                routing.INTERRUPTED,
+                router.INTERRUPTED,
             ),
         ]
 
@@ -3086,7 +3085,7 @@ class RunPlanning(Base):
             self.add(kind="resume", ident="TASK-1", sid="sid1", minutes_ago=m)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
 
     def test_live_session_not_resumed_or_recovered(self):
         resume = "resume TASK-3 c https://linear.app/x/TASK-3 Deep Research"
@@ -3242,7 +3241,7 @@ class RunPlanning(Base):
                         "TASK-6": "In Progress",
                     },
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"][0], routing.INTERRUPTED)
+                self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
@@ -3276,7 +3275,7 @@ class RunPlanning(Base):
         t = fake.issues["TASK-1"]
         self.assertEqual(
             (t["state"], t["assignee"], t["comments"]),
-            ("Todo", who("engineer"), [routing.INTERRUPTED]),
+            ("Todo", who("engineer"), [router.INTERRUPTED]),
         )
         self.assertNotIn("subscribers", t)
         self.assertFalse(any("assigneeId" in repr(v) for _, v in fake.mutations))
@@ -3329,7 +3328,7 @@ class RunPlanning(Base):
                 )
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"][-1], routing.CAP_COMMENT)
+        self.assertEqual(fake.issues["TASK-1"]["comments"][-1], router.CAP_COMMENT)
 
     def test_user_reset_resumes_and_orders_by_new_sid(self):
         rows = (
@@ -3376,7 +3375,7 @@ class RunPlanning(Base):
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
                     (t["state"], t["assignee"], t["comments"], t.get("subscribers", [])),
-                    ("In Review", who("researcher"), [routing.CAP_COMMENT], members),
+                    ("In Review", who("researcher"), [router.CAP_COMMENT], members),
                 )
                 self.assertEqual(
                     writes(fake),
@@ -3482,7 +3481,7 @@ class StaleRunRecovery(Base):
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
-                    (t["state"], t.get("comments")), (state, [routing.INTERRUPTED] if out else None)
+                    (t["state"], t.get("comments")), (state, [router.INTERRUPTED] if out else None)
                 )
                 self.assertEqual(
                     self.said(),
@@ -3930,8 +3929,8 @@ class ScheduledRuns(TickScenario):
             {i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
             {
                 "TASK-1": ("In Progress", None),
-                "TASK-2": ("Todo", [routing.INTERRUPTED]),
-                "TASK-3": ("In Review", [routing.CAP_COMMENT]),
+                "TASK-2": ("Todo", [router.INTERRUPTED]),
+                "TASK-3": ("In Review", [router.CAP_COMMENT]),
                 "TASK-4": ("Todo", None),
                 "TASK-5": ("In Progress", None),
                 "TASK-6": ("Todo", None),

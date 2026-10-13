@@ -1,3 +1,6 @@
+"""orchestrator inputs.py, ported from the old inputs_test (its Checkout case on the composer), plus
+FR-57: a Handoff whose Instructions hold a `## Comments` line."""
+
 import json
 import os
 import re

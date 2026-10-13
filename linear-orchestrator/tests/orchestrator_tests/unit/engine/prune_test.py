@@ -1,3 +1,6 @@
+"""orchestrator prune.py, ported from the old prune_test onto a fake Driver api (FR-50); its tick
+through promote.main."""
+
 import io
 import json
 import os
