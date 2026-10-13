@@ -2,7 +2,7 @@
 Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
 a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
 the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
-the session on a thread of the session, stopped at its next yield, changing no global state (cwd, environ,
+the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
 signals): it applies spec.access.cwd, not its env. Starts no process.
 """
 
