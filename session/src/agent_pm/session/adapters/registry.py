@@ -11,8 +11,9 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from agent_pm.session.adapters.base import Adapter, ConfigError
+from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.selection import configure as configure_selection
+from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tmux import tmux_host
 

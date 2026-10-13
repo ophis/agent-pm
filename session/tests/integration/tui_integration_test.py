@@ -19,8 +19,8 @@ from collections.abc import Iterator
 from unittest import mock
 
 from agent_pm.session import Session, api
-from agent_pm.session.adapters.base import Activity, Blocked, Exited, SessionBound, TurnEnd
 from agent_pm.session.engine import records
+from agent_pm.session.engine.types import Activity, Blocked, Exited, SessionBound, TurnEnd
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 

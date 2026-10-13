@@ -11,7 +11,7 @@ from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.base import EFFORTS, ConfigError, Launch, SessionInfo, Usage, Window
+from agent_pm.session.engine.types import EFFORTS, ConfigError, Launch, SessionInfo, Usage, Window
 
 from .sessions import (
     RecoveryError,

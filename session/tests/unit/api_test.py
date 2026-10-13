@@ -26,9 +26,9 @@ from unittest import mock
 
 from agent_pm.session import api
 from agent_pm.session.adapters import base, selection
-from agent_pm.session.adapters.base import Access, Launch
 from agent_pm.session.engine import records
-from agent_pm.session.engine.types import DriverError
+from agent_pm.session.engine import types as engine_types
+from agent_pm.session.engine.types import Access, DriverError, Launch
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 
@@ -78,7 +78,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
     def check(self, prompt, spec, resume):
         LAUNCHED.append(spec)
         if spec.tier == 4:
-            raise base.ConfigError("tier 4 is unmapped")
+            raise engine_types.ConfigError("tier 4 is unmapped")
         with open(self.adapter.config["log"], "a", encoding="utf-8") as f:
             f.write(
                 json.dumps(
@@ -103,10 +103,10 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return Launch(**self.config["probe"])
 
     def usage(self, output):
-        return base.Usage(base.Window(float(output), None), None)
+        return engine_types.Usage(engine_types.Window(float(output), None), None)
 
     def session_status(self, sid, cwd):
-        return base.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
+        return engine_types.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
 
 
 LAUNCHED: list[api.Spec] = []
@@ -1007,7 +1007,7 @@ class UsageTest(Base):
         self.assertEqual(probe.call_args.kwargs["timeout"], api.PROBE_TIMEOUT)
 
     def test_a_reading_without_windows_is_a_usage(self):
-        with mock.patch.object(ProbeAdapter, "usage", return_value=base.Usage(None, None)):
+        with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
             found, probe = self.usage()
         self.assertEqual(found, api.Usage(None, None))
         probe.assert_called_once()
@@ -1906,10 +1906,10 @@ class ExportsTest(Case):
             "Usage",
             "Window",
             "SessionStatus",
-            "RESUMABLE",
         ):
             with self.subTest(name=name):
-                self.assertIs(getattr(api, name), getattr(base, name))
+                self.assertIs(getattr(api, name), getattr(engine_types, name))
+        self.assertIs(api.RESUMABLE, base.RESUMABLE)
         self.assertIs(api.records, records)
         self.assertIs(api.session, records.session)
         self.assertIs(api.DriverError, DriverError)

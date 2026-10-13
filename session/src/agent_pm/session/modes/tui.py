@@ -13,20 +13,17 @@ import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
 
-from agent_pm.session.adapters.base import (
-    ACTIVITY,
-    BLOCKED,
-    TURN_END,
+from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
+from agent_pm.session.engine.types import (
     Activity,
     Blocked,
+    DriverError,
     Event,
     Paste,
     SessionBound,
     SessionInfo,
     Stderr,
-    Tui,
 )
-from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui_hook
 from agent_pm.utils.files import read_regular

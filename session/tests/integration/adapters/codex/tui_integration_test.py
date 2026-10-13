@@ -19,7 +19,9 @@ from zoneinfo import ZoneInfo
 
 from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import (
+from agent_pm.session.adapters.codex import tui_start
+from agent_pm.session.engine import records
+from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
@@ -30,8 +32,6 @@ from agent_pm.session.adapters.base import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.adapters.codex import tui_start
-from agent_pm.session.engine import records
 
 from session.tests import live_tmux
 from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings

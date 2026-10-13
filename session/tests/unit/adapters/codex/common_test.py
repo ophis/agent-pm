@@ -7,8 +7,8 @@ import stat
 import time
 from unittest import mock
 
-from agent_pm.session.adapters.base import Access, ConfigError, SessionInfo
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
 
 from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base

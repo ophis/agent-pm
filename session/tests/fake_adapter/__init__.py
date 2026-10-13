@@ -15,18 +15,20 @@ from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
-    Activity,
     Adapter,
-    Blocked,
-    Exited,
     Headless,
     InProcess,
+    Tui,
+)
+from agent_pm.session.engine.types import (
+    Activity,
+    Blocked,
+    Exited,
     Launch,
     LimitHit,
     Reply,
     SessionBound,
     Stderr,
-    Tui,
     TurnEnd,
 )
 

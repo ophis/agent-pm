@@ -17,7 +17,8 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters.base import (
+from agent_pm.session.engine import records
+from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
@@ -29,7 +30,6 @@ from agent_pm.session.adapters.base import (
     Stderr,
     TurnEnd,
 )
-from agent_pm.session.engine import records
 
 from session.tests import fake_adapter
 from session.tests.case import Case

@@ -13,9 +13,9 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.engine.types import Access, Spec
 
 from session.tests import case, live_tmux
 from session.tests.integration.adapters.claude import fake_claude

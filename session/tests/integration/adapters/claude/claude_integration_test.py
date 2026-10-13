@@ -17,7 +17,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters.base import (
+from agent_pm.session.engine.types import (
     Activity,
     Exited,
     LimitHit,

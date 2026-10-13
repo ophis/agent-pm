@@ -15,15 +15,8 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm.session import api
-from agent_pm.session.adapters.base import (
-    Activity,
-    Blocked,
-    Exited,
-    LimitHit,
-    SessionBound,
-    TurnEnd,
-)
 from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.engine.types import Activity, Blocked, Exited, LimitHit, SessionBound, TurnEnd
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 

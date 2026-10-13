@@ -70,7 +70,7 @@ ALLOWED = {
     ("delegate.event.outcome", "delegate.composer"),  # SCHEMA, RunConfig
     *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
     *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
-    (SESSION_TYPES, "session.adapters"),
+    ("session.adapters", SESSION_TYPES),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
     (CONFIG, HOSTS),  # the [hosts] parser; PURE narrows it to HOST_TABLES

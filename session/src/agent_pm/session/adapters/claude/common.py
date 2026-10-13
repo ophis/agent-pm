@@ -9,7 +9,7 @@ import stat
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
-from agent_pm.session.adapters.base import (
+from agent_pm.session.engine.types import (
     EFFORTS,
     ConfigError,
     Launch,

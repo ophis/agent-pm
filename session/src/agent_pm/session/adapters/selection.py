@@ -1,7 +1,7 @@
 import functools
 import re
 
-from agent_pm.session.adapters.base import ConfigError
+from agent_pm.session.engine.types import ConfigError
 
 
 def select(

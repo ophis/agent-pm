@@ -19,17 +19,19 @@ from dataclasses import replace
 from typing import Protocol
 
 from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import (
-    RESUMABLE,
+from agent_pm.session.adapters.base import RESUMABLE, Adapter, Headless, InProcess, Tui
+from agent_pm.session.adapters.selection import check as check_selection
+from agent_pm.session.engine import records
+from agent_pm.session.engine.records import session
+from agent_pm.session.engine.types import (
     Access,
     Activity,
-    Adapter,
     Blocked,
     ConfigError,
+    DriverError,
     Event,
     Exited,
-    Headless,
-    InProcess,
+    IdleTimeout,
     Key,
     Launch,
     LimitHit,
@@ -37,19 +39,15 @@ from agent_pm.session.adapters.base import (
     Reply,
     SessionBound,
     SessionInfo,
+    SessionRow,
     SessionStatus,
     Spec,
     Stderr,
-    Tui,
     TurnEnd,
     Usage,
     Window,
     sid_error,
 )
-from agent_pm.session.adapters.selection import check as check_selection
-from agent_pm.session.engine import records
-from agent_pm.session.engine.records import session
-from agent_pm.session.engine.types import DriverError, IdleTimeout, SessionRow
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils.paths import printable_abs

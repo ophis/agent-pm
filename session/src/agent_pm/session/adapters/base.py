@@ -1,231 +1,37 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
-Its Headless (a fresh one per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a
-Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and the runtime's output
-into the frozen event set (Event) plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a
-Driver thread, stopped at its next yield; it changes no global state (cwd, environ, signals), applying
-spec.access.cwd itself, not its env. Access.dirs are granted write, Access.reads only read. Spec.flags/env are
-caller-supplied for every Mode. select_session is the Driver's selector (registry); unset, it refuses. Times are
-epoch seconds. Starts no process."""
+Its Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a Launch
+whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and the runtime's output into
+Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at
+its next yield, changing no global state (cwd, environ, signals): it applies spec.access.cwd, not its env.
+select_session is the Driver's selector (registry); unset, it refuses. Starts no process."""
 
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
 
-from agent_pm.utils.paths import printable_abs
+from agent_pm.session.engine.types import Access as Access  # re-export until the Spec step
+from agent_pm.session.engine.types import (
+    Activity,
+    Blocked,
+    ConfigError,
+    Event,
+    Key,
+    Launch,
+    LimitHit,
+    Paste,
+    SessionBound,
+    SessionInfo,
+    SessionStatus,
+    Spec,
+    Stderr,
+    TurnEnd,
+    Usage,
+)
 
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
-TAG = re.compile(r"[A-Za-z0-9_-]+")
 TURN_END = "turn_end"
 BLOCKED = "blocked"
 ACTIVITY = "activity"
-
-
-class ConfigError(Exception):
-    pass
-
-
-def _strings(value) -> bool:
-    return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
-
-
-def _clean(value) -> bool:
-    return isinstance(value, str) and "\0" not in value
-
-
-def env_ok(env) -> bool:
-    return isinstance(env, Mapping) and all(
-        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean(v)
-        for k, v in env.items()
-    )
-
-
-def sid_error(sid) -> str | None:
-    if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
-        return None
-    return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
-
-
-@dataclass(frozen=True, kw_only=True)
-class Access:
-    dirs: tuple[str, ...] = ()
-    commands: tuple[str, ...] = ()
-    cwd: str = ""
-    project: bool = False
-    reads: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
-
-    def __post_init__(self):
-        for name in ("dirs", "commands", "reads"):
-            if not _strings(getattr(self, name)):
-                raise ConfigError(f"{name} must be a tuple of strings")
-        if not env_ok(self.env):
-            raise ConfigError(
-                "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
-            )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Spec:
-    workdir: str
-    access: Access = Access()
-    tier: int | None = None
-    effort: str | None = None
-    sid: str | None = None
-    flags: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
-    name: str | None = None
-    protect: tuple[str, ...] = ()  # paths no writable dir may overlap (Codex only)
-    reply_tags: tuple[str, str] | None = (
-        None  # the caller's (progress, outcome) tags (print_prompt only)
-    )
-
-    def __post_init__(self):
-        if not printable_abs(self.workdir):
-            raise ConfigError(
-                f"workdir must be a printable absolute path, got {self.workdir!r:.80}"
-            )
-        if self.tier is not None and (
-            isinstance(self.tier, bool) or not isinstance(self.tier, int) or not 1 <= self.tier <= 4
-        ):
-            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
-        if self.effort is not None and self.effort not in EFFORTS:
-            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
-        if self.access.cwd != "" and not printable_abs(self.access.cwd):
-            raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
-        if self.sid is not None and (error := sid_error(self.sid)):
-            raise ConfigError(error)
-        if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
-            raise ConfigError("flags must be a tuple of strings without NUL")
-        if not env_ok(self.env):
-            raise ConfigError("env must map variable names to strings without NUL")
-        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
-        if self.name is not None and not isinstance(self.name, str):
-            raise ConfigError("name must be None or a string")
-        if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
-            raise ConfigError("protect must be a tuple of printable absolute paths")
-        if self.reply_tags is not None and not (
-            isinstance(self.reply_tags, tuple)
-            and len(self.reply_tags) == 2
-            and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
-        ):
-            raise ConfigError(
-                "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
-            )
-
-
-@dataclass(frozen=True)
-class Launch:
-    argv: tuple[str, ...]
-    env: Mapping[str, str] = field(default_factory=dict)
-    unset: tuple[str, ...] = ()
-    cwd: str = ""
-    transcript: str = ""
-    resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
-
-    project: bool | None = None
-
-    def __post_init__(self):
-        if self.project is not None and not isinstance(self.project, bool):
-            raise ConfigError("launch: project must be a bool or None")
-        env = self.env
-        for name, ok in (
-            ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
-            (
-                "env",
-                isinstance(env, Mapping) and all(_clean(k) and _clean(v) for k, v in env.items()),
-            ),
-            ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
-        ):
-            if not ok:
-                raise ConfigError(f"launch: {name} must be strings without NUL")
-
-
-@dataclass(frozen=True)
-class SessionInfo:
-    sid: str
-    native_id: str
-    cwd: str
-    project: bool
-    transcript: str
-    resume: str
-
-
-@dataclass(frozen=True)
-class SessionBound:
-    native_id: str
-
-
-@dataclass(frozen=True)
-class Activity:
-    detail: str = ""
-
-
-@dataclass(frozen=True)
-class Reply:
-    text: str
-
-
-@dataclass(frozen=True)
-class TurnEnd:
-    reply: str = ""
-    pending: int = 0
-
-
-@dataclass(frozen=True)
-class Blocked:
-    reason: str = ""
-
-
-@dataclass(frozen=True)
-class LimitHit:
-    resets_at: float | None = None
-
-
-@dataclass(frozen=True)
-class Exited:
-    returncode: int
-
-
-Event = SessionBound | Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
-
 RESUMABLE = ("yes", "no", "unknown")
-
-
-@dataclass(frozen=True)
-class Window:
-    used_percent: float  # may exceed 100
-    resets_at: float | None  # None: not given
-
-
-@dataclass(frozen=True)
-class Usage:
-    five_hour: Window | None  # None: not reported
-    weekly: Window | None
-
-
-@dataclass(frozen=True)
-class SessionStatus:
-    resumable: str
-    last_active: float | None
-    resume_command: str
-
-
-@dataclass(frozen=True)
-class Stderr:
-    text: str
-
-
-@dataclass(frozen=True)
-class Paste:
-    text: str
-
-
-@dataclass(frozen=True)
-class Key:
-    name: str
 
 
 class Adapter(ABC):
@@ -257,8 +63,7 @@ class Adapter(ABC):
         """A fresh Headless, or None."""
 
     @abstractmethod
-    def tui(self) -> "Tui | None":
-        """The Tui, or None."""
+    def tui(self) -> "Tui | None": ...
 
     def in_process(self) -> "InProcess | None":
         """A fresh InProcess, or None."""
@@ -292,8 +97,7 @@ class Headless(ABC):
         """The command; resume continues spec.sid."""
 
     @abstractmethod
-    def parse(self, record: dict) -> Iterable[Event | Stderr]:
-        """One JSONL object's events."""
+    def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
 
     def events(self, lines: Iterable[str]) -> Iterator[Event | Stderr]:
         for line in lines:
@@ -317,14 +121,12 @@ class Tui(ABC):
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its payload on stdin."""
 
     @abstractmethod
-    def reply(self, payload: dict) -> str:
-        """A TURN_END hook's reply."""
+    def reply(self, payload: dict) -> str: ...
 
     def pending(self, payload: dict) -> int:
         return 0
 
     def activity(self, payload: dict) -> str:
-        """An ACTIVITY hook's detail."""
         return ""
 
     def blocked_reason(self, payload: dict) -> str:

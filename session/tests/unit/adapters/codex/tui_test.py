@@ -9,7 +9,8 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session.adapters.base import (
+from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
@@ -20,7 +21,6 @@ from agent_pm.session.adapters.base import (
     SessionBound,
     TurnEnd,
 )
-from agent_pm.session.adapters.codex import CodexAdapter
 
 from session.tests.case import ROOTS
 from session.tests.selection import configured

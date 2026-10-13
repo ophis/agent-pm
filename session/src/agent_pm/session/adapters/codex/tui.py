@@ -5,7 +5,8 @@ import shlex
 import shutil
 import sys
 
-from agent_pm.session.adapters.base import ConfigError, Launch, LimitHit, Tui
+from agent_pm.session.adapters.base import Tui
+from agent_pm.session.engine.types import ConfigError, Launch, LimitHit
 
 from . import sessions
 from .common import LIMIT_PREFIXES, added_dirs, flags, native_id, passed, refuse, reset_at
