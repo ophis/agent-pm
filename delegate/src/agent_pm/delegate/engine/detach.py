@@ -43,15 +43,15 @@ def detach(
     """
     mode = p.spec.mode
     if mode not in MODES:
-        raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
+        raise ConfigError.detach_mode(mode)
     if mode != "tui" and (split is not None or split_from is not None):
-        raise ConfigError("split and split_from: tui mode only")
+        raise ConfigError.split_mode()
     tui, driver = names(p.run.role, p.spec.sid, mode)
     events = os.path.abspath(events)
     try:
         append_line(events, "", own=True)
     except OSError as e:
-        raise ConfigError(f"events file {events}: {e.strerror or e}") from None
+        raise ConfigError.events_file(events, e.strerror or e) from None
     opener = None
     if tui is not None:
         try:

@@ -1,0 +1,1 @@
+"""Delegate settings validation types."""

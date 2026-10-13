@@ -4,8 +4,8 @@ import os
 import re
 from collections.abc import Mapping
 
+import agent_pm.utils as utils
 from agent_pm.delegate.composer.types import ConfigError
-from agent_pm.utils import unfenced
 
 TEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "team")
 OUTPUT = "output"
@@ -29,7 +29,7 @@ def fill(text: str, values: Mapping, where: str) -> str:
 
     out = PLACEHOLDER.sub(value, text)
     if m := PLACEHOLDER.search(out):
-        raise ConfigError(f"unfilled placeholder {m.group(0)} in {where}")
+        raise ConfigError.placeholder(m.group(0), where)
     return out
 
 
@@ -39,7 +39,7 @@ def anchor(heading: str) -> str:
 
 def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
     out, stack, section, last = [], [], "", (-2, "")
-    for i, line in unfenced(text):
+    for i, line in utils.unfenced(text):
         if m := HEADING.match(line):
             level, title = len(m[1]), m[2].strip()
             while stack and stack[-1][0] >= level:
@@ -61,13 +61,13 @@ def read_text(path: str) -> str:
         with open(path) as f:
             return f.read().strip() + "\n"
     except OSError as e:
-        raise ConfigError(f"{path}: {e.strerror}") from None
+        raise ConfigError.file_io(path, e.strerror) from None
     except UnicodeDecodeError:
-        raise ConfigError(f"{path}: not UTF-8 text") from None
+        raise ConfigError.file_encoding(path) from None
 
 
 def title_of(text: str, rel: str) -> str:
     first = text.splitlines()[0] if text.strip() else ""
     if not first.startswith("# "):
-        raise ConfigError(f"{rel}: must start with a '# ' heading")
+        raise ConfigError.heading(rel)
     return first[2:].strip()

@@ -38,7 +38,7 @@ def _config(name: str) -> Iterator[None]:
     try:
         yield
     except (OSError, ValueError, SessionConfigError) as e:
-        raise ConfigError(f"{name} config: {e}") from None
+        raise ConfigError.layer_configuration(name, e) from None
 
 
 def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
@@ -47,7 +47,7 @@ def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
         spec = SessionSpec(workdir="/", flags=tuple(flags), env=env)
         return spec.flags, dict(spec.env)
     except (OSError, ValueError, SessionConfigError) as exc:
-        raise ConfigError(f"policy.{runtime}: {exc}") from None
+        raise ConfigError.policy(runtime, exc) from None
 
 
 def _own(f):
@@ -72,17 +72,15 @@ def place(
         entry = session_record(workdir, resume_sid)
         here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
         if project and not under(os.path.realpath(here), trusted):
-            raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
+            raise ConfigError.untrusted_resume_cwd(here)
     else:
         here = os.path.abspath(os.path.expanduser(run.cwd or cwd or os.getcwd()))
         project = under(os.path.realpath(here), trusted) is not None
     real, real_work = os.path.realpath(here), os.path.realpath(workdir)
     if real != real_work and not os.path.isdir(here):
-        raise ConfigError(f"cwd {here} is not a directory")
+        raise ConfigError.cwd_missing(here)
     if project and under(real, [real_work]):
-        raise ConfigError(
-            f"cwd {here} is in trusted_dirs and in the workdir: project settings must not load from it"
-        )
+        raise ConfigError.cwd_inside_workdir(here)
     if not project and real != real_work:
         print(
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
@@ -96,13 +94,13 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
     driver = configure() if driver is None else driver
     if spec.mode not in MODES:
-        raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {spec.mode!r}")
+        raise ConfigError.mode(MODES, spec.mode)
     if spec.mode != "tui" and spec.name is not None:
-        raise ConfigError("name: tui mode only")
+        raise ConfigError.name_mode()
     if spec.mode != "tui" and spec.events is not None:
-        raise ConfigError("events: tui mode only")
+        raise ConfigError.events_mode()
     if spec.resume and spec.sid is None:
-        raise ConfigError("resume: needs a sid")
+        raise ConfigError.resume_sid()
     team, guarded = spec.team, ()
     if team is None:
         team = composer.team()
@@ -113,9 +111,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     tasks = composer.index(run.role, team)
     if spec.task:
         if spec.task not in tasks:
-            raise ConfigError(
-                f"task {spec.task!r} is not one of {run.role}'s tasks ({', '.join(tasks)})"
-            )
+            raise ConfigError.task(spec.task, run.role, tasks)
         run = replace(run, task=spec.task)
     workdir = os.path.abspath(spec.workdir)
     spec = replace(

@@ -8,13 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
+from agent_pm.delegate.composer.errors.types import ConfigError as ConfigError
+
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-
-
-class ConfigError(Exception):
-    pass
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,31 +35,29 @@ class RunConfig:
 
     def __post_init__(self):
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
-            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
+            raise ConfigError.tier(self.tier)
         if self.effort not in EFFORTS:
-            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
+            raise ConfigError.effort(EFFORTS, self.effort)
         if (
             not isinstance(self.runtime, str)
             or not self.runtime.strip()
             or not self.runtime.isprintable()
         ):
-            raise ConfigError(
-                f"runtime must be a non-empty one-line name, got {self.runtime!r:.80}"
-            )
+            raise ConfigError.runtime(self.runtime)
         if "type" not in self.output:
-            raise ConfigError("output.type is not set")
+            raise ConfigError.output_type()
         if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:
-            raise ConfigError("gate must be one line of shell command without backticks")
+            raise ConfigError.gate()
         if not isinstance(self.language, str) or "\n" in self.language:
-            raise ConfigError("language must be one line of text")
+            raise ConfigError.language()
         if not isinstance(self.show, str) or "\n" in self.show:
-            raise ConfigError("show must be one line of shell command")
+            raise ConfigError.show()
         if self.cwd and (
             not isinstance(self.cwd, str)
             or not self.cwd.isprintable()
             or not os.path.isabs(os.path.expanduser(self.cwd))
         ):
-            raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
+            raise ConfigError.configured_cwd(self.cwd)
 
 
 @dataclass(frozen=True, kw_only=True)
