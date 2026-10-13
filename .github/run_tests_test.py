@@ -32,14 +32,21 @@ class Cases:
             self.fail("a:b, c% |")
 
 
-SCRIPT = """import os, sys, unittest
+# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit 134 instead.
+SCRIPT = """import faulthandler, os, sys, unittest
 sys.path.insert(0, {github!r})
 import run_tests
+
+def abort():
+    sys.stderr.write("Fatal Python error: Aborted\\n\\n")
+    sys.stderr.flush()
+    faulthandler.dump_traceback()
+    os._exit(134)
 
 class T(unittest.TestCase):
     def test_a(self):
         if {mode!r} == "mid":
-            os.abort()
+            abort()
         self.assertNotEqual({mode!r}, "fail")
 
 code = run_tests.supervise("Unit x")
@@ -48,7 +55,7 @@ if code is None:
         sys.exit(2)
     code = run_tests.run(unittest.TestLoader().loadTestsFromTestCase(T), "Unit x")
     if {mode!r} == "after":
-        os.abort()
+        abort()
 sys.exit(code)
 """
 
