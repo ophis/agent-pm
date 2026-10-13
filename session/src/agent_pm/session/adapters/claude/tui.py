@@ -8,13 +8,16 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
-from agent_pm.session.engine.types import LimitHit
-from agent_pm.utils.files import read_regular
+from agent_pm.session.adapters.claude.common import ClaudeCommon
+from agent_pm.session.engine.types import LimitHit, Spec
+from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
 WHEN = re.compile(
-    r"(?:([A-Za-z]+)(?: (\d{1,2})(?:, (\d{4}))?)?,? )?(\d{1,2})(?::([0-5]\d))?([ap]m)(?: \(([^)]*)\))?",
+    (
+        r"(?:([A-Za-z]+)(?: (\d{1,2})(?:, (\d{4}))?)?,? )?(\d{1,2})(?::([0-5]\d))?([ap]m)(?: \(([^)]*)\))?"
+    ),
     re.I,
 )
 ZONE = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")
@@ -49,8 +52,11 @@ class ClaudeTui(Tui):
     )
     dialogs = ("Quick safety check",)
 
-    def launch(self, prompt, spec, resume, hook):
-        common = self.adapter.common
+    def __init__(self, common: ClaudeCommon):
+        self.common = common
+
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+        common = self.common
         hooks = {
             label: [
                 {
@@ -62,7 +68,7 @@ class ClaudeTui(Tui):
         }
         tail = ("--", prompt) if prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, resume, settings, tail=(*flags, *tail))
+        return common.launch(spec, settings, tail=(*flags, *tail), resume=resume)
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")
@@ -101,7 +107,9 @@ def _first(payload: dict, *keys: str) -> str:
 
 
 def _last_text(data: bytes) -> str:
-    """The text blocks of the last assistant message with text, over its records sharing one message.id."""
+    """The text blocks of the last assistant message with text, over its records sharing one
+    message.id.
+    """
     last, texts = None, []
     for line in reversed(data.split(b"\n")):
         try:
@@ -114,7 +122,7 @@ def _last_text(data: bytes) -> str:
             else None
         )
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
+        if not isinstance(message, dict) or not isinstance(content, list):
             continue
         blocks = [
             b["text"]

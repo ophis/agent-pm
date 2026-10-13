@@ -1,6 +1,8 @@
-"""The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and the projects' import
-roots."""
+"""The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and the
+projects' import roots.
+"""
 
+import contextlib
 import os
 import subprocess
 import tempfile
@@ -24,7 +26,7 @@ def real_dirs(paths, label: str) -> frozenset[str]:
 
 def temp_dirs() -> tuple[str, ...]:
     dirs = [os.environ.get("TMPDIR", ""), tempfile.gettempdir(), "/tmp", "/var/tmp"]
-    try:
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
         dirs.append(
             subprocess.run(
                 ["getconf", "DARWIN_USER_TEMP_DIR"],
@@ -34,8 +36,6 @@ def temp_dirs() -> tuple[str, ...]:
                 stdin=subprocess.DEVNULL,
             ).stdout.strip()
         )
-    except (OSError, subprocess.SubprocessError):
-        pass
     return tuple(dict.fromkeys(os.path.realpath(d) for d in dirs if d))
 
 

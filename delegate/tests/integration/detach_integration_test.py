@@ -1,13 +1,16 @@
-"""delegate/cli.py --detach as a subprocess on a private tmux server (session/tests/live_tmux.py), a control-mode client on
-the manager, the session config's ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py: the Driver session, the TUI beside the
-caller or in no pane, the outcome line, a kill-session of the Driver session, an events path tmux would misread.
-Ports main's tests/integration/core/drive_tui_integration_test.py test_detach_from_the_manager. Not ported, as role
-entries are TASK-356: its test_detach_events_default (the manager directory's events file needs roster) and main's
-manager/tests/integration/crew_integration_test.py Roster role-run cases: test_killed_role_run_gone_then_recovered,
-test_stop_a_role_run_by_its_tui_session,
+"""delegate/cli.py --detach as a subprocess on a private tmux server (session/tests/live_tmux.py), a
+control-mode client on the manager, the session config's ClaudeAdapter running
+session/tests/integration/adapters/claude/fake_claude.py: the Driver session, the TUI beside the
+caller or in no pane, the outcome line, a kill-session of the Driver session, an events path tmux
+would misread. Ports main's tests/integration/core/drive_tui_integration_test.py
+test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
+test_detach_events_default (the manager directory's events file needs roster) and main's
+manager/tests/integration/crew_integration_test.py Roster role-run cases:
+test_killed_role_run_gone_then_recovered, test_stop_a_role_run_by_its_tui_session,
 test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume, the role parts of
 test_stop_all_stops_what_mgr_opened_and_only_that and
-test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker."""
+test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker.
+"""
 
 import json
 import os
@@ -16,8 +19,6 @@ import signal
 import subprocess
 import tempfile
 import unittest
-
-from agent_pm.session.engine import records
 
 from delegate.tests.case import PYTHONPATH, Case
 from delegate.tests.integration.cli import ASKING, CLI, DONE, SID
@@ -78,7 +79,7 @@ class Detach(Case):
             timeout=WAIT,
         )
 
-    def said(self, res: subprocess.CompletedProcess, tui: bool) -> None:
+    def said(self, res: subprocess.CompletedProcess, *, tui: bool) -> None:
         want = [
             f"delegate: session {SID}\n",
             f"delegate: driver session {DRIVER}: tmux attach -t '={DRIVER}'\n",
@@ -88,7 +89,8 @@ class Detach(Case):
         self.assertTrue(res.stderr.endswith("".join(want)), res.stderr)
 
     def poke(self) -> None:
-        # tmux on Linux (CI: 3.4) can leave an exited pane's process unreaped until another child of the server exits
+        # tmux on Linux (CI: 3.4) can leave an exited pane's process unreaped until another child of
+        # the server exits
         self.server.tmux("run-shell", "-b", "true")
 
     def live(self, name: str) -> bool:
@@ -102,8 +104,9 @@ class Detach(Case):
         return live_tmux.wait(poked, WAIT, what=what)
 
     def ended(self, turn_ends: int = 0) -> list[str]:
-        """The events file's lines, shaped, once they hold an outcome and turn_ends turn ends and the Driver session
-        is gone."""
+        """The events file's lines, shaped, once they hold an outcome and turn_ends turn ends and
+        the Driver session is gone.
+        """
 
         def check():
             shaped = shape(live_tmux.events(self.events))
@@ -116,11 +119,18 @@ class Detach(Case):
         self.until(lambda: not self.live(DRIVER), f"{DRIVER} gone")
         return shape(live_tmux.events(self.events))
 
+    def records(self):
+        try:
+            with open(os.path.join(self.work, "run.jsonl")) as stream:
+                return [json.loads(line) for line in stream]
+        except FileNotFoundError:
+            return []
+
     def kinds(self) -> list[str]:
-        return [e["kind"] for e in records.read(records.path(self.work))]
+        return [e["kind"] for e in self.records()]
 
     def last(self, kind: str) -> dict:
-        return [e for e in records.read(records.path(self.work)) if e["kind"] == kind][-1]
+        return [e for e in self.records() if e["kind"] == kind][-1]
 
     def read(self, path: str) -> str:
         with open(path) as f:
@@ -176,7 +186,7 @@ class Tui(Detach):
         rc = 128 + signal.SIGHUP
         self.assertEqual(
             (self.last("result")["error"], self.last("end")["rc"]),
-            (f"stopped: SystemExit: {rc}", rc),
+            (f"stopped: Stopped: {rc}", rc),
         )
 
     def test_an_events_path_tmux_would_misread_detaches_then_the_driver_form_exits_2_outcome_error(

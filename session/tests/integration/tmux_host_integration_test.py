@@ -1,8 +1,4 @@
-"""session.engine.api.show and close on a private tmux server (session/tests/live_tmux.py), placing sessions as
-hosts/tmux/tmux_host.py lays them out: the grid (columns, name order, sub-sessions, an unshown session reopened), its
-settling and re-tiling modes, and a split outside it; ported from main's crew integration tests. Sessions are
-tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
-fails the test. Also start's dead line for a command ending at once."""
+"""Session behavior tests with caller-owned dependencies."""
 
 import contextlib
 import functools
@@ -13,23 +9,32 @@ import subprocess
 import sys
 import tempfile
 import time
-import unittest
 from unittest import mock
 
-from agent_pm.session.engine import api
 from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import tmux_host as grids
+from agent_pm.session.hosts.tmux import tmux_host as layout
+from agent_pm.session.hosts.tmux import tmux_host as tmux_model
 
 from session.tests import live_tmux
 from session.tests.case import Case
+from session.tests.processes import reject_command
 
 MANAGER = "mgr"
+
 TIMEOUT = 60
+
 TUI = os.path.abspath(tmux_host.__file__)
+
 IGNORED = "tui: show: grid: --split/--split-from ignored"
+
 STEADY = 1  # seconds a check that nothing re-tiles holds
+
 BREAKER_TIMEOUT = 30
+
 RETILE_WAIT = 0.5
+
 PACE = 0.02
 
 
@@ -41,9 +46,7 @@ class Live(Case):
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()
         self.addCleanup(patch.stop)
-        patch = mock.patch.object(
-            tmux_host, "_iterm", side_effect=AssertionError("the iTerm2 path")
-        )
+        patch = reject_command("osascript")
         patch.start()
         self.addCleanup(patch.stop)
         tmp = tempfile.TemporaryDirectory()
@@ -73,7 +76,7 @@ class Live(Case):
         """show(name, **kwargs) from inside `inside`, a pane then showing it; its stderr."""
         err = io.StringIO()
         with self.inside(inside), contextlib.redirect_stderr(err):
-            self.assertIsNone(api.show(name, **kwargs))
+            self.assertIsNone(self.driver.show(name, **kwargs))
         return err.getvalue()
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
@@ -120,12 +123,12 @@ class Live(Case):
 
     def hooks(self, name: str) -> list[str]:
         out = self.tmux("show-hooks", "-w", "-t", self.window_of(name))
-        return [h for h in tmux_host.GRID_HOOKS if re.search(rf"^{h}\b", out, re.M)]
+        return [h for h in tmux_model.GRID_HOOKS if re.search(rf"^{h}\b", out, re.M)]
 
     def open_close_hooks(self, name: str) -> None:
-        self.assertEqual(self.hooks(name), list(tmux_host.RETILE_HOOKS["open-close"]))
+        self.assertEqual(self.hooks(name), list(tmux_model.RETILE_HOOKS["open-close"]))
         out = self.tmux("show-hooks", "-w", "-t", self.window_of(name))
-        for h in tmux_host.RETILE_HOOKS["open-close"]:
+        for h in tmux_model.RETILE_HOOKS["open-close"]:
             line = next(line for line in out.splitlines() if re.match(rf"{h}\b", line))
             self.assertIn(" tile --no-wait --if-panes-changed @", line)
 
@@ -148,7 +151,8 @@ class GridTest(Live):
 
     def test_columns_retile(self):
         self.per_column(2)
-        # tmux's split leaves the split pane the wider half (100 of 200); tile keeps the manager's width
+        # tmux's split leaves the split pane the wider half (100 of 200); tile keeps the manager's
+        # width
         width = self.server.size[0] // 2
         self.started("w1")
         self.grid([["w1"]], width)
@@ -157,7 +161,7 @@ class GridTest(Live):
         self.grid([["w1", "w2"]], width)
         self.started("w3")
         self.grid([["w1", "w2"], ["w3"]], width)
-        api.close("w2")
+        self.driver.close("w2")
         self.grid([["w1", "w3"]], width)
 
     def test_name_order(self):
@@ -182,12 +186,12 @@ class GridTest(Live):
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
         self.grid([["m1", ("m2", ["z1", "z2"]), "m3"]])
-        api.close("z1")
-        api.close("z2")
+        self.driver.close("z1")
+        self.driver.close("z2")
         self.grid([["m1", "m2", "m3"]])
         self.started("z3", inside="m2")
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
-        api.close("m2")
+        self.driver.close("m2")
         self.grid([["m1", ["z3"], "m3"]])
 
     def test_an_unshown_session_reopens_in_the_grid(self):
@@ -204,160 +208,47 @@ class GridTest(Live):
         self.assertEqual(self.server.option("w1", "@opener"), MANAGER)
 
 
-class SettleTest(Live):
-    def setUp(self):
-        super().setUp()
-        self.retile("all")
-        self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
-        self.window = self.display(MANAGER, "#{window_id}")
-        w1 = self.tmux(
-            "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE
-        )
-        w2 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", w1, *live_tmux.IDLE)
-        for name, opener, pane in (("w1", "old1", w1), ("w2", "old2", w2)):
-            self.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
-            self.tmux(
-                "set-option",
-                "-t",
-                f"={name}:",
-                "@opener",
-                opener,
-                ";",
-                "set-option",
-                "-t",
-                f"={name}:",
-                "@pane",
-                pane,
-            )
-        self.tmux("swap-pane", "-d", "-s", self.manager, "-t", w2)
-        self.assertEqual(
-            self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
-            [w2, w1, self.manager],
-        )
-        old = tmux_host._render_layout(
-            tmux_host._parse_layout(
-                f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
-            )
-        )
-        self.tmux("select-layout", "-t", self.window, old)
-        self.assertEqual(self.layout(), old)
-
-    def layout(self) -> str:
-        return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
-
-    def grid_up(self) -> None:
+class SplitsTest(Live):
+    def test_split_outside_grid(self):
+        manager = self.server.inside(MANAGER)["TMUX_PANE"]
         with self.inside(MANAGER):
-            self.assertIsNone(
-                tmux_host._grid_up(self.window, self.manager, 1, "all", subprocess.run)
-            )
-
-    def settled(self) -> str:
-        self.grid([[["w1"]], [["w2"]]], 99)
-        return self.steady(self.layout())
-
-    def steady(self, layout: str) -> str:
-        return self.holds(self.layout, layout, "the window's layout")
-
-    def hand_layout(self, tiles: str) -> tuple[str, str]:
-        # even-vertical: even-horizontal of these three panes already is their grid
-        self.tmux("select-layout", "-t", self.window, "even-vertical")
-        end = time.monotonic() + RETILE_WAIT
-        state = f"#{{{tmux_host.GRID_MANAGER}}}\t#{{{tmux_host.GRID_BUSY}}}\t#{{{tmux_host.GRID_TILES}}}"
-        while True:
-            manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split(
-                "\t"
-            )
-            if not manager or now != tiles and not busy or time.monotonic() > end:
-                return manager, now
-            time.sleep(PACE)
-
-    def test_grid_up_settles(self):
-        self.grid_up()
-        self.settled()
-
-    def test_concurrent_tiles_settle(self):
-        self.tmux(
-            "set-option",
-            "-w",
-            "-t",
-            self.window,
-            tmux_host.GRID_MANAGER,
-            self.manager,
-            ";",
-            "set-option",
-            "-w",
-            "-t",
-            self.window,
-            tmux_host.GRID_PER_COLUMN,
-            "1",
+            self.assertEqual(self.driver.layout(), MANAGER)
+        self.assertIsNone(self.driver.layout("below", MANAGER))
+        with self.assertRaises(DriverError) as caught:
+            self.driver.layout("below")
+        self.assertTrue(
+            str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),
+            caught.exception,
         )
-        env = self.server.env(**self.server.inside(MANAGER))
-        tiles = [
-            subprocess.Popen(
-                [sys.executable, "-I", TUI, "tile", *flag, self.window],
-                env=env,
-                cwd=self.cwd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            for flag in (["--no-wait"], [])
-            for _ in range(8)
-        ]
-        for p in tiles:
-            self.addCleanup(
-                p.communicate
-            )  # cleanups run last first: after the kill, reaps it, closes its pipes
-            self.addCleanup(p.kill)
-        for p in tiles:
-            _, err = p.communicate(timeout=TIMEOUT)
-            self.assertEqual(p.returncode, 0, f"{p.args}: {err}")
-        self.settled()
-
-    def test_busy_mutes_the_hooks(self):
-        self.grid_up()
-        grid = self.settled()
-        self.tmux("set-option", "-w", "-t", self.window, tmux_host.GRID_BUSY, self.window)
-        self.tmux("select-layout", "-t", self.window, "even-vertical")
-        self.assertNotEqual(self.steady(self.layout()), grid)
-        self.tmux("set-option", "-u", "-w", "-t", self.window, tmux_host.GRID_BUSY)
-        self.tmux("select-layout", "-t", self.window, "even-vertical")
-        self.settled()
-
-    def test_breaker_stops_a_loop(self):
-        self.grid_up()
-        self.settled()
-        start, seen, most = time.monotonic(), 0, 0
-        tiles = self.window_option(MANAGER, tmux_host.GRID_TILES)
-        while True:
-            manager, now = self.hand_layout(tiles)
-            if not manager:
-                break
-            seen, most, tiles = seen + (now != tiles), max(most, len(now.split())), now
-            elapsed = time.monotonic() - start
-            self.assertLess(
-                elapsed,
-                BREAKER_TIMEOUT,
-                f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
-                f"trips past {tmux_host.TILE_LIMIT} in {tmux_host.TILE_WINDOW} s",
-            )
-        # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
-        self.assertGreaterEqual(most, tmux_host.TILE_LIMIT - 1)
-        options = (
-            tmux_host.GRID_MANAGER,
-            tmux_host.GRID_PER_COLUMN,
-            tmux_host.GRID_TILES,
-            tmux_host.GRID_BUSY,
-            tmux_host.GRID_PANES_SET,
+        self.assertEqual(self.started("w1", inside=None, split="below", split_from=MANAGER), "")
+        pane = self.server.pane_of("w1")
+        panes = self.server.panes(f"={MANAGER}:")
+        self.assertIn(pane, panes)
+        (mx, my, _, _), (x, y, _, _) = panes[manager], panes[pane]
+        self.assertEqual(x, mx)
+        self.assertGreater(y, my)
+        self.assertEqual(
+            [self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")],
+            ["", ""],
         )
-        self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
-        hooks = self.tmux("show-hooks", "-w", "-t", self.window)
-        self.assertEqual([h for h in tmux_host.GRID_HOOKS if h in hooks], [], hooks)
-        self.tmux("select-layout", "-t", self.window, "even-vertical")
-        self.steady(self.layout())
-        self.started("w3")
-        self.grid([[["w1"], ["w2"], "w3"]])
+
+
+class StartTest(Live):
+    def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
+        events = os.path.join(self.cwd, "events")
+        tmux_host.start(
+            "s1", ["/bin/sh", "-c", "exit 3"], events=events, cwd=self.cwd, env=self.server.env()
+        )
+
+        def dead():
+            self.server.tmux("run-shell", "-b", "true")
+            self.assertEqual(
+                [line.split(" ", 1)[1] for line in live_tmux.events(events)], ["s1 dead"]
+            )
+            return True
+
+        live_tmux.wait(dead, what="s1's dead line")
+        self.assertEqual((tmux_host.status("s1"), self.server.option("s1", "@state")), (3, "dead"))
 
 
 class RetileTest(Live):
@@ -372,7 +263,7 @@ class RetileTest(Live):
         return self.display(MANAGER, "#{window_layout}")
 
     def tiles(self) -> str:
-        return self.window_option(MANAGER, tmux_host.GRID_TILES)
+        return self.window_option(MANAGER, tmux_model.GRID_TILES)
 
     def drag(self, name: str, rows: int) -> str:
         before = self.layout()
@@ -409,7 +300,7 @@ class RetileTest(Live):
         self.grid([["w1", "w2"]], width)
         self.open_close_hooks(MANAGER)
         self.assertEqual(
-            self.window_option(MANAGER, tmux_host.GRID_PANES_SET), self.pane_set(MANAGER)
+            self.window_option(MANAGER, tmux_model.GRID_PANES_SET), self.pane_set(MANAGER)
         )
         dragged = self.drag("w1", 5)
         self.holds(self.layout, dragged, "the layout after a drag")
@@ -434,16 +325,18 @@ class RetileTest(Live):
         for name in ("w1", "w2", "w3"):
             self.started(name)
         self.grid([["w1", "w2", "w3"]], width)
-        # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the window's pane-exited
-        # hook, so window-layout-changed (a new pane set) re-tiles
+        # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the
+        # window's pane-exited hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
-        api.close("w2")
+        self.driver.close("w2")
         self.grid([["w1", "w3"]], width)
         self.open_close_hooks(MANAGER)
-        api.close("w3")
+        self.driver.close("w3")
         self.grid([["w1"]], width)
         live_tmux.wait(
-            lambda: self.window_option(MANAGER, tmux_host.GRID_PANES_SET) == self.pane_set(MANAGER),
+            lambda: (
+                self.window_option(MANAGER, tmux_model.GRID_PANES_SET) == self.pane_set(MANAGER)
+            ),
             what="@grid-panes the window's pane set",
         )
 
@@ -467,7 +360,7 @@ class RetileTest(Live):
         self.split_of(before, "z1", largest, "below")
         self.holds(self.panes, self.panes(), "the panes as placed")
         self.assertEqual(self.hooks(MANAGER), [])
-        options = (tmux_host.GRID_MANAGER, tmux_host.GRID_PER_COLUMN)
+        options = (tmux_model.GRID_MANAGER, tmux_model.GRID_PER_COLUMN)
         self.assertEqual(
             [self.window_option(MANAGER, k) for k in options],
             [self.manager, str(tmux_host.PER_COLUMN)],
@@ -479,7 +372,7 @@ class RetileTest(Live):
         self.retile("all")
         self.started("w1")
         self.grid([["w1"]])
-        self.assertEqual(self.hooks(MANAGER), list(tmux_host.GRID_HOOKS))
+        self.assertEqual(self.hooks(MANAGER), list(tmux_model.GRID_HOOKS))
         self.retile("open-close")
         self.started("w2")
         self.grid([["w1", "w2"]])
@@ -488,48 +381,166 @@ class RetileTest(Live):
         self.holds(self.layout, dragged, "the layout after a drag")
 
 
-class SplitsTest(Live):
-    def test_split_outside_grid(self):
-        manager = self.server.inside(MANAGER)["TMUX_PANE"]
-        with self.inside(MANAGER):
-            self.assertEqual(api.layout(), MANAGER)
-        self.assertIsNone(api.layout("below", MANAGER))
-        with self.assertRaises(DriverError) as caught:
-            api.layout("below")
-        self.assertTrue(
-            str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),
-            caught.exception,
+class SettleTest(Live):
+    def setUp(self):
+        super().setUp()
+        self.retile("all")
+        self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
+        self.window = self.display(MANAGER, "#{window_id}")
+        w1 = self.tmux(
+            "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.manager, *live_tmux.IDLE
         )
-        self.assertEqual(self.started("w1", inside=None, split="below", split_from=MANAGER), "")
-        pane = self.server.pane_of("w1")
-        panes = self.server.panes(f"={MANAGER}:")
-        self.assertIn(pane, panes)
-        (mx, my, _, _), (x, y, _, _) = panes[manager], panes[pane]
-        self.assertEqual(x, mx)
-        self.assertGreater(y, my)
-        self.assertEqual(
-            [self.window_option(MANAGER, k) for k in ("@grid-manager", "@grid-per-column")],
-            ["", ""],
-        )
-
-
-class StartTest(Live):
-    def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
-        events = os.path.join(self.cwd, "events")
-        tmux_host.start(
-            "s1", ["/bin/sh", "-c", "exit 3"], cwd=self.cwd, env=self.server.env(), events=events
-        )
-
-        def dead():
-            self.server.tmux("run-shell", "-b", "true")
-            self.assertEqual(
-                [line.split(" ", 1)[1] for line in live_tmux.events(events)], ["s1 dead"]
+        w2 = self.tmux("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", w1, *live_tmux.IDLE)
+        for name, opener, pane in (("w1", "old1", w1), ("w2", "old2", w2)):
+            self.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
+            self.tmux(
+                "set-option",
+                "-t",
+                f"={name}:",
+                "@opener",
+                opener,
+                ";",
+                "set-option",
+                "-t",
+                f"={name}:",
+                "@pane",
+                pane,
             )
-            return True
+        self.tmux("swap-pane", "-d", "-s", self.manager, "-t", w2)
+        self.assertEqual(
+            self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
+            [w2, w1, self.manager],
+        )
+        old = layout._render_layout(
+            layout._parse_layout(
+                f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
+            )
+        )
+        self.tmux("select-layout", "-t", self.window, old)
+        self.assertEqual(self.layout(), old)
 
-        live_tmux.wait(dead, what="s1's dead line")
-        self.assertEqual((tmux_host.status("s1"), self.server.option("s1", "@state")), (3, "dead"))
+    def layout(self) -> str:
+        return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
 
+    def grid_up(self) -> None:
+        with self.inside(MANAGER):
+            self.assertIsNone(
+                grids._grid_up(
+                    self.window,
+                    self.manager,
+                    per_column=1,
+                    retile="all",
+                    proc=subprocess.run,
+                    script=tmux_host.__file__,
+                )
+            )
 
-if __name__ == "__main__":
-    unittest.main()
+    def settled(self) -> str:
+        self.grid([[["w1"]], [["w2"]]], 99)
+        return self.steady(self.layout())
+
+    def steady(self, layout: str) -> str:
+        return self.holds(self.layout, layout, "the window's layout")
+
+    def hand_layout(self, tiles: str) -> tuple[str, str]:
+        # even-vertical: even-horizontal of these three panes already is their grid
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        end = time.monotonic() + RETILE_WAIT
+        state = f"#{{{tmux_model.GRID_MANAGER}}}\t#{{{tmux_model.GRID_BUSY}}}\t#{{{tmux_model.GRID_TILES}}}"
+        while True:
+            manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split(
+                "\t"
+            )
+            if not manager or now != tiles and not busy or time.monotonic() > end:
+                return manager, now
+            time.sleep(PACE)
+
+    def test_grid_up_settles(self):
+        self.grid_up()
+        self.settled()
+
+    def test_concurrent_tiles_settle(self):
+        self.tmux(
+            "set-option",
+            "-w",
+            "-t",
+            self.window,
+            tmux_model.GRID_MANAGER,
+            self.manager,
+            ";",
+            "set-option",
+            "-w",
+            "-t",
+            self.window,
+            tmux_model.GRID_PER_COLUMN,
+            "1",
+        )
+        env = self.server.env(**self.server.inside(MANAGER))
+        tiles = [
+            subprocess.Popen(
+                [sys.executable, "-I", TUI, "tile", *flag, self.window],
+                env=env,
+                cwd=self.cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for flag in (["--no-wait"], [])
+            for _ in range(8)
+        ]
+        for p in tiles:
+            self.addCleanup(
+                p.communicate
+            )  # cleanups run last first: after the kill, reaps it, closes its pipes
+            self.addCleanup(p.kill)
+        for p in tiles:
+            _, err = p.communicate(timeout=TIMEOUT)
+            self.assertEqual(p.returncode, 0, f"{p.args}: {err}")
+        self.settled()
+
+    def test_busy_mutes_the_hooks(self):
+        self.grid_up()
+        grid = self.settled()
+        self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_BUSY, self.window)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.assertNotEqual(self.steady(self.layout()), grid)
+        self.tmux("set-option", "-u", "-w", "-t", self.window, tmux_model.GRID_BUSY)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.settled()
+
+    def test_breaker_stops_a_loop(self):
+        self.grid_up()
+        self.settled()
+        start, seen, most = time.monotonic(), 0, 0
+        tiles = self.window_option(MANAGER, tmux_model.GRID_TILES)
+        while True:
+            manager, now = self.hand_layout(tiles)
+            if not manager:
+                break
+            seen, most, tiles = seen + (now != tiles), max(most, len(now.split())), now
+            elapsed = time.monotonic() - start
+            self.assertLess(
+                elapsed,
+                BREAKER_TIMEOUT,
+                (
+                    f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
+                    f"trips past {tmux_model.TILE_LIMIT} in {tmux_model.TILE_WINDOW} s"
+                ),
+            )
+        # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
+        self.assertGreaterEqual(most, tmux_model.TILE_LIMIT - 1)
+        options = (
+            tmux_model.GRID_MANAGER,
+            tmux_model.GRID_PER_COLUMN,
+            tmux_model.GRID_TILES,
+            tmux_model.GRID_BUSY,
+            tmux_model.GRID_PANES_SET,
+        )
+        self.assertEqual([self.window_option(MANAGER, k) for k in options], [""] * len(options))
+        hooks = self.tmux("show-hooks", "-w", "-t", self.window)
+        self.assertEqual([h for h in tmux_model.GRID_HOOKS if h in hooks], [], hooks)
+        self.tmux("select-layout", "-t", self.window, "even-vertical")
+        self.steady(self.layout())
+        self.started("w3")
+        self.grid([[["w1"], ["w2"], "w3"]])

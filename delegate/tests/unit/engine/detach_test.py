@@ -1,5 +1,6 @@
-"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its refusals with nothing started
-and the Driver's errors; outcome's line and its write errors."""
+"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its
+refusals with nothing started and the Driver's errors; outcome's line and its write errors.
+"""
 
 import errno
 import io
@@ -32,15 +33,17 @@ class Names(Case):
 
 
 class Detach(Base):
-    """detach_session and layout patched (the opener `mgr`); the cwd self.tmp."""
+    """The fake driver's detach and layout recorded (the opener `mgr`); the cwd self.tmp."""
 
     def setUp(self):
         super().setUp()
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(detach, "detach_session"))
-        self.layout = self.enterContext(mock.patch.object(detach, "layout", return_value="mgr"))
+        self.started = self.enterContext(mock.patch.object(self.driver, "detach"))
+        self.layout = self.enterContext(
+            mock.patch.object(self.driver, "layout", return_value="mgr")
+        )
 
     def plan(self, mode="headless", task="echo", **kw):
         return self.planned("dummy-tester", task, mode=mode, input=INPUT, sid=SID, **kw)[0]

@@ -1,6 +1,8 @@
-"""FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own process group, state in
-one dir per session under settings["root"] (default ~/.agent-pm/fake-host): meta.json, env.json, pid, rc, output,
-and a terminal's FIFO input. Every call reads that state, so any process sees the sessions another started."""
+"""FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own process
+group, state in one dir per session under settings["root"] (default ~/.agent-pm/fake-host):
+meta.json, env.json, pid, rc, output, and a terminal's FIFO input. Every call reads that state, so
+any process sees the sessions another started.
+"""
 
 import contextlib
 import json
@@ -15,8 +17,7 @@ import time
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.types import Key, Paste
-from agent_pm.utils.paths import import_roots
-from agent_pm.utils.record import Display, Record
+from agent_pm.utils import Display, Record, import_roots
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}
@@ -71,8 +72,9 @@ class FakeProcess(HostProcess):
         return True
 
     def kill(self) -> None:
-        """The whole process group, whatever its leader's state (a child the program left is in it), once: its pid
-        may be reused after."""
+        """The whole process group, whatever its leader's state (a child the program left is in it),
+        once: its pid may be reused after.
+        """
         if (pid := self._pid()) is not None and _read(self.folder, "killed") is None:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
@@ -121,10 +123,14 @@ class FakeHost(Host):
         return os.path.expanduser(self.settings.get("root", "~/.agent-pm/fake-host"))
 
     def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
-        return self._start("detach", name, argv, cwd, env, display, events, record)
+        return self._start(
+            "detach", name, argv, cwd, env, display=display, events=events, record=record
+        )
 
     def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
-        return self._start("terminal", name, argv, cwd, env, display, events, record)
+        return self._start(
+            "terminal", name, argv, cwd, env, display=display, events=events, record=record
+        )
 
     def attach(self, name: str) -> FakeProcess:
         folder = os.path.join(self.root(), name)
@@ -144,7 +150,7 @@ class FakeHost(Host):
             and (display is None or meta.get("display") == display)
         ]
 
-    def _start(self, kind, name, argv, cwd, env, display, events, record):
+    def _start(self, kind, name, argv, cwd, env, *, display, events, record):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ValueError(f"name: want [A-Za-z0-9_-]+, not {name!r}")
         if not (isinstance(argv, list | tuple) and argv and all(isinstance(a, str) for a in argv)):

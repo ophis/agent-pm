@@ -1,6 +1,8 @@
-"""session.engine.api over fake runtimes: events, idle timeouts, exits, stop, process groups, inherited pipes,
-launch environment, limits and resume. Custom adapters: in-process module tables."""
+"""session.engine.api over fake runtimes: events, idle timeouts, exits, stop, process groups,
+inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
+"""
 
+import contextlib
 import dataclasses
 import io
 import json
@@ -34,6 +36,8 @@ from agent_pm.session.engine.types import (
 
 from session.tests import fake_adapter
 from session.tests.case import Case
+from session.tests.modules import adapter_loader
+from session.tests.threads import capture_errors
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds
@@ -52,10 +56,10 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
 
 
 class LaunchingRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         config = self.adapter.config
         return dataclasses.replace(
-            super().launch(prompt, spec, resume),
+            super().launch(prompt, spec, resume=resume),
             env=config.get("env", {}),
             unset=tuple(config.get("unset", ())),
             cwd=config.get("cwd", ""),
@@ -76,7 +80,7 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
 
 
 class ScriptRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 
@@ -99,10 +103,8 @@ def running(pid: int) -> bool:
 
 def kill(pid: int) -> None:
     """SIGKILL to a test's stray process, if it still runs."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 class Base(Case):
@@ -114,16 +116,15 @@ class Base(Case):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
-        patch = mock.patch.dict(
-            sys.modules,
-            {
-                "agent_pm.session.adapters.fake": fake_adapter,
-                "agent_pm.session.adapters.launching": LAUNCHING,
-                "agent_pm.session.adapters.script": SCRIPT,
-            },
-        )
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader(
+                {
+                    "agent_pm.session.adapters.fake": fake_adapter,
+                    "agent_pm.session.adapters.launching": LAUNCHING,
+                    "agent_pm.session.adapters.script": SCRIPT,
+                }
+            )
+        }
         self.configure()
 
     def steps(self, *steps):
@@ -131,7 +132,9 @@ class Base(Case):
             json.dump(list(steps), f)
 
     def configure(self, **extra):
-        """Tables fake and launching, each with this test's scenario and log; `extra` keys go into launching's."""
+        """Tables fake and launching, each with this test's scenario and log; `extra` keys go into
+        launching's.
+        """
         tables = {
             name: {
                 "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
@@ -144,28 +147,27 @@ class Base(Case):
         self.configure_session(tables)
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
-        handle = api.start(
+        handle = self.driver.start(
             runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
         self.addCleanup(handle.stop)
         return handle
 
-    def drain(self, handle, on=lambda event: None) -> list:
-        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping the handle, instead
-        of hanging past WAIT."""
+    def drain(self, handle, on=lambda _event: None) -> list:
+        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
+        the handle, instead of hanging past WAIT.
+        """
         found, errors = [], []
 
         def run():
-            try:
-                for event in handle.events():
-                    found.append(event)
-                    on(event)
-            except BaseException as e:
-                errors.append(e)
+            for event in handle.events():
+                found.append(event)
+                on(event)
 
         thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
+        with capture_errors(thread, errors.append):
+            thread.start()
+            thread.join(WAIT)
         if thread.is_alive():
             handle.stop()
             self.fail(f"events() did not end within {WAIT}s, got {found}")
@@ -349,7 +351,9 @@ class ProcessGroupTest(Base):
     def test_stop_kills_a_grandchild_holding_the_pipes_so_events_end_with_exited(self):
         handle = self.script("""
             import json, subprocess, sys, time
-            grandchild = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
+            grandchild = subprocess.Popen(
+                [sys.executable, "-I", "-c", "import time; time.sleep(60)"]
+            )
             print(json.dumps({"type": "message", "text": str(grandchild.pid)}), flush=True)
             time.sleep(60)
         """)

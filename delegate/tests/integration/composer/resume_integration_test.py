@@ -1,5 +1,6 @@
-"""The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a run whose role picks
-its task, a draft left at the deliverable's path."""
+"""The prompts of a resume, composed in a child process (child.Case): an answer to needs_input, a
+run whose role picks its task, a draft left at the deliverable's path.
+"""
 
 import os
 import re
@@ -60,8 +61,10 @@ class Draft(child.Case):
                 prompt = self.compose("dummy-tester", resume=resume)["prompt"]
                 self.assertIn(f"\n- `<Workdir>`: `{self.work}`\n", prompt)
                 self.assertIn(
-                    "\nWrite the deliverable to `<Workdir>/out.md` and name that file in the outcome's "
-                    "`deliverable_file`;",
+                    (
+                        "\nWrite the deliverable to `<Workdir>/out.md` and name that file in the outcome's "
+                        "`deliverable_file`;"
+                    ),
                     prompt,
                 )
 

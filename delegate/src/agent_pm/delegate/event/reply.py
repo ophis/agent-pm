@@ -1,8 +1,10 @@
-"""The reply protocol's progress mark tag (PROGRESS) and outcome fence info (OUTCOME); a reply's progress mark lines outside code fences (marks) and its outcome block (outcome_block)."""
+"""The reply protocol's progress mark tag (PROGRESS) and outcome fence info (OUTCOME); a reply's
+progress mark lines outside code fences (marks) and its outcome block (outcome_block).
+"""
 
 import re
 
-from agent_pm.utils.markdown import fenced, unfenced
+from agent_pm.utils import fenced, unfenced
 
 PROGRESS = "agent-pm-progress"
 OUTCOME = "agent-pm-outcome"
@@ -11,7 +13,9 @@ NAME = re.compile(r"[\w-]+")
 
 
 def marks(text: str) -> list[tuple[str, str]]:
-    """(name, text) of each mark line, whitespace collapsed; one with a bad name or no text is skipped."""
+    """(name, text) of each mark line, whitespace collapsed; one with a bad name or no text is
+    skipped.
+    """
     out = []
     for _, line in unfenced(text):
         if (

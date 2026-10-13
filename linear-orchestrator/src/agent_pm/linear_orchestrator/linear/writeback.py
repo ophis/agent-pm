@@ -1,21 +1,23 @@
-"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and moves, each step
-once per session id (the ledger; comment steps by client id, found again on resume); bounce, the router's repo-check
-report."""
+"""Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and
+moves, each step once per session id (the ledger; comment steps by client id, found again on
+resume); bounce, the router's repo-check report.
+"""
 
-import fcntl
+import contextlib
 import functools
 import hashlib
 import json
 import os
-import stat
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.target import MAPPED
-from agent_pm.linear_orchestrator.linear.issues import Issue
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
     client_id,
@@ -24,28 +26,10 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     move,
     one_line,
-    reraise_signal,
     subscribe,
 )
-from agent_pm.utils.files import save
-
-M_TITLE = (
-    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
-)
-M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
-M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
-Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
-Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
-
-LEDGER = "writeback.json"
-MAX_FILE = 1_000_000
-PLAN_MARK = "RESUME: phase="
-FOOTER = "Answer in a comment, then move this issue back to Todo."
-LIMIT = "Usage limit,"
-ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
-# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain open forever; regular-file
-# reads ignore it.
-NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+from agent_pm.linear_orchestrator.linear.types import Issue
+from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
 
 
 @dataclass(frozen=True)
@@ -63,6 +47,25 @@ class Context:
     repos: Mapping[str, str]
     team: str
     target: tuple[str, str] | None
+
+
+M_TITLE = (
+    "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
+)
+M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
+Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
+Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
+
+LEDGER = "writeback.json"
+MAX_FILE = 1_000_000
+PLAN_MARK = "RESUME: phase="
+FOOTER = "Answer in a comment, then move this issue back to Todo."
+LIMIT = "Usage limit,"
+ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
+# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain
+# open forever; regular-file reads ignore it.
+NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
@@ -108,7 +111,15 @@ def local_time(epoch):
 
 
 def _error(ctx, step, e):
-    log("writeback", "step-error", ctx.ident, sid=ctx.sid, step=step, error=one_line(e))
+    log(
+        "writeback",
+        "step-error",
+        ctx.ident,
+        sid=ctx.sid,
+        step=step,
+        error=one_line(e),
+        traceback="".join(format_exception(e)),
+    )
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
@@ -142,8 +153,7 @@ def _step(ctx, step, call, cid=None):
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, step, e)
         return e
     log("writeback", "step", ctx.ident, sid=ctx.sid, step=step, found=found or None)
@@ -156,7 +166,7 @@ def _post(ctx, step, body):
 
 
 def progress(ctx, event: Progress) -> None:
-    # raises only a signal SystemExit: an on_event exception stops the Delegate's session
+    # raises only Stopped: an on_event exception stops the Delegate's session
     try:
         if not isinstance(event, Progress):
             return
@@ -166,29 +176,23 @@ def progress(ctx, event: Progress) -> None:
         else:
             digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
             _post(ctx, f"progress:{event.name}:{digest}", f"Progress ({event.name}): {event.text}")
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except Exception as e:  # noqa: BLE001  # A sink failure must not stop the run.
         _error(ctx, "sink", e)
 
 
 def _read_file(path, workdir):
-    # re-checked on the open fd: a process the agent run left behind could swap it after the Delegate's check
-    fd = os.open(path, NO_FOLLOW)
-    with os.fdopen(fd, "rb") as f:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise ValueError("not a regular file")
-        if st.st_nlink != 1:
-            raise ValueError("not a single-link file")
-        real = os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
-        if not real.endswith(".md"):
-            raise ValueError("not a .md file")
-        if not real.startswith(os.path.join(os.path.realpath(workdir), "")):
-            raise ValueError("not under the workdir")
-        data = f.read(MAX_FILE + 1) if st.st_size <= MAX_FILE else None
-    if data is None or len(data) > MAX_FILE:  # len: the file may grow after fstat
-        raise ValueError(f"over {MAX_FILE} bytes")
-    return data
+    try:
+        return read_confined(path, workdir, limit=MAX_FILE)
+    except ConfinedFileError as error:
+        reasons = {
+            ConfinedReason.REGULAR: "not a regular file",
+            ConfinedReason.SINGLE_LINK: "not a single-link file",
+            ConfinedReason.SUFFIX: "not a .md file",
+            ConfinedReason.OUTSIDE: "not under the workdir",
+            ConfinedReason.REPLACED: "file changed while reading",
+            ConfinedReason.TOO_LARGE: f"over {MAX_FILE} bytes",
+        }
+        raise ValueError(reasons[error.reason]) from None
 
 
 def _url(ctx, url):
@@ -208,18 +212,17 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: Outcome) -> bool:
-    # never raises: a signal SystemExit stops the steps and returns False, so run.py still posts the session comment's
-    # end
+    # never raises: Stopped stops the steps and returns False, so run.py still posts the session
+    # comment's end
     try:
         return _finish(ctx, outcome)
-    except (Exception, SystemExit) as e:
+    except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after failed steps.
         _error(ctx, "finish", e)
         return False
 
 
-def _finish(ctx, o):
-    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
-    url = _url(ctx, o.url)
+def _completion_body(ctx, o):
+    task, url = TASKS[ctx.role], _url(ctx, o.url)
     if o.status == "done":
         lead, text, state = task.done, o.summary, "in_review"
     elif o.status == "needs_input":
@@ -234,34 +237,55 @@ def _finish(ctx, o):
     if task.approve and o.status == "done":
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
 
+    return body, state, url
+
+
+def _post_files(ctx, o, body):
+    posts = []
+    for path in o.files:
+        name = os.path.basename(path)
+        try:
+            data = _read_file(path, ctx.workdir)
+        except (OSError, ValueError) as e:
+            body += f"\n\nCould not post the file `{name}`: {one_line(e)}"
+            continue
+        text = data.decode("utf-8", errors="replace")
+        posts.append(
+            (
+                "Plan" if PLAN_MARK in text else "Spec",
+                name,
+                text,
+                hashlib.sha256(data).hexdigest()[:12],
+            )
+        )
+    for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
+        if err := _post(ctx, f"file:{name}:{digest}", f"**{kind}** `{name}`\n\n---\n\n{text}"):
+            body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
+    return body
+
+
+def _attach(ctx, url, title, attached):
+    if url in attached:
+        return
+    try:
+        call(ctx.gql, M_ATTACH, "attachmentLinkURL", i=ctx.issue_id, u=url, t=title)
+    except LinearError as e:
+        if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
+            raise
+
+
+def _finish(ctx, o):
+    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
+    body, state, url = _completion_body(ctx, o)
+
     try:
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, "read", e)
         return False
 
     if task.files and o.status != "needs_input":
-        posts = []
-        for path in o.files:
-            name = os.path.basename(path)
-            try:
-                data = _read_file(path, ctx.workdir)
-            except (OSError, ValueError) as e:
-                body += f"\n\nCould not post the file `{name}`: {one_line(e)}"
-                continue
-            text = data.decode("utf-8", errors="replace")
-            posts.append(
-                (
-                    "Plan" if PLAN_MARK in text else "Spec",
-                    name,
-                    text,
-                    hashlib.sha256(data).hexdigest()[:12],
-                )
-            )
-        for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
-            if err := _post(ctx, f"file:{name}:{digest}", f"**{kind}** `{name}`\n\n---\n\n{text}"):
-                body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
+        body = _post_files(ctx, o, body)
 
     if (
         task.retitle
@@ -278,21 +302,12 @@ def _finish(ctx, o):
     if _post(ctx, "comment", body):
         return False
 
-    if o.status == "done" and url:
-
-        def attach():
-            if url in attached:
-                return
-            try:
-                call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
-            except (Exception, SystemExit) as e:
-                if not any(
-                    s in str(e) for s in ATTACHED
-                ):  # the GitHub integration links PRs itself
-                    raise
-
-        if _step(ctx, f"attach:{url}", attach):
-            return False
+    if (
+        o.status == "done"
+        and url
+        and _step(ctx, f"attach:{url}", lambda: _attach(ctx, url, o.title, attached))
+    ):
+        return False
 
     return (
         _step(
@@ -305,7 +320,7 @@ def _finish(ctx, o):
 def limit(ctx, resets_at: float | None) -> bool:
     try:
         return _limit(ctx, resets_at)
-    except (Exception, SystemExit) as e:
+    except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after a failed limit.
         _error(ctx, "limit", e)
         return False
 
@@ -318,8 +333,7 @@ def _limit(ctx, resets_at):
     # not ledgered: a resumed sid that hits the limit again moves again
     try:
         _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")
-    except (Exception, SystemExit) as e:
-        reraise_signal(e)
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, "move:in_review", e)
         return False
     return True
@@ -328,16 +342,13 @@ def _limit(ctx, resets_at):
 def bounce(ctx, issue: Issue, reason: str) -> None:
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
-    if src and src["team"]["id"] == ctx.team:
+    if h is not None and src and src["team"]["id"] == ctx.team:
         text = (
             f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
             "`Repo: <owner>/<name>` naming the target repo."
-            + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
-        )
-        try:
+        ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
+        with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        except (Exception, SystemExit) as e:
-            reraise_signal(e)
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)
         _guarded_move(ctx, src["id"], h.source, "in_review", "done")

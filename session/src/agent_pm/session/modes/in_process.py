@@ -1,6 +1,8 @@
-"""The Driver's in_process Mode: an InProcess's run iterated on a daemon thread into a queue; no child process. A run
-that raises ends with its traceback as Stderr lines and code 1. stop() never waits: what came before it is still
-polled, the code is -SIGKILL unless the run had ended, and the run is closed at its next yield."""
+"""The Driver's in_process Mode: an InProcess's run iterated on a daemon thread into a queue; no
+child process. A run that raises ends with its traceback as Stderr lines and code 1. stop() never
+waits: what came before it is still polled, the code is -SIGKILL unless the run had ended, and the
+run is closed at its next yield.
+"""
 
 import contextlib
 import queue
@@ -19,24 +21,26 @@ class InProcessMode:
         self.run, self.begun, self.stopped, self.code = run, False, False, None
         self.items, self.lock, self.over = queue.Queue(), threading.Lock(), threading.Event()
 
-    def begin(self, prompt: str, spec: Spec, resume: bool) -> None:
+    def begin(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
         try:
-            threading.Thread(target=self._pump, args=(prompt, spec, resume), daemon=True).start()
+            threading.Thread(
+                target=self._pump, args=(prompt, spec), kwargs={"resume": resume}, daemon=True
+            ).start()
         except RuntimeError as e:
             raise DriverError(f"cannot start the in_process run: {e}") from e
         self.begun = True
 
-    def _pump(self, prompt: str, spec: Spec, resume: bool) -> None:
+    def _pump(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
         events, code = None, 1
         try:
-            events = iter(self.run.run(prompt, spec, resume))
+            events = iter(self.run.run(prompt, spec, resume=resume))
             for item in events:
                 with self.lock:
                     if self.stopped:
                         break
                     self.items.put(item)
             code = 0
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             lines = "".join(traceback.format_exception(e)).rstrip().split("\n")
             with self.lock:
                 if not self.stopped:

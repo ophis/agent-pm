@@ -1,28 +1,37 @@
-"""Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with the prompt last
-after "--" so a leading "-" stays the prompt. parse turns init, assistant, result and rate-limit records into events,
-one LimitHit per run."""
+"""Claude Code's headless Mode, `claude -p` with stream-json output. launch is ClaudeCommon's with
+the prompt last after "--" so a leading "-" stays the prompt. parse turns init, assistant, result
+and rate-limit records into events, one LimitHit per run.
+"""
 
 from agent_pm.session.adapters.base import Headless
+from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.adapters.common import number
-from agent_pm.session.engine.types import Activity, LimitHit, Reply, SessionBound, TurnEnd
+from agent_pm.session.engine.types import (
+    Activity,
+    LimitHit,
+    Reply,
+    SessionBound,
+    Spec,
+    TurnEnd,
+)
 
 
 class ClaudeHeadless(Headless):
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, common: ClaudeCommon):
+        self.common = common
         self.limit_sent = False
         self.resets_at = None
 
-    def launch(self, prompt, spec, resume):
-        common = self.adapter.common
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+        common = self.common
         return common.launch(
             spec,
-            resume,
             None,
-            ("-p",),
-            ("--output-format", "stream-json", "--verbose"),
-            (*spec.flags, "--", prompt),
-            common.ENV,
+            head=("-p",),
+            output=("--output-format", "stream-json", "--verbose"),
+            tail=(*spec.flags, "--", prompt),
+            env=common.ENV,
+            resume=resume,
         )
 
     def parse(self, record):
@@ -40,22 +49,7 @@ class ClaudeHeadless(Headless):
         elif kind == "assistant":
             if record.get("error") == "rate_limit":
                 yield from self._limit()
-            message = record.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            blocks = (
-                [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-            )
-            text = "\n".join(
-                b["text"]
-                for b in blocks
-                if b.get("type") == "text" and isinstance(b.get("text"), str)
-            )
-            if text.strip():
-                yield Reply(text)
-            for block in blocks:
-                if block.get("type") == "tool_use":
-                    name = block.get("name")
-                    yield Activity(name if isinstance(name, str) else "")
+            yield from self._assistant(record)
         elif kind == "result":
             result = record.get("result")
             yield TurnEnd(result if isinstance(result, str) else "", 0)
@@ -64,3 +58,17 @@ class ClaudeHeadless(Headless):
         if not self.limit_sent:
             self.limit_sent = True
             yield LimitHit(self.resets_at)
+
+    def _assistant(self, record):
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        text = "\n".join(
+            b["text"] for b in blocks if b.get("type") == "text" and isinstance(b.get("text"), str)
+        )
+        if text.strip():
+            yield Reply(text)
+        for block in blocks:
+            if block.get("type") == "tool_use":
+                name = block.get("name")
+                yield Activity(name if isinstance(name, str) else "")

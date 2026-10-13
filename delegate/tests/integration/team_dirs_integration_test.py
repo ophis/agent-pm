@@ -1,9 +1,11 @@
-"""A local `team_dirs`, a team dir of TEAM's files. Read by the Composer in a child process (child.Case): a team dir's
-role composes with its tasks dir to read, never added; its catalog row; a read dir holding the team dir composes
-unadded, a write dir refused. Read by delegate/cli.py as a subprocess over the fake `claude`: a dry run, --list, a run
-in headless mode of the team dir's role, its tasks dir a read rule, never added; over fake_codex: a run and its resume
-reading the tasks dir unadded, a read dir holding the team dir run unadded, a write dir or CODEX_HOME overlapping it
-refused. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's part."""
+"""A local `team_dirs`, a team dir of TEAM's files. Read by the Composer in a child process
+(child.Case): a team dir's role composes with its tasks dir to read, never added; its catalog row; a
+read dir holding the team dir composes unadded, a write dir refused. Read by delegate/cli.py as a
+subprocess over the fake `claude`: a dry run, --list, a run in headless mode of the team dir's role,
+its tasks dir a read rule, never added; over fake_codex: a run and its resume reading the tasks dir
+unadded, a read dir holding the team dir run unadded, a write dir or CODEX_HOME overlapping it
+refused. Main's tests/integration/core/team_dirs_integration_test.py, the Delegate's part.
+"""
 
 import json
 import os
@@ -13,7 +15,7 @@ import tempfile
 import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.integration.cli import CLI, NATIVE, CodexIntegration, Integration, codex_said
@@ -36,7 +38,8 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from agent_pm.utils.config_file import read_project
+CATALOG = """from agent_pm.utils import read_project
+
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
 composer.check_all(team, read_project("delegate"))
@@ -45,8 +48,11 @@ rows = {}
 for role, tasks in composer.catalog(team).items():
     run = composer.resolve(role, team=team)
     composer.render(run, params, team=team)
-    rows[role] = [run.output["type"], team.source(composer.lookup(team, "roles", role)),
-                  {t: [what, team.source(composer.lookup(team, "tasks", t))] for t, what in tasks.items()}]
+    rows[role] = [
+        run.output["type"],
+        team.source(composer.lookup(team, "roles", role)),
+        {t: [what, team.source(composer.lookup(team, "tasks", t))] for t, what in tasks.items()},
+    ]
 print(json.dumps(rows))
 """
 
@@ -55,7 +61,7 @@ def make_team(case: unittest.TestCase) -> str:
     """A team dir of TEAM's files under TEAMS, removed after `case`'s test."""
     os.makedirs(TEAMS, mode=0o700, exist_ok=True)
     if os.path.realpath(TEAMS) != TEAMS:
-        raise RuntimeError(f"{TEAMS} must not contain symlinks")
+        case.fail(f"{TEAMS} must not contain symlinks")
     os.chmod(TEAMS, 0o700)
     team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
     case.addCleanup(shutil.rmtree, team, ignore_errors=True)
@@ -72,7 +78,9 @@ def make_team(case: unittest.TestCase) -> str:
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class ComposerTeamDirs(child.Case):
-    """The Composer in a child process over role `writer` of a team dir of TEAM as the local `team_dirs`."""
+    """The Composer in a child process over role `writer` of a team dir of TEAM as the local
+    `team_dirs`.
+    """
 
     def setUp(self):
         super().setUp()
@@ -137,8 +145,10 @@ class ComposerTeamDirs(child.Case):
         self.assertEqual(
             got,
             {
-                "error": f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
-                "run can write there"
+                ("error"): (
+                    f"team_dirs: {self.team} overlaps a dir the run adds {self.team}: the agent "
+                    "run can write there"
+                )
             },
         )
 
@@ -197,7 +207,8 @@ class TeamDirs(Integration):
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CodexTeamDirs(CodexIntegration):
     """--runtime codex over fake_codex, role `writer` of a team dir (TEAM) as the local config's
-    `team_dirs`."""
+    `team_dirs`.
+    """
 
     ROLE, TASK = "writer", "note"
 

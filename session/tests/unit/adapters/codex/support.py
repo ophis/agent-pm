@@ -54,7 +54,7 @@ class Base(Case):
         )
 
     def prepare(self):
-        return self.common.prepare(self.spec, False)
+        return self.common.prepare(self.spec, resume=False)
 
     def rollout(self, native=NATIVE, *, cwd=None, parent=None, stamp=100):
         path = self.codex_home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{native}.jsonl"

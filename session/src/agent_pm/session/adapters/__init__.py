@@ -1,1 +1,1 @@
-"""Adapters: one subpackage per agent runtime, built by registry.py; base.py holds their interface."""
+"""Runtime subpackages instantiated by the caller-owned Registry in registry.py."""

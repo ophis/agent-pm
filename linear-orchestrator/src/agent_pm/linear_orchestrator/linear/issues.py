@@ -1,10 +1,18 @@
-"""Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar: handoff,
-parse_handoff and head."""
+"""Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar:
+handoff, parse_handoff and head.
+"""
 
 import re
-from dataclasses import dataclass
 
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, IssueError
 from agent_pm.linear_orchestrator.linear import linear, sessions
+from agent_pm.linear_orchestrator.linear.types import (
+    Handoff,
+    Issue,
+    Link,
+    Linked,
+    Note,
+)
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }
@@ -13,92 +21,15 @@ Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title descri
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
-HANDOFF = re.compile(rf"Handoff from ({linear.ISSUE_ID}): \S+")
+
+
+HANDOFF = re.compile(rf"Handoff from ({ISSUE_ID}): \S+")
+
+
 SECTIONS = ("## Source", "## Instructions", "## Comments")
+
+
 COMMENTS = re.compile(rf"^{re.escape(SECTIONS[2])}\r?$", re.M)
-
-
-@dataclass(frozen=True)
-class Note:
-    body: str
-    at: str
-    email: str | None
-    name: str | None
-
-
-@dataclass(frozen=True)
-class Link:
-    url: str
-
-
-@dataclass(frozen=True)
-class Linked:
-    identifier: str
-    title: str
-    state: str
-
-
-@dataclass(frozen=True)
-class Handoff:
-    source: str
-    instructions: str
-    comments: str
-
-
-@dataclass(frozen=True)
-class Issue:
-    id: str
-    identifier: str
-    url: str
-    title: str
-    description: str
-    created_at: str
-    project_id: str | None
-    notes: tuple[Note, ...]
-    links: tuple[Link, ...]
-    linked: tuple[Linked, ...]
-
-    @property
-    def handoff(self) -> Handoff | None:
-        return parse_handoff(self.description)
-
-
-def read_issue(gql, ident) -> Issue:
-    node = gql(Q_ISSUE, i=ident)["issue"]
-    if node is None:
-        raise LookupError(f"{ident}: issue not found")
-    if node["identifier"] != ident:
-        raise LookupError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
-    notes = sorted(
-        (
-            Note(
-                c["body"],
-                c["createdAt"],
-                (c["user"] or {}).get("email"),
-                (c["user"] or {}).get("name"),
-            )
-            for c in node["comments"]["nodes"]
-            if not sessions.is_comment(c)
-        ),
-        key=lambda n: linear.parse_time(n.at),
-    )
-    linked = {}
-    for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [
-        x["issue"] for x in node["inverseRelations"]["nodes"]
-    ]:
-        linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
-    return Issue(
-        id=node["id"],
-        identifier=node["identifier"],
-        url=node["url"],
-        title=node["title"],
-        description=node["description"] or "",
-        created_at=node["createdAt"],
-        project_id=(node["project"] or {}).get("id"),
-        notes=tuple(notes),
-        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
-        linked=tuple(linked.values()),
-    )
 
 
 def _lines(description):
@@ -106,11 +37,12 @@ def _lines(description):
 
 
 def _starts(lines):
-    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first one (unless it
-    # comes after Instructions' first), Instructions the first after it, Comments the last after Instructions.
+    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
+    # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
+    # last after Instructions.
     source, instructions, comments = SECTIONS
 
-    def find(header, after, last=False):
+    def find(header, after, *, last=False):
         found = [i for i, line in enumerate(lines) if line == header and i > after]
         return (found[-1] if last else found[0]) if found else None
 
@@ -143,6 +75,46 @@ def parse_handoff(description) -> Handoff | None:
         return "\n".join(lines[starts[header] + 1 : end]).strip()
 
     return Handoff(m.group(1), body(SECTIONS[1]), body(SECTIONS[2]))
+
+
+def read_issue(gql, ident) -> Issue:
+    node = gql(Q_ISSUE, i=ident)["issue"]
+    if node is None:
+        raise IssueError(f"{ident}: issue not found")
+    if node["identifier"] != ident:
+        raise IssueError(f"Linear returned {str(node['identifier'])[:40]!r} for {ident}")
+    notes = sorted(
+        (
+            Note(
+                c["body"],
+                c["createdAt"],
+                (c["user"] or {}).get("email"),
+                (c["user"] or {}).get("name"),
+            )
+            for c in node["comments"]["nodes"]
+            if not sessions.is_comment(c)
+        ),
+        key=lambda n: linear.parse_time(n.at),
+    )
+    linked = {}
+    for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [
+        x["issue"] for x in node["inverseRelations"]["nodes"]
+    ]:
+        linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
+    description = node["description"] or ""
+    return Issue(
+        id=node["id"],
+        identifier=node["identifier"],
+        url=node["url"],
+        title=node["title"],
+        description=description,
+        handoff=parse_handoff(description),
+        created_at=node["createdAt"],
+        project_id=(node["project"] or {}).get("id"),
+        notes=tuple(notes),
+        links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
+        linked=tuple(linked.values()),
+    )
 
 
 def head(description) -> str:

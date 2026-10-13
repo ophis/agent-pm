@@ -10,6 +10,12 @@ USERINFO = re.compile(r"//[^@/\s]+@")
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
+class Stopped(BaseException):
+    def __init__(self, code: int):
+        super().__init__(code)
+        self.code = code
+
+
 def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
     return subprocess.run(
         argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL

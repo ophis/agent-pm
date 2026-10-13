@@ -1,10 +1,12 @@
 """The Delegate's shared types."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
-from agent_pm.delegate.event.outcome import Outcome
+from agent_pm.delegate.event.types import Outcome
+from agent_pm.session import Driver
 from agent_pm.session import Spec as SessionSpec
+from agent_pm.utils import Stopped as Stopped
 
 __all__ = [
     "ConfigError",
@@ -21,8 +23,9 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Spec:
-    """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None: nothing is saved;
-    `team` None: the built-in one. name and events: tui only."""
+    """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None:
+    nothing is saved; `team` None: the built-in one. name and events: tui only.
+    """
 
     input: str
     workdir: str
@@ -41,13 +44,27 @@ class Spec:
 
 @dataclass(frozen=True)
 class Plan:
-    """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's Spec."""
+    """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's
+    Spec.
+    """
 
     spec: Spec
     session: SessionSpec
     prompt: str
     run: RunConfig
     params: RunParams
+    driver: Driver = field(compare=False, repr=False)
+
+    @property
+    def runtime(self) -> str:
+        return self.spec.runtime or self.run.runtime
+
+    @property
+    def sid(self) -> str:
+        sid = self.spec.sid
+        if sid is None:
+            raise ConfigError("plan has no session id")
+        return sid
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,10 @@
-"""delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test, the session config's
-ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn end with no prompt before it).
-The tui policy end to end (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle
-give-up on a clock ahead (session.engine.api's `time` only), the fix send; the session left open. Main's
-tests/integration/core/drive_tui_integration_test.py, its tui run."""
+"""delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test,
+the session config's ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py
+interactively (a Stop hook step: a turn end with no prompt before it). The tui policy end to end
+(FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle give-up
+on a clock ahead (session.engine.api's `time` only), the fix send; the session left open. Main's
+tests/integration/core/drive_tui_integration_test.py, its tui run.
+"""
 
 import io
 import json
@@ -15,13 +17,13 @@ from unittest import mock
 
 from agent_pm.delegate import Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.session import Session
-from agent_pm.utils.config_file import read_project
+from agent_pm.session import Driver
+from agent_pm.utils import read_project
 
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, prompt
 from delegate.tests.unit.runs import GAVE_UP
-from session.tests.integration import tui_integration_test as tui_live
+from session.tests import tui_support as tui_live
 from session.tests.integration.adapters.claude import fake_claude
 
 NAME = f"claude-{SID[:8]}"
@@ -51,7 +53,9 @@ class Ahead:
 
 
 class TuiRun(tui_live.Live):
-    """dummy-tester's echo as session SID in workdir `work`, out `out.md`, events file self.events."""
+    """
+    dummy-tester's echo as session SID in workdir `work`, out `out.md`, events file self.events.
+    """
 
     def setUp(self):
         super().setUp()
@@ -69,11 +73,12 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        Session.configure_from(read_project("session"))
+        self.driver = Driver.from_config(read_project("session"))
 
     def go(self, on_event=None, **scenario):
-        """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each callback, self.err the
-        stderr."""
+        """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each
+        callback, self.err the stderr.
+        """
         with open(self.scenario, "w") as f:
             json.dump({**scenario, "log": self.log}, f)
         config, self.seen, err, ended = composer.resolve("dummy-tester"), [], io.StringIO(), []
@@ -84,29 +89,35 @@ class TuiRun(tui_live.Live):
                 on_event(event)
 
         def target():
-            try:
-                ended.append(
-                    run(
-                        config,
-                        Spec(
-                            "Hello.",
-                            self.workdir,
-                            task="echo",
-                            mode="tui",
-                            runtime="claude",
-                            sid=SID,
-                            events=self.events,
-                            out=self.out,
-                            cwd=self.workdir,
-                        ),
-                        on_event=on,
-                    )
+            ended.append(
+                run(
+                    config,
+                    Spec(
+                        "Hello.",
+                        self.workdir,
+                        task="echo",
+                        mode="tui",
+                        runtime="claude",
+                        sid=SID,
+                        events=self.events,
+                        out=self.out,
+                        cwd=self.workdir,
+                    ),
+                    on_event=on,
+                    driver=self.driver,
                 )
-            except BaseException as e:
-                ended.append(e)
+            )
+
+        previous_hook = threading.excepthook
+
+        def capture(args):
+            if args.thread is thread:
+                ended.append(args.exc_value)
+            else:
+                previous_hook(args)
 
         thread = threading.Thread(target=target, daemon=True)
-        with redirect_stderr(err):
+        with redirect_stderr(err), mock.patch("threading.excepthook", new=capture):
             thread.start()
             thread.join(WAIT)
         self.err = err.getvalue()
@@ -188,7 +199,7 @@ class TurnEnds(TuiRun):
 class Idle(TuiRun):
     def test_no_event_for_the_idle_timeout_gives_up_the_session_left_open(self):
         clock = Ahead()
-        self.enterContext(mock.patch("agent_pm.session.engine.api.time", clock))
+        self.driver = Driver.from_config(read_project("session"), clock=clock.monotonic)
 
         def later(event):
             if isinstance(event, Progress):  # read at turn 1's end, the last event

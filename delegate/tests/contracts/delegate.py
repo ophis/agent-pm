@@ -1,7 +1,9 @@
-"""DelegateContract, FR-47's Delegate contract (FR-13 to FR-16): a subclass also inherits Case and defines
-delegate_cls, ROLE (a role it runs), DISPLAYABLE (its sessions can display), make(workdir, **kw) (a Delegate of kw's
-role, else ROLE, and a Spec for workdir with kw's other fields), end(record) (its sessions gone, no outcome) and
-finish(record) (its sessions gone, a valid outcome). Each case uses only the Delegate ABC and these hooks."""
+"""DelegateContract, FR-47's Delegate contract (FR-13 to FR-16): a subclass also inherits Case and
+defines delegate_cls, ROLE (a role it runs), DISPLAYABLE (its sessions can display), make(workdir,
+**kw) (a Delegate of kw's role, else ROLE, and a Spec for workdir with kw's other fields),
+end(record) (its sessions gone, no outcome) and finish(record) (its sessions gone, a valid outcome).
+Each case uses only the Delegate ABC and these hooks.
+"""
 
 import inspect
 import os
@@ -9,7 +11,7 @@ import uuid
 
 from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
 from agent_pm.session import NotDisplayable, Usage
-from agent_pm.utils.record import Record, Status
+from agent_pm.utils import Record, Status
 
 NO_ROLE = "no-such-role"
 OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r1")}

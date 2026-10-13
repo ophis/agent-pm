@@ -1,5 +1,6 @@
-"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's reuse, send's errors
-and cleanup of a child an ended program left."""
+"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's reuse,
+send's errors and cleanup of a child an ended program left.
+"""
 
 import os
 import sys
@@ -44,9 +45,11 @@ class FakeHostOnly(Case):
             ("w1", good[0], os.path.join(self.home, "absent")),
         ):
             for kind in ("detach", "terminal"):
-                with self.subTest(kind=kind, name=name, argv=argv, cwd=cwd):
-                    with self.assertRaises(ValueError):
-                        getattr(self.host, kind)(name, argv, cwd, {})
+                with (
+                    self.subTest(kind=kind, name=name, argv=argv, cwd=cwd),
+                    self.assertRaises(ValueError),
+                ):
+                    getattr(self.host, kind)(name, argv, cwd, {})
         self.assertEqual(self.host.list(), [])
 
     def test_a_dead_name_is_started_again(self):

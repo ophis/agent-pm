@@ -1,4 +1,6 @@
-"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows them."""
+"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows
+them.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import DriverError, Key, Paste
-from agent_pm.utils.record import Display, Record
+from agent_pm.utils import Display, Record
 
 
 class NotDisplayable(DriverError):
@@ -45,9 +47,10 @@ class Terminal(HostProcess):
 
 
 class Host(ABC):
-    """settings: its [hosts.<name>] table minus implementation. detach, terminal: env verbatim; on exit, events gets
-    `exited <rc>` / `dead`. attach: a Terminal for one, unknown → DriverError. list: sorted names matching display
-    ("" none). display: a value completed in the caller's process."""
+    """settings: [hosts.<name>] minus implementation. detach/terminal: env verbatim; on exit, events
+    gets `exited <rc>` / `dead`. attach: a Terminal, unknown → DriverError. list: sorted display
+    matches ("" none). display: completed in the caller's process.
+    """
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name
@@ -93,7 +96,9 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: api.layout's, split folded into display."""
+    """show: None once shown, else an attach command; layout: api.layout's, split folded into
+    display.
+    """
 
     @abstractmethod
     def show(self, name: str, display: Display = None) -> str | None: ...

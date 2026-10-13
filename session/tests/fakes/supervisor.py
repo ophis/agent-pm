@@ -1,14 +1,17 @@
-"""FakeHost's supervisor, run as `python3 -P supervisor.py <dir> <events or "">`, its process group's leader: runs
-meta.json's argv in its cwd with env.json verbatim (a terminal's stdin: the FIFO <dir>/input), output to <dir>/output;
-writes <dir>/pid, its own; when the program exits, the event (`exited <rc>` / `dead`) to <events>, then <dir>/rc."""
+"""FakeHost's supervisor, run as `python3 -P supervisor.py <dir> <events or "">`, its process
+group's leader: runs meta.json's argv in its cwd with env.json verbatim (a terminal's stdin: the
+FIFO <dir>/input), output to <dir>/output; writes <dir>/pid, its own; when the program exits, the
+event (`exited <rc>` / `dead`) to <events>, then <dir>/rc.
+"""
 
+import contextlib
 import json
 import os
 import subprocess
 import sys
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.utils.files import save
+from agent_pm.utils import save
 
 
 def main(folder: str, events: str) -> None:
@@ -29,10 +32,8 @@ def main(folder: str, events: str) -> None:
     if events:
         name = os.path.basename(folder)
         word = ("exited", rc) if meta["kind"] == "detach" else ("dead",)
-        try:
+        with contextlib.suppress(OSError):
             SessionStatusLog(events).write(name, *word)
-        except OSError:
-            pass
     save(os.path.join(folder, "rc"), str(rc))
 
 

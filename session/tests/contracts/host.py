@@ -1,6 +1,9 @@
-"""HostContract, FR-47's Host contract: a subclass also inherits Case and defines make_host() -> Host. Each case runs
-short Python programs written against the Host ABC only, polling files under self.home for events and output."""
+"""HostContract, FR-47's Host contract: a subclass also inherits Case and defines make_host() ->
+Host. Each case runs short Python programs written against the Host ABC only, polling files under
+self.home for events and output.
+"""
 
+import contextlib
 import json
 import os
 import re
@@ -12,7 +15,7 @@ from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host
 from agent_pm.session.engine.types import Key, Paste
-from agent_pm.utils.record import Record
+from agent_pm.utils import Record
 
 from session.tests.case import PY, REPO, child_env
 
@@ -37,9 +40,9 @@ SPAWN = (
 )
 CHILD = """import json, sys
 from agent_pm.session import Host
-from agent_pm.utils import registry
+from agent_pm.utils import load_class
 path, host, settings, name, argv, cwd, env = sys.argv[1:]
-registry.load(path, Host)(host, json.loads(settings)).terminal(
+load_class(path, Host)(host, json.loads(settings)).terminal(
     name, json.loads(argv), cwd, json.loads(env)
 )
 """
@@ -66,7 +69,9 @@ def gone(pid: int) -> bool:
 
 
 class HostContract:
-    """TASK-365 (356-4) adds FR-47's cannot-display case (Session.displayable, NotDisplayable) with HostedSession."""
+    """TASK-365 (356-4) adds FR-47's cannot-display case (Session.displayable, NotDisplayable) with
+    HostedSession.
+    """
 
     def make_host(self) -> Host:
         raise NotImplementedError
@@ -81,10 +86,8 @@ class HostContract:
         return name
 
     def forget(self, name: str) -> None:
-        try:
+        with contextlib.suppress(DriverError):
             self.host.attach(name).close()
-        except DriverError:
-            pass
 
     def env(self, **extra: str) -> dict[str, str]:
         return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.home, **extra}

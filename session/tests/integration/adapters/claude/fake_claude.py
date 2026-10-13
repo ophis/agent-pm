@@ -1,22 +1,23 @@
-"""A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose` (print) or neither
-(interactive); install() puts it on PATH. An option src/agent_pm/session/adapters/claude/ never emits exits 2.
-Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs the next of [steps, *turns] between the
-UserPromptSubmit and Stop hooks. Stdin's end exits `exit`; orphaned or HANG_CAP s idle, 1.
+"""A stand-in `claude` for integration tests, `-p --output-format stream-json --verbose` (print) or
+neither (interactive); install() puts it on PATH. An option src/agent_pm/session/adapters/claude/
+never emits exits 2. Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs
+the next of [steps, *turns] between UserPromptSubmit and Stop hooks. Stdin's end exits `exit`;
+orphaned or HANG_CAP s idle, 1.
 
 Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
-  steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use (interactive: then PostToolUse);
-              print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then LIMIT with error
-              "rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
-              interactive: {"kind": "limit"|"dialog", "text": S}: prints S, then ends the turn without Stop or reads a
-              line; {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}
-  turns       interactive: the steps of turn 2 on
-  background  interactive: background_tasks per Stop
-  resume      print: steps run instead of `steps` on --resume
-  rate_limit  print: a rate_limit_info, printed after init
-  exit        the exit code
-  hang        print: true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
-  log         a file each start appends {"pid", "argv", "cwd"} to
-  gate        a file a --session-id or --resume run waits for after its log line, as hang does
+- steps: a string is assistant text; {"kind": "tool", "name": N} is a tool_use (interactive: then
+PostToolUse). In print, {"kind": "limit", "resets_at": T} is a rejected rate_limit_event, then LIMIT
+with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (relative to cwd).
+Interactive {"kind": "limit"|"dialog", "text": S} prints S, then ends the turn without Stop or reads
+another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
+- turns: interactive steps of turn 2 on.
+- background: interactive background_tasks per Stop.
+- resume: print steps run instead of `steps` on --resume.
+- rate_limit: print a rate_limit_info after init.
+- exit: the exit code.
+- hang: in print, true sleeps after steps until orphaned or HANG_CAP s, then exits 1.
+- log: a file each start appends {"pid", "argv", "cwd"} to.
+- gate: a file a --session-id or --resume run waits for after its log line, as hang does.
 """
 
 import argparse
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 
 ENV = "FAKE_CLAUDE_SCENARIO"
 HANG_CAP = 120
@@ -78,7 +80,7 @@ TUI = {
 }
 
 
-def _step(step, tui: bool) -> bool:
+def _step(step, *, tui: bool) -> bool:
     if isinstance(step, str):
         return True
     kind = step.get("kind") if isinstance(step, dict) else None
@@ -94,7 +96,9 @@ def _step(step, tui: bool) -> bool:
 
 CHECKS = {
     "steps": lambda v: isinstance(v, list),
-    "resume": lambda v: v is None or isinstance(v, list) and all(_step(step, False) for step in v),
+    "resume": lambda v: (
+        v is None or isinstance(v, list) and all(_step(step, tui=False) for step in v)
+    ),
     "turns": lambda v: isinstance(v, list) and all(isinstance(t, list) for t in v),
     "background": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "rate_limit": lambda v: v is None or isinstance(v, dict),
@@ -124,6 +128,16 @@ def scenario() -> dict:
     return data
 
 
+def settings_hooks(a):
+    try:
+        settings = json.loads(a.settings)
+    except ValueError:
+        settings = None
+    if not isinstance(settings, dict):
+        sys.exit("Error: --settings is no JSON object")
+    return settings.get("hooks")
+
+
 def parse(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="claude", allow_abbrev=False)
     for flag in ("--verbose", "--strict-mcp-config"):
@@ -150,20 +164,14 @@ def parse(argv: list[str]) -> argparse.Namespace:
         ap.error(
             "this fake models -p with --output-format stream-json, and interactive mode without either"
         )
-    if a.print and not a.prompt:
+    if a.print and (not a.prompt):
         sys.exit("Error: no prompt")
     if a.session_id and a.resume:
         sys.exit("Error: --session-id and --resume exclude each other")
     a.hooks = None
     if a.settings is not None:
-        try:
-            settings = json.loads(a.settings)
-        except ValueError:
-            settings = None
-        if not isinstance(settings, dict):
-            sys.exit("Error: --settings is no JSON object")
-        a.hooks = settings.get("hooks")
-    if a.print and not a.verbose:
+        a.hooks = settings_hooks(a)
+    if a.print and (not a.verbose):
         sys.exit("Error: When using --print, --output-format=stream-json requires --verbose")
     return a
 
@@ -239,33 +247,44 @@ class Stdin:
         return line.decode(errors="replace")
 
 
-def interactive(
-    s: dict, turns: list, hooks, base: dict, keep, stdin: Stdin, prompt: str | None
-) -> int:
+@dataclass(frozen=True, kw_only=True)
+class InteractiveRequest:
+    scenario: dict
+    turns: list
+    hooks: dict | None
+    payload: dict
+    keep: object
+    stdin: Stdin
+    prompt: str | None
 
-    def hook(event: str, fields: dict) -> None:
-        payload = {**base, "hook_event_name": event, **fields}
+
+class InteractiveSession:
+    def __init__(self, request: InteractiveRequest):
+        self.request = request
+
+    def hook(self, event: str, fields: dict) -> None:
+        payload = {**self.request.payload, "hook_event_name": event, **fields}
         field = payload.get("notification_type" if event == "Notification" else "tool_name")
-        run_hooks(hooks, event, payload, field if isinstance(field, str) else "")
+        run_hooks(self.request.hooks, event, payload, field if isinstance(field, str) else "")
 
-    def turn(text: str, steps: list) -> None:
-        hook("UserPromptSubmit", {"prompt": text})
-        keep("user", text)
+    def turn(self, text: str, steps: list) -> None:
+        self.hook("UserPromptSubmit", {"prompt": text})
+        self.request.keep("user", text)
         last = ""
         for k, step in enumerate(steps):
             kind = "text" if isinstance(step, str) else step["kind"]
             if kind == "text":
                 print(step, flush=True)
-                keep("assistant", [{"type": "text", "text": step}])
+                self.request.keep("assistant", [{"type": "text", "text": step}])
                 last = step
             elif kind == "tool":
-                keep(
+                self.request.keep(
                     "assistant",
                     [{"type": "tool_use", "id": f"toolu_{k}", "name": step["name"], "input": {}}],
                 )
-                hook("PostToolUse", {"tool_name": step["name"]})
+                self.hook("PostToolUse", {"tool_name": step["name"]})
             elif kind == "hook":
-                hook(
+                self.hook(
                     step["event"],
                     {key: value for key, value in step.items() if key not in ("kind", "event")},
                 )
@@ -275,28 +294,29 @@ def interactive(
                 print(step["text"], flush=True)
                 if kind == "limit":
                     return
-                stdin.line()
-        hook(
+                self.request.stdin.line()
+        self.hook(
             "Stop",
             {
                 "stop_hook_active": False,
                 "last_assistant_message": last,
-                "background_tasks": [{}] * s["background"],
+                "background_tasks": [{}] * self.request.scenario["background"],
             },
         )
 
-    try:
-        prompt = prompt or stdin.line()
-        for k in itertools.count():
-            turn(prompt, turns[k] if k < len(turns) else [])
-            prompt = stdin.line()
-    except EOFError:
-        return s["exit"]
-    except Stranded:
-        return 1
+    def run(self):
+        try:
+            prompt = self.request.prompt or self.request.stdin.line()
+            for k in itertools.count():
+                self.turn(prompt, self.request.turns[k] if k < len(self.request.turns) else [])
+                prompt = self.request.stdin.line()
+        except EOFError:
+            return self.request.scenario["exit"]
+        except Stranded:
+            return 1
 
 
-def main(argv: list[str]) -> int:
+def invocation(argv: list[str]):
     parent = os.getppid()
     s = scenario()
     if s["log"]:
@@ -304,74 +324,63 @@ def main(argv: list[str]) -> int:
             f.write(json.dumps({"pid": os.getpid(), "argv": argv, "cwd": os.getcwd()}) + "\n")
     a = parse(argv)
     turns = [s["steps"]] if a.print else [s["steps"], *s["turns"]]
-    if not all(_step(step, not a.print) for steps in turns for step in steps):
+    if not all(_step(step, tui=not a.print) for steps in turns for step in steps):
         sys.exit("fake_claude.py: bad scenario steps")
-    sid, cwd = a.resume or a.session_id or str(uuid.uuid4()), os.getcwd()
-    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
-    project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
-    transcript = os.path.join(config, "projects", project, f"{sid}.jsonl")
-    if a.resume and not os.path.isfile(transcript):
-        sys.exit(f"No conversation found with session ID: {sid}")
-    gate = s["gate"]
-    if (
-        gate is not None
-        and (a.session_id or a.resume)
-        and not waited(lambda: os.path.exists(gate), parent)
-    ):
-        print(f"fake_claude.py: gate {gate}: never created", file=sys.stderr, flush=True)
-        return 1
-    os.makedirs(os.path.dirname(transcript), exist_ok=True)
-    last = ""
+    return (parent, s, a, turns)
 
-    def say(record: dict) -> None:
-        print(json.dumps({**record, "session_id": sid}), flush=True)
 
-    def keep(role: str, content) -> None:
-        with open(transcript, "a", encoding="utf-8") as f:
+@dataclass(frozen=True)
+class Transcript:
+    sid: str
+    cwd: str
+    path: str
+
+    def say(self, record: dict) -> None:
+        print(json.dumps({**record, "session_id": self.sid}), flush=True)
+
+    def keep(self, role: str, content) -> None:
+        with open(self.path, "a", encoding="utf-8") as f:
             f.write(
                 json.dumps(
                     {
                         "type": role,
-                        "sessionId": sid,
-                        "cwd": cwd,
+                        "sessionId": self.sid,
+                        "cwd": self.cwd,
                         "message": {"role": role, "content": content},
                     }
                 )
                 + "\n"
             )
 
-    def assistant(content: list, **extra) -> None:
-        keep("assistant", content)
-        say({"type": "assistant", "message": {"role": "assistant", "content": content}, **extra})
-
-    if not a.print:
-        return interactive(
-            s,
-            turns,
-            a.hooks,
-            {"session_id": sid, "transcript_path": transcript, "cwd": cwd},
-            keep,
-            Stdin(parent),
-            a.prompt,
+    def assistant(self, content: list, **extra) -> None:
+        self.keep("assistant", content)
+        self.say(
+            {"type": "assistant", "message": {"role": "assistant", "content": content}, **extra}
         )
-    say({"type": "system", "subtype": "init", "cwd": cwd})
+
+
+def printed(s, a, journal, parent):
+    last = ""
+    journal.say({"type": "system", "subtype": "init", "cwd": journal.cwd})
     if s["rate_limit"] is not None:
-        say({"type": "rate_limit_event", "rate_limit_info": s["rate_limit"]})
-    keep("user", a.prompt)
+        journal.say({"type": "rate_limit_event", "rate_limit_info": s["rate_limit"]})
+    journal.keep("user", a.prompt)
     steps = s["resume"] if a.resume and s["resume"] is not None else s["steps"]
     for k, step in enumerate(steps):
         if isinstance(step, str):
             last = step
-            assistant([{"type": "text", "text": step}])
+            journal.assistant([{"type": "text", "text": step}])
         elif step["kind"] == "tool":
-            assistant([{"type": "tool_use", "id": f"toolu_{k}", "name": step["name"], "input": {}}])
+            journal.assistant(
+                [{"type": "tool_use", "id": f"toolu_{k}", "name": step["name"], "input": {}}]
+            )
         elif step["kind"] == "write":
             os.makedirs(os.path.dirname(os.path.abspath(step["path"])), exist_ok=True)
             with open(step["path"], "w", encoding="utf-8") as f:
                 f.write(step["text"])
         else:
             resets = {} if step["resets_at"] is None else {"resetsAt": step["resets_at"]}
-            say(
+            journal.say(
                 {
                     "type": "rate_limit_event",
                     "rate_limit_info": {
@@ -382,12 +391,12 @@ def main(argv: list[str]) -> int:
                 }
             )
             last = LIMIT
-            assistant([{"type": "text", "text": LIMIT}], error="rate_limit")
+            journal.assistant([{"type": "text", "text": LIMIT}], error="rate_limit")
     if s["hang"]:
         waited(lambda: False, parent)
         return 1
     ok = s["exit"] == 0
-    say(
+    journal.say(
         {
             "type": "result",
             "subtype": "success" if ok else "error_during_execution",
@@ -396,6 +405,39 @@ def main(argv: list[str]) -> int:
         }
     )
     return s["exit"]
+
+
+def main(argv: list[str]) -> int:
+    parent, s, a, turns = invocation(argv)
+    sid, cwd = (a.resume or a.session_id or str(uuid.uuid4()), os.getcwd())
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    project = re.sub("[^A-Za-z0-9]", "-", os.path.realpath(cwd))
+    transcript = os.path.join(config, "projects", project, f"{sid}.jsonl")
+    if a.resume and (not os.path.isfile(transcript)):
+        sys.exit(f"No conversation found with session ID: {sid}")
+    gate = s["gate"]
+    if (
+        gate is not None
+        and (a.session_id or a.resume)
+        and (not waited(lambda: os.path.exists(gate), parent))
+    ):
+        print(f"fake_claude.py: gate {gate}: never created", file=sys.stderr, flush=True)
+        return 1
+    os.makedirs(os.path.dirname(transcript), exist_ok=True)
+    journal = Transcript(sid, cwd, transcript)
+    if not a.print:
+        return InteractiveSession(
+            InteractiveRequest(
+                scenario=s,
+                turns=turns,
+                hooks=a.hooks,
+                payload={"session_id": sid, "transcript_path": transcript, "cwd": cwd},
+                keep=journal.keep,
+                stdin=Stdin(parent),
+                prompt=a.prompt,
+            )
+        ).run()
+    return printed(s, a, journal, parent)
 
 
 if __name__ == "__main__":

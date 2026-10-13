@@ -1,3 +1,5 @@
+"""Codex recovery records, persistence and snapshot validation; standard library only."""
+
 from __future__ import annotations
 
 import fcntl
@@ -10,11 +12,41 @@ import stat
 import tempfile
 import time
 import uuid
-from contextlib import contextmanager
+from collections.abc import Mapping
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from typing import Literal, overload
+
+
+class RecoveryError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class SessionFile:
+    path: str
+    mtime: float
+    metadata: dict
+
+
+@dataclass(frozen=True)
+class SessionState:
+    workdir: str
+    sid: str
+    snapshot: dict
+    writable_roots: list[str]
+    native_id: str | None = None
+
+
+def private_file(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o600
+    )
+
 
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
 
 VALUED = {
     "-c": "-c",
@@ -56,14 +88,14 @@ def options(flags):
 
 
 def added_dirs(flags, cwd: str) -> list[str]:
-    return [os.path.join(cwd, value) for name, value, _ in options(flags) if name == "--add-dir"]
+    return [
+        os.path.join(cwd, value)
+        for name, value, _ in options(flags)
+        if name == "--add-dir" and value is not None
+    ]
 
 
-class RecoveryError(Exception):
-    pass
-
-
-def absolute_path(path: str, label: str) -> str:
+def absolute_path(path: object, label: str) -> str:
     if not isinstance(path, str) or not path or not os.path.isabs(path) or "\x00" in path:
         raise RecoveryError(f"invalid Codex recovery {label}: expected an absolute path")
     return os.path.realpath(path)
@@ -84,15 +116,7 @@ def validate_snapshot(value: dict) -> dict:
         "env",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    env = value["env"]
-    if not isinstance(env, dict) or not all(
-        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
-        for k, v in env.items()
-    ):
-        raise RecoveryError("invalid Codex recovery snapshot env")
-    flags = value["flags"]
-    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
-        raise RecoveryError("invalid Codex recovery snapshot flags")
+    env, flags = _snapshot_inputs(value)
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     if type(value["project"]) is not bool:
         raise RecoveryError("invalid Codex recovery snapshot project")
@@ -123,15 +147,21 @@ def validate_snapshot(value: dict) -> dict:
     return validated
 
 
+def _snapshot_inputs(value):
+    env = value["env"]
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise RecoveryError("invalid Codex recovery snapshot env")
+    flags = value["flags"]
+    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
+        raise RecoveryError("invalid Codex recovery snapshot flags")
+    return env, flags
+
+
 def inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
-
-
-@dataclass(frozen=True)
-class SessionFile:
-    path: str
-    mtime: float
-    metadata: dict
 
 
 def read_metadata(path: str) -> SessionFile:
@@ -221,20 +251,9 @@ def native_id(value) -> bool:
 
 _SESSION_VERSION = 1
 
-
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
 
-
 _MAX_SESSION_BYTES = 64 * 1024
-
-
-@dataclass(frozen=True)
-class SessionState:
-    workdir: str
-    sid: str
-    snapshot: dict
-    writable_roots: list[str]
-    native_id: str | None = None
 
 
 def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
@@ -264,7 +283,7 @@ def _copy_snapshot(value: object) -> dict:
     return copied
 
 
-def session_identity(workdir: str, sid: str) -> tuple[str, str]:
+def session_identity(workdir: object, sid: object) -> tuple[str, str]:
     workdir = absolute_path(workdir, "workdir")
     if not isinstance(sid, str) or not sid or len(sid) > 1024 or "\x00" in sid:
         raise RecoveryError("invalid recovery run ID")
@@ -274,7 +293,7 @@ def session_identity(workdir: str, sid: str) -> tuple[str, str]:
 def _state(data: object, workdir: str, sid: str) -> SessionState:
     if (
         not isinstance(data, dict)
-        or set(data) != _SESSION_KEYS
+        or frozenset(data) != _SESSION_KEYS
         or type(data["version"]) is not int
         or data["version"] != _SESSION_VERSION
     ):
@@ -316,10 +335,8 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
     if not os.path.exists(path):
         if not create:
             return False
-        try:
+        with suppress(FileExistsError):
             os.mkdir(path, 0o700)
-        except FileExistsError:
-            pass
         fd = os.open(os.path.dirname(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(fd)
@@ -346,6 +363,14 @@ def store_root(root: str | None = None) -> str:
     )
 
 
+@overload
+def store_directory(*, create: Literal[True], root: str | None = None) -> str: ...
+
+
+@overload
+def store_directory(*, create: bool, root: str | None = None) -> str | None: ...
+
+
 def store_directory(*, create: bool, root: str | None = None) -> str | None:
     root = store_root(root)
     parent = os.path.dirname(root)
@@ -363,7 +388,7 @@ def _path(root: str, workdir: str, sid: str) -> str:
     return os.path.join(root, digest + ".json")
 
 
-def implicit_writable_roots(environment: dict[str, str] | None = None) -> list[str]:
+def implicit_writable_roots(environment: Mapping[str, str] | None = None) -> list[str]:
     environment = os.environ if environment is None else environment
     return [
         "/tmp",
@@ -393,31 +418,13 @@ def read_state(
         return None
     except OSError as exc:
         raise RecoveryError(f"cannot read recovery state {path}: {exc}") from exc
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o600
-        ):
-            raise RecoveryError(f"unsafe recovery state file mode or owner: {path}")
-        if info.st_size > _MAX_SESSION_BYTES:
-            raise RecoveryError(f"malformed recovery state: file too large: {path}")
-        with os.fdopen(fd, "r", encoding="utf-8") as stream:
-            fd = -1
-            text = stream.read(_MAX_SESSION_BYTES + 1)
-            if len(text.encode("utf-8")) > _MAX_SESSION_BYTES:
-                raise RecoveryError(f"malformed recovery state: file too large: {path}")
-            data = json.loads(text)
-    except (ValueError, UnicodeError, RecursionError) as exc:
-        raise RecoveryError(f"malformed recovery state: {path}") from exc
-    finally:
-        if fd >= 0:
-            os.close(fd)
+    data = _state_data(fd, path)
     if workdir is None:
         if not isinstance(data, dict):
             raise RecoveryError("malformed recovery state")
         workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
+    if sid is None:
+        raise RecoveryError("invalid recovery state identity")
     state = _state(data, workdir, sid)
     if path != _path(root, workdir, sid):
         raise RecoveryError("invalid recovery state identity")
@@ -436,7 +443,7 @@ def _locked(root: str, timeout: float | None = None):
                 fcntl.flock(fd, fcntl.LOCK_EX | (fcntl.LOCK_NB if deadline is not None else 0))
                 break
             except BlockingIOError:
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     raise RecoveryError("Codex recovery state lock timed out") from None
                 time.sleep(0.05)
         yield
@@ -525,12 +532,11 @@ def save_session(state: SessionState, *, root: str | None = None) -> SessionStat
     recovery_snapshot(state, root=root)
     check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
     root = store_directory(create=True, root=root)
-    assert root is not None
     _write(_path(root, state.workdir, state.sid), state, exclusive=True)
     return state
 
 
-def load_session(workdir: str, sid: str, *, root: str | None = None) -> SessionState | None:
+def load_session(workdir: str, sid: object, *, root: str | None = None) -> SessionState | None:
     workdir, sid = session_identity(workdir, sid)
     root = store_directory(create=False, root=root)
     if root is None:
@@ -591,3 +597,24 @@ def protect(state, dependencies, environment=None, added=()):
                     raise RecoveryError(
                         f"Codex tui writable root {root} could rewrite hook dependency {path}"
                     )
+
+
+def _state_data(fd: int, path: str):
+    try:
+        info = os.fstat(fd)
+        if not private_file(info):
+            raise RecoveryError(f"unsafe recovery state file mode or owner: {path}")
+        if info.st_size > _MAX_SESSION_BYTES:
+            raise RecoveryError(f"malformed recovery state: file too large: {path}")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            text = stream.read(_MAX_SESSION_BYTES + 1)
+            if len(text.encode("utf-8")) > _MAX_SESSION_BYTES:
+                raise RecoveryError(f"malformed recovery state: file too large: {path}")
+            data = json.loads(text)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise RecoveryError(f"malformed recovery state: {path}") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return data

@@ -1,15 +1,17 @@
-"""FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions yield the class's
-script (FakeSession's is empty; scripted(*events) makes a subclass with those), then Exited(0) unless it ends with
-Exited. FakeSession and each subclass have their own started (start's arguments), live (name → session; stop and
-close remove it) and configured."""
+"""FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions
+yield the class's script (FakeSession's is empty; scripted(*events) makes a subclass with those),
+then Exited(0) unless it ends with Exited. FakeSession and each subclass have their own started
+(start's arguments), live (name → session; stop and close remove it) and configured.
+"""
 
 from __future__ import annotations
 
 import re
 import uuid
 
-from agent_pm.session import DriverError, NotDisplayable, Session
+from agent_pm.session import NotDisplayable, Session
 from agent_pm.session.engine.types import (
+    DriverError,
     Exited,
     Reply,
     SessionInfo,
@@ -36,7 +38,7 @@ class FakeSession(Session):
     def scripted(cls, *events) -> type[FakeSession]:
         return type(cls.__name__, (cls,), {"script": events})
 
-    def __init__(self, runtime, mode, spec, sid, name, display) -> None:
+    def __init__(self, runtime, mode, spec, sid, name, *, display) -> None:
         self.runtime, self.mode, self.spec, self.sid, self.name = runtime, mode, spec, sid, name
         self.display_value = display
         self.sent: list[str] = []
@@ -68,7 +70,12 @@ class FakeSession(Session):
 
     def info(self) -> SessionInfo:
         return SessionInfo(
-            self.sid, self.sid, self.spec.access.cwd or self.spec.workdir, False, "", ""
+            sid=self.sid,
+            native_id=self.sid,
+            cwd=self.spec.access.cwd or self.spec.workdir,
+            project=False,
+            transcript="",
+            resume="",
         )
 
     @property
@@ -129,7 +136,7 @@ class FakeSession(Session):
         name = spec.name or f"{runtime}-{sid[:8]}"
         if name in cls.live:
             raise DriverError(f"session {name} is live")
-        cls.live[name] = cls(runtime, mode, spec, sid, name, display)
+        cls.live[name] = cls(runtime, mode, spec, sid, name, display=display)
         return cls.live[name]
 
     @classmethod
@@ -141,7 +148,17 @@ class FakeSession(Session):
     @classmethod
     def list(cls, match=None, *, display=None) -> list[SessionRow]:
         return [
-            SessionRow(name, s.sid, s.runtime, "working", None, None, None, None, False)
+            SessionRow(
+                name=name,
+                sid=s.sid,
+                runtime=s.runtime,
+                state="working",
+                pane=None,
+                opener=None,
+                shown=None,
+                last_lines=None,
+                own=False,
+            )
             for name, s in sorted(cls.live.items())
             if (match is None or re.fullmatch(match, name))
             and (display is None or display != "" and s.display_value == display)

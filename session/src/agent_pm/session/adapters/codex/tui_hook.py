@@ -1,15 +1,16 @@
+"""Codex binding callback loaded by the standalone Driver hook."""
+
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import sys
-import tempfile
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
 def _sibling(name):
+    # pylint: disable=duplicate-code  # standalone stdlib-only scripts cannot share code
     key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
     if key in sys.modules:
         found = getattr(sys.modules[key], "__file__", None)
@@ -17,37 +18,24 @@ def _sibling(name):
             raise ImportError(f"{key} is {found}, not {path}")
         return sys.modules[key]
     spec = importlib.util.spec_from_file_location(key, path)
-    # registered before it runs: dataclasses with postponed annotations look up their module
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{path}: cannot load Python module")
+    # Postponed dataclass annotations resolve through their registered module.
     module = sys.modules[key] = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except BaseException:
         del sys.modules[key]
         raise
+    # pylint: enable=duplicate-code
     return module
 
 
 sessions = _sibling("sessions")
 HOOKS = _sibling("hook_schema").HOOKS
 
+
 LABELS = {label for label, _, _ in HOOKS}
-PAYLOAD_MAX = 64 << 20
-BLOCK = 1 << 16
-
-
-def payload(stream):
-    chunks, size = [], 0
-    while chunk := stream.read(BLOCK):
-        size += len(chunk)
-        if size <= PAYLOAD_MAX:
-            chunks.append(chunk)
-    if size > PAYLOAD_MAX:
-        return {}
-    try:
-        value = json.loads(b"".join(chunks))
-    except (ValueError, RecursionError):
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 def bind(label, value, workdir, sid, *, root=None):
@@ -70,46 +58,20 @@ def bind(label, value, workdir, sid, *, root=None):
         sessions.bind_session(
             workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5, root=root
         )
-        return True
     except (sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex hook: {exc}", file=sys.stderr)
         return False
+    return True
 
 
-def forward(hook, label, value):
-    with tempfile.TemporaryFile() as stream:
-        stream.write(
-            json.dumps({**value, "hook_event_name": label}, ensure_ascii=False).encode("utf-8")
-        )
-        stream.seek(0)
-        os.dup2(stream.fileno(), 0)
-        os.execv(hook[0], [*hook, label])
-
-
-def main(argv):
-    value = payload(sys.stdin.buffer)
-    if len(argv) != 5:
-        print("codex hook: expected WORKDIR SID STORE HOOK_JSON LABEL", file=sys.stderr)
-        return
-    workdir, sid, root, encoded, label = argv
-    try:
-        hook = json.loads(encoded)
-    except (ValueError, RecursionError):
-        return
-    if (
-        not isinstance(hook, list)
-        or not hook
-        or not all(isinstance(w, str) and "\0" not in w for w in hook)
-        or not os.path.isabs(hook[0])
+def on_hook(label, payload, state):
+    if not bind(
+        label,
+        payload,
+        state["workdir"],
+        state["sid"],
+        root=state["adapter_state"]["store"],
     ):
-        return
-    if bind(label, value, workdir, sid, root=root):
-        forward(hook, label, value)
-
-
-if __name__ == "__main__":
-    try:
-        main(sys.argv[1:])
-    except Exception as exc:
-        print(f"codex hook: {type(exc).__name__}: {exc}", file=sys.stderr)
-    sys.exit(0)
+        return False
+    payload["hook_event_name"] = label
+    return True

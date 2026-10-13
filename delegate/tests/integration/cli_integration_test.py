@@ -1,6 +1,9 @@
-"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
-a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an
-interrupt, a usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
+"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py (on
+PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp: a run's exit code, stderr, out and run.jsonl;
+its fix resume, a resume, a draft kept through a kill and resume, an interrupt, a usage limit,
+config errors. Main's tests/integration/core/drive_integration_test.py and
+resume_integration_test.py, the Delegate's part.
+"""
 
 import os
 import signal
@@ -10,8 +13,8 @@ from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Session, session_status
-from agent_pm.utils.config_file import read_project
+from agent_pm.session import Driver
+from agent_pm.utils import read_project
 
 from delegate.tests.integration.cli import (
     ASKING,
@@ -366,9 +369,9 @@ class UsageLimit(Integration):
         )
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
-        Session.configure_from(read_project("session"))
+        self.driver = Driver.from_config(read_project("session"))
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
-            self.assertEqual(session_status("claude", SID, self.proj).resumable, "yes")
+            self.assertEqual(self.driver.session_status("claude", SID, self.proj).resumable, "yes")
 
 
 class ConfigErrors(Integration):
@@ -462,7 +465,8 @@ class Interrupt(Integration):
         (call,) = self.calls()
         os.kill(proc.pid, signal.SIGINT)
         proc.wait(timeout=WAIT)
-        # Before communicate(): the fake shares the CLI's stderr pipe, which would wait for it to die by any path.
+        # Before communicate(): the fake shares the CLI's stderr pipe, which would wait for it to
+        # die by any path.
         self.assertFalse(running(call["pid"]))
         out, err = proc.communicate()
         self.assertIn(proc.returncode, (-signal.SIGINT, 130), out + err)

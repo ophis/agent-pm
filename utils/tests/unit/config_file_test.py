@@ -1,4 +1,6 @@
-"""utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset."""
+"""
+utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset.
+"""
 
 import copy
 import os
@@ -61,8 +63,9 @@ MANAGER = 'runtime = "m"\n'
 
 
 class Projects(Case):
-    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has none) and this
-    test's ~/.agent-pm/config.local.toml."""
+    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has
+    none) and this test's ~/.agent-pm/config.local.toml.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -156,8 +159,7 @@ class Projects(Case):
 
     def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
         self.local(
-            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = 1\nacount = "typo"\n'
-            '[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = "github"\n'
+            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = "github"\n'
         )
         self.write("delegate", 'cwd = ""\n' + DELEGATE)
         self.assertEqual(
@@ -166,7 +168,7 @@ class Projects(Case):
                 "team": "T",
                 "work_dir": "~/w",
                 "roles": {
-                    "pm": {"account": "pm@x", "max_runs": 3, "acount": "typo"},
+                    "pm": {"account": "pm@x", "max_runs": 3, "unknown_field": "typo"},
                     "new": {"max_runs": 2},
                 },
                 "core": {"roles": {"pm": {"gate": "g"}}},
@@ -175,7 +177,7 @@ class Projects(Case):
         found = self.read("delegate", own=True)
         self.assertEqual(
             found["roles"],
-            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "acount": "typo"}},
+            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "unknown_field": "typo"}},
         )
         self.assertNotIn("hosts", found)
         self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
@@ -187,7 +189,9 @@ class Projects(Case):
                 self.subTest(name),
                 self.assertRaisesRegex(
                     ValueError,
-                    r"^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's config.toml has it$",
+                    (
+                        r"^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's config.toml has it$"
+                    ),
                 ),
             ):
                 self.read(name)

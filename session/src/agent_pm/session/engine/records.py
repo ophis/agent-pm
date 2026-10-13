@@ -1,6 +1,7 @@
 """Run records: <workdir>/run.jsonl, one JSON object {"ts", "kind", **fields} per line, through
-utils.files; a read returns what it can.
-The agent run can append to the file: what a read finds is a status hint, never an authorization or a recovery grant."""
+utils.files; a read returns what it can. The agent run can append to the file: what a read finds is
+a status hint, never an authorization or a recovery grant.
+"""
 
 import json
 import os
@@ -8,8 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.utils.files import append_line, read_regular
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import append_line, json_records, printable_abs, read_regular
 
 CHANNEL = "run.jsonl"
 
@@ -46,15 +46,7 @@ def read(path: str) -> list[dict]:
     data = read_regular(path)
     if data is None:
         return []
-    found = []
-    for line in data.split(b"\n"):
-        try:
-            record = json.loads(line)
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(record, dict):
-            found.append(record)
-    return found
+    return list(json_records(data.split(b"\n")))
 
 
 def session_record(workdir: str, sid: str) -> dict | None:

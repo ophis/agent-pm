@@ -1,24 +1,21 @@
-"""session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py), os.environ that server's env:
-the fake adapter's Tui (session/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
-send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
-while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
-a start while another process closes the name."""
+"""session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
+os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
+pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
+attach from another process, stop, a runtime's own exit, close, sessions while tmux's state is
+unknown, an old Handle once its name is another session's, two starts of one name at once, and a
+start while another process closes the name.
+"""
 
 import itertools
 import json
 import os
-import queue
 import signal
 import subprocess
-import sys
-import tempfile
 import threading
-import time
 import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.session import Session
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Activity,
@@ -34,146 +31,45 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter, live_tmux
-from session.tests.case import PY, Case, child_env, settings
+from session.tests.case import PY, child_env
+from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, Stream
 
-MANAGER = "mgr"
-SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
-IDLE = 0.5  # idle_timeout, in seconds
-WAIT = 20  # upper bound on any wait, in seconds
-# Another process: attaches by name, sends text, prints [sid, state, reply, its first event but IdleTimeout, reply].
+# Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
+# IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
 fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
-sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
+module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 from agent_pm.session.engine import api
-from agent_pm.session import IdleTimeout, Session
-Session.configure(**json.loads(config))
-handle = api.attach(name)
+from agent_pm.session import IdleTimeout, Driver
+from agent_pm.utils import load_class
+def adapter_class(path, base):
+    return module.FakeAdapter if path == "agent_pm.session.adapters.fake:FakeAdapter" else load_class(path, base)
+driver = Driver(**json.loads(config), class_loader=adapter_class)
+handle = driver.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session.engine import api; api.close(sys.argv[1])"
-SLOW_CLOSE = """import sys, time
-from agent_pm.session.engine import api
-from agent_pm.session.modes import tui
-remove = tui._remove
-def slow(*args):
+CLOSE = "import sys; from agent_pm.session import Driver; Driver(adapters={}, hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, default_host='tmux').close(sys.argv[1])"
+SLOW_CLOSE = """import sys, time, shutil
+from unittest import mock
+from agent_pm.session import Driver
+remove = shutil.rmtree
+def slow(*args, **kwargs):
     open(sys.argv[2], "w").close()
     time.sleep(1)
-    remove(*args)
-tui._remove = slow
-api.close(sys.argv[1])
+    remove(*args, **kwargs)
+with mock.patch("shutil.rmtree", slow):
+    driver = Driver(
+        adapters={},
+        hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}},
+        default_host="tmux",
+    )
+    driver.close(sys.argv[1])
 """
-DIALOG = "Pick one: 1. this 2. that"
-
-
-class Stream:
-    """A Handle's events(), drained by `thread` into a queue."""
-
-    def __init__(self, handle: api.Handle):
-        self.queue = queue.Queue()
-        self.thread = threading.Thread(target=self._drain, args=(handle,), daemon=True)
-        self.thread.start()
-
-    def _drain(self, handle):
-        try:
-            for event in handle.events():
-                self.queue.put(event)
-        except BaseException as e:
-            self.queue.put(e)
-
-    def next(self, poke=None, idle=True):
-        """The next event (idle False: but IdleTimeout), within WAIT s; poke() runs between checks."""
-        deadline = time.monotonic() + WAIT
-        while True:
-            try:
-                item = self.queue.get(timeout=live_tmux.POLL)
-            except queue.Empty:
-                if time.monotonic() > deadline:
-                    raise AssertionError(f"no event within {WAIT} s") from None
-                if poke:
-                    poke()
-                continue
-            if isinstance(item, BaseException):
-                raise item
-            if idle or not isinstance(item, IdleTimeout):
-                return item
-
-    def until_exited(self) -> list:
-        """The events up to Exited, IdleTimeouts dropped."""
-        found = [self.next(idle=False)]
-        while not isinstance(found[-1], Exited):
-            found.append(self.next(idle=False))
-        return found
-
-    def quiet(self, seconds: float) -> None:
-        time.sleep(seconds)
-        if not self.queue.empty():
-            raise AssertionError(f"an event within {seconds} s: {self.queue.get()!r}")
-
-
-class Live(Case):
-    def setUp(self):
-        self.server = live_tmux.Server(self, self.home)
-        self.server.start(MANAGER)
-        patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
-        patch.start()
-        self.addCleanup(patch.stop)
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = os.path.realpath(tmp.name)
-        self.workdir = os.path.join(self.dir, "work")
-        self.events = os.path.join(self.dir, "events")
-        self.config = settings(
-            {
-                "fake": {
-                    "implementation": "adapters.fake:FakeAdapter",
-                    "tui": True,
-                    "scenario": os.path.join(self.dir, "scenario.json"),
-                    "log": os.path.join(self.dir, "runtime.log"),
-                }
-            }
-        )
-        patch = mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
-        patch.start()
-        self.addCleanup(patch.stop)
-        Session.configure(**self.config)
-
-    def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
-        """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
-        with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
-            json.dump(list(steps), f)
-        handle = api.start(
-            "fake",
-            "tui",
-            "hello",
-            Spec(workdir=self.workdir, name=name, sid=sid),
-            **{"events": self.events, **kwargs},
-        )
-        self.addCleanup(handle.stop)
-        return handle
-
-    def lines(self, *want: str, events: str | None = None) -> None:
-        """Waits until the events file's (self.events unless given) lines, times dropped, are `want`; pokes the server
-        meanwhile."""
-
-        def check():
-            self.poke()
-            self.assertEqual(
-                [line.split(" ", 1)[1] for line in live_tmux.events(events or self.events)],
-                list(want),
-            )
-            return True
-
-        live_tmux.wait(check, what=f"events lines {want}")
-
-    def poke(self):
-        # tmux on Linux (CI: 3.4) can leave a dead pane's process unreaped, so its status unset and no pane-died,
-        # until another child of the server exits: a no-op job is one.
-        self.server.tmux("run-shell", "-b", "true")
 
 
 class TuiTest(Live):
@@ -197,7 +93,7 @@ class TuiTest(Live):
             [("session", SID)],
         )
         self.assertEqual(tui.read_state("w1")["sid"], SID)
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         self.assertEqual(
             [stream.next() for _ in range(4)],
             [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)],
@@ -226,36 +122,36 @@ class TuiTest(Live):
 
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
-        self.assertEqual(api.sessions("w1"), [])
+        self.assertEqual(self.driver.sessions("w1"), [])
         self.assertFalse(os.path.lexists(tui.session_dir("w1")))
 
     def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         self.assertEqual(stream.next(), TurnEnd("bye", 0))
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         self.lines("w2 done", "w2 dead")
         self.assertEqual(
-            (handle.state(), [r.state for r in api.sessions("w2")]), ("live", ["dead"])
+            (handle.state(), [r.state for r in self.driver.sessions("w2")]), ("live", ["dead"])
         )
-        api.close("w2")
-        self.assertEqual((handle.state(), api.sessions("w2")), ("absent", []))
+        self.driver.close("w2")
+        self.assertEqual((handle.state(), self.driver.sessions("w2")), ("absent", []))
         self.assertFalse(os.path.lexists(tui.session_dir("w2")))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
         if os.getuid() == 0:
             self.skipTest("root connects to a mode 000 socket")
         handle = self.start("w3", {"read": True})
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         mode = os.stat(self.server.socket).st_mode
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
         with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: "):
-            api.sessions("w.*")
+            self.driver.sessions("w.*")
         self.assertEqual(handle.state(), "unknown")
         stream.quiet(1.0)
         os.chmod(self.server.socket, mode)
-        self.assertEqual([r.name for r in api.sessions("w3")], ["w3"])
+        self.assertEqual([r.name for r in self.driver.sessions("w3")], ["w3"])
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
 
@@ -274,11 +170,13 @@ class SameNameTest(Live):
         )
         events = handle.events()
         self.assertEqual(next(events), TurnEnd("r1", 0))
+        self.lines(f"{name} done")
         return handle, events
 
     def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
-        """`name` started again showing DIALOG, with an events file of its own: old's events end, never scanning it;
-        old.stop() leaves it; the new Handle gets Blocked and the blocked line."""
+        """`name` started again showing DIALOG, with an events file of its own: old's events end,
+        never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked line.
+        """
         mine = os.path.join(self.dir, "events-new")
         new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
         live_tmux.wait(
@@ -287,8 +185,7 @@ class SameNameTest(Live):
         self.assertEqual(next(events), Exited(-signal.SIGHUP))
         self.assertEqual((list(events), old.state()), ([], "absent"))
         old.stop()
-        stream = Stream(new)
-        self.addCleanup(stream.thread.join, WAIT)
+        stream = Stream(self, new)
         self.addCleanup(new.stop)
         self.assertEqual(stream.next(), Blocked(DIALOG))
         self.lines(f"{name} blocked", events=mine)
@@ -314,9 +211,9 @@ class SameNameTest(Live):
         def run():
             try:
                 results.append(
-                    api.start("fake", "tui", "hello", Spec(workdir=self.workdir, name="w6"))
+                    self.driver.start("fake", "tui", "hello", Spec(workdir=self.workdir, name="w6"))
                 )
-            except Exception as e:
+            except DriverError as e:
                 results.append(e)
 
         def start(*args, **kwargs):
@@ -332,9 +229,13 @@ class SameNameTest(Live):
             finally:
                 first_done.set()
 
-        with mock.patch.object(tmux_host, "start", start):
-            run()
-            threads[0].join(WAIT)
+        self.driver.host = type(
+            "HostProxy",
+            (),
+            {"__getattr__": lambda _, key: start if key == "start" else getattr(tmux_host, key)},
+        )()
+        run()
+        threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
         self.addCleanup(handle.stop)
         self.assertEqual(tui.read_state("w6")["sid"], handle.sid)

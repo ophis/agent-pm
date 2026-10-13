@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 
-from agent_pm.session.adapters import registry
 from agent_pm.session.engine.types import (
     ConfigError,
     Event,
@@ -19,8 +18,8 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.tables import Hosts
-from agent_pm.utils.record import Display, Record
+from agent_pm.session.hosts.types import Hosts
+from agent_pm.utils import Display, Record
 
 
 def _later(method: str) -> NotImplementedError:
@@ -78,35 +77,13 @@ class Session(ABC):
     @abstractmethod
     def screen(self, lines: int | None = None) -> str: ...
 
-    @classmethod
-    def configure(
-        cls,
-        *,
-        adapters: Mapping[str, Mapping],
-        hosts: Mapping[str, Mapping],
-        default_host: str,
-    ) -> None:
-        """Every caller's first step before it starts or attaches a session: the session reads no config. Calling
-        it again replaces the settings; bad input: ConfigError, the settings kept."""
-        registry.configure(adapters=adapters, hosts=hosts, default_host=default_host)
-
-    @classmethod
-    def configure_from(cls, config: Mapping) -> None:
-        """configure from an already-read session config (session/config.toml, the caller's read): its [adapters]
-        and parsed [hosts]; else ConfigError."""
-        try:
-            settings = registry.settings(config)
-        except ValueError as e:
-            raise ConfigError(str(e)) from None
-        cls.configure(**settings)
-
     @staticmethod
     def parse_hosts(table) -> Hosts:
-        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else ConfigError."""
+        """An already-read [hosts] table as Hosts(default, tables); else ConfigError."""
         try:
             return tables.parse(table)
-        except ValueError as e:
-            raise ConfigError(str(e)) from None
+        except ValueError as error:
+            raise ConfigError(str(error)) from None
 
     @classmethod
     def start(

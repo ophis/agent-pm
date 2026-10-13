@@ -1,8 +1,11 @@
-"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path, it is the account
-probe: prints the account/rateLimits/read result, or null on any failure (--timeout S, 0 < S <= 10)."""
+"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path,
+it is the account probe: prints the account/rateLimits/read result, or null on any failure
+(--timeout S, 0 < S <= 10).
+"""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import select
@@ -10,11 +13,13 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Protocol
 
-POLL = 0.1
-BLOCK = 1 << 16
-EXIT_WAIT = 5
-PROBE_MAX = 1 << 20
+
+class Termination(Protocol):
+    signum: int
+
+    def check(self) -> None: ...
 
 
 class Error(Exception):
@@ -23,6 +28,15 @@ class Error(Exception):
 
 class Exited(Exception):
     pass
+
+
+POLL = 0.1
+
+BLOCK = 1 << 16
+
+EXIT_WAIT = 5
+
+PROBE_MAX = 1 << 20
 
 
 def call(
@@ -35,11 +49,13 @@ def call(
     wait: float,
     limit: int,
     cwd: str | None = None,
-    termination=None,
+    termination: Termination | None = None,
     exit_wait: float = EXIT_WAIT,
 ):
-    """`exe app-server *args` in its own process group: initialize, then `method`'s result within `wait` s and `limit`
-    buffered bytes; else Error, or Exited (its returncode) if it ends first. Its group is killed before returning."""
+    """`exe app-server *args` in its own process group: initialize, then `method`'s result within
+    `wait` s and `limit` buffered bytes; else Error, or Exited (its returncode) if it ends first.
+    Its group is killed before returning.
+    """
     proc = None
     exited = False
     try:
@@ -59,7 +75,8 @@ def call(
             raise Error(f"{exe}: {e.strerror}") from e
         if termination is not None:
             termination.check()
-        lines = Lines(proc.stdout.fileno(), wait, limit, termination)
+        assert proc.stdout is not None
+        lines = Lines(proc.stdout.fileno(), wait, limit, termination=termination)
         send(
             proc,
             {
@@ -85,7 +102,7 @@ def call(
             close(proc, termination, exit_wait)
         if termination is not None:
             termination.check()
-        if exited:
+        if exited and proc is not None:
             raise Exited(proc.returncode)
 
 
@@ -98,10 +115,9 @@ def send(proc, message: dict) -> None:
 
 
 class Lines:
-    def __init__(self, fd: int, wait: float, limit: int, termination=None):
-        self.fd, self.wait, self.limit = fd, wait, limit
+    def __init__(self, fd: int, wait: float, limit: int, *, termination: Termination | None = None):
+        self.fd, self.wait, self.limit, self.termination = fd, wait, limit, termination
         self.deadline, self.buf, self.seen = time.monotonic() + wait, bytearray(), 0
-        self.termination = termination
 
     def __next__(self) -> bytes:
         while (end := self.buf.find(b"\n", self.seen)) < 0:
@@ -141,40 +157,38 @@ def answer(lines, ident: int, method: str):
         if "result" in message:
             return message["result"]
         error = message.get("error")
-        raise Error(
-            f"{method} failed: {error.get('message') if isinstance(error, dict) else error}"
-        )
+        detail = error.get("message") if isinstance(error, dict) else error
+        raise Error(f"{method} failed: {detail}")
+
+
+def _polls(deadline: float, termination):
+    while (left := deadline - time.monotonic()) > 0:
+        if termination is not None and termination.signum:
+            return
+        yield min(left, POLL)
 
 
 def close(proc, termination=None, wait: float = EXIT_WAIT) -> None:
     deadline = time.monotonic() + wait
-    try:
+    with contextlib.suppress(OSError):
         proc.stdin.close()
-    except OSError:
-        pass
     fd = proc.stdout.fileno()
     try:
-        while (left := deadline - time.monotonic()) > 0:
-            if termination is not None and termination.signum:
-                break
-            if select.select([fd], [], [], min(left, POLL))[0]:
+        for interval in _polls(deadline, termination):
+            if select.select([fd], [], [], interval)[0]:
                 if not os.read(fd, BLOCK):
                     break
             elif proc.poll() is not None:
                 break
-        while (left := deadline - time.monotonic()) > 0:
-            if termination is not None and termination.signum:
-                break
+        for interval in _polls(deadline, termination):
             try:
-                proc.wait(timeout=min(left, POLL))
+                proc.wait(timeout=interval)
                 break
             except subprocess.TimeoutExpired:
                 pass
     finally:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         proc.wait()
         proc.stdout.close()
 

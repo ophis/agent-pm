@@ -1,17 +1,21 @@
-#!/usr/bin/env python3
-"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown: skipped):
-- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a left-open agent may
-  work in one;
-- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own folder, a src or
-  publish entry only as a clone or worktree (.git a directory or a file), uncommitted work included;
-- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree prune`, then deletes
-  each <ID>-* branch but the default that origin/<branch> or origin/<default> holds, else keeps and reports it (git
-  reads refs only, so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
+"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
+skipped):
+- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a
+  left-open agent may work in one;
+- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
+  folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
+  uncommitted work included;
+- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree
+  prune`, then deletes each <ID>-* branch but the default that origin/<branch> or origin/<default>
+  holds, else keeps and reports it (git reads refs only, so code an agent run planted, such as
+  filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
-TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune); a failure is
-logged and the rest goes on (run returns 3), but Unavailable is raised.
+
+TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune);
+a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
 """
 
+import contextlib
 import functools
 import os
 import re
@@ -21,7 +25,7 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import Unavailable
+from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
@@ -30,10 +34,9 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     one_line,
 )
-from agent_pm.session import ConfigError, DriverError, close, sessions
-from agent_pm.utils.git import GUARD, common_dir, git
-from agent_pm.utils.paths import under
-from agent_pm.utils.shell import SHORT
+from agent_pm.session import ConfigError, DriverError
+from agent_pm.utils import GUARD, SHORT, GitError, common_dir, under
+from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -41,7 +44,6 @@ ARCHIVE_ROLES = ("pm", "engineer")
 FOLDERS = (CLONES[0],)
 PUBLISH = CLONES[1]
 TMP = "tmp"  # delegate/team/principles.md: an agent run's temp files
-
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = (
     """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
@@ -59,9 +61,12 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work, team, roles, run=config.sh_run, writable=None):
+    def __init__(
+        self, gql, now, *, dry, run=config.sh_run, work, team, roles, driver, writable=None
+    ):
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.run_git = team, roles, run
+        self.driver = driver
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.tuis = 0, {}
         self.say = functools.partial(log, "prune", dry=dry)
@@ -83,14 +88,12 @@ class Pruner:
                 if os.path.islink(entry) or not os.path.isdir(entry):
                     found.append((folder, n))
                     continue
-                try:
+                with contextlib.suppress(OSError):
                     found += [
                         (folder, n, m)
                         for m in sorted(os.listdir(entry))
                         if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))
                     ]
-                except OSError:
-                    pass
         found += [
             (d,) for d in (PUBLISH, TMP) if os.path.lexists(os.path.join(self.work, ident, d))
         ]
@@ -191,19 +194,17 @@ class Pruner:
                         once=True,
                         reason=f"branch {branch} in {clone} kept: not pushed",
                     )
-        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        except (GitError, OSError, subprocess.TimeoutExpired) as e:
             self.error(ident, error=one_line(e))
 
     def rmdir_owners(self, ident, owners):
         for owner in sorted(owners):
-            try:
+            with contextlib.suppress(OSError):
                 os.rmdir(os.path.join(self.work, ident, *owner))
-            except OSError:
-                pass
 
     def live_tuis(self):
         try:
-            names = [row.name for row in sessions()]
+            names = [row.name for row in self.driver.sessions()]
         except DriverError:
             return None
         roles, found = set(self.roles.values()), {}
@@ -218,31 +219,35 @@ class Pruner:
                 self.say("prune-plan", ident, session=name, what="close the tui session")
                 continue
             try:
-                close(name)
+                self.driver.close(name)
             except (ConfigError, DriverError) as e:
                 self.error(ident, session=name, error=one_line(e))
             else:
                 self.say("prune-closed", ident, session=name)
 
+    def finished_issues(self, finished):
+        ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
+        if not ids:
+            return []
+        # Every page before any archive: archiving shifts the pages.
+        nodes, cursor = [], None
+        while True:
+            page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)[
+                "issues"
+            ]
+            nodes += page["nodes"]
+            end = page["pageInfo"]["endCursor"]
+            if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
+                break
+            cursor = end
+        return nodes
+
     def archive(self, finished):
         try:
-            ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
-            if not ids:
-                return
-            # Every page before any archive: archiving shifts the pages.
-            nodes, cursor = [], None
-            while True:
-                page = self.gql(Q_FINISHED, t=self.team.id, s=sorted(finished), a=ids, c=cursor)[
-                    "issues"
-                ]
-                nodes += page["nodes"]
-                end = page["pageInfo"]["endCursor"]
-                if not page["pageInfo"]["hasNextPage"] or not end or end == cursor:
-                    break
-                cursor = end
+            nodes = self.finished_issues(finished)
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
         for node in nodes:
@@ -259,15 +264,16 @@ class Pruner:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except Unavailable:
                     raise
-                except (Exception, SystemExit) as e:
+                except (LinearError, OSError, subprocess.SubprocessError) as e:
                     self.error(ident, error=f"archive: {one_line(e)}")
                     continue
                 self.say("prune-archived", ident)
 
     def run(self):
         finished = {self.team.states["done"], self.team.states["canceled"]}
-        self.tuis = self.live_tuis()
-        if self.tuis is None:
+        found = self.live_tuis()
+        self.tuis = found or {}
+        if found is None:
             self.error(error="tui sessions unknown")
         else:
             try:
@@ -289,7 +295,7 @@ class Pruner:
             issue = self.gql(Q_ISSUE, i=ident)["issue"]
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
         if not issue or issue["state"]["id"] not in finished:

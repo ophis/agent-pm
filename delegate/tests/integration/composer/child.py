@@ -1,6 +1,7 @@
-"""The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME (its
-~/.agent-pm/config.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
-agent run as its caller (the Delegate) would."""
+"""The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME
+(its ~/.agent-pm/config.local.toml the only local config) and a temp cwd, printing one JSON value.
+COMPOSE composes one agent run as its caller (the Delegate) would.
+"""
 
 import json
 import os
@@ -13,23 +14,45 @@ from delegate.tests.case import PY, child_env
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nfrom agent_pm.delegate import composer\n"
 COMPOSE = """import dataclasses
+
 req = json.loads(sys.argv[1])
 try:
     team = composer.team(composer.TEAM, composer.team_dirs())
-    run = composer.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()), team=team)
-    intent = composer.access(run, req["workdir"], cwd=req["cwd"], project=False, team=team)
+    run = composer.resolve(
+        req["role"],
+        req.get("task"),
+        overlays=req.get("overlays", ()),
+        team=team,
+    )
+    intent = composer.access(
+        run, req["workdir"], cwd=req["cwd"], project=False, team=team
+    )
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
     writes += [("a dir the run adds", d) for d in intent.dirs]
     composer.check_team_dirs(team.dirs, writes=writes)
-    params = composer.RunParams(input=req["input"], out=req["out"], workdir=req["workdir"],
-                                resume=req.get("resume", False))
-    print(json.dumps({"run": dataclasses.asdict(run), "intent": dataclasses.asdict(intent),
-                      "prompt": composer.render(run, params, team=team), "trusted": sorted(composer.trusted_dirs()),
-                      "files": [composer.__file__, sys.modules["agent_pm.utils.config_file"].__file__,
-                                sys.modules["agent_pm.utils.paths"].__file__],
-                      "repo_imported": any(os.path.dirname(getattr(m, "__file__", None) or "")
-                                           == os.path.join(composer.TEAM, "tools")
-                                           for m in list(sys.modules.values()))}))
+    params = composer.RunParams(
+        input=req["input"], out=req["out"], workdir=req["workdir"], resume=req.get("resume", False)
+    )
+    print(
+        json.dumps(
+            {
+                "run": dataclasses.asdict(run),
+                "intent": dataclasses.asdict(intent),
+                "prompt": composer.render(run, params, team=team),
+                "trusted": sorted(composer.trusted_dirs()),
+                "files": [
+                    composer.__file__,
+                    sys.modules["agent_pm.utils.config_file"].__file__,
+                    sys.modules["agent_pm.utils.paths"].__file__,
+                ],
+                "repo_imported": any(
+                    os.path.dirname(getattr(m, "__file__", None) or "")
+                    == os.path.join(composer.TEAM, "tools")
+                    for m in list(sys.modules.values())
+                ),
+            }
+        )
+    )
 except composer.ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """

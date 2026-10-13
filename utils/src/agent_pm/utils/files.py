@@ -1,15 +1,19 @@
 import errno
+import fcntl
 import os
 import stat
+import sys
 import tempfile
+from enum import Enum
 from pathlib import Path
 
 
 def read_regular(
     path: str | os.PathLike, *, offset: int = 0, limit: int | None = None, tail: bool = False
 ) -> bytes | None:
-    """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a symlink, no regular
-    file, an OSError. Never waits on a FIFO."""
+    """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a
+    symlink, no regular file, an OSError. Never waits on a FIFO.
+    """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -33,8 +37,9 @@ def read_regular(
 
 
 def append_line(path: str | Path, text: str, *, durable: bool = False, own: bool = False) -> None:
-    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it and its directory;
-    `own` also refuses one another user owns (EPERM)."""
+    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it
+    and its directory; `own` also refuses one another user owns (EPERM).
+    """
     data = memoryview(text.encode(errors="replace"))
     fd = os.open(
         path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
@@ -73,3 +78,71 @@ def save(path: str | Path, text: str) -> None:
         except BaseException:
             os.unlink(f.name)
             raise
+
+
+class ConfinedReason(Enum):
+    REGULAR = "regular"
+    SINGLE_LINK = "single_link"
+    SUFFIX = "suffix"
+    OUTSIDE = "outside"
+    REPLACED = "replaced"
+    TOO_LARGE = "too_large"
+
+
+class ConfinedFileError(ValueError):
+    def __init__(self, reason: ConfinedReason, path: str, *, limit: int | None = None):
+        self.reason = reason
+        self.path = path
+        self.limit = limit
+        super().__init__(
+            f"{path!r}: {reason.value}" + (f" (limit {limit})" if limit is not None else "")
+        )
+
+
+def _descriptor_path(fd: int) -> Path:
+    if sys.platform == "darwin":
+        raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0]
+        return Path(os.fsdecode(raw)).resolve()
+    return Path(os.readlink(f"/proc/self/fd/{fd}")).resolve()
+
+
+def _checked(fd: int, path: str, root: Path, suffix: str) -> os.stat_result:
+    opened = os.fstat(fd)
+    if not stat.S_ISREG(opened.st_mode):
+        raise ConfinedFileError(ConfinedReason.REGULAR, path)
+    if opened.st_nlink != 1:
+        raise ConfinedFileError(ConfinedReason.SINGLE_LINK, path)
+    real = _descriptor_path(fd)
+    if real.suffix != suffix:
+        raise ConfinedFileError(ConfinedReason.SUFFIX, path)
+    if not real.is_relative_to(root):
+        raise ConfinedFileError(ConfinedReason.OUTSIDE, path)
+    identity = opened.st_dev, opened.st_ino
+    for current in (os.stat(path), real.stat()):
+        if (current.st_dev, current.st_ino) != identity:
+            raise ConfinedFileError(ConfinedReason.REPLACED, path)
+    return opened
+
+
+def _within_limit(path: str, size: int, limit: int) -> None:
+    if size > limit:
+        raise ConfinedFileError(ConfinedReason.TOO_LARGE, path, limit=limit)
+
+
+def read_confined(path: str, root: str, *, limit: int, suffix: str = ".md") -> bytes:
+    """
+    Checks descriptor location and path identity before and after a bounded read. OSError reports
+    filesystem failures; ConfinedFileError reports ownership-independent confinement failures.
+    """
+    base = Path(root).resolve()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        opened = _checked(fd, path, base, suffix)
+        _within_limit(path, opened.st_size, limit)
+        with os.fdopen(fd, "rb", closefd=False) as source:
+            data = source.read(limit + 1)
+        current = _checked(fd, path, base, suffix)
+        _within_limit(path, max(len(data), current.st_size), limit)
+        return data
+    finally:
+        os.close(fd)

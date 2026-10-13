@@ -1,6 +1,8 @@
-"""A role's run config (resolve: the core config, then the caller's overlays), one run's params and its runtime-neutral
-access intent (access), whose env is the session env its commands and gate need. An overlay can widen read, write,
-commands and gate, so a caller passes only operator-controlled config as one."""
+"""A role's run config (resolve: the core config, then the caller's overlays), one run's params and
+its runtime-neutral access intent (access), whose env is the session env its commands and gate need.
+An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
+config as one.
+"""
 
 import os
 from collections.abc import Callable, Mapping, Sequence
@@ -20,7 +22,7 @@ from agent_pm.delegate.composer.teams import (
 from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
 from agent_pm.delegate.engine import config as delegate_config
 from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH
-from agent_pm.utils.config_file import LOCAL
+from agent_pm.utils import LOCAL
 
 RUN_KEYS = frozenset(
     {
@@ -52,8 +54,7 @@ def run_key(layer: Mapping, role: str, key: str):
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
     if old := sorted(OLD_KEYS & set(table)):
         raise ConfigError(
-            f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set "
-            f"run keys in [{prefix}roles.{role}] (a run without a task picks one)"
+            f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set run keys in [{prefix}roles.{role}] (a run without a task picks one)"
         )
 
 

@@ -1,8 +1,11 @@
-"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
-Session.configure, runs session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through api.start, api.usage and
-api.session_status; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
-CLAUDE_CONFIG_DIR are temp dirs."""
+"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
+table given to Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py
+(on PATH as `claude`) through Driver.start, Driver.usage and Driver.session_status; one case runs
+the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are
+temp dirs.
+"""
 
+import contextlib
 import json
 import os
 import shlex
@@ -10,10 +13,10 @@ import signal
 import stat
 import subprocess
 import tempfile
-import threading
 import time
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session.engine import api, records
@@ -59,14 +62,15 @@ PROBE = [
     "user",
     "--strict-mcp-config",
 ]
-# A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
-# (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
+# A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a
+# KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
+# parent.
 CALLER = """import json, signal, sys, time
 from agent_pm.session.engine import api
-from agent_pm.session import Session, Spec
+from agent_pm.session import Driver, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
-Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
-handle = api.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
+driver = Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
+handle = driver.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
 try:
     for event in handle.events():
         print(type(event).__name__, flush=True)
@@ -86,10 +90,8 @@ def running(pid: int) -> bool:
 
 def kill(pid: int) -> None:
     """SIGKILL to a test's stray process, if it still runs."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 class Base(Case):
@@ -121,31 +123,31 @@ class Base(Case):
 
     def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> api.Handle:
         spec = spec or Spec(workdir=self.workdir, sid=sid)
-        handle = api.start("claude", "headless", prompt, spec, **kwargs)
+        handle = self.driver.start("claude", "headless", prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
 
-    def drain(self, handle, on=lambda event: None) -> list:
-        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping the handle, instead
-        of hanging past WAIT."""
-        found, errors = [], []
+    def drain(self, handle, on=lambda _event: None) -> list:
+        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
+        the handle, instead of hanging past WAIT.
+        """
+        self.addCleanup(handle.stop)
+        found = []
 
-        def run():
-            try:
-                for event in handle.events():
-                    found.append(event)
-                    on(event)
-            except BaseException as e:
-                errors.append(e)
+        def consume():
+            for event in handle.events():
+                found.append(event)
+                on(event)
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
-        if thread.is_alive():
+        executor = ThreadPoolExecutor(max_workers=1)
+        result = executor.submit(consume)
+        try:
+            result.result(timeout=WAIT)
+        except TimeoutError:
             handle.stop()
             self.fail(f"events() did not end within {WAIT}s, got {found}")
-        if errors:
-            raise errors[0]
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         return found
 
     def logged(self) -> list[dict]:
@@ -287,7 +289,7 @@ class RunTest(Base):
         self.assertEqual(
             self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)]
         )
-        self.assertEqual(api.session_status("claude", sid, self.workdir).resumable, "yes")
+        self.assertEqual(self.driver.session_status("claude", sid, self.workdir).resumable, "yes")
         self.scenario(steps=["second"])
         again = self.start("more", resume=sid)
         self.assertEqual(
@@ -361,7 +363,9 @@ class RunTest(Base):
 
 class InterruptTest(Base):
     def until(self, caller: subprocess.Popen, check, what: str) -> None:
-        """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s pass."""
+        """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s
+        pass.
+        """
         deadline = time.monotonic() + WAIT
         while not check():
             if caller.poll() is not None or time.monotonic() > deadline:
@@ -388,7 +392,8 @@ class InterruptTest(Base):
         self.until(caller, lambda: "Reply" in self.printed(), "printed the Reply")
         (entry,) = self.logged()
         self.addCleanup(kill, entry["pid"])
-        # SIGINT must land while events() waits, not in the loop body, where it would only close the iterator.
+        # SIGINT must land while events() waits, not in the loop body, where it would only close the
+        # iterator.
         time.sleep(SETTLE)
         caller.send_signal(signal.SIGINT)
         self.until(
@@ -411,7 +416,7 @@ class UsageTest(Base):
             }
         )
         self.assertEqual(
-            api.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
+            self.driver.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
         )
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], PROBE)
@@ -422,7 +427,7 @@ class UsageTest(Base):
 
     def test_a_reading_without_windows_has_none(self):
         self.scenario(rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": "high"}})
-        self.assertEqual(api.usage("claude"), Usage(None, None))
+        self.assertEqual(self.driver.usage("claude"), Usage(None, None))
 
     def test_unknown_is_none(self):
         for name, fields in (
@@ -433,7 +438,7 @@ class UsageTest(Base):
                 self.scenario(**fields)
                 if name == "no claude":
                     os.environ["PATH"] = self.dir
-                self.assertIsNone(api.usage("claude"))
+                self.assertIsNone(self.driver.usage("claude"))
 
 
 class SessionInfoTest(Base):
@@ -441,14 +446,14 @@ class SessionInfoTest(Base):
         handle = self.start(sid=SID)
         self.assertEqual(self.drain(handle)[-1], Exited(0))
         self.assertEqual(
-            api.session_status("claude", SID, self.workdir),
+            self.driver.session_status("claude", SID, self.workdir),
             SessionStatus(
                 "yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)
             ),
         )
         other = str(uuid.uuid4())
         self.assertEqual(
-            api.session_status("claude", other, self.workdir),
+            self.driver.session_status("claude", other, self.workdir),
             SessionStatus("no", None, self.resume_command(other)),
         )
 

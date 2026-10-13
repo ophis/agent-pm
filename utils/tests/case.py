@@ -1,4 +1,6 @@
-"""Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign check."""
+"""
+Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign check.
+"""
 
 import os
 import sys
@@ -16,8 +18,9 @@ RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 
 
 class Case(unittest.TestCase):
-    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm)."""
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm).
+    """
 
     def run(self, result=None):
         if foreign := _foreign():
@@ -38,7 +41,7 @@ class Case(unittest.TestCase):
             return super().run(result)
 
 
-def _foreign() -> str | None:
+def _foreign(modules=None) -> str | None:
     own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
     for path in agent_pm.__path__:
         if os.path.realpath(path) not in own:
@@ -47,7 +50,7 @@ def _foreign() -> str | None:
         return (
             f"agent_pm.__path__ lacks {', '.join(sorted(missing))}: run with PYTHONPATH={RUN_WITH}"
         )
-    for name, module in list(sys.modules.items()):
+    for name, module in list((sys.modules if modules is None else modules).items()):
         top, _, sub = name.partition(".")
         where = getattr(module, "__file__", None)
         if top == "agent_pm" and sub and "." not in sub and where:

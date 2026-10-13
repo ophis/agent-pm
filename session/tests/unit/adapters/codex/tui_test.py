@@ -27,15 +27,17 @@ from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
+HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
+
 
 class TuiTest(Base):
-    def launch(self, resume=False, adapter=None):
+    def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
             mock.patch("shutil.which", return_value="/protected/codex"),
             mock.patch("subprocess.Popen") as proc,
         ):
-            launch = run.launch("quoted ' prompt\nnext", self.spec, resume, HOOK)
+            launch = run.launch("quoted ' prompt\nnext", self.spec, HOOK, resume=resume)
         proc.assert_not_called()
         return run, launch, json.loads(launch.argv[-1])
 
@@ -59,9 +61,13 @@ class TuiTest(Base):
         self.assertIn("gpt-test", data["argv"])
         self.assertEqual(data["hook"], list(HOOK))
         self.assertEqual(set(data["commands"]), set(run.hooks))
-        hook = os.path.join(os.path.dirname(launch.argv[2]), "tui_hook.py")
-        for command in data["commands"].values():
-            self.assertEqual(shlex.split(command)[:3], [launch.argv[0], "-I", hook])
+        for label, command in data["commands"].items():
+            self.assertEqual(shlex.split(command), [*HOOK, label])
+        self.assertEqual(
+            run.hook_state()["adapter_hook"],
+            os.path.join(os.path.dirname(launch.argv[2]), "tui_hook.py"),
+        )
+        self.assertEqual(run.hook_state()["adapter_state"], {"store": data["store"]})
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
     def test_resume_uses_shared_saved_policy_and_native_file(self):
@@ -69,11 +75,11 @@ class TuiTest(Base):
             self.spec,
             flags=("-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=false"),
         )
-        saved = CodexAdapter(self.adapter.config).common.prepare(self.spec, False)
+        saved = CodexAdapter(self.adapter.config).common.prepare(self.spec, resume=False)
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         other = CodexAdapter({"env": {"CODEX_HOME": str(self.extra)}})
-        run, launch, data = self.launch(True, other)
+        run, launch, data = self.launch(resume=True, adapter=other)
         self.assertEqual(data["argv"][:3], ["/protected/codex", "resume", NATIVE])
         self.assertIn("gpt-test", data["argv"])
         self.assertIn("sandbox_workspace_write.network_access=false", data["argv"])
@@ -89,7 +95,7 @@ class TuiTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
-        _, resumed, _ = self.launch(True, adapter)
+        _, resumed, _ = self.launch(resume=True, adapter=adapter)
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
         self.assertEqual(shlex.split(resumed.resume)[4], "PYTHONPATH=/a b;c")
 
@@ -98,7 +104,7 @@ class TuiTest(Base):
             mock.patch("shutil.which") as which,
             self.assertRaisesRegex(ConfigError, "missing.*state"),
         ):
-            self.adapter.tui().launch("again", self.spec, True, HOOK)
+            self.adapter.tui().launch("again", self.spec, HOOK, resume=True)
         which.assert_not_called()
 
     def test_interactive_environment_preserves_external_default_values(self):
@@ -129,7 +135,7 @@ class TuiTest(Base):
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = adapter.tui().launch("hi", second, False, HOOK)
+            launch = adapter.tui().launch("hi", second, HOOK, resume=False)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
         self.assertEqual(launch.env["PAGER"], "less")
@@ -189,7 +195,7 @@ class TuiTest(Base):
 
     def test_limit_screen_official_variants_and_reset(self):
         run = self.adapter.tui()
-        run.adapter.common.config["env"] = {"TZ": "UTC"}
+        run.common.config["env"] = {"TZ": "UTC"}
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
         for prefix in (
             "You’ve hit your usage limit.",
@@ -215,20 +221,26 @@ class TuiTest(Base):
         for path in (self.cwd / "codex", self.extra / "driver.py"):
             spec = dataclasses.replace(self.spec, sid="unsafe-" + path.name)
             hook = HOOK if path.name == "codex" else (sys.executable, "-I", str(path))
-            with mock.patch(
-                "shutil.which",
-                return_value=str(path if path.name == "codex" else "/protected/codex"),
+            with (
+                mock.patch(
+                    "shutil.which",
+                    return_value=str(path if path.name == "codex" else "/protected/codex"),
+                ),
+                self.assertRaisesRegex(ConfigError, "rewrite|writable"),
             ):
-                with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                    self.adapter.tui().launch("hi", spec, False, hook)
+                self.adapter.tui().launch("hi", spec, hook, resume=False)
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_writable_symlink_to_protected_driver_hook_is_rejected(self):
         link = self.cwd / "driver-link.py"
         link.symlink_to("/protected/driver_hook.py")
-        with mock.patch("shutil.which", return_value="/protected/codex"):
-            with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                self.adapter.tui().launch("hi", self.spec, False, (sys.executable, "-I", str(link)))
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaisesRegex(ConfigError, "rewrite|writable"),
+        ):
+            self.adapter.tui().launch(
+                "hi", self.spec, (sys.executable, "-I", str(link)), resume=False
+            )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
@@ -255,7 +267,9 @@ class TuiTest(Base):
     def test_assistant_bullets_and_quoted_limit_text_are_not_native_errors(self):
         run = self.adapter.tui()
         for screen in (
-            "Codex > gpt-test • You have asked me to quote this error. • You've hit your usage limit. is a quoted example › ",
+            (
+                "Codex > gpt-test • You have asked me to quote this error. • You've hit your usage limit. is a quoted example › "
+            ),
             "• You've hit your usage limit. is a quoted example\n› ",
             "You've hit your usage limit. is a quoted example",
             "! You've hit your usage limit. is a quoted example",
@@ -278,14 +292,19 @@ class TuiTest(Base):
                     )
                     if resume:
                         with mock.patch("shutil.which", return_value="/protected/codex"):
-                            launch = adapter.tui().launch("hi", spec, True, HOOK)
+                            launch = adapter.tui().launch("hi", spec, HOOK, resume=True)
                             self.assertNotIn("TMPDIR", launch.env)
                         continue
-                    with mock.patch("shutil.which", return_value="/protected/codex"):
-                        with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                            adapter.tui().launch(
-                                "hi", spec, resume, (sys.executable, "-I", "/driver-only/hook.py")
-                            )
+                    with (
+                        mock.patch("shutil.which", return_value="/protected/codex"),
+                        self.assertRaisesRegex(ConfigError, "rewrite|writable"),
+                    ):
+                        adapter.tui().launch(
+                            "hi",
+                            spec,
+                            (sys.executable, "-I", "/driver-only/hook.py"),
+                            resume=resume,
+                        )
                     if not resume:
                         self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
@@ -302,13 +321,13 @@ class TuiTest(Base):
         run = adapter.tui()
         expected = [str(p) for p in (self.cwd, home, self.extra)]
         with mock.patch("subprocess.Popen") as proc:
-            roots = run.adapter.writable_dirs(self.spec, False)
+            roots = run.common.writable_dirs(self.spec, resume=False)
             self.assertEqual(list(roots[:3]), expected)
             self.assertIn(str(temporary), roots)
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
             with mock.patch("shutil.which", return_value="/protected/codex"):
-                run.launch("hello", self.spec, False, HOOK)
+                run.launch("hello", self.spec, HOOK, resume=False)
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
             changed = CodexAdapter(
@@ -320,7 +339,7 @@ class TuiTest(Base):
                 access=dataclasses.replace(self.spec.access, cwd=str(self.extra), dirs=()),
             )
             before = self.record().read_bytes()
-            resumed = changed.adapter.writable_dirs(spec, True)
+            resumed = changed.common.writable_dirs(spec, resume=True)
             self.assertEqual(list(resumed[: len(saved)]), saved)
             self.assertNotIn(str(changed_tmp), resumed)
             self.assertNotIn(str(changed_home), resumed)
@@ -329,11 +348,13 @@ class TuiTest(Base):
 
 
 PROMPT = "quoted ' prompt\nnext"
+
 POLICY = (
     "approval_policy",
     "approvals_reviewer",
     "sandbox_workspace_write",
 )
+
 REFUSED = (
     ("-C", "/x"),
     ("--cd=/x",),
@@ -352,9 +373,9 @@ REFUSED = (
 
 
 class SuppliedFlagsTest(Base):
-    def launch(self, spec, resume=False):
+    def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch(PROMPT, spec, resume, HOOK)
+            launch = self.adapter.tui().launch(PROMPT, spec, HOOK, resume=resume)
         return launch, json.loads(launch.argv[-1])
 
     def test_supplied_flags_env_and_hooks_share_one_path(self):
@@ -415,6 +436,65 @@ class SuppliedFlagsTest(Base):
         self.rollout()
         changed = dataclasses.replace(spec, flags=(), protect=(str(guarded / "events"),))
         with self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"):
-            self.launch(changed, True)
+            self.launch(changed, resume=True)
         changed = dataclasses.replace(spec, flags=("--add-dir", "/unrecorded"))
-        self.assertEqual(self.launch(changed, True)[1]["add_dirs"], [str(guarded)])
+        self.assertEqual(self.launch(changed, resume=True)[1]["add_dirs"], [str(guarded)])
+
+
+class LaunchPolicy(Base):
+    def argv(self, adapter, spec, *, resume=False):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = adapter.tui().launch("hi", spec, HOOK, resume=resume)
+        return json.loads(launch.argv[-1])["argv"]
+
+    def test_supplied_policy_and_saved_replay_in_both_modes(self):
+        mode = "tui"
+        for saved, current in (
+            ("workspace-write", "danger-full-access"),
+            ("danger-full-access", "workspace-write"),
+        ):
+            with self.subTest(mode=mode, saved=saved):
+                flags = (
+                    "-s",
+                    saved,
+                    "-c",
+                    'approval_policy="on-request"',
+                    "-c",
+                    'approvals_reviewer="auto_review"',
+                    "-c",
+                    "sandbox_workspace_write.network_access=false",
+                )
+                spec = dataclasses.replace(
+                    self.spec, sid=f"{mode}-{saved}", flags=flags, env={"K": "saved"}
+                )
+                first = self.argv(self.adapter, spec)
+                self.assertEqual(first[first.index("-s") :][: len(flags)], list(flags))
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                self.rollout()
+                changed = dataclasses.replace(spec, flags=("-s", current), env={"K": "changed"})
+                second = self.argv(self.adapter, changed, resume=True)
+                self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
+                self.assertEqual(
+                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
+                )
+
+    def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
+        mode = "tui"
+        with self.subTest(mode=mode):
+            supplied = ("--enable", "web", "--", "literal", "--last")
+            spec = dataclasses.replace(self.spec, sid=f"separator-{mode}", flags=supplied)
+            first = self.argv(self.adapter, spec)
+            self.common.bind(str(self.work), spec.sid, NATIVE)
+            self.rollout()
+            changed = dataclasses.replace(spec, flags=("--", "changed"))
+            second = self.argv(self.adapter, changed, resume=True)
+            for argv in (first, second):
+                boundary = argv.index("--")
+                self.assertEqual(argv[boundary:], ["--", "literal", "--last", "hi"])
+                self.assertIn("gpt-test", argv[:boundary])
+                self.assertIn(str(self.extra), argv[:boundary])
+                self.assertIn("project_doc_max_bytes=0", argv[:boundary])
+                self.assertEqual(sum(word.startswith("hooks.") for word in argv[:boundary]), 6)
+            self.assertEqual(
+                self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+            )

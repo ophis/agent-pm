@@ -1,10 +1,10 @@
 """Codex's abstract factory."""
 
 from agent_pm.session.adapters.base import Adapter
-
-from .common import CodexCommon
-from .headless import CodexHeadless
-from .tui import CodexTui
+from agent_pm.session.adapters.codex.common import CodexCommon
+from agent_pm.session.adapters.codex.headless import CodexHeadless
+from agent_pm.session.adapters.codex.tui import CodexTui
+from agent_pm.session.engine.types import Spec
 
 
 class CodexAdapter(Adapter):
@@ -35,10 +35,10 @@ class CodexAdapter(Adapter):
         self.common = CodexCommon(self.config, selector=self.select_session)
 
     def headless(self):
-        return CodexHeadless(self)
+        return CodexHeadless(self.common)
 
     def tui(self):
-        return CodexTui(self)
+        return CodexTui(self.common)
 
     def usage_probe(self):
         return self.common.probe()
@@ -52,5 +52,5 @@ class CodexAdapter(Adapter):
     def session_status(self, sid, cwd):
         return self.common.session_status(sid, cwd)
 
-    def writable_dirs(self, spec, resume):
-        return self.common.writable_dirs(spec, resume)
+    def writable_dirs(self, spec: Spec, *, resume: bool = False):
+        return self.common.writable_dirs(spec, resume=resume)

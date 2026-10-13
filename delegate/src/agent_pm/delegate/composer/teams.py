@@ -1,5 +1,6 @@
-"""The Team: the roles, tasks and templates a run can name, from the team root and the team dirs; each role's task
-index; the checks that keep a team dir out of reach of the agent run."""
+"""The Team: the roles, tasks and templates a run can name, from the team root and the team dirs;
+each role's task index; the checks that keep a team dir out of reach of the agent run.
+"""
 
 import os
 import re
@@ -11,9 +12,8 @@ from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text
 from agent_pm.delegate.composer.types import ConfigError, Team
 from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils.config_file import LOCAL, load, read_project
-from agent_pm.utils.markdown import unfenced
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils import LOCAL, read_project, temp_dirs, under, unfenced
+from agent_pm.utils import load_config as load
 
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
 KINDS = ("roles", "tasks", "templates")
@@ -34,9 +34,14 @@ def lookup(team: Team, kind: str, name: str) -> str | None:
     return paths[0] if paths else None
 
 
+def path_for(team: Team, kind: str, name: str) -> str:
+    if path := lookup(team, kind, name):
+        return path
+    raise misnamed_error(team, kind, name) or ConfigError(f"missing file {kind}/{name}.md")
+
+
 def read(team: Team, kind: str, name: str) -> tuple[str, str]:
-    if not (path := lookup(team, kind, name)):
-        raise misnamed_error(team, kind, name) or ConfigError(f"missing file {kind}/{name}.md")
+    path = path_for(team, kind, name)
     return read_text(path), team.label(kind, name, path)
 
 
@@ -44,8 +49,7 @@ def check_file(team: Team, kind: str, path: str) -> None:
     text = read_text(path)
     if text.split("\n", 1)[0].strip() == "---":
         raise ConfigError(
-            f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
-            f"{LOCAL}"
+            f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in {LOCAL}"
         )
     if m := PLACEHOLDER.search(text):
         raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
@@ -217,8 +221,7 @@ def index(
             )
         if os.path.dirname(path) != own:
             raise ConfigError(
-                f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
-                f"{tasks_dir(team, role) or 'core team/tasks'}: a role runs only its own tasks"
+                f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in {tasks_dir(team, role) or 'core team/tasks'}: a role runs only its own tasks"
             )
     return tasks
 
@@ -301,13 +304,11 @@ def check_team_dirs(
                 raise ConfigError(f"{parent}: {e.strerror}") from None
             if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not st.st_mode & stat.S_ISVTX:
                 raise ConfigError(
-                    f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could "
-                    "replace the team dir"
+                    f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could replace the team dir"
                 )
             if st.st_uid not in (me, 0):
                 raise ConfigError(
-                    f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: "
-                    "they could replace the team dir"
+                    f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: they could replace the team dir"
                 )
 
 

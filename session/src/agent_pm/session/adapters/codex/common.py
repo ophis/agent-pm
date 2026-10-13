@@ -9,17 +9,7 @@ from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.common import check, number, resume_command
-from agent_pm.session.engine.types import (
-    ConfigError,
-    Launch,
-    SessionInfo,
-    SessionStatus,
-    Usage,
-    Window,
-)
-
-from .sessions import (
+from agent_pm.session.adapters.codex.sessions import (
     RecoveryError,
     SessionFile,
     SessionState,
@@ -44,6 +34,16 @@ from .sessions import (
     store_directory,
     store_root,
     validate_snapshot,
+)
+from agent_pm.session.adapters.common import check, number, resume_command
+from agent_pm.session.engine.types import (
+    ConfigError,
+    Launch,
+    SessionInfo,
+    SessionStatus,
+    Spec,
+    Usage,
+    Window,
 )
 
 TABLE = "[adapters.codex]"
@@ -99,13 +99,22 @@ def reset_at(message, environment):
 
 def refuse(flags) -> None:
     for name, value, text in options(flags):
-        key = value.partition("=")[0].split(".", 1)[0].strip().strip("\"'") if name == "-c" else ""
+        key = (
+            value.partition("=")[0].split(".", 1)[0].strip().strip("\"'")
+            if name == "-c" and value is not None
+            else ""
+        )
         if name in RESERVED or key in RESERVED_KEYS:
             raise ConfigError(f"{text}: the Driver sets Codex's hooks, session and cwd")
 
 
 def passed(flags) -> list[str]:
-    return [word for name, value, _ in options(flags) if name in PASSED for word in (name, value)]
+    return [
+        word
+        for name, value, _ in options(flags)
+        if name in PASSED and value is not None
+        for word in (name, value)
+    ]
 
 
 def _recover(method):
@@ -132,8 +141,7 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
     real_config_home = os.path.realpath(config_home)
     if inside(config_home, workdir) or inside(real_config_home, real_workdir):
         raise ConfigError(
-            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
-            "move Codex config outside the workdir"
+            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; move Codex config outside the workdir"
         )
 
     for start in (cwd, real_cwd):
@@ -153,8 +161,7 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
                 )
                 if not genuine_user_home:
                     raise ConfigError(
-                        f"project Codex settings at {candidate} may load in an untrusted run; "
-                        "use a clean workdir or trusted_dirs"
+                        f"project Codex settings at {candidate} may load in an untrusted run; use a clean workdir or trusted_dirs"
                     )
             parent = os.path.dirname(ancestor)
             if parent == ancestor:
@@ -243,7 +250,7 @@ class CodexCommon:
         return result
 
     @_recover
-    def prepare(self, spec, resume: bool, *, persist: bool = True) -> SessionState:
+    def prepare(self, spec: Spec, *, resume: bool = False, persist: bool = True) -> SessionState:
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
@@ -307,7 +314,7 @@ class CodexCommon:
         ]
 
     @_recover
-    def writable_dirs(self, spec, resume: bool) -> tuple[str, ...]:
+    def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
@@ -332,7 +339,7 @@ class CodexCommon:
         return save_session(state)
 
     @_recover
-    def load(self, workdir: str, sid: str) -> SessionState | None:
+    def load(self, workdir: str, sid: object) -> SessionState | None:
         return load_session(workdir, sid)
 
     @_recover
@@ -356,7 +363,7 @@ class CodexCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """Map native account rate limits to five-hour and weekly usage; malformed data is unknown."""
+        """Map account limits to five-hour and weekly usage; malformed data is unknown."""
         try:
             result = json.loads(output)
         except (ValueError, TypeError, RecursionError):
@@ -369,7 +376,7 @@ class CodexCommon:
 
     def resume_command(self, state: SessionState) -> str:
         snapshot = state.snapshot
-        selection = self.selector(state.native_id, True)
+        selection = self.selector(state.native_id, resume=True)
         _, literal = split_flags(snapshot["flags"])
         argv = [
             "codex",

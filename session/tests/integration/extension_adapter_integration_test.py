@@ -1,8 +1,10 @@
-"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of
-session and utils, the fake adapter's package copied in as session's adapters/fake/ and its table
-appended to the copy's session/config.toml, nothing else changed, runs a headless session through
-session.engine.api.start in a child Python whose PYTHONPATH is only the copy's src/ dirs. A table without its
-package, or a package without its table, fails there before anything starts."""
+"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>]
+table: a temp copy of session and utils, the fake adapter's package copied in as session's
+adapters/fake/ and its table appended to the copy's session/config.toml, nothing else changed, runs
+a headless session through session.engine.api.start in a child Python whose PYTHONPATH is only the
+copy's src/ dirs. A table without its package, or a package without its table, fails there before
+anything starts.
+"""
 
 import json
 import os
@@ -17,15 +19,15 @@ from session.tests.case import PY, REPO, Case, child_env
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
 PROJECTS = ("session", "utils")
-# The child: configures the session from the copy's session config, starts runtime argv[2] headless in workdir argv[1]
-# and prints its events; a ConfigError exits 1, its text on stderr.
+# The child: configures the session from the copy's session config, starts runtime argv[2] headless
+# in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Session, ConfigError, Spec, start
+from agent_pm.session import Driver, ConfigError, Spec
 from agent_pm.session.engine import api
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils import read_project
 try:
-    Session.configure_from(read_project("session"))
-    handle = start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
+    driver = Driver.from_config(read_project("session"))
+    handle = driver.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
 except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
@@ -39,14 +41,18 @@ class ExtensionAdapterIntegration(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
+        self.src = os.path.join(self.root, "session", "src")
+        self.package("fake")
+        self.package("untabled")
         for project in PROJECTS:
             shutil.copytree(
-                os.path.join(REPO, project), os.path.join(self.root, project), ignore=SKIP
+                os.path.join(REPO, project),
+                os.path.join(self.root, project),
+                ignore=SKIP,
+                dirs_exist_ok=True,
             )
         self.srcs = os.pathsep.join(os.path.join(self.root, p, "src") for p in PROJECTS)
-        self.src = os.path.join(self.root, "session", "src")
         self.config = os.path.join(self.root, "session", "config.toml")
-        self.package("fake")
         self.home = os.path.join(self.root, "home")
         os.mkdir(self.home)
         self.work = os.path.join(self.root, "work")
@@ -89,7 +95,9 @@ class ExtensionAdapterIntegration(Case):
         )
 
     def refused(self, runtime: str, error: str) -> None:
-        """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or process."""
+        """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or
+        process.
+        """
         child = self.child(runtime)
         self.assertEqual((child.returncode, child.stdout), (1, ""), child.stderr)
         self.assertIn(f"ConfigError: {error}", child.stderr)
@@ -121,7 +129,7 @@ class ExtensionAdapterIntegration(Case):
         )
 
     def test_a_package_without_its_table_fails_before_launch(self):
-        self.package("untabled")
+        self.assertTrue(os.path.isdir(os.path.join(self.src, "agent_pm/session/adapters/untabled")))
         self.refused("untabled", "no [adapters.untabled] table")
 
 

@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's branch.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's
+branch.
 
-repo.py worktree --dir DIR --branch B [--name SLUG] [--base BASE] REPO
-    prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
-    no error
-repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
-    after worktree with the same SLUG: {"pr", "base", "plan_docs", "since", "user", "others"}, `pr` being B's PR
-    {"number", "url", "state", "baseRefName"} or null, `base` the PR's baseRefName, else BASE, else the default branch,
-    `user` and `others` PR comments and reviews by the user (core config's `users`, else the gh login) and by anyone
-    else since the latest plan doc commit
-SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
-REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
-and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
-blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else tracking origin/B, else new from
-origin/BASE (origin/<default> when BASE is omitted).
-Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
-second `--dir`.
-Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), or BASE syntax
-is invalid. Exits 1 on other failures, including a missing origin/BASE.
-Errors mask URL userinfo.
+    repo.py worktree --dir DIR --branch B [--name SLUG] [--base BASE] REPO
+    repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
+
+worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base",
+"push"}; no push permission is no error. status, after worktree with the same SLUG, prints {"pr",
+"base", "plan_docs", "since", "user", "others"}. `pr` is B's PR {"number", "url", "state",
+"baseRefName"} or null; `base` is the PR's baseRefName, else BASE, else the default branch. `user`
+and `others` are PR comments and reviews by the user (core config's `users`, else the gh login) and
+by anyone else since the latest plan doc commit.
+
+SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
+`https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
+dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
+blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else tracking
+origin/B, else new from origin/BASE (origin/<default> when BASE is omitted). Each option may be
+given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
+second `--dir`. Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked
+out elsewhere), or BASE syntax is invalid. Exits 1 on other failures, including a missing
+origin/BASE. Errors mask URL userinfo.
 """
 
 import argparse
@@ -30,26 +32,45 @@ import sys
 from datetime import datetime
 
 from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
-from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, read_project
-from agent_pm.utils.git import git
-from agent_pm.utils.paths import temp_dirs, under
-from agent_pm.utils.repos import Invalid, Repo, check_slug, checkout, origin, resolve
-from agent_pm.utils.shell import LONG, SHORT, Runner, err_text, redact, sh
+from agent_pm.utils import (
+    LOCAL,
+    LONG,
+    SHORT,
+    GitError,
+    Invalid,
+    Once,
+    Repo,
+    Runner,
+    check_slug,
+    checkout,
+    err_text,
+    origin,
+    read_project,
+    redact,
+    resolve,
+    sh,
+    temp_dirs,
+    under,
+)
+from agent_pm.utils import run_git as git
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 
 
+class RepoCommandError(RuntimeError):
+    pass
+
+
 def gh_json(run: Runner, argv: list[str]):
     res = run(["gh", *argv], SHORT)
     if res.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {err_text(res)}")
+        raise RepoCommandError(f"gh {' '.join(argv)[:100]}: {err_text(res)}")
     try:
         return json.loads(res.stdout)
     except ValueError as e:
-        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {e}") from None
+        raise RepoCommandError(f"gh {' '.join(argv)[:100]}: {e}") from None
 
 
 def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
@@ -58,12 +79,15 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
             raise Invalid(f"{repo.slug}: not found or no access (HTTP {code.group(1)})")
-        raise RuntimeError(f"gh api: {err_text(res)}")
+        raise RepoCommandError(f"gh api: {err_text(res)}")
     try:
         data = json.loads(res.stdout)
-        return data["permissions"]["push"] is True, data["default_branch"]
+        push, default = data["permissions"]["push"], data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
-        raise RuntimeError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
+        raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
+    if not isinstance(push, bool) or not isinstance(default, str):
+        raise RepoCommandError(f"gh api repos/{repo.owner}/{repo.name}: invalid repository fields")
+    return push, default
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
@@ -84,7 +108,8 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
             else None
         )
         if (
-            res is None
+            clone is None
+            or res is None
             or res.returncode != 0
             or os.path.realpath(res.stdout.strip()) != os.path.join(clone, ".git")
         ):
@@ -113,7 +138,7 @@ def clone_repo(repo: Repo, wt: str, *, run: Runner) -> None:
         LONG,
     )
     if res.returncode != 0:
-        raise RuntimeError(f"gh repo clone: {err_text(res)}")
+        raise RepoCommandError(f"gh repo clone: {err_text(res)}")
 
 
 def check_branch(branch: str) -> None:
@@ -143,7 +168,7 @@ def worktree(
     links=frozenset(),
     base_branch: str | None = None,
 ) -> dict:
-    # a local clone in a temp dir is refused: prune treats clones there as untrusted
+    # A local clone in a temp dir is refused: prune treats clones there as untrusted.
     check_branch(branch)
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -174,14 +199,15 @@ def worktree(
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     add = clone is not None and not exists
-    # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move local branches.
+    # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move
+    # local branches.
     if exists:
         git(run, wt, *FETCH, timeout=LONG)
-    elif add:
+    elif clone is not None:
         git(run, clone, *FETCH, timeout=LONG)
     else:
         clone_repo(repo, wt, run=run)
-    at = clone if add else wt
+    at = clone if clone is not None and not exists else wt
     if add or git(run, wt, "branch", "--show-current").strip() != branch:
         trees, mine = registered(run, at), os.path.realpath(wt)
         busy = [p for p, b in trees.items() if b == branch and p != mine]
@@ -193,10 +219,10 @@ def worktree(
             opts, start = ["--track", "-b", branch], f"origin/{branch}"
         else:
             opts, start = ["--no-track", "-b", branch], f"origin/{onto}"
-        if add:
+        if clone is not None and not exists:
             os.makedirs(os.path.dirname(wt), exist_ok=True)
-            # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds our own path
-            # when it was deleted by hand but is still registered.
+            # core.symlinks per worktree, so the clone's own checkout keeps its config. --force re-adds
+            # our own path when it was deleted by hand but is still registered.
             if (
                 run(
                     ["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT
@@ -220,14 +246,14 @@ def worktree(
             try:
                 git(run, wt, "config", "--worktree", "core.symlinks", symlinks)
                 git(run, wt, "reset", "-q", "--hard", timeout=LONG)
-            except (RuntimeError, subprocess.TimeoutExpired):
+            except (GitError, subprocess.TimeoutExpired):
                 run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
                 raise
         else:
             git(run, wt, "checkout", *opts, start, timeout=LONG)
     commit = git(run, wt, "rev-parse", "HEAD").strip()
     if not SHA.fullmatch(commit):
-        raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
+        raise RepoCommandError(f"git rev-parse HEAD: {commit[:80]!r}")
     return {
         "repo": f"{repo.owner}/{repo.name}",
         "host": repo.host,
@@ -277,9 +303,9 @@ def status(
     base: str,
     *,
     slug: str | None = None,
+    base_branch: str | None = None,
     run: Runner = sh,
     users: list[str] | None = None,
-    base_branch: str | None = None,
 ) -> dict:
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
@@ -292,7 +318,14 @@ def status(
         if docs
         else ""
     )
-    login = gh_json(run, ["api", "--hostname", repo.host, "user"]).get("login")
+    account = gh_json(run, ["api", "--hostname", repo.host, "user"])
+    if (
+        not isinstance(account, dict)
+        or not isinstance(account.get("login"), str)
+        or not account["login"]
+    ):
+        raise RepoCommandError("gh api user: expected a login")
+    login = account["login"]
     rows = gh_json(
         run,
         [
@@ -310,6 +343,8 @@ def status(
             "100",
         ],
     )
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise RepoCommandError("gh pr list: expected pull request objects")
     mine = [
         r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login
     ]
@@ -332,14 +367,27 @@ def status(
             (f"{api}/pulls/{pr['number']}/reviews", "submitted_at", "review"),
             (f"{api}/pulls/{pr['number']}/comments", "created_at", "review_comment"),
         ):
-            for page in gh_json(
-                run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path]
-            ):
+            pages = gh_json(run, ["api", "--hostname", repo.host, "--paginate", "--slurp", path])
+            if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+                raise RepoCommandError("gh api: expected comment or review pages")
+            for page in pages:
                 for c in page:
+                    if not isinstance(c, dict):
+                        raise RepoCommandError("gh api: expected comment or review objects")
                     at = c.get(key)
-                    if at is None or (
-                        since and datetime.fromisoformat(at) <= datetime.fromisoformat(since)
-                    ):
+                    if at is None:
+                        continue
+                    if not isinstance(at, str):
+                        raise RepoCommandError("gh api: invalid comment or review timestamp")
+                    try:
+                        parsed = datetime.fromisoformat(at)
+                    except ValueError:
+                        raise RepoCommandError(
+                            "gh api: invalid comment or review timestamp"
+                        ) from None
+                    if parsed.utcoffset() is None:
+                        raise RepoCommandError("gh api: timestamp has no timezone")
+                    if since and parsed <= datetime.fromisoformat(since):
                         continue
                     e = {
                         "at": at,
@@ -367,6 +415,7 @@ def status(
 
 def main(
     argv: list[str],
+    *,
     run: Runner = sh,
     out=sys.stdout,
     err=sys.stderr,
@@ -386,16 +435,24 @@ def main(
     a = ap.parse_args(argv)
     try:
         cfg = read_project("delegate", path=config, local=local)
+        users = cfg.get("users", [])
+        if not isinstance(users, list) or any(not isinstance(user, str) for user in users):
+            raise ValueError("users: want a list of strings")
+        links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
+    except (ValueError, OSError) as e:
+        err.write(f"repo.py: {redact(str(e))}\n")
+        return 1
+    try:
         if a.cmd == "worktree":
             r = worktree(
                 a.repo,
                 a.branch,
                 a.dir,
                 slug=a.name,
+                base_branch=a.base,
                 run=run,
                 temp=temp,
-                links=trusted_dirs(cfg),
-                base_branch=a.base,
+                links=links,
             )
         else:
             r = status(
@@ -403,21 +460,14 @@ def main(
                 a.branch,
                 a.dir,
                 slug=a.name,
-                run=run,
-                users=cfg.get("users"),
                 base_branch=a.base,
+                run=run,
+                users=users,
             )
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2
-    except (
-        RuntimeError,
-        OSError,
-        ValueError,
-        TypeError,
-        AttributeError,
-        subprocess.TimeoutExpired,
-    ) as e:
+    except (RepoCommandError, GitError, OSError, subprocess.TimeoutExpired) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 1
     json.dump(r, out)

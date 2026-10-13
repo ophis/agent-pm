@@ -1,7 +1,7 @@
-"""adapters/codex/sessions.py: the recovery snapshot's session env, by the same rule as Access.env."""
+"""Codex recovery snapshots validate session environment by the Access.env rule."""
 
+from agent_pm.session import Access, ConfigError
 from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
-from agent_pm.session.engine.types import env_ok
 
 from session.tests.unit.adapters.codex.support import Base
 
@@ -24,18 +24,22 @@ BAD = (
 
 class SnapshotEnvTest(Base):
     def snapshot(self, **fields):
-        return {**self.common.prepare(self.spec, False, persist=False).snapshot, **fields}
+        return {
+            **self.common.prepare(self.spec, persist=False, resume=False).snapshot,
+            **fields,
+        }
 
     def test_keeps_an_env_access_env_accepts(self):
         for env in GOOD:
             with self.subTest(env=env):
-                self.assertTrue(env_ok(env))
+                self.assertEqual(Access(env=env).env, env)
                 self.assertEqual(validate_snapshot(self.snapshot(env=env))["env"], env)
 
     def test_refuses_an_env_access_env_refuses(self):
         for env in BAD:
             with self.subTest(env=env):
-                self.assertFalse(env_ok(env))
+                with self.assertRaises(ConfigError):
+                    Access(env=env)
                 with self.assertRaises(RecoveryError) as caught:
                     validate_snapshot(self.snapshot(env=env))
                 self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")

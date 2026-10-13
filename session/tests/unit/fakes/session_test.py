@@ -1,4 +1,6 @@
-"""session/tests/fakes/session.py: FakeSession plays its script in the caller's process, with no Host to display on."""
+"""session/tests/fakes/session.py: FakeSession plays its script in the caller's process, with no
+Host to display on.
+"""
 
 import unittest
 
@@ -87,20 +89,18 @@ class Scripted(Case):
         self.assertEqual(len(first.started), 1)
         self.start(second, name="w1")
 
-    def test_the_bare_class_plays_an_empty_script_on_state_no_subclass_shares(self):
-        session = self.start(FakeSession, name="w1")
-        self.addCleanup(FakeSession.started.clear)
-        self.addCleanup(session.close)
-        FakeSession.configure(adapters={}, hosts={}, default_host="fake")
-        self.addCleanup(setattr, FakeSession, "configured", None)
-        self.assertEqual(list(session.events()), [Exited(0)])
-        self.assertIs(FakeSession.attach("w1"), session)
-        self.assertEqual([row.name for row in FakeSession.list()], ["w1"])
-        self.assertEqual([call["spec"].name for call in FakeSession.started], ["w1"])
+    def test_a_fresh_class_plays_an_empty_script_on_state_no_subclass_shares(self):
         cls = FakeSession.scripted()
-        self.assertEqual((cls.started, cls.live, cls.configured), ([], {}, None))
-        self.start(cls, name="w1")
-        self.assertEqual(len(FakeSession.started), 1)
+        session = self.start(cls, name="w1")
+        cls.configure(adapters={}, hosts={}, default_host="fake")
+        self.assertEqual(list(session.events()), [Exited(0)])
+        self.assertIs(cls.attach("w1"), session)
+        self.assertEqual([row.name for row in cls.list()], ["w1"])
+        self.assertEqual([call["spec"].name for call in cls.started], ["w1"])
+        other = cls.scripted()
+        self.assertEqual((other.started, other.live, other.configured), ([], {}, None))
+        self.start(other, name="w1")
+        self.assertEqual(len(cls.started), 1)
 
 
 if __name__ == "__main__":

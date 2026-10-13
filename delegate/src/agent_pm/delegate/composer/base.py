@@ -4,8 +4,8 @@ import os
 import re
 from collections.abc import Mapping
 
+import agent_pm.utils as utils
 from agent_pm.delegate.composer.types import ConfigError
-from agent_pm.utils import markdown
 
 TEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "team")
 OUTPUT = "output"
@@ -39,7 +39,7 @@ def anchor(heading: str) -> str:
 
 def outline(text: str) -> list[tuple[int, tuple[str, ...], str, bool]]:
     out, stack, section, last = [], [], "", (-2, "")
-    for i, line in markdown.unfenced(text):
+    for i, line in utils.unfenced(text):
         if m := HEADING.match(line):
             level, title = len(m[1]), m[2].strip()
             while stack and stack[-1][0] >= level:

@@ -2,7 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `CLAUDE.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `AGENTS.md`.
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each calls only the next lower one and imports only lower layers' public packages; the rules and their exceptions: `CLAUDE.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each layer calls only the next lower one, through its public package; temporary TASK-371/372 exceptions: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -22,7 +22,7 @@ flowchart TB
     HU[the user]
   end
   subgraph MG[agent_pm.manager]
-    W[crew.py] --> RS[roster.py]
+    W["engine/crew.py"] --> RS["engine/roster.py"]
   end
   subgraph LO[agent_pm.linear_orchestrator]
     R["engine/router.py<br>pick · usage gate"]
@@ -59,7 +59,7 @@ flowchart TB
   HU -.-> W
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
-  LC -->|agent_pm.delegate.composer| C
+  LC -->|agent_pm.delegate| C
   LO -->|"agent_pm.session, until TASK-372"| DR
   MG -->|"agent_pm.session, until TASK-371"| DR
   D --> C
@@ -172,9 +172,9 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
 session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
-manager/              crew: a manager's workers and roster
+manager/              engine/crew.py and engine/roster.py: a manager's workers and roster
 linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
-tests/                repo-wide checks: guards.py (the repo's rules)
+tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
@@ -197,9 +197,27 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 ## Tests
 
 ```bash
-export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src   # from the repo root
+export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
-Commands and where a test goes: `CLAUDE.md` › Tests.
+Run Lint checks with the pinned tool versions in `.github/workflows/test.yml`:
 
-CI (`.github/workflows/test.yml`) runs Comment budget, Ruff over the whole repo, `Unit <project>` per project (`repo`: the root `tests/`) and `Integration <project> [shard]` per `.github/integration_jobs.py` `JOBS` entry (`--check` validates assignment), both through `.github/run_tests.py`, which annotates each failing test and a crash by test id.
+```bash
+python3 .github/comment_budget.py
+ruff check --no-cache
+ruff format --check --no-cache
+pyright
+lint-imports --no-cache
+pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+python3 -m tests.checks
+python3 .github/run_tests.py "Repository integration" tests/integration
+python3 .github/integration_jobs.py --check
+actionlint -shellcheck= -pyflakes=
+typos --config pyproject.toml
+```
+
+One project's unit tests: `python3 .github/run_tests.py "Session unit" session/tests/unit`.
+Run project and repository unit tests with `python3 .github/run_tests.py Unit --unit`; integration
+shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
+shards; Lint also runs the repository integration tests with its pinned tools installed. Its
+required `CI` job succeeds only when every dependency succeeds.

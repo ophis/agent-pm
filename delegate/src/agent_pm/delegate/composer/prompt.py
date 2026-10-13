@@ -1,14 +1,17 @@
-"""The agent run's prompt (render) and the section reference check its texts pass (reference_errors).
+"""The agent run's prompt (render) and the section reference check its texts pass
+(reference_errors).
 
-Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the guide's default text)
-and {{language}} (unset → each line holding it is dropped); a destination gets {{deliverable}}, <Workdir>/<its path in
-the workdir>. Every other run value is a PARAMETERS name, its value given once in # Parameters. The run reports in its
-replies (RETURN): PROGRESS mark lines and one OUTCOME block, which the Delegate parses.
+Guide and principles get {{role}}, its anchor, {{task}} (the named task and its file; none → the
+guide's default text) and {{language}} (unset → each line holding it is dropped); a destination gets
+{{deliverable}}, <Workdir>/<its path in the workdir>. Every other run value is a PARAMETERS name,
+its value given once in # Parameters. The run reports in its replies (RETURN): PROGRESS mark lines
+and one OUTCOME block, which the Delegate parses.
 
-References: a link's target is `#a`, `a` an anchor of the prompt (link text `A › B`: a path there), or a `<scheme>://`
-URL; a task or method file's code span may be followed by ` › ` and a path in that file. Any other `›`, or a section
-title in parentheses, outside fences, code spans and links is an error. Only a run using a team dir file is checked; the
-error names the custom file to blame."""
+References: a link's target is `#a`, `a` an anchor of the prompt (link text `A › B`: a path there),
+or a `<scheme>://` URL; a task or method file's code span may be followed by ` › ` and a path in
+that file. Any other `›`, or a section title in parentheses, outside fences, code spans and links is
+an error. Only a run using a team dir file is checked; the error names the custom file to blame.
+"""
 
 import os
 import re
@@ -30,7 +33,7 @@ from agent_pm.delegate.composer.base import (
 )
 from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
-from agent_pm.utils.markdown import unfenced
+from agent_pm.utils import unfenced
 
 RESUME = (
     "Resumed agent run after an interruption. These rules are current and may have changed since this session "
@@ -54,14 +57,8 @@ PARAMETERS = {
 }
 RETURN = (
     "## Return\n\nYour replies carry your reports:\n\n"
-    f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write "
-    "that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. "
-    f"`[{PROGRESS}:start] <what that line asks you to report>`.\n"
-    "- **Outcome:** once everything else is done and all background work and every agent you spawned have "
-    "finished (wait for each and collect its result), end your last reply with one fenced code block whose info "
-    f"string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. "
-    '`{"status": "done", "title": "<one line>", "summary": "<text>"}`. A long deliverable goes in a file named '
-    "by `deliverable_file` instead.\n"
+    f"- **Progress:** at each `[{PROGRESS}:<name>] …` line in your steps, before calling the next tool, write that line in a reply as a line of its own, outside any code block: the mark, then your report, e.g. `[{PROGRESS}:start] <what that line asks you to report>`.\n"
+    f'- **Outcome:** once everything else is done and all background work and every agent you spawned have finished (wait for each and collect its result), end your last reply with one fenced code block whose info string is `{OUTCOME}`, holding the outcome as one JSON object of the fields in [Output](#output), e.g. `{{"status": "done", "title": "<one line>", "summary": "<text>"}}`. A long deliverable goes in a file named by `deliverable_file` instead.\n'
 )
 
 
@@ -194,7 +191,7 @@ def _task_path(after: str, paths) -> str | None:
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
     used = teams.used(team, run.role, run.templates)
-    paths = {t: teams.lookup(team, "tasks", t) for t in teams.index(run.role, team)}
+    paths = {t: teams.path_for(team, "tasks", t) for t in teams.index(run.role, team)}
     tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))
@@ -270,7 +267,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
 
 
 def _without(text: str, placeholder: str) -> str:
-    return "".join(line for line in text.splitlines(True) if placeholder not in line)
+    return "".join(line for line in text.splitlines(keepends=True) if placeholder not in line)
 
 
 def _fence(text: str, least: int = 3) -> str:

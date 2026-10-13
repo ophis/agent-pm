@@ -1,10 +1,9 @@
-"""CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each project's): JOBS
-entries, from the repo root, are directories ending in /, files, or <file>::<Class>. Exact classes outrank
-the longest matching path. --check rejects loader errors, unmatched classes/tests, empty jobs, duplicate
-tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests through run_tests.py."""
+"""Balance integration tests across numbered shards using recorded durations."""
 
 import json
+import math
 import re
+import statistics
 import sys
 import unittest
 from collections import Counter
@@ -13,26 +12,18 @@ from pathlib import Path
 import run_tests
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRECTORIES = (
-    "tests/integration",
-    *sorted(
-        f"{p.parents[1].name}/tests/integration"
-        for p in ROOT.glob("*/src/agent_pm")
-        if (p.parents[1] / "tests" / "integration").is_dir()
-    ),
-)
 WORKFLOW = ROOT / ".github/workflows/test.yml"
-CREW = "manager/tests/integration/crew_integration_test.py"
-JOBS = {
-    "session 1": ["session/tests/integration/"],
-    "session 2": ["session/tests/integration/adapters/"],
-    "delegate": ["delegate/tests/integration/"],
-    "linear-orchestrator": ["linear-orchestrator/tests/integration/"],
-    "manager 1": [f"{CREW}::ClaudeLifecycleTest", f"{CREW}::RuntimeTest"],
-    "manager 2": [f"{CREW}::CodexLifecycleTest", f"{CREW}::RosterTest"],
-    "manager 3": [f"{CREW}::ManagersTest", f"{CREW}::RosterRecoveryTest"],
-    "repo": ["tests/integration/"],
-}
+DURATIONS = ROOT / ".github/integration_durations.json"
+JOBS = tuple(str(number) for number in range(1, 9))
+
+
+def directories(root):
+    return sorted(
+        str(path.relative_to(root))
+        for pattern in ("*/tests/integration", "*/tests/*/integration")
+        for path in root.glob(pattern)
+        if (path / "__init__.py").is_file()
+    )
 
 
 def tests(suite):
@@ -41,21 +32,6 @@ def tests(suite):
             yield from tests(test)
         else:
             yield test
-
-
-def owners(file, jobs, class_name):
-    exact = [job for job, entries in jobs.items() if f"{file}::{class_name}" in entries]
-    if exact:
-        return exact
-    longest = {
-        job: max(
-            (len(e) for e in entries if file == e or e.endswith("/") and file.startswith(e)),
-            default=0,
-        )
-        for job, entries in jobs.items()
-    }
-    best = max(longest.values(), default=0)
-    return [job for job, length in longest.items() if length and length == best]
 
 
 def workflow_jobs(text):
@@ -70,70 +46,71 @@ def workflow_jobs(text):
         or not all(isinstance(label, str) for label in labels)
         or len(set(labels)) != len(labels)
     ):
-        raise ValueError(
-            "workflow: the integration job's matrix.job must be one inline JSON array of unique strings"
-        )
+        raise ValueError("workflow: matrix.job must be one inline JSON array of unique strings")
     return labels
 
 
-def validate(found, suites, labels):
-    if set(labels) != set(suites):
-        raise ValueError(f"workflow matrix.job {sorted(labels)} differs from JOBS {sorted(suites)}")
-    counts = Counter(test for ids in suites.values() for test in ids)
-    empty = [job for job, ids in suites.items() if not ids]
-    missing, stale = sorted(found - counts.keys()), sorted(counts.keys() - found)
-    duplicate = sorted(test for test, count in counts.items() if count > 1)
-    if empty or missing or stale or duplicate:
-        raise ValueError(
-            f"integration jobs: empty={empty}, missing={missing}, stale={stale}, duplicate={duplicate}"
-        )
+def weights(found, durations):
+    if any(
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value <= 0
+        for value in durations.values()
+    ):
+        raise ValueError("integration durations must be finite positive seconds")
+    known = [durations[test.id()] for test in found if test.id() in durations]
+    fallback = statistics.median(known) if known else 1.0
+    return {test.id(): durations.get(test.id(), fallback) for test in found}
 
 
-def check(root, directories, jobs, workflow):
-    loader, found = unittest.TestLoader(), []
-    for directory in directories:
-        start = str(root / directory)
-        found += tests(loader.discover(start, pattern="*_test.py", top_level_dir=str(root)))
-    if loader.errors:
-        raise ValueError("\n".join(loader.errors))
-    split, unassigned = {job: [] for job in jobs}, set()
-    locations = [(test, type(test).__module__.replace(".", "/") + ".py") for test in found]
-    classes = {f"{file}::{type(test).__name__}" for test, file in locations}
-    missing_classes = sorted(
-        {entry for entries in jobs.values() for entry in entries if "::" in entry} - classes
-    )
-    if missing_classes:
-        raise ValueError("no integration tests for: " + ", ".join(missing_classes))
-    for test, file in locations:
-        matched = owners(file, jobs, type(test).__name__)
-        if not matched:
-            unassigned.add(file)
-        for job in matched:
-            split[job].append(test)
-    if unassigned:
-        raise ValueError("no integration job for: " + ", ".join(sorted(unassigned)))
-    ids = {job: [test.id() for test in suite] for job, suite in split.items()}
-    validate({test.id() for test in found}, ids, workflow_jobs(workflow))
+def assign(found, labels, durations):
+    estimates = weights(found, durations)
+    split, totals = {job: [] for job in labels}, dict.fromkeys(labels, 0.0)
+    for test in sorted(found, key=lambda test: (-estimates[test.id()], test.id())):
+        target = min(labels, key=lambda job: (totals[job], job))
+        split[target].append(test)
+        totals[target] += estimates[test.id()]
     return split
 
 
-def run(suite, title):
-    return run_tests.run(unittest.TestSuite(suite), title)
+def validate(found, suites, labels):
+    counts = Counter(test.id() for suite in suites.values() for test in suite)
+    expected = Counter(test.id() for test in found)
+    if (
+        set(labels) != set(suites)
+        or any(not suite for suite in suites.values())
+        or counts != expected
+        or any(count != 1 for count in counts.values())
+    ):
+        raise ValueError("integration shards must be nonempty and contain every test exactly once")
+
+
+def check(root, labels, durations, workflow):
+    matrix = workflow_jobs(workflow)
+    if set(matrix) != set(labels):
+        raise ValueError("workflow matrix.job differs from the duration shards")
+    found = list(tests(run_tests.discover(root, directories(root))))
+    split = assign(found, labels, durations)
+    validate(found, split, matrix)
+    return split
 
 
 def main(argv):
     if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
-        raise ValueError("give --check or a job name: " + ", ".join(JOBS))
+        raise ValueError("give --check or a shard number: " + ", ".join(JOBS))
     title = f"Integration {argv[0]}"
     code = None if argv == ["--check"] else run_tests.supervise(title)
     if code is not None:
         return code
-    split = check(ROOT, DIRECTORIES, JOBS, WORKFLOW.read_text())
+    split = check(ROOT, JOBS, json.loads(DURATIONS.read_text()), WORKFLOW.read_text())
     if argv == ["--check"]:
-        counts = ", ".join(f"{job} {len(suite)}" for job, suite in split.items())
-        print(f"integration jobs match discovery and the workflow: {counts}")
+        print(
+            "duration shards match discovery and workflow: "
+            + ", ".join(f"{job}: {len(suite)} tests" for job, suite in split.items())
+        )
         return 0
-    return run(split[argv[0]], title)
+    return run_tests.run(unittest.TestSuite(split[argv[0]]), title)
 
 
 if __name__ == "__main__":

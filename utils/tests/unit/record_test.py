@@ -32,7 +32,7 @@ TEXT = "want a non-empty printable str"
 NULL_TEXT = "want null or a non-empty printable str"
 ARGV = "want a non-empty list of str"
 SESSIONS = "sessions: want a list of non-empty printable str"
-STATUS = Status("n", True, "working", "done", "fake-ctl attach n")
+STATUS = Status(name="n", alive=True, state="working", outcome="done", attach="fake-ctl attach n")
 
 
 def line(base, **changes) -> str:
@@ -139,13 +139,16 @@ class StatusLine(Case):
         self.assertEqual(str(caught.exception), message)
 
     def test_round_trip(self):
-        for status in (STATUS, Status("n", False, "gone", None, None)):
+        for status in (
+            STATUS,
+            Status(name="n", alive=False, state="gone", outcome=None, attach=None),
+        ):
             with self.subTest(status=status):
                 text = status.to_line()
                 self.assertNotIn("\n", text)
                 self.assertEqual(Status.parse(text + "\n"), status)
         self.assertEqual(
-            Status("n", False, "gone", None, None).to_line(),
+            Status(name="n", alive=False, state="gone", outcome=None, attach=None).to_line(),
             '{"name":"n","alive":false,"state":"gone","outcome":null,"attach":null}',
         )
 

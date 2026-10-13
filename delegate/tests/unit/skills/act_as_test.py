@@ -1,6 +1,8 @@
-"""delegate/skills/act-as/SKILL.md as Claude Code runs it: its pre-approved rule is step 1's command, which lists the
-team with no PYTHON* variable inherited; step 3 runs the same Python, and step 4 puts its PYTHONPATH before each
-command of the prompt that runs an agent_pm module or team tool."""
+"""delegate/skills/act-as/SKILL.md as Claude Code runs it: its pre-approved rule is step 1's
+command, which lists the team with no PYTHON* variable inherited; step 3 runs the same Python, and
+step 4 puts its PYTHONPATH before each command of the prompt that runs an agent_pm module or team
+tool.
+"""
 
 import os
 import re
@@ -9,7 +11,7 @@ import subprocess
 from agent_pm.delegate import cli, composer
 
 from delegate.tests.case import Case
-from delegate.tests.unit.skills.act_as import argv, command, head, prefix, text
+from delegate.tests.skills.act_as import argv, command, head, prefix, text
 
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 ROLES = ["researcher", "pm", "engineer", "dummy-tester"]

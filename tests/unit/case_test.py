@@ -1,20 +1,20 @@
-"""Each tests/case.py (CASES): Case.run's temp HOME, registry resets (RESETS) and import-root checks, on inner
-tests; child_env where kept."""
+"""Each tests/case.py: temporary HOME, import-root checks and child environment."""
 
+import contextlib
 import importlib
 import os
 import sys
 import tempfile
 import types
 import unittest
+from importlib._bootstrap_external import _NamespacePath
 from unittest import mock
 
 import agent_pm
-import agent_pm.delegate.engine.config
-from agent_pm.session.adapters import registry
+from agent_pm.delegate import IMPORT_ROOTS
 
 from tests import guards
-from tests.case import Case
+from tests.case import REPO, Case
 
 CASES = (
     "tests",
@@ -24,20 +24,38 @@ CASES = (
     "linear-orchestrator/tests",
     "manager/tests",
 )
-RESETS = {"session/tests", "delegate/tests", "linear-orchestrator/tests", "manager/tests"}
+
 RUN_WITH = os.pathsep.join(
     f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")
 )
+
+
+@contextlib.contextmanager
+def foreign_modules(case, name, module):
+    table = dict(sys.modules)
+    if module is None:
+        table.pop(name, None)
+    else:
+        table[name] = module
+    foreign = case._foreign
+    with mock.patch.object(case, "_foreign", side_effect=lambda: foreign(table)):
+        yield
 
 
 class Checks:
     tree = ""
 
     def setUp(self):
-        self.case = importlib.import_module(f"{self.tree.replace('/', '.')}.case")
+        self.case = importlib.import_module(
+            "orchestrator_tests.case"
+            if self.tree == "linear-orchestrator/tests"
+            else f"{self.tree.replace('/', '.')}.case"
+        )
 
     def run_inner(self, test, set_up=None) -> unittest.TestResult:
-        """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given), never super()."""
+        """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given),
+        never super().
+        """
 
         class Inner(self.case.Case):
             def setUp(inner):
@@ -79,7 +97,7 @@ class Checks:
     def test_a_set_up_without_super_runs_in_the_temp_home(self):
         seen = []
         result = self.run_inner(
-            lambda inner: None,
+            lambda _inner: None,
             set_up=lambda inner: seen.append(
                 (os.environ["HOME"], inner.home, os.path.isdir(inner.agent_pm))
             ),
@@ -89,19 +107,6 @@ class Checks:
         self.assertEqual(env, home)
         self.assertNotEqual(home, self.home)
         self.assertTrue(made)
-
-    def test_the_registry_is_reset_before_and_after_a_failing_test_too_where_kept(self):
-        calls = []
-
-        def test(inner):
-            calls.append("test")
-            inner.fail("boom")
-
-        with mock.patch.object(registry, "reset", side_effect=lambda: calls.append("reset")):
-            result = self.run_inner(test)
-        self.assertEqual(len(result.failures), 1)
-        reset = ["reset"] if self.tree in RESETS else []
-        self.assertEqual(calls, [*reset, "test", *reset])
 
     def module(self, name, root):
         """A package module `name` (agent_pm.<sub>) found under `root`."""
@@ -126,14 +131,16 @@ class Checks:
         for sub, root in self.case.SRC.items():
             name = f"agent_pm.{sub}"
             elsewhere = {name: self.module(name, "/elsewhere/src")}
-            with self.subTest(name), mock.patch.dict(sys.modules, elsewhere):
+            with self.subTest(name), foreign_modules(self.case, name, elsewhere[name]):
                 self.assert_fails_before_set_up(
                     f"{name} is imported from /elsewhere/src, not this tree's {root}"
                 )
 
     def test_another_trees_agent_pm_dir_on_the_package_path_fails_the_test(self):
         with mock.patch.object(
-            agent_pm, "__path__", [*agent_pm.__path__, "/elsewhere/src/agent_pm"]
+            _NamespacePath,
+            "_recalculate",
+            return_value=[*agent_pm.__path__, "/elsewhere/src/agent_pm"],
         ):
             self.assert_fails_before_set_up(
                 "agent_pm.__path__ holds /elsewhere/src/agent_pm, not only this tree's"
@@ -142,7 +149,7 @@ class Checks:
     def test_a_missing_import_root_fails_the_test(self):
         manager = os.path.realpath(os.path.join(self.case.SRC["manager"], "agent_pm"))
         path = [p for p in agent_pm.__path__ if os.path.realpath(p) != manager]
-        with mock.patch.object(agent_pm, "__path__", path):
+        with mock.patch.object(_NamespacePath, "_recalculate", return_value=path):
             self.assert_fails_before_set_up(f"agent_pm.__path__ lacks {manager}")
 
     def test_the_orchestrator_absent_or_this_trees_passes(self):
@@ -153,10 +160,7 @@ class Checks:
         self.assertTrue(os.path.isfile(self.module(name, orch).__file__))
         for found in (None, self.module(name, orch)):
             ran = []
-            with self.subTest(found=found), mock.patch.dict(sys.modules):
-                sys.modules.pop(name, None)
-                if found:
-                    sys.modules[name] = found
+            with self.subTest(found=found), foreign_modules(self.case, name, found):
                 result = self.run_inner(ran.append)
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)
@@ -166,7 +170,7 @@ class Checks:
         self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
         self.assertEqual(len(own), 5)
         self.assertEqual(self.case.SRC, guards_src())
-        self.assertEqual(self.case.ROOTS, agent_pm.delegate.engine.config.IMPORT_ROOTS)
+        self.assertEqual(self.case.ROOTS, IMPORT_ROOTS)
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath_where_kept(self):
@@ -201,9 +205,7 @@ class Checks:
 
 
 def guards_src():
-    return {
-        sub: os.path.join(guards.REPO, project, "src") for project, sub in guards.PROJECTS.items()
-    }
+    return {sub: os.path.join(REPO, project, "src") for project, sub in guards.PROJECTS.items()}
 
 
 for _tree in CASES:

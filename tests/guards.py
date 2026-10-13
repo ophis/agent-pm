@@ -1,42 +1,9 @@
-"""The repo's rules: each guard takes a root, returns its sorted violations; str constants include docstrings.
-Only a TREES walk enters a project's tests/.
-
-layer_imports(repo)   imports go one way (CLAUDE.md › Import rules), a unit imports no package module outside UNITS, SESSION
-                      and SHARED, a session unit no delegate module, none imports TOOLS, ORCH or a BARE
-                      name, nested, relative or import_module'd; SESSION_INTERNAL only from session/
-delegate_session(repo) delegate/ imports SESSION only by an __all__ name
-layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND, SESSION_SRC's but SESSION_COMMAND
-standalone(repo)      no file names LINEAR but CONFIG_LEVELS' LEVELS line (the config override order)
-runtime_names(repo)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
-old_core(repo)        no `core` import
-session_only(repo)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
-adapters_key(repo)    no str constant "adapters" outside ADAPTERS_HOME
-syntax_311(repo)      every .py parses as Python 3.11
-pure_utils(repo)      each PURE unit imports only stdlib and its PURE entry
-manager_imports(repo) nothing else imports MANAGER; it: stdlib, MANAGER_ALLOWED, MANAGER_EXCEPTIONS
-private_imports(root) no other module's _name
-modes_import_api(repo) MODES never imports SESSION_API
-tmux_calls(repo)      "tmux" only in TMUX_HOST
-status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
-syntax_39(repo)       PY39 files parse as Python 3.9
-import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
-namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
-package_top(repo)     a LAYERS package but utils' holds only TOP, SUBPACKAGES and TOP_EXCEPTIONS
-shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
-                      is in a *.types module or TYPE_HOMES
-python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, session's __all__ (until TASK-372), EXPORTERS' __all__
-                      (composer's and `from session import Session` in config.py only), no bare name
-orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
-config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
-test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in LAYERS
-config_levels(repo)   CONFIG_LEVELS' LEVELS holds each project once
-explicit_keys(repo)   each `# local:` example key in a <project>/config.toml has a real line in one: the same dotted key,
-                      the same table, depth and last key, a suffix of it, or a key of an empty real table
-
-"""
+"""Repository design checks: each public function takes a repository root and returns violations."""
 
 import ast
+import builtins
+import fnmatch
+import importlib
 import io
 import os
 import re
@@ -44,537 +11,253 @@ import sys
 import tokenize
 import tomllib
 
-GROUPS = ("session", "delegate", "manager")
-SESSION_API = "session.engine.api"
-SESSION_TYPES = "session.engine.types"
-MODES = "session.modes"
-RECORDS = "session.engine.records"
-HOSTS = "session.hosts"
-HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the units, in unit SESSION
-UNITS = (
-    "session.adapters",
-    SESSION_API,
-    SESSION_TYPES,
-    MODES,
-    RECORDS,
-    HOSTS,
-    "delegate.composer",
-    "delegate",
-)
-SESSION = "session"
-OUTSIDE = "outside the units"
-CONFIG = "delegate.engine.config"
-ALLOWED = {
-    ("delegate", "delegate.composer"),
-    ("delegate", SESSION),
-    *((SESSION_API, unit) for unit in ("session.adapters", SESSION_TYPES, MODES, RECORDS, HOSTS)),
-    *((MODES, unit) for unit in ("session.adapters", SESSION_TYPES, HOSTS)),
-    ("session.adapters", SESSION_TYPES),
-    ("session.adapters.registry", HOSTS),  # until TASK-368
-    ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
-    ("session.engine.base", HOSTS),  # Session.parse_hosts
-    (OUTSIDE, SESSION),
-    ("manager.crew", "delegate"),  # until TASK-371
-}
-SESSION_INTERNAL = (SESSION_API, SESSION_TYPES)
-SHARED = ("utils", CONFIG, "delegate.event")
-TOOLS = "delegate.team.tools"
-ORCH = "linear_orchestrator"
-ALL_UNITS = (*UNITS, *SHARED, TOOLS)
-PURE = {
-    "utils": ("utils",),
-    CONFIG: ("utils", CONFIG),
-    "delegate.event": SHARED,
-    TOOLS: ("utils", CONFIG),
-}
-BARE = (
-    *GROUPS,
-    *(n for n in (u.rpartition(".")[2] for u in UNITS) if n not in sys.stdlib_module_names),
-    "utils",
-    TOOLS.rpartition(".")[2],
-    "repo",
-    ORCH,
-)
-SESSION_WORDS = (
-    "config_file",
-    "tomllib",
-    "agent_pm.delegate.engine.config",
-    "agent-pm-progress",
-    "agent-pm-outcome",
-    "team/",
-)
+from agent_pm.utils.config_file import LEVELS
+
+from tests.import_policy import violation
+
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+
+
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
+
+
 TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+
+
 TOML_IMPLEMENTATION = re.compile(
     r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
 )
+
+
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+
+
 TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
-TUI_HOOK = "session/src/agent_pm/session/modes/tui_hook.py"
-PY39 = (TMUX_HOST, TUI_HOOK)
-HYGIENE = re.compile(r"noqa\s*:[\s,\w]*\b(?:E402|I001)\b|isort\s*:", re.I)
-READS = {"copy", "count", "get", "index", "items", "keys", "values"}
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 PKG = "agent_pm"
+
+
+SESSION = "session"
+
+
+ORCH = "linear_orchestrator"
+
+
+PROJECTS = {p: p.replace("-", "_") for level in LEVELS for p in level}
+
+
+LAYERS = tuple(PROJECTS)
+
+
 ORCH_PKG = f"{PKG}.{ORCH}"
+
+
 ORCH_SRC = f"src/{PKG}/{ORCH}/"
+
+
 ORCH_PROJECT = "linear-orchestrator"
-LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_package entry
-TYPE_HOMES = {
-    "delegate.event.outcome.Outcome": "the event unit sits below the engine",
-    "linear_orchestrator.linear.issues.Issue": "issues.py is its parser",
-    "session.hosts.tables.Hosts": "hosts imports no session.engine module",
-    **dict.fromkeys(
-        (f"session.adapters.codex.sessions.{n}" for n in ("SessionFile", "SessionState")),
-        "sessions.py runs by path as a stdlib-only script",
-    ),
-}
-PROJECTS = {
-    "delegate": "delegate",
-    "session": SESSION,
-    "utils": "utils",
-    "manager": "manager",
-    ORCH_PROJECT: ORCH,
-}
-LAYERS = ("utils", SESSION, "delegate", ORCH_PROJECT, "manager")
+
+
+LEFTOVERS = {"__pycache__", ".DS_Store"}
+
+
 TOP = {"__init__.py", "cli.py", "engine"}
+
+
 SUBPACKAGES = {
     SESSION: {"adapters", "hosts", "modes"},
     "delegate": {"composer", "event", "team"},
+    "linear-orchestrator": {"linear"},
 }
-TOP_EXCEPTIONS = {
-    SESSION: {"cli.py"},  # until TASK-369
-    ORCH_PROJECT: {"cli.py", "linear"},  # until TASK-372
-    "manager": {"cli.py", "crew.py", "roster.py"},  # until TASK-371
-}
+
+
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
-TREES = (*PROJECTS, "tests")
+
+
+TREES = (*PROJECTS, "tests", ".github")
+
+
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
+
+
 CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
+
+
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
+
+
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
+
+
+STANDALONE = frozenset(
+    f"{SESSION_SRC}{path}"
+    for path in (
+        "hosts/tmux/tmux_host.py",
+        "modes/tui_hook.py",
+        "adapters/codex/app_server.py",
+        "adapters/codex/hook_schema.py",
+        "adapters/codex/sessions.py",
+        "adapters/codex/tui_start.py",
+        "adapters/codex/tui_hook.py",
+    )
+)
+
+
+NOQA_ALLOWED = {
+    (
+        f"{SESSION_SRC}modes/headless.py",
+        "BLE001",
+        "HeadlessMode._pump",
+    ): "Forward failures to the caller thread.",
+    (
+        f"{SESSION_SRC}modes/in_process.py",
+        "BLE001",
+        "InProcessMode._pump",
+    ): "Forward failures to the caller thread.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/sessions.py",
+        "BLE001",
+        "_bounded.run",
+    ): "Forward failures to the caller thread.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "Promoter.pending",
+    ): "Keep reading the other handoffs.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "Promoter.run",
+    ): "Keep processing other handoffs.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "run_prune",
+    ): "Prune failures leave promotions intact.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
+        "BLE001",
+        "start_run",
+    ): "A recorded launch may fail.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
+        "BLE001",
+        "inner",
+    ): "Finish reporting a failed run.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "progress",
+    ): "A sink failure must not stop the run.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "finish",
+    ): "Report the session after failed steps.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "limit",
+    ): "Report the session after a failed limit.",
+    (
+        f"{SESSION_SRC}modes/tui_hook.py",
+        "BLE001",
+        "__main__",
+    ): "the hook must never fail the client runtime",
+    (
+        f"{SESSION_SRC}adapters/codex/tui_hook.py",
+        "duplicate-code",
+        "_sibling",
+    ): "standalone stdlib-only scripts cannot share code",
+    (
+        f"{SESSION_SRC}adapters/codex/tui_start.py",
+        "duplicate-code",
+        "_sibling",
+    ): "standalone stdlib-only scripts cannot share code",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
+        "duplicate-code",
+        "outer",
+    ): "Build writeback.context directly in both callers; no shared builder by design.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
+        "duplicate-code",
+        "inner",
+    ): "Build writeback.context directly in both callers; no shared builder by design.",
+}
+
+
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
+
+
 ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
+
+
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
+
+
 STATUS_LOG_CLOCK = "%H:%M:%S"
-# until TASK-368
-STATUS_LOG_WRITERS = {TMUX_HOST}
+
+
 COMMAND_SRC = (
     SESSION_SRC,
     f"delegate/src/{PKG}/delegate/",
     f"{ORCH_PROJECT}/{ORCH_SRC}",
 )
-MANAGER = "manager"
-MANAGER_ALLOWED = {
-    "manager.crew": ("utils", "manager.roster", "manager.engine.types"),
-    "manager.roster": ("utils", "manager.engine.types"),
-}
-MANAGER_EXCEPTIONS = {
-    "manager.crew": tuple(f"{PKG}.delegate.{n}" for n in ("IMPORT_ROOTS", "PYTHONPATH"))
-}  # until TASK-371
-MANAGER_SESSION = ("manager.crew", "manager.roster")  # session names, until TASK-371
+
+
 COMMAND = "agent-pm-"
+
+
 SESSION_COMMAND = "agent-pm-session"
+
+
 SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
+
+
 LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
-COMPOSER = f"{PKG}.delegate.composer"
-EXPORTERS = (f"{PKG}.delegate", COMPOSER)
+
+
 CONFIG_PY = f"{ORCH_SRC}engine/config.py"
+
+
 TOOL_STRINGS = ("tmux", "adapters")
+
+
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
+
+
 ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
+
+
 ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
+
+
 LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
+
+
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
+
+
 HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
+
+
 COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
+
+
 COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
+
+
 PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
+
+
 PYTHON_OK = re.compile(
-    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{PKG}\.\w"
-    r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
+    f"\\S+[ \\t]+-P[ \\t]+(?:-m[ \\t]+{PKG}\\.\\w|(?:<team>|\\{{\\{{team\\}}\\}})/tools/\\w+\\.py(?=[ \\t]|\\Z))"
 )
 
 
-def layer_imports(repo: str) -> list[str]:
-    found = set()
-    for rel, names, imports in _modules(repo):
-        name = ".".join(names or ())
-        own = _unit(name)
-        own = own if own in UNITS else OUTSIDE
-        for module, inner in imports:
-            unit = _unit(inner) if inner else module.split(".")[0]
-            if module.split(".")[0] in BARE:
-                found.add(f"{rel}: bare import {module}")
-            elif (
-                unit in (TOOLS, ORCH)
-                or (own != OUTSIDE and inner and unit not in (*UNITS, SESSION, *SHARED))
-                or (_within(own, "session") and _within(unit, "delegate"))
-                or (
-                    unit in (*UNITS, SESSION)
-                    and unit != own
-                    and (own, unit) not in ALLOWED
-                    and (name, unit) not in ALLOWED
-                    and not (
-                        own == OUTSIDE
-                        and unit in SESSION_INTERNAL
-                        and (names is None or _within(name, SESSION))
-                    )
-                )
-            ):
-                found.add(f"{rel}: {own} imports {module}")
-    return sorted(found)
-
-
-def delegate_session(repo: str) -> list[str]:
-    found = set()
-    exported = _all(os.path.join(repo, "session", "src", PKG, SESSION, "__init__.py"))
-    for rel, names, imports in _modules(repo):
-        if names and names[0] == "delegate" and not _within(".".join(names), CONFIG):
-            found.update(
-                f"{rel}: imports {m} outside session.__all__"
-                for m, inner in imports
-                if _within(inner, SESSION) and inner.partition(".")[2] not in exported
-            )
-    return sorted(found)
-
-
-def layer_commands(repo: str) -> list[str]:
-    found = set()
-    for scanned in COMMAND_SRC:
-        for rel, text in _files(os.path.join(repo, scanned), ".py"):
-            tree = ast.parse(text, rel)
-            bound = _bindings(tree)
-            for call in ast.walk(tree):
-                if isinstance(call, ast.Call) and SPAWNS.fullmatch(_dotted(call.func, bound)):
-                    argv = [*call.args, *(k.value for k in call.keywords if k.arg == "args")]
-                    words = {
-                        (line, s.split()[0])
-                        for arg in argv
-                        for line, s in _strings(arg)
-                        if s.startswith(COMMAND)
-                    }
-                    found.update(
-                        f'{scanned}{rel}:{line}: runs "{word}"'
-                        for line, word in words
-                        if not (scanned == SESSION_SRC and word == SESSION_COMMAND)
-                    )
-    return sorted(found)
-
-
-def standalone(repo: str) -> list[str]:
-    found = set()
-    for project in LOWER:
-        for top, dirs, names in os.walk(os.path.join(repo, project)):
-            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-            if top == os.path.join(repo, project):
-                dirs[:] = [d for d in dirs if d != "tests"]
-            for name in sorted(names):
-                rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
-                with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
-                    for number, line in enumerate(f, 1):
-                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
-                            continue
-                        found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
-    return sorted(found)
-
-
-def pure_utils(repo: str) -> list[str]:
-    found = set()
-    for rel, names, imports in _modules(repo):
-        package = max((p for p in PURE if _within(".".join(names or ()), p)), key=len, default=None)
-        if package:
-            found.update(
-                f"{rel}: {package} imports {m}"
-                for m, inner in imports
-                if not any(_within(inner, u) for u in PURE[package])
-                and m.split(".")[0] not in sys.stdlib_module_names
-            )
-    return sorted(found)
-
-
-def manager_imports(repo: str) -> list[str]:
-    found = set()
-    for rel, names, imports in _modules(repo, tuple(PROJECTS)):
-        name = ".".join(names or ())
-        allowed = MANAGER_ALLOWED.get(name, ("utils",))
-        for m, inner in imports:
-            if not _within(name, MANAGER):
-                if _within(inner, MANAGER):
-                    found.add(f"{rel}: imports {m}")
-            elif not (
-                m.split(".")[0] in sys.stdlib_module_names
-                or any(_within(inner, u) for u in allowed)
-                or m in MANAGER_EXCEPTIONS.get(name, ())
-                or (name in MANAGER_SESSION and m.rpartition(".")[0] == f"{PKG}.{SESSION}")
-            ):
-                found.add(f"{rel}: {name} imports {m}")
-    return sorted(found)
-
-
-def package_top(repo: str) -> list[str]:
-    found = set()
-    for project in LAYERS[1:]:
-        rel = f"{project}/src/{PKG}/{PROJECTS[project]}"
-        path = os.path.join(repo, rel)
-        have = {e for e in (os.listdir(path) if os.path.isdir(path) else ()) if e not in LEFTOVERS}
-        exempt = TOP_EXCEPTIONS.get(project, set())
-        found.update(f"{rel}/{e}: missing" for e in TOP - have - exempt)
-        found.update(
-            f"{rel}/{e}: not __init__.py, cli.py, engine/ or a listed subpackage"
-            for e in have - TOP - SUBPACKAGES.get(project, set()) - exempt
-        )
-    return sorted(found)
-
-
-def runtime_names(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
-        for number, line in enumerate(text.splitlines(), 1):
-            if rel.endswith(".toml"):
-                code = TOML_CODE.match(line)[0]
-                line = code if line[len(code) : len(code) + 1] in ("", "#") else line
-                if (
-                    TOML_HEADER.match(line)
-                    or TOML_IMPLEMENTATION.match(line)
-                    or TOML_RUNTIME.match(line)
-                ):
-                    continue
-            found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
-    return sorted(found)
-
-
-def old_core(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _tree_files(repo, ".py"):
-        found.update(
-            f"{rel}: imports {m}"
-            for m in _imports(ast.parse(text, rel), None)
-            if m.split(".")[0] == "core"
-        )
-    return sorted(found)
-
-
-def session_only(repo: str) -> list[str]:
-    found = set()
-    for rel, names, imports in _modules(repo):
-        name = ".".join(names or ())
-        if _within(name, SESSION):
-            found.update(
-                f"{rel}: session imports {m}"
-                for m, inner in imports
-                if m.split(".")[0] not in sys.stdlib_module_names
-                and not (_within(inner, SESSION) or _within(inner, "utils"))
-            )
-    for rel, text in _lower_files(repo, ".py"):
-        if rel.startswith(SESSION_SRC):
-            found.update(f"{rel}: names {w}" for w in SESSION_WORDS if w in text)
-    return sorted(found)
-
-
-def adapters_key(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _lower_files(repo, ".py", skip=ADAPTERS_HOME):
-        found.update(
-            f'{rel}:{line}: literal key "adapters"'
-            for line, s in _strings(ast.parse(text, rel))
-            if s == "adapters"
-        )
-    return sorted(found)
-
-
-def syntax_311(repo: str) -> list[str]:
-    found = []
-    for rel, text in _tree_files(repo, ".py"):
-        try:
-            ast.parse(text, rel, feature_version=(3, 11))
-        except SyntaxError as e:
-            found.append(f"{rel}: {e}")
-    return sorted(found)
-
-
-def modes_import_api(repo: str) -> list[str]:
-    found = set()
-    for rel, names, imports in _modules(repo):
-        if names and _within(".".join(names), MODES):
-            found.update(
-                f"{rel}: imports {m}"
-                for m, inner in imports
-                if _within(inner, SESSION_API) or _within(inner, f"{SESSION}.api")
-            )
-    return sorted(found)
-
-
-def tmux_calls(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _lower_files(repo, ".py"):
-        if rel != TMUX_HOST:
-            found.update(
-                f'{rel}:{line}: str constant "tmux"'
-                for line, s in _strings(ast.parse(text, rel))
-                if s == "tmux"
-            )
-    return sorted(found)
-
-
-def status_log_format(repo: str) -> list[str]:
-    found = set()
-    for top in PROJECTS:
-        for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
-            rel = f"{top}/src/{rel}"
-            if rel != STATUS_LOG_HOME and rel not in STATUS_LOG_WRITERS:
-                found.update(
-                    f"{rel}:{line}: status log line format outside session/engine/status_log.py"
-                    for line, s in _strings(ast.parse(text, rel))
-                    if STATUS_LOG_CLOCK in s
-                )
-    return sorted(found)
-
-
-def syntax_39(repo: str) -> list[str]:
-    found = []
-    for rel, text in _lower_files(repo, ".py"):
-        if rel in PY39:
-            try:
-                ast.parse(text, rel, feature_version=(3, 9))
-            except SyntaxError as e:
-                found.append(f"{rel}: {e}")
-    return sorted(found)
-
-
-def private_imports(root: str) -> list[str]:
-    found = set()
-    for rel, text in _files(root, ".py"):
-        tree = ast.parse(text, rel)
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                imported.update(a.asname or a.name for a in node.names)
-                module = "." * node.level + (f"{node.module}." if node.module else "")
-                found.update(
-                    f"{rel}:{node.lineno}: private {module}{a.name}"
-                    for a in node.names
-                    if _private(a.name)
-                )
-            elif isinstance(node, ast.Import):
-                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and _private(node.attr):
-                chain, base = [node.attr], node.value
-                while isinstance(base, ast.Attribute):
-                    chain.append(base.attr)
-                    base = base.value
-                if isinstance(base, ast.Name) and base.id in imported:
-                    found.add(
-                        f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}"
-                    )
-    return sorted(found)
-
-
-def import_hygiene(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _tree_files(repo, ".py"):
-        tree = ast.parse(text, rel)
-        nodes = list(ast.walk(tree))
-        path, environ, putenv = (
-            _spellings(nodes, n) for n in ("sys.path", "os.environ", "os.putenv")
-        )
-        found.update(f"{rel}:{n.lineno}: sys.path mutation" for n in nodes if _changes(n, path))
-        found.update(
-            f"{rel}:{n.lineno}: module-level environment write"
-            for n in _at_import(tree)
-            if _changes(n, environ) or isinstance(n, ast.Call) and _is(n.func, putenv)
-        )
-        found.update(
-            f"{rel}:{t.start[0]}: comment {t.string}"
-            for t in tokenize.generate_tokens(io.StringIO(text).readline)
-            if t.type == tokenize.COMMENT and HYGIENE.search(t.string)
-        )
-    return sorted(found)
-
-
-def namespace_package(repo: str) -> list[str]:
-    found = set()
-    for top, own in PROJECTS.items():
-        for rel, wanted in (("src", {PKG}), (f"src/{PKG}", {own})):
-            path = os.path.join(repo, top, rel)
-            have = {
-                e
-                for e in (os.listdir(path) if os.path.isdir(path) else ())
-                if e not in LEFTOVERS and not e.endswith(".egg-info")
-            }
-            found.update(
-                f"{top}/{rel}/{e}: "
-                + ("namespace package __init__.py" if e == "__init__.py" else f"not {top}'s")
-                for e in have - wanted
-            )
-            found.update(f"{top}/{rel}/{e}: missing" for e in wanted - have)
-    return sorted(found)
-
-
-def shared_types(repo: str) -> list[str]:
-    found = []
-    for project in PROJECTS:
-        src = os.path.join(repo, project, "src")
-        trees = {
-            rel[:-3].replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text, rel))
-            for rel, text in _files(src, ".py")
-        }
-        data = {
-            f"{module}.{n.name}"
-            for module, (_, tree) in trees.items()
-            for n in tree.body
-            if isinstance(n, ast.ClassDef)
-            and any("dataclass" in ast.unparse(d) for d in n.decorator_list)
-        }
-        for module, (rel, tree) in trees.items():
-            if not rel.endswith("__init__.py"):
-                found += _type_uses(project, rel, module, tree, data)
-    return sorted(found)
-
-
-def _type_uses(project, rel, module, tree, data):
-    package, bound, used = module.split(".")[:-1], {}, []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            source = ".".join(
-                [*package[: len(package) - node.level + 1], *([node.module] if node.module else [])]
-                if node.level
-                else [node.module]
-            )
-            for a in node.names:
-                bound[a.asname or a.name] = f"{source}.{a.name}"
-                used.append((node.lineno, f"{source}.{a.name}"))
-        elif isinstance(node, ast.Import):
-            for a in node.names:
-                bound[a.asname or a.name.split(".")[0]] = (
-                    a.name if a.asname else a.name.split(".")[0]
-                )
-    used += [(n.lineno, _dotted(n, bound)) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
-    return sorted(
-        {
-            f"{project}/src/{rel}:{line}: {key}: a shared dataclass belongs in a types.py"
-            for line, key in used
-            if key in data
-            and (source := key.rpartition(".")[0]) != module
-            and not source.endswith(".types")
-            and key.removeprefix(f"{PKG}.") not in TYPE_HOMES
-        }
-    )
-
-
-def python_commands(repo: str) -> list[str]:
-    found = set()
-    for rel, text in _tree_files(repo, (".toml", ".md")):
-        if rel in COMMAND_FILES or rel.endswith(".md") and rel.startswith(COMMAND_DOCS):
-            found.update(
-                f'{rel}:{number}: python command "{m[0]}"'
-                for number, line in enumerate(text.splitlines(), 1)
-                for m in PYTHON.finditer(line)
-                if not PYTHON_OK.match(m[0])
-            )
-    return sorted(found)
+READS = {"copy", "count", "get", "index", "items", "keys", "values"}
 
 
 def _spellings(nodes, dotted):
@@ -628,160 +311,6 @@ def _at_import(node):
             yield from _at_import(child)
 
 
-def orchestrator_imports(orch: str) -> list[str]:
-    found = set()
-    exported = {package: _exported(package) for package in EXPORTERS}
-    for rel, text in _files(orch, ".py"):
-        if not rel.startswith("src/"):
-            continue
-        tree = ast.parse(text, rel)
-        for line, module, name in _import_items(tree):
-            if _denied(rel, module, name, exported):
-                full = (
-                    module
-                    if name is None
-                    else module + name
-                    if module.endswith(".")
-                    else f"{module}.{name}"
-                )
-                found.add(f"{rel}:{line}: imports {full}")
-        bound = _bindings(tree)
-        parents = {id(c): n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Attribute):
-                base = _dotted(n.value, bound)
-                outer = n
-                while isinstance(p := parents.get(id(outer)), ast.Attribute) and p.value is outer:
-                    outer = p
-                if (
-                    base in exported
-                    and n.attr not in exported[base]
-                    and not _shared(_dotted(outer, bound))
-                ):
-                    found.add(f"{rel}:{n.lineno}: uses {base}.{n.attr}")
-    return sorted(found)
-
-
-def orchestrator_text(orch: str) -> list[str]:
-    found = set()
-    for rel, text in _files(orch, (".py", ".toml"), skip="tests/"):
-        lines = text.splitlines()
-        grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
-        for number, line in enumerate(lines, 1):
-            found.update(
-                f"{rel}:{number}: runtime name {w}"
-                for w in RUNTIME.findall(line.replace("CLAUDE.md", " "))
-            )
-            if grammar:
-                found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
-        strings = (
-            _strings(ast.parse(text, rel))
-            if rel.endswith(".py")
-            else (
-                (number, m[1] or m[2])
-                for number, line in enumerate(lines, 1)
-                for m in TOML_STRING.finditer(TOML_CODE.match(line)[0])
-            )
-        )
-        found.update(
-            f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
-        )
-    return sorted(found)
-
-
-def config_once(orch: str) -> list[str]:
-    found = set()
-    for rel, text in _files(orch, ".py"):
-        if not rel.startswith("src/"):
-            continue
-        tree = ast.parse(text, rel)
-        bound = _bindings(tree)
-        mains = {
-            id(n)
-            for top in tree.body
-            if rel in ENTRIES and isinstance(top, ast.FunctionDef) and top.name == "main"
-            for n in ast.walk(top)
-        }
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                called = _dotted(node.func, bound)
-                if called in ONCE and id(node) not in mains:
-                    found.add(f"{rel}:{node.lineno}: calls {called} outside an entry main")
-                elif called.rpartition(".")[2] in LOAD_HELPERS and rel != CONFIG_PY:
-                    found.add(f"{rel}:{node.lineno}: calls {called}")
-    return sorted(found)
-
-
-def _denied(rel, module, name, exported):
-    top = module.split(".")[0]
-    joined = f"{module}.{name}" if name else module
-    if top in sys.stdlib_module_names or _within(joined, ORCH_PKG):
-        return False
-    if _within(joined, f"{PKG}.{CONFIG}"):
-        return True
-    packages = (PKG, *(f"{PKG}.{g}" for g in GROUPS))
-    target = next(
-        (t for t in (joined, module) if t in exported or _shared(t)),
-        joined if module in packages else module,
-    )
-    if target in exported:
-        return (
-            module == target
-            and name is not None
-            and name not in exported[target]
-            or (target == COMPOSER and rel != CONFIG_PY)
-        )
-    return not (
-        _shared(target)
-        or (module == f"{PKG}.{SESSION}" and name != "Session")  # both until TASK-372
-        or (module, name, rel) == (f"{PKG}.{SESSION}", "Session", CONFIG_PY)
-    )
-
-
-def _shared(module):
-    return any(_within(module, f"{PKG}.{s}") for s in SHARED)
-
-
-def _exported(package):
-    return _all(
-        os.path.join(REPO, package.split(".")[1], "src", *package.split("."), "__init__.py")
-    )
-
-
-def _all(path):
-    if not os.path.isfile(path):
-        return set()
-    with open(path, encoding="utf-8") as f:
-        tree = ast.parse(f.read())
-    return next(
-        (
-            set(ast.literal_eval(n.value))
-            for n in tree.body
-            if isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
-        ),
-        set(),
-    )
-
-
-def _import_items(tree):
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            yield from ((node.lineno, a.name, None) for a in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            yield from (
-                (node.lineno, "." * node.level + (node.module or ""), a.name) for a in node.names
-            )
-        elif (
-            isinstance(node, ast.Call)
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-            and _dotted(node.func, {}).rpartition(".")[2] in ("__import__", "import_module")
-        ):
-            yield node.lineno, node.args[0].value, None
-
-
 def _bindings(tree):
     bound = {}
     for node in ast.walk(tree):
@@ -804,19 +333,852 @@ def _dotted(node, bound):
     return ".".join([*base, *reversed(chain)])
 
 
-def test_layers(repo: str) -> list[str]:
-    rank = {p: i for i, p in enumerate(LAYERS)}
-    owner = {sub: project for project, sub in PROJECTS.items()}
+def _private(name):
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
+def _within(name, unit):
+    return name == unit or name.startswith(f"{unit}.")
+
+
+def _files(root, suffixes, skip=None):
+    for top, dirs, names in os.walk(root):
+        dirs.sort()
+        for name in sorted(names):
+            rel = os.path.relpath(os.path.join(top, name), root).replace(os.sep, "/")
+            if name.endswith(suffixes) and not (skip and rel.startswith(skip)):
+                with open(os.path.join(top, name), encoding="utf-8") as f:
+                    yield rel, f.read()
+
+
+def _strings(tree):
+    return (
+        (n.lineno, n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    )
+
+
+def _boundary_name(node, aliases):
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        return f"{_boundary_name(node.value, aliases)}.{node.attr}"
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _boundary_name(node.left, aliases) + _boundary_name(node.right, aliases)
+    return ""
+
+
+def _boundary_bindings(tree):
+    aliases = _bindings(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and (value := _boundary_name(node.value, aliases)):
+                    aliases[target.id] = value
+    return aliases
+
+
+def _boundary_violations(text, own, modules=None, *, shipped=False):
+    tree = ast.parse(text)
+    aliases, modules = _boundary_bindings(tree), modules or {}
     found = set()
-    for project in LAYERS:
-        for rel, text in _files(os.path.join(repo, project, "tests"), ".py"):
-            rel = f"{project}/tests/{rel}"
-            package = rel.split("/")[:-1]
-            for m in _imports(ast.parse(text, rel), package, PKG):
-                parts = m.split(".")
-                top = owner.get(parts[1], "") if parts[0] == PKG and len(parts) > 1 else parts[0]
-                if top == "tests" or rank.get(top, -1) > rank[project]:
-                    found.add(f"{rel}: imports {m}")
+    for node in ast.walk(tree):
+        if shipped:
+            if _test_switch(node, aliases):
+                found.add((node.lineno, "shipped test switch"))
+            continue
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            names = [a.name for a in node.names] + [getattr(node, "module", "") or ""]
+            if any(_test_module(name) for name in names):
+                found.add((node.lineno, "test module import"))
+        name = _resolve_boundary(_boundary_name(node, aliases), modules)
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store | ast.Del)
+            and _within(name, f"agent_pm.{own}")
+        ):
+            found.add((node.lineno, "own project attribute mutation"))
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store | ast.Del)
+            and _boundary_name(node.value, aliases) == "sys.modules"
+        ) or (
+            isinstance(node, ast.Attribute)
+            and _boundary_name(node.value, aliases) == "sys.modules"
+            and node.attr
+            in {"pop", "popitem", "update", "clear", "setdefault", "__setitem__", "__delitem__"}
+        ):
+            found.add((node.lineno, "sys.modules mutation"))
+        if isinstance(node, ast.Call):
+            found.update(
+                (node.lineno, reason) for reason in _boundary_calls(node, aliases, own, modules)
+            )
+    return sorted(found)
+
+
+def _test_module(name):
+    return any(part.endswith("_test") for part in name.split("."))
+
+
+def _test_switch(node, aliases):
+    candidates = []
+    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+        candidates.append(node.id)
+    if (
+        isinstance(node, ast.Call)
+        and _boundary_name(node.func, aliases) in {"os.getenv", "os.environ.get"}
+        and node.args
+    ):
+        candidates.append(_boundary_name(node.args[0], aliases))
+    if isinstance(node, ast.Subscript) and _boundary_name(node.value, aliases) == "os.environ":
+        candidates.append(_boundary_name(node.slice, aliases))
+    return any(name.endswith("_TEST") or name.startswith("FORCE_") for name in candidates)
+
+
+def _boundary_calls(node, aliases, own, modules):
+    arguments = node.args or [k.value for k in node.keywords if k.arg in {"target", "in_dict"}]
+    if not arguments:
+        return []
+    call, raw = _boundary_name(node.func, aliases), _boundary_name(arguments[0], aliases)
+    target = _resolve_boundary(raw, modules)
+    rules = {
+        "shipped code patch": call.endswith((".patch", ".patch.multiple"))
+        and (_within(raw, "agent_pm") or _within(target, "agent_pm")),
+        "shipped object patch": call.endswith(".patch.object") and _within(target, "agent_pm"),
+        "sys.modules dictionary patch": call.endswith(".patch.dict") and target == "sys.modules",
+        "shipped dictionary patch": call.endswith(".patch.dict") and _within(target, "agent_pm"),
+        "own project attribute mutation": call in {"setattr", "delattr"}
+        and _within(target, f"agent_pm.{own}"),
+        "test module import": (call.endswith("import_module") or call == "__import__")
+        and _test_module(raw),
+    }
+    return [reason for reason, violated in rules.items() if violated]
+
+
+def _resolve_boundary(name, modules):
+    seen = set()
+    while name not in seen:
+        seen.add(name)
+        parts = name.split(".")
+        matched = False
+        for index in range(len(parts) - 1, 0, -1):
+            module, member = ".".join(parts[:index]), parts[index]
+            if module in modules and member in modules[module]:
+                name = ".".join([modules[module][member], *parts[index + 1 :]])
+                matched = True
+                break
+        if not matched:
+            return name
+    return name
+
+
+def _source_modules(repo, projects):
+    return {
+        rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__"): _boundary_bindings(
+            ast.parse(text)
+        )
+        for project in projects
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py")
+    }
+
+
+def session_names(repo: str) -> list[str]:
+    """Session owns no config reader, reply-protocol tag or team text."""
+    forbidden = (
+        "config_file",
+        "tomllib",
+        "agent_pm.delegate.engine.config",
+        "read_project",
+        "agent-pm-progress",
+        "agent-pm-outcome",
+        "team/",
+    )
+    return sorted(
+        f"{SESSION_SRC}{rel}: names {word}"
+        for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
+        for word in forbidden
+        if word in text
+    )
+
+
+def literal_imports(repo: str) -> list[str]:
+    """Literal dynamic imports obey the same contracts as normal imports."""
+    config = os.path.join(repo, "pyproject.toml")
+    if not os.path.isfile(config):
+        return []
+    with open(config, "rb") as file:
+        contracts = tomllib.load(file)["tool"]["importlinter"]["contracts"]
+    found = set()
+    for project in PROJECTS:
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            tree = ast.parse(text)
+            bound = _bindings(tree)
+            for call in ast.walk(tree):
+                if (
+                    not isinstance(call, ast.Call)
+                    or not call.args
+                    or _dotted(call.func, bound)
+                    not in {"importlib.import_module", "__import__", "builtins.__import__"}
+                ):
+                    continue
+                if any(isinstance(node, ast.Name) for node in ast.walk(call.args[0])):
+                    continue
+                target = _boundary_name(call.args[0], {})
+                if target and any(
+                    _literal_violation(module, target, contract) for contract in contracts
+                ):
+                    found.add(f"{project}/src/{rel}:{call.lineno}: imports {target}")
+    return sorted(found)
+
+
+def _literal_violation(source, target, contract):
+    if contract["type"] == "units":
+        return violation(source, target, contract)
+    if contract["type"] == "forbidden":
+        return any(_within(source, module) for module in contract["source_modules"]) and any(
+            fnmatch.fnmatchcase(target, module) if "*" in module else _within(target, module)
+            for module in contract["forbidden_modules"]
+        )
+    if contract["type"] == "layers":
+        own = next(
+            (i for i, layer in enumerate(contract["layers"]) if _within(source, layer)), None
+        )
+        lower = next(
+            (i for i, layer in enumerate(contract["layers"]) if _within(target, layer)), None
+        )
+        return own is not None and lower is not None and lower < own
+    raise ValueError(f"unsupported import contract type: {contract['type']!r}")
+
+
+def layer_commands(repo: str) -> list[str]:
+    found = set()
+    for scanned in COMMAND_SRC:
+        for rel, text in _files(os.path.join(repo, scanned), ".py"):
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            for call in ast.walk(tree):
+                if isinstance(call, ast.Call) and SPAWNS.fullmatch(_dotted(call.func, bound)):
+                    argv = [*call.args, *(k.value for k in call.keywords if k.arg == "args")]
+                    words = {
+                        (line, s.split()[0])
+                        for arg in argv
+                        for line, s in _strings(arg)
+                        if s.startswith(COMMAND)
+                    }
+                    found.update(
+                        f'{scanned}{rel}:{line}: runs "{word}"'
+                        for line, word in words
+                        if not (scanned == SESSION_SRC and word == SESSION_COMMAND)
+                    )
+    return sorted(found)
+
+
+def source_suppressions(repo: str) -> list[str]:
+    """Suppressions in every code tree need an exact inventory entry, reason and one use."""
+    found, seen = [], set()
+    for path, text in _tree_files(repo, ".py"):
+        functions = list(_suppression_functions(ast.parse(text)))
+        disabled = {}
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type != tokenize.COMMENT or not re.search(
+                r"#\s*(?:(?:ruff|flake8)\s*:\s*noqa\b|noqa\b|type\s*:\s*ignore\b|(?:pyright|pylint|isort)\s*:)",
+                token.string,
+                re.I,
+            ):
+                continue
+            at = f"{path}:{token.start[0]}"
+            scope = next(
+                (
+                    name
+                    for first, last, name in reversed(functions)
+                    if first <= token.start[0] <= last
+                ),
+                "<module>",
+            )
+            pylint = re.fullmatch(
+                r"# pylint: (disable|enable)=duplicate-code(?:\s+#\s*(.+?))?\s*",
+                token.string,
+            )
+            if pylint:
+                key = (path, "duplicate-code", scope)
+                detail = f"suppression duplicate-code in {scope}"
+                if pylint[1] == "enable":
+                    if key not in disabled or disabled[key] != token.start[1] or pylint[2]:
+                        found.append(f"{at}: {detail} has no matching disable")
+                    else:
+                        del disabled[key]
+                elif key not in NOQA_ALLOWED:
+                    found.append(f"{at}: {detail} is not allowed")
+                elif pylint[2] != NOQA_ALLOWED[key]:
+                    found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
+                elif key in seen:
+                    found.append(f"{at}: duplicate {detail}")
+                else:
+                    disabled[key] = token.start[1]
+                    seen.add(key)
+                continue
+            match = re.fullmatch(
+                r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
+                token.string,
+                re.I,
+            )
+            if not match:
+                found.append(f"{at}: suppression needs explicit codes and a recorded reason")
+                continue
+            for code in re.split(r"\s*,\s*", match[1].upper()):
+                key = (path, code, scope)
+                detail = f"suppression {code} in {scope}"
+                if key not in NOQA_ALLOWED:
+                    found.append(f"{at}: {detail} is not allowed")
+                elif match[2] != NOQA_ALLOWED[key]:
+                    found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
+                elif key in seen:
+                    found.append(f"{at}: duplicate {detail}")
+                else:
+                    seen.add(key)
+        found.extend(
+            f"{path}: suppression {code} in {scope} has no matching enable"
+            for _, code, scope in disabled
+        )
+    found.extend(
+        f"{path}: suppression {code} in {scope} has no matching comment"
+        for path, code, scope in sorted(NOQA_ALLOWED.keys() - seen)
+    )
+    return found
+
+
+def _suppression_functions(tree, parents=()):
+    for node in ast.iter_child_nodes(tree):
+        scope = parents
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = (*parents, node.name)
+            if not isinstance(node, ast.ClassDef):
+                yield node.lineno, node.end_lineno, ".".join(scope)
+        if (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.Eq)
+            and len(node.test.comparators) == 1
+            and isinstance(node.test.comparators[0], ast.Constant)
+            and node.test.comparators[0].value == "__main__"
+        ):
+            scope = (*parents, "__main__")
+            yield node.lineno, node.end_lineno, ".".join(scope)
+        yield from _suppression_functions(node, scope)
+
+
+def standalone(repo: str) -> list[str]:
+    found = set()
+    for project in LOWER:
+        for top, dirs, names in os.walk(os.path.join(repo, project)):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            if top == os.path.join(repo, project):
+                dirs[:] = [d for d in dirs if d != "tests"]
+            for name in sorted(names):
+                rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
+                with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                    for number, line in enumerate(f, 1):
+                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
+                            continue
+                        found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
+    return sorted(found)
+
+
+def standalone_imports(repo: str) -> list[str]:
+    found = []
+    standard = sys.stdlib_module_names | {"__future__", "builtins"}
+    for rel in sorted(STANDALONE):
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            found.append(f"{rel}: missing standalone script")
+            continue
+        with open(path, encoding="utf-8") as file:
+            tree = ast.parse(file.read(), rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = ["." * node.level + (node.module or "")]
+            else:
+                continue
+            found.extend(
+                f"{rel}:{node.lineno}: non-stdlib import {name}"
+                for name in names
+                if name.split(".")[0] not in standard
+            )
+    return sorted(found)
+
+
+def package_top(repo: str) -> list[str]:
+    found = set()
+    for project in (p for p in PROJECTS if p != "utils"):
+        rel = f"{project}/src/{PKG}/{PROJECTS[project]}"
+        path = os.path.join(repo, rel)
+        have = {e for e in (os.listdir(path) if os.path.isdir(path) else ()) if e not in LEFTOVERS}
+        found.update(f"{rel}/{e}: missing" for e in (TOP - {"cli.py"}) - have)
+        found.update(
+            f"{rel}/{e}: not __init__.py, cli.py, engine/ or a listed subpackage"
+            for e in have - TOP - SUBPACKAGES.get(project, set())
+        )
+    return sorted(found)
+
+
+def runtime_names(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
+        for number, line in enumerate(text.splitlines(), 1):
+            if rel.endswith(".toml"):
+                code = TOML_CODE.match(line)[0]
+                line = code if line[len(code) : len(code) + 1] in ("", "#") else line
+                if (
+                    TOML_HEADER.match(line)
+                    or TOML_IMPLEMENTATION.match(line)
+                    or TOML_RUNTIME.match(line)
+                ):
+                    continue
+            found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
+    return sorted(found)
+
+
+def old_core(repo: str) -> list[str]:
+    return sorted(
+        f"{rel}: imports core"
+        for rel, text in _tree_files(repo, ".py")
+        for node in ast.walk(ast.parse(text, rel))
+        if isinstance(node, ast.Import)
+        and any(a.name.split(".")[0] == "core" for a in node.names)
+        or isinstance(node, ast.ImportFrom)
+        and (node.module or "").split(".")[0] == "core"
+        or isinstance(node, ast.Call)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.split(".")[0] == "core"
+        and ast.unparse(node.func).split(".")[-1] in {"__import__", "import_module"}
+    )
+
+
+def adapters_key(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", skip=ADAPTERS_HOME):
+        found.update(
+            f'{rel}:{line}: literal key "adapters"'
+            for line, s in _strings(ast.parse(text, rel))
+            if s == "adapters"
+        )
+    return sorted(found)
+
+
+def tmux_calls(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py"):
+        if rel != TMUX_HOST:
+            found.update(
+                f'{rel}:{line}: str constant "tmux"'
+                for line, s in _strings(ast.parse(text, rel))
+                if s == "tmux"
+            )
+    return sorted(found)
+
+
+def status_log_format(repo: str) -> list[str]:
+    found = set()
+    for top in PROJECTS:
+        for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
+            rel = f"{top}/src/{rel}"
+            if rel not in (STATUS_LOG_HOME, TMUX_HOST):
+                found.update(
+                    f"{rel}:{line}: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
+                    for line, s in _strings(ast.parse(text, rel))
+                    if STATUS_LOG_CLOCK in s
+                )
+    return sorted(found)
+
+
+def private_imports(root: str) -> list[str]:
+    """Ruff 0.16.9 PLC2701 is preview; this guard supplies stable private-import checks."""
+    found = set()
+    for rel, text in _files(root, ".py"):
+        tree = ast.parse(text, rel)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                imported.update(a.asname or a.name for a in node.names)
+                module = "." * node.level + (f"{node.module}." if node.module else "")
+                found.update(
+                    f"{rel}:{node.lineno}: private {module}{a.name}"
+                    for a in node.names
+                    if _private(a.name)
+                )
+            elif isinstance(node, ast.Import):
+                imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _private(node.attr):
+                chain, base = [node.attr], node.value
+                while isinstance(base, ast.Attribute):
+                    chain.append(base.attr)
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in imported:
+                    found.add(
+                        f"{rel}:{node.lineno}: private {'.'.join([base.id, *reversed(chain)])}"
+                    )
+    return sorted(found)
+
+
+def import_hygiene(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _tree_files(repo, ".py"):
+        tree = ast.parse(text, rel)
+        nodes = list(ast.walk(tree))
+        path, environ, putenv = (
+            _spellings(nodes, n) for n in ("sys.path", "os.environ", "os.putenv")
+        )
+        found.update(f"{rel}:{n.lineno}: sys.path mutation" for n in nodes if _changes(n, path))
+        found.update(
+            f"{rel}:{n.lineno}: module-level environment write"
+            for n in _at_import(tree)
+            if _changes(n, environ) or isinstance(n, ast.Call) and _is(n.func, putenv)
+        )
+    return sorted(found)
+
+
+def namespace_package(repo: str) -> list[str]:
+    found = set()
+    for top, own in PROJECTS.items():
+        for rel, wanted in (("src", {PKG}), (f"src/{PKG}", {own})):
+            path = os.path.join(repo, top, rel)
+            have = {
+                e
+                for e in (os.listdir(path) if os.path.isdir(path) else ())
+                if e not in LEFTOVERS and not e.endswith(".egg-info")
+            }
+            found.update(
+                f"{top}/{rel}/{e}: "
+                + ("namespace package __init__.py" if e == "__init__.py" else f"not {top}'s")
+                for e in have - wanted
+            )
+            found.update(f"{top}/{rel}/{e}: missing" for e in wanted - have)
+    return sorted(found)
+
+
+def unit_test_modules(repo: str) -> list[str]:
+    """Unit <rel>/<name>_test.py matches a source module or nonempty directory at the same path, or
+    a helper module under the project's tests. Package tests use the package name, including the
+    layer package at unit root. Integration tests and non-_test.py helpers are outside this rule.
+    """
+    found = []
+    for project, layer in PROJECTS.items():
+        tests = os.path.join(repo, project, "tests")
+        for top, dirs, names in os.walk(tests):
+            parts = os.path.relpath(top, tests).split(os.sep)
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            if "unit" not in parts:
+                dirs[:] = [d for d in dirs if d != "integration"]
+                continue
+            unit = parts.index("unit")
+            relative = parts[unit + 1 :]
+            for name in sorted(n for n in names if n.endswith("_test.py")):
+                stem = name.removesuffix("_test.py")
+                source = os.path.join(project, "src", PKG, layer, *relative, stem)
+                home = os.path.join(repo, source)
+                helper = os.path.join(tests, *parts[:unit], *relative, stem + ".py")
+                matches = (
+                    os.path.isfile(home + ".py")
+                    or any(files for _, _, files in os.walk(home))
+                    or os.path.isfile(helper)
+                    or (
+                        not relative
+                        and stem == layer
+                        and os.path.isfile(
+                            os.path.join(repo, project, "src", PKG, layer, "__init__.py")
+                        )
+                    )
+                )
+                if not stem or stem == "__init__" or not matches:
+                    test = os.path.relpath(os.path.join(top, name), repo)
+                    found.append(f"{test}: missing source module {source}.py")
+    return sorted(found)
+
+
+def shared_types(repo: str) -> list[str]:
+    found = []
+    for project in PROJECTS:
+        src = os.path.join(repo, project, "src")
+        trees = {
+            rel[:-3].replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text, rel))
+            for rel, text in _files(src, ".py")
+            if f"{project}/src/{rel}" not in STANDALONE
+        }
+        data = {
+            f"{module}.{node.name}"
+            for module, (_, tree) in trees.items()
+            for bound in (_bindings(tree),)
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and _data_type(node, bound)
+        }
+        for module, (rel, tree) in trees.items():
+            if not rel.endswith("__init__.py"):
+                found += _type_uses(project, rel, module, tree, data)
+    return sorted(found)
+
+
+def _data_type(node, bound):
+    return any(
+        _dotted(decorator.func if isinstance(decorator, ast.Call) else decorator, bound)
+        == "dataclasses.dataclass"
+        for decorator in node.decorator_list
+    ) or any(
+        _dotted(base, bound) in {"typing.NamedTuple", "enum.Enum", "typing.TypedDict"}
+        for base in node.bases
+    )
+
+
+def types_only(repo: str) -> list[str]:
+    found, private = [], {}
+    for project in PROJECTS:
+        src = os.path.join(repo, project, "src")
+        for rel, text in _files(src, ".py"):
+            if not (rel.endswith("/types.py") or "/types/" in rel):
+                continue
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            kinds = _type_kinds(tree, bound)
+            for node in _module_nodes(tree):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    if _private(node.name):
+                        module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+                        private[f"{module}.{node.name}"] = f"{project}/src/{rel}"
+                    else:
+                        found.append(
+                            f"{project}/src/{rel}:{node.lineno}: types module function {node.name}"
+                        )
+                elif isinstance(node, ast.ClassDef):
+                    kind = kinds.get(node.name)
+                    if kind is None:
+                        found.append(
+                            f"{project}/src/{rel}:{node.lineno}: {node.name}: not a type class"
+                        )
+                    else:
+                        found += _type_methods(project, rel, node, kind, bound)
+    return sorted([*found, *_types_private_uses(repo, private)])
+
+
+def _types_private_uses(repo, private):
+    found = set()
+    modules = _source_modules(repo, PROJECTS)
+    for rel, text in _tree_files(repo, ".py"):
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        uses = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                uses.extend((node.lineno, f"{node.module}.{a.name}") for a in node.names)
+            elif isinstance(node, ast.Name | ast.Attribute):
+                uses.append((node.lineno, _dotted(node, bound)))
+        for line, name in uses:
+            name = _resolve_boundary(name, modules)
+            if name in private and rel != private[name]:
+                found.add(f"{rel}:{line}: private types helper {name} used outside its module")
+    return found
+
+
+def _module_nodes(tree):
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            yield node
+        else:
+            yield from _module_nodes(node)
+
+
+def _type_kinds(tree, bound):
+    classes = [node for node in _module_nodes(tree) if isinstance(node, ast.ClassDef)]
+    kinds = {}
+    bases = {
+        "typing.NamedTuple": "data",
+        "typing.TypedDict": "data",
+        "enum.Enum": "data",
+        "typing.Protocol": "protocol",
+        "abc.ABC": "abstract",
+    }
+    for _ in classes:
+        for node in classes:
+            if any(
+                _dotted(d.func if isinstance(d, ast.Call) else d, bound) == "dataclasses.dataclass"
+                for d in node.decorator_list
+            ):
+                kinds[node.name] = "dataclass"
+            else:
+                for base in node.bases:
+                    name = _dotted(base, bound)
+                    kind = bases.get(name) or kinds.get(name)
+                    if _exception_type(name):
+                        kind = "exception"
+                    if kind:
+                        kinds[node.name] = kind
+                        break
+    return kinds
+
+
+def _exception_type(name):
+    module, _, attr = name.rpartition(".")
+    if not module or module == "builtins":
+        value = getattr(builtins, attr or name, None)
+    elif module.split(".")[0] in sys.stdlib_module_names:
+        value = getattr(importlib.import_module(module), attr, None)
+    else:
+        return False
+    return isinstance(value, type) and issubclass(value, BaseException)
+
+
+def _type_methods(project, rel, node, kind, bound):
+    found = []
+    fields = {
+        child.target.id
+        for child in node.body
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name)
+    }
+    methods = {
+        child.name
+        for child in node.body
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    for method in (
+        child for child in node.body if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+    ):
+        decorators = {
+            _dotted(d.func if isinstance(d, ast.Call) else d, bound) for d in method.decorator_list
+        }
+        if (
+            method.name.startswith("__")
+            and method.name.endswith("__")
+            or decorators & {"property", "abc.abstractmethod"}
+        ):
+            continue
+        if kind == "protocol" and all(
+            isinstance(child, ast.Pass)
+            or isinstance(child, ast.Expr)
+            and isinstance(child.value, ast.Constant)
+            for child in method.body
+        ):
+            continue
+        args = [*method.args.posonlyargs, *method.args.args]
+        own = [
+            child.attr
+            for child in ast.walk(method)
+            if isinstance(child, ast.Attribute)
+            and isinstance(child.value, ast.Name)
+            and args
+            and child.value.id == args[0].arg
+        ]
+        if (
+            kind == "dataclass"
+            and own
+            and set(own) <= fields | methods
+            and not decorators & {"staticmethod", "classmethod"}
+        ):
+            continue
+        found.append(
+            f"{project}/src/{rel}:{method.lineno}: {node.name}.{method.name}: business method in types module"
+        )
+    return found
+
+
+def _type_uses(project, rel, module, tree, data):
+    package, bound, used = module.split(".")[:-1], {}, []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            source = ".".join(
+                [*package[: len(package) - node.level + 1], *([node.module] if node.module else [])]
+                if node.level
+                else [node.module]
+            )
+            for a in node.names:
+                bound[a.asname or a.name] = f"{source}.{a.name}"
+                used.append((node.lineno, f"{source}.{a.name}"))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                bound[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+    used += [(n.lineno, _dotted(n, bound)) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
+    return sorted(
+        {
+            f"{project}/src/{rel}:{line}: {key}: a shared data type belongs in a types.py"
+            for line, key in used
+            if key in data
+            and (source := key.rpartition(".")[0]) != module
+            and not source.endswith(".types")
+        }
+    )
+
+
+def python_commands(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _tree_files(repo, (".toml", ".md")):
+        if rel in COMMAND_FILES or rel.endswith(".md") and rel.startswith(COMMAND_DOCS):
+            found.update(
+                f'{rel}:{number}: python command "{m[0]}"'
+                for number, line in enumerate(text.splitlines(), 1)
+                for m in PYTHON.finditer(line)
+                if not PYTHON_OK.match(m[0])
+            )
+    return sorted(found)
+
+
+def orchestrator_text(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _files(os.path.join(repo, ORCH_PROJECT), (".py", ".toml"), skip="tests/"):
+        lines = text.splitlines()
+        grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
+        for number, line in enumerate(lines, 1):
+            found.update(
+                f"{rel}:{number}: runtime name {w}"
+                for w in RUNTIME.findall(line.replace("AGENTS.md", " "))
+            )
+            if grammar:
+                found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
+        strings = (
+            _strings(ast.parse(text, rel))
+            if rel.endswith(".py")
+            else (
+                (number, m[1] or m[2])
+                for number, line in enumerate(lines, 1)
+                for m in TOML_STRING.finditer(TOML_CODE.match(line)[0])
+            )
+        )
+        found.update(
+            f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
+        )
+    return sorted(found)
+
+
+def config_once(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _files(os.path.join(repo, ORCH_PROJECT), ".py"):
+        if not rel.startswith("src/"):
+            continue
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        mains = {
+            id(n)
+            for top in tree.body
+            if rel in ENTRIES and isinstance(top, ast.FunctionDef) and top.name == "main"
+            for n in ast.walk(top)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                called = _dotted(node.func, bound)
+                if called in ONCE and id(node) not in mains:
+                    found.add(f"{rel}:{node.lineno}: calls {called} outside an entry main")
+                elif called.rpartition(".")[2] in LOAD_HELPERS and rel != CONFIG_PY:
+                    found.add(f"{rel}:{node.lineno}: calls {called}")
     return sorted(found)
 
 
@@ -887,42 +1249,6 @@ def _toml_leaves(table, at):
     return out
 
 
-def _private(name):
-    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
-
-
-def _modules(repo, projects=LOWER):
-    for rel, text in _lower_files(repo, ".py", projects=projects):
-        parts = rel[:-3].split("/")
-        names = parts[3:] if parts[1:3] == ["src", PKG] else None
-        imports = _imports(ast.parse(text, rel), [PKG, *names[:-1]] if names else None, PKG)
-        yield rel, names, [(m, _inner(m, PKG)) for m in imports]
-
-
-def _unit(inner):
-    if _within(inner, HOST_ABC):
-        return SESSION
-    return max((u for u in ALL_UNITS if _within(inner, u)), key=len, default=inner.split(".")[0])
-
-
-def _within(name, unit):
-    return name == unit or name.startswith(f"{unit}.")
-
-
-def _inner(module, top):
-    return module[len(top) + 1 :] if top and module.startswith(f"{top}.") else ""
-
-
-def _files(root, suffixes, skip=None):
-    for top, dirs, names in os.walk(root):
-        dirs.sort()
-        for name in sorted(names):
-            rel = os.path.relpath(os.path.join(top, name), root).replace(os.sep, "/")
-            if name.endswith(suffixes) and not (skip and rel.startswith(skip)):
-                with open(os.path.join(top, name), encoding="utf-8") as f:
-                    yield rel, f.read()
-
-
 def _lower_files(repo, suffixes, skip=None, projects=LOWER):
     for project in projects:
         for rel, text in _files(os.path.join(repo, project), suffixes):
@@ -937,44 +1263,12 @@ def _tree_files(repo, suffixes):
             yield f"{tree}/{rel}", text
 
 
-def _imports(tree, package, top=None):
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            yield from (alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                if package is None or node.level - 1 > len(package):
-                    continue
-                parts = package[: len(package) - node.level + 1] + (
-                    node.module.split(".") if node.module else []
-                )
-            else:
-                parts = node.module.split(".")
-            grouped = parts[0] == top and len(parts) > 1 and parts[1] in GROUPS
-            if len(parts) > 1 + (parts[0] == top) + grouped:
-                yield ".".join(parts)
-            else:
-                yield from (
-                    ".".join(parts + ([] if a.name == "*" else [a.name])) for a in node.names
-                )
-        elif (
-            isinstance(node, ast.Call)
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
-            and (
-                isinstance(node.func, ast.Name)
-                and node.func.id in ("__import__", "import_module")
-                or isinstance(node.func, ast.Attribute)
-                and node.func.attr == "import_module"
-            )
-        ):
-            yield node.args[0].value
-
-
-def _strings(tree):
-    return (
-        (n.lineno, n.value)
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+def test_boundaries(repo: str) -> list[str]:
+    modules = _source_modules(repo, PROJECTS)
+    return sorted(
+        f"{rel}:{line}: {reason}"
+        for rel, text in _tree_files(repo, ".py")
+        for line, reason in _boundary_violations(
+            text, rel.split("/")[0].replace("-", "_"), modules, shipped="/src/" in rel
+        )
     )

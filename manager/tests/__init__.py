@@ -1,1 +1,1 @@
-"""The manager's tests (CLAUDE.md › Tests): unit/, integration/, case.py (its Case)."""
+"""The manager's tests: unit/, integration/, case.py (its Case)."""

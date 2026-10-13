@@ -1,4 +1,4 @@
-"""Codex shared configuration, recovery metadata and inspection behavior."""
+"""Session behavior tests with caller-owned dependencies."""
 
 import dataclasses
 import os
@@ -76,9 +76,9 @@ class CommonTest(Base):
             },
         )
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
-        resumed = other.common.prepare(spec, True)
+        resumed = other.common.prepare(spec, resume=True)
         self.assertEqual(resumed.snapshot, saved.snapshot)
-        launch = other.headless().launch("again", spec, True)
+        launch = other.headless().launch("again", spec, resume=True)
         self.assertIn("gpt-test", launch.argv)
         self.assertIn("model_reasoning_effort=low", launch.argv)
         self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
@@ -91,7 +91,7 @@ class CommonTest(Base):
             self.spec, access=dataclasses.replace(self.spec.access, env=env)
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
-        launch = adapter.headless().launch("hi", self.spec, False)
+        launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
             self.common.load(str(self.work), self.spec.sid).snapshot["env"], {**env, "K": "v"}
@@ -99,7 +99,7 @@ class CommonTest(Base):
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         spec = dataclasses.replace(self.spec, access=Access())
-        resumed = adapter.headless().launch("again", spec, True)
+        resumed = adapter.headless().launch("again", spec, resume=True)
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
         for command in (resumed.resume, self.common.resume_command(state)):
             q = shlex.quote
@@ -120,7 +120,7 @@ class CommonTest(Base):
                     sid=f"project-{saved}",
                     access=dataclasses.replace(self.spec.access, project=saved),
                 )
-                self.common.prepare(spec, False)
+                self.common.prepare(spec, resume=False)
                 self.common.bind(str(self.work), spec.sid, NATIVE)
                 path = self.rollout()
                 requested = dataclasses.replace(
@@ -134,16 +134,18 @@ class CommonTest(Base):
                     ):
                         run = getattr(self.adapter, mode)()
                         launch = (
-                            run.launch("again", requested, True)
+                            run.launch("again", requested, resume=True)
                             if mode == "headless"
-                            else run.launch("again", requested, True, ("/fake/hook",))
+                            else run.launch("again", requested, ("/fake/hook",), resume=True)
                         )
                     self.assertIs(launch.project, saved)
                     self.assertEqual(launch.transcript, str(path))
                     self.assertIn(NATIVE, launch.resume)
 
     def test_metadata_resolves_only_the_matching_trusted_binding(self):
-        info = SessionInfo(self.spec.sid, NATIVE, str(self.cwd), False, "", "")
+        info = SessionInfo(
+            self.spec.sid, NATIVE, str(self.cwd), project=False, transcript="", resume=""
+        )
         self.assertEqual(self.adapter.session_metadata(info), info)
         self.prepare()
         self.assertEqual(self.adapter.session_metadata(info), info)
@@ -169,26 +171,28 @@ class CommonTest(Base):
         self.spec = dataclasses.replace(self.spec, access=access)
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        info = SessionInfo(self.spec.sid, NATIVE, str(self.cwd), False, "", "")
+        info = SessionInfo(
+            self.spec.sid, NATIVE, str(self.cwd), project=False, transcript="", resume=""
+        )
         resume = self.adapter.session_metadata(info).resume
         self.assertEqual(shlex.split(resume)[4], "PYTHONPATH=/a b;c")
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
-        launch = self.adapter.headless().launch("hi", spec, False)
+        launch = self.adapter.headless().launch("hi", spec, resume=False)
         self.assertNotIn("-m", launch.argv)
         self.assertFalse(any(x.startswith("model_reasoning_effort=") for x in launch.argv))
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot["model"])
 
     def test_missing_recovery_and_session_fail_before_launch(self):
         with self.assertRaisesRegex(ConfigError, "missing.*state"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         self.prepare()
         with self.assertRaisesRegex(ConfigError, "missing.*ID"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         with self.assertRaisesRegex(ConfigError, "missing.*file"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
 
     def test_fifo_record_is_nonblocking(self):
         self.prepare()
@@ -197,7 +201,7 @@ class CommonTest(Base):
         os.mkfifo(path, 0o600)
         before = time.monotonic()
         with self.assertRaisesRegex(ConfigError, "unsafe"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         self.assertLess(time.monotonic() - before, 0.5)
 
     def test_record_type_mode_owner_size_and_json_guards(self):
@@ -259,16 +263,18 @@ class CommonTest(Base):
         for grant in (self.home, self.home / ".agent-pm", self.root):
             with self.subTest(grant=grant), self.assertRaisesRegex(ConfigError, "writable"):
                 self.common.prepare(
-                    dataclasses.replace(self.spec, access=Access(dirs=(str(grant),))), False
+                    dataclasses.replace(self.spec, access=Access(dirs=(str(grant),))), resume=False
                 )
-        with mock.patch.dict(os.environ, {"HOME": "/tmp/agent-pm-untrusted-home"}):
-            with self.assertRaisesRegex(ConfigError, "writable"):
-                self.common.load(str(self.work), self.spec.sid)
+        with (
+            mock.patch.dict(os.environ, {"HOME": "/tmp/agent-pm-untrusted-home"}),
+            self.assertRaisesRegex(ConfigError, "writable"),
+        ):
+            self.common.load(str(self.work), self.spec.sid)
 
     def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
         adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
         with self.assertRaisesRegex(ConfigError, "writable"):
-            adapter.common.prepare(self.spec, False)
+            adapter.common.prepare(self.spec, resume=False)
         self.assertFalse((self.home / ".agent-pm").exists())
 
     def test_configured_tmpdir_cannot_grant_store_on_resumed_prepare(self):
@@ -277,7 +283,7 @@ class CommonTest(Base):
         self.rollout()
         saved = self.record().read_bytes()
         adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
-        self.assertEqual(adapter.common.prepare(self.spec, True).native_id, NATIVE)
+        self.assertEqual(adapter.common.prepare(self.spec, resume=True).native_id, NATIVE)
         self.assertEqual(self.record().read_bytes(), saved)
 
     def test_store_parent_permissions_and_symlink_guard(self):
@@ -304,7 +310,7 @@ class CommonTest(Base):
         settings.rmdir()
         with self.assertRaisesRegex(ConfigError, "outside"):
             self.common.prepare(
-                dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), False
+                dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), resume=False
             )
 
     def test_mapping_keys_and_values_name_the_table(self):
@@ -369,7 +375,7 @@ class CommonTest(Base):
                 CodexAdapter({"tiers": {}, "efforts": {}, **cfg})
         adapter = CodexAdapter({"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
         launch = adapter.headless().launch(
-            "hi", dataclasses.replace(self.spec, tier=None, effort=None), False
+            "hi", dataclasses.replace(self.spec, tier=None, effort=None), resume=False
         )
         self.assertEqual(launch.env["PROBE"], "1")
         self.assertEqual(launch.env["NO_COLOR"], "1")
@@ -384,18 +390,18 @@ class CommonTest(Base):
             ("efforts", dataclasses.replace(self.spec, tier=None)),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
-                CodexAdapter({}).headless().launch("hi", spec, False)
+                CodexAdapter({}).headless().launch("hi", spec, resume=False)
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
 class WritableDirsTest(Base):
     def new_launch(self, adapter, home):
         roots = [str(path) for path in (self.cwd, home, self.extra)]
-        dirs = adapter.writable_dirs(self.spec, False)
+        dirs = adapter.writable_dirs(self.spec, resume=False)
         self.assertFalse((self.home / ".agent-pm").exists())
         self.assertEqual(list(dirs[:3]), roots)
         self.assertEqual(len(set(dirs)), len(dirs))
-        launch = adapter.headless().launch("hi", self.spec, False)
+        launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
         self.assertEqual(adapter.common.load(str(self.work), self.spec.sid).writable_roots, roots)
 
@@ -422,8 +428,8 @@ class WritableDirsTest(Base):
         elsewhere = str(self.root / "elsewhere")
         other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
         spec = dataclasses.replace(self.spec, access=Access(project=True))
-        self.assertIn(elsewhere, other.writable_dirs(spec, False))
-        dirs = other.writable_dirs(spec, True)
+        self.assertIn(elsewhere, other.writable_dirs(spec, resume=False))
+        dirs = other.writable_dirs(spec, resume=True)
         self.assertEqual(list(dirs[: len(saved)]), saved)
         self.assertNotIn(elsewhere, dirs)
         self.assertEqual(self.record().read_bytes(), record)
@@ -434,7 +440,7 @@ class WritableDirsTest(Base):
         adapter = CodexAdapter(self.adapter.config)
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
-        argv = adapter.headless().launch("hi", spec, False).argv
+        argv = adapter.headless().launch("hi", spec, resume=False).argv
         self.assertEqual(
             [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
         )
@@ -443,28 +449,31 @@ class WritableDirsTest(Base):
         )
         for resume in (False, True):
             with self.subTest(resume=resume):
-                dirs = adapter.writable_dirs(spec, resume)
+                dirs = adapter.writable_dirs(spec, resume=resume)
                 self.assertIn(str(self.extra), dirs)
                 self.assertNotIn(str(read), dirs)
 
     def test_access_grants_are_passed_without_interpreting_policy(self):
         access = dataclasses.replace(self.spec.access, reads=(str(self.root),))
         spec = dataclasses.replace(self.spec, access=access)
-        self.assertIn("--add-dir", self.adapter.headless().launch("hi", spec, False).argv)
+        self.assertIn(
+            "--add-dir",
+            self.adapter.headless().launch("hi", spec, resume=False).argv,
+        )
 
     def test_the_session_env_adds_no_writable_dir(self):
         env = {"PYTHONPATH": str(self.root / "env-dir")}
         spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, env=env))
-        fresh = self.adapter.writable_dirs(self.spec, False)
-        self.assertEqual(self.adapter.writable_dirs(spec, False), fresh)
-        self.common.prepare(spec, False)
-        self.assertEqual(self.adapter.writable_dirs(spec, True), fresh)
+        fresh = self.adapter.writable_dirs(self.spec, resume=False)
+        self.assertEqual(self.adapter.writable_dirs(spec, resume=False), fresh)
+        self.common.prepare(spec, resume=False)
+        self.assertEqual(self.adapter.writable_dirs(spec, resume=True), fresh)
 
     def test_a_resume_without_saved_state_is_refused(self):
         with self.assertRaisesRegex(
             ConfigError, "missing Codex recovery state for run ID 'caller-id'"
         ):
-            self.adapter.writable_dirs(self.spec, True)
+            self.adapter.writable_dirs(self.spec, resume=True)
         self.assertFalse((self.home / ".agent-pm").exists())
 
     def test_a_configured_tmpdir_new_and_resumed(self):
@@ -474,15 +483,15 @@ class WritableDirsTest(Base):
         adapter = CodexAdapter(
             self.adapter.config | {"env": {"TMPDIR": str(self.root / "tmp-link")}}
         )
-        self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, False))
-        self.assertIn(str(target), adapter.writable_dirs(self.spec, False))
-        adapter.common.prepare(self.spec, False)
-        self.assertIn(str(target), adapter.writable_dirs(self.spec, True))
+        self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec, resume=False))
+        self.assertIn(str(target), adapter.writable_dirs(self.spec, resume=False))
+        adapter.common.prepare(self.spec, resume=False)
+        self.assertIn(str(target), adapter.writable_dirs(self.spec, resume=True))
 
     def test_fresh_query_translates_path_errors_without_persistence(self):
         spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
         with self.assertRaisesRegex(ConfigError, "absolute path"):
-            self.adapter.writable_dirs(spec, False)
+            self.adapter.writable_dirs(spec, resume=False)
         self.assertFalse((self.home / ".agent-pm").exists())
 
 
@@ -541,17 +550,17 @@ class SessionStatusTest(Base):
         os.mkfifo(path)
         before = time.monotonic()
         with self.assertRaisesRegex(ConfigError, "unsafe"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         self.assertLess(time.monotonic() - before, 0.5)
         path.unlink()
         path = self.rollout(cwd=str(self.extra))
         with self.assertRaisesRegex(ConfigError, "mismatched"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         path = self.rollout()
         duplicate = path.with_name("rollout-other-" + NATIVE + ".jsonl")
         duplicate.write_text(path.read_text())
         with self.assertRaisesRegex(ConfigError, "duplicate"):
-            self.common.prepare(self.spec, True)
+            self.common.prepare(self.spec, resume=True)
         duplicate.unlink()
         path.unlink()
         path.symlink_to(self.root / "absent")
@@ -586,7 +595,7 @@ class SessionStatusTest(Base):
             dataclasses.replace(
                 self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
             ),
-            False,
+            resume=False,
         )
         self.assertEqual(
             self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
@@ -606,20 +615,26 @@ class GrantTest(Base):
                     cwd=str(self.cwd), project=True, dirs=(str(record),) if granted else ()
                 ),
             )
-            state = self.common.prepare(spec, False)
+            state = self.common.prepare(spec, resume=False)
             with self.subTest(granted=granted):
                 self.assertEqual(str(record) in state.writable_roots, granted)
-                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, False), granted)
+                self.assertEqual(
+                    str(record) in self.adapter.writable_dirs(spec, resume=False),
+                    granted,
+                )
                 self.common.bind(str(record), spec.sid, NATIVE)
                 self.rollout()
-                resumed = self.common.prepare(spec, True)
+                resumed = self.common.prepare(spec, resume=True)
                 self.assertEqual(str(record) in resumed.writable_roots, granted)
-                self.assertEqual(str(record) in self.adapter.writable_dirs(spec, True), granted)
+                self.assertEqual(
+                    str(record) in self.adapter.writable_dirs(spec, resume=True),
+                    granted,
+                )
 
     def test_access_and_flag_roots_are_combined_and_resume_ignores_new_flags(self):
         added = self.root / "added"
         spec = dataclasses.replace(self.spec, flags=("--add-dir", str(added)))
-        state = self.common.prepare(spec, False)
+        state = self.common.prepare(spec, resume=False)
         expected = [
             str(self.cwd),
             str(self.codex_home),
@@ -630,8 +645,8 @@ class GrantTest(Base):
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(spec, flags=("--add-dir", "/changed"))
-        self.assertEqual(self.common.prepare(changed, True).writable_roots, expected)
-        self.assertNotIn("/changed", self.adapter.writable_dirs(changed, True))
+        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, expected)
+        self.assertNotIn("/changed", self.adapter.writable_dirs(changed, resume=True))
 
     def test_recovery_needs_roots_covering_cwd_and_home(self):
         self.prepare()
@@ -646,4 +661,13 @@ class GrantTest(Base):
         spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, project=True)
         )
-        self.common.prepare(spec, False)
+        self.common.prepare(spec, resume=False)
+
+
+class SavedFlags(Base):
+    def test_invalid_saved_flags_fail_closed(self):
+        state = self.prepare()
+        for value in (None, True, 0, {}, "-s", [1], ["bad\0"]):
+            self.edit_record(snapshot=state.snapshot | {"flags": value})
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "snapshot flags"):
+                self.common.load(str(self.work), self.spec.sid)

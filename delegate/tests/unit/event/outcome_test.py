@@ -1,7 +1,9 @@
-"""delegate/event/outcome.py: SCHEMA beside it; main's drive.validate cases with the same results (FR-20) and read
-with deliverable_file (FR-19); main's save cases: unit/utils/files_test.py."""
+"""delegate/event/outcome.py: SCHEMA beside it; main's drive.validate cases with the same results
+(FR-20) and read with deliverable_file (FR-19); main's save cases: unit/utils/files_test.py.
+"""
 
 import dataclasses
+import hashlib
 import json
 import os
 import shutil
@@ -21,6 +23,9 @@ from agent_pm.delegate.event.outcome import (
 )
 
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.shipped import (
+    SCHEMA_SHA256,
+)
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}
@@ -275,7 +280,9 @@ class Read(Base):
 
 
 class ReadRace(Base):
-    """A file swapped between _file's check and the open, faked by patching os.open to swap first."""
+    """
+    A file swapped between _file's check and the open, faked by patching os.open to swap first.
+    """
 
     def swapped(self, swap, reason=""):
         real_open = os.open
@@ -286,9 +293,11 @@ class ReadRace(Base):
                 done.append(swap())
             return real_open(path, *args, **kw)
 
-        with unittest.mock.patch("os.open", side_effect=open_):
-            with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+        with (
+            unittest.mock.patch("os.open", side_effect=open_),
+            self.assertRaises(InvalidOutcome) as cm,
+        ):
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertEqual(len(done), 1)
         self.assertIn("deliverable_file ", str(cm.exception))
         self.assertIn(reason, str(cm.exception))
@@ -340,15 +349,23 @@ class ReadRace(Base):
             os.rename(other, self.target)
             return fd
 
-        with unittest.mock.patch("os.open", side_effect=open_):
-            with self.assertRaises(InvalidOutcome) as cm:
-                read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+        with (
+            unittest.mock.patch("os.open", side_effect=open_),
+            self.assertRaises(InvalidOutcome) as cm,
+        ):
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
         self.assertIn("replaced while it was opened", str(cm.exception))
 
 
 class SchemaFile(Case):
     def test_is_beside_outcome_py(self):
         self.assertEqual(os.path.dirname(SCHEMA), os.path.dirname(outcome.__file__))
+
+
+class Acceptance(Case):
+    def test_the_outcome_schema_is_mains(self):
+        with open(SCHEMA, "rb") as f:
+            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), SCHEMA_SHA256)
 
 
 if __name__ == "__main__":

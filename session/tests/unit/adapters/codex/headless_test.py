@@ -1,8 +1,11 @@
 """Codex headless launches, native events and usage limits."""
 
+import dataclasses
 import json
+import sys
 from datetime import UTC, datetime
 
+from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import (
     Activity,
     ConfigError,
@@ -15,11 +18,15 @@ from agent_pm.session.engine.types import (
 
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
+CODEX = ("-s", "danger-full-access", "-c", 'approval_policy="on-request"')
+
+HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
+
 
 class HeadlessTest(Base):
     def run_instance(self):
         run = self.adapter.headless()
-        run.launch("hello", self.spec, False)
+        run.launch("hello", self.spec, resume=False)
         return run
 
     def test_native_binding_precedes_event(self):
@@ -63,9 +70,13 @@ class HeadlessTest(Base):
     def test_source_usage_errors_without_reset_emit_limit(self):
         messages = (
             "You’ve hit your usage limit. Try again later.",
-            "You’ve hit your usage limit for GPT-5. Switch to another model now, or try again later.",
+            (
+                "You’ve hit your usage limit for GPT-5. Switch to another model now, or try again later."
+            ),
             "Your workspace is out of credits. Add credits to continue.",
-            "You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.",
+            (
+                "You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue."
+            ),
         )
         for kind in ("error", "turn.failed"):
             for message in messages:
@@ -110,7 +121,7 @@ class HeadlessTest(Base):
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        run.launch("again", self.spec, True)
+        run.launch("again", self.spec, resume=True)
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
 
     def test_source_quota_error_emits_limit(self):
@@ -136,7 +147,9 @@ class HeadlessTest(Base):
         cases = (
             ("You’ve hit your usage limit. Try again at 4:30 PM.", expected_today),
             (
-                "You’ve hit your usage limit. Upgrade to Pro, or try again at Oct 12th, 2026 4:30 PM.",
+                (
+                    "You’ve hit your usage limit. Upgrade to Pro, or try again at Oct 12th, 2026 4:30 PM."
+                ),
                 datetime(2026, 10, 12, 16, 30, tzinfo=UTC).timestamp(),
             ),
         )
@@ -168,3 +181,95 @@ class HeadlessTest(Base):
         run = self.adapter.headless()
         message = "network error mentioning a usage limit"
         self.assertEqual(list(run.parse({"type": "error", "message": message})), [Stderr(message)])
+
+
+class LaunchPolicy(Base):
+    def argv(self, adapter, spec, *, resume=False):
+        return list(adapter.headless().launch("hi", spec, resume=resume).argv)
+
+    def test_supplied_policy_and_saved_replay_in_both_modes(self):
+        mode = "headless"
+        for saved, current in (
+            ("workspace-write", "danger-full-access"),
+            ("danger-full-access", "workspace-write"),
+        ):
+            with self.subTest(mode=mode, saved=saved):
+                flags = (
+                    "-s",
+                    saved,
+                    "-c",
+                    'approval_policy="on-request"',
+                    "-c",
+                    'approvals_reviewer="auto_review"',
+                    "-c",
+                    "sandbox_workspace_write.network_access=false",
+                )
+                spec = dataclasses.replace(
+                    self.spec, sid=f"{mode}-{saved}", flags=flags, env={"K": "saved"}
+                )
+                first = self.argv(self.adapter, spec)
+                self.assertEqual(first[first.index("-s") :][: len(flags)], list(flags))
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                self.rollout()
+                changed = dataclasses.replace(spec, flags=("-s", current), env={"K": "changed"})
+                second = self.argv(self.adapter, changed, resume=True)
+                self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
+                self.assertEqual(
+                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
+                )
+
+    def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
+        mode = "headless"
+        with self.subTest(mode=mode):
+            supplied = ("--enable", "web", "--", "literal", "--last")
+            spec = dataclasses.replace(self.spec, sid=f"separator-{mode}", flags=supplied)
+            first = self.argv(self.adapter, spec)
+            self.common.bind(str(self.work), spec.sid, NATIVE)
+            self.rollout()
+            changed = dataclasses.replace(spec, flags=("--", "changed"))
+            second = self.argv(self.adapter, changed, resume=True)
+            for argv in (first, second):
+                boundary = argv.index("--")
+                self.assertEqual(argv[boundary:], ["--", "literal", "--last", "hi"])
+                self.assertIn("gpt-test", argv[:boundary])
+                self.assertIn(str(self.extra), argv[:boundary])
+                self.assertIn("project_doc_max_bytes=0", argv[:boundary])
+            self.assertEqual(
+                self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+            )
+
+
+class PolicyReplay(Base):
+    def test_snapshot_replays_supplied_flags_and_environment(self):
+        flags = (
+            "-s",
+            "workspace-write",
+            "-c",
+            'approval_policy="on-request"',
+            "--add-dir",
+            str(self.extra),
+        )
+        spec = dataclasses.replace(self.spec, flags=flags, env={"K": "saved"})
+        first = self.adapter.headless().launch("one", spec, resume=False)
+        state = self.common.bind(str(self.work), spec.sid, NATIVE)
+        self.rollout()
+        changed = dataclasses.replace(
+            spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
+        )
+        adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
+        resumed = adapter.headless().launch("two", changed, resume=True)
+        self.assertEqual(state.snapshot["flags"], list(flags))
+        self.assertEqual(first.env["K"], "saved")
+        self.assertEqual(resumed.env["K"], "saved")
+        self.assertIn("workspace-write", resumed.argv)
+        self.assertNotIn("danger-full-access", resumed.argv)
+
+
+class SuppliedPolicy(Base):
+    def test_a_policy_reaches_both_runtime_launches(self):
+        flags = CODEX
+        adapter = self.adapter
+        spec = dataclasses.replace(self.spec, flags=flags)
+        launch = adapter.headless().launch("hi", spec, resume=False)
+        start = launch.argv.index(flags[0])
+        self.assertEqual(launch.argv[start : start + len(flags)], flags)

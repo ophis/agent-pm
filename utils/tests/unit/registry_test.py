@@ -1,9 +1,7 @@
-"""utils/registry.py: load. Test modules are files in a temp dir, found by a finder on sys.meta_path for the test's
-span (guard import_hygiene counts a patched sys.path as a mutation)."""
+"""utils/registry.py: load real fixture files through caller-owned module objects."""
 
-import importlib.machinery
+import importlib.util
 import os
-import sys
 import unittest
 from collections.abc import Sized
 from unittest import mock
@@ -37,16 +35,6 @@ VALUE = 1
 ABSENT = "agent_pm_registry_absent"
 
 
-class TempFinder:
-    def __init__(self, folder):
-        self.folder = folder
-
-    def find_spec(self, fullname, path=None, target=None):
-        if path is not None:
-            return None
-        return importlib.machinery.PathFinder.find_spec(fullname, [self.folder])
-
-
 class Load(Case):
     def setUp(self):
         self.folder = os.path.join(self.home, "modules")
@@ -54,13 +42,24 @@ class Load(Case):
         self.write("regpkg/__init__.py", "")
         self.write("regpkg/impl.py", MODULE)
         self.write("regbroken.py", "def broken(:\n")
-        for patch in (
-            mock.patch.dict(sys.modules),
-            mock.patch.dict(sys.path_importer_cache),
-            mock.patch.object(sys, "meta_path", [TempFinder(self.folder), *sys.meta_path]),
-        ):
-            patch.start()
-            self.addCleanup(patch.stop)
+        self.modules = {}
+        original_import = importlib.import_module
+        files = {"regpkg.impl": "regpkg/impl.py", "regbroken": "regbroken.py"}
+
+        def import_fixture(name, package=None):
+            if name not in files:
+                return original_import(name, package)
+            if name not in self.modules:
+                spec = importlib.util.spec_from_file_location(
+                    name, os.path.join(self.folder, files[name])
+                )
+                assert spec is not None and spec.loader is not None
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                self.modules[name] = module
+            return self.modules[name]
+
+        self.enterContext(mock.patch.object(importlib, "import_module", side_effect=import_fixture))
 
     def write(self, name, text):
         with open(os.path.join(self.folder, name), "w", encoding="utf-8") as f:
@@ -73,7 +72,7 @@ class Load(Case):
 
     def test_loads_a_concrete_subclass(self):
         cls = registry.load("regpkg.impl:Ok", Sized)
-        self.assertIs(cls, sys.modules["regpkg.impl"].Ok)
+        self.assertIs(cls, self.modules["regpkg.impl"].Ok)
         self.assertEqual(len(cls()), 0)
 
     def test_path_syntax(self):

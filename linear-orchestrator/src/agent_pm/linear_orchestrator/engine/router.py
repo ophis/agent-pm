@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among the team's
-issues assigned to role accounts, then starts it through the outer (run.py in a detached Driver session).
+"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among
+the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
+Driver session).
 
 python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
@@ -15,9 +15,8 @@ python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--
               role.
 Bad arguments exit 2.
 
-Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked one only its
-usage-skip lines.
-"""
+Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked
+one only its usage-skip lines."""
 
 import argparse
 import contextlib
@@ -25,18 +24,29 @@ import fcntl
 import functools
 import os
 import re
+import subprocess
 import sys
 import uuid
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from traceback import format_exception
 
 from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
-from agent_pm.linear_orchestrator.engine.types import ConfigError, Invalid, Transient, Unavailable
+from agent_pm.linear_orchestrator.engine.types import (
+    ConfigError,
+    InputError,
+    Invalid,
+    IssueError,
+    LinearError,
+    Transient,
+    Unavailable,
+)
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import (
     ISSUE_ID,
-    config_error,
     humans,
     linear_error,
     linear_gql,
@@ -48,9 +58,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     team,
 )
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, attach_command, detach
-from agent_pm.session import sessions as tui_sessions
-from agent_pm.session import usage as runtime_usage
+from agent_pm.session import DriverError
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -96,9 +104,9 @@ def attempt_count(entries, issue, since=None):
     return sum(1 for e in entries if e.issue == issue and (since is None or e.ts > since))
 
 
-def live_sessions(roles):
+def live_sessions(roles, *, driver):
     try:
-        names = [row.name for row in tui_sessions(re.escape(SESSIONS) + ".*")]
+        names = [row.name for row in driver.sessions(re.escape(SESSIONS) + ".*")]
     except DriverError:
         return None
     live = {}
@@ -129,17 +137,18 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(runtime):
+def read_usage(runtime, *, driver):
     try:
-        return runtime_usage(runtime)
-    except Exception:
+        return driver.usage(runtime)
+    except (SessionConfigError, DriverError):
         return None
 
 
 class Gate:
-    def __init__(self, runs, now, dry, say=None):
+    def __init__(self, runs, now, say=None, *, driver, dry):
+        self.driver = driver
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
-        self.say = say or functools.partial(log, "router", dry=dry)
+        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
 
     def blocked(self, runtime, ident):
         if runtime not in self.seen:
@@ -154,7 +163,7 @@ class Gate:
             shown = {"until": at.isoformat()}
             reason, fields = "limit", shown
         else:
-            usage = read_usage(runtime)
+            usage = read_usage(runtime, driver=self.driver)
             shown = {"usage": summary(usage)}
             reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
             fields = shown if reason == "usage" else {}
@@ -183,14 +192,18 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     if len(found) > 1:
         return (
             None,
-            f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo.",
+            (
+                f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+            ),
         )
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
         return (
             None,
-            f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.',
+            (
+                f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.'
+            ),
         )
     if task not in role_tasks:
         return None, (
@@ -202,16 +215,20 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 
 def q_issues(fields=""):
     return (
-        "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-        "updatedAt project { id name } assignee { id email } " + fields + " } } }"
+        (
+            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
+            "updatedAt project { id name } assignee { id email } "
+        )
+        + fields
+        + " } } }"
     )
 
 
 class Board:
-    def __init__(self, gql, entries, now, dry, cfg, gate, say=None):
+    def __init__(self, gql, entries, cfg, *, now, dry, gate=None, say=None):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.gate = cfg, gate
-        self.say = say or functools.partial(log, "router", dry=dry)
+        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
@@ -233,13 +250,13 @@ class Board:
         if self.ready is None:
             try:
                 issues = self.issues("todo", RELATIONS)
-            except SystemExit as e:
+            except LinearError as e:
                 self.say("todo-error", error=one_line(e))
                 issues = self.issues("todo")
                 for i in issues:
                     try:
                         i.update(self.gql(Q_RELATIONS, i=i["id"])["issue"])
-                    except SystemExit:
+                    except LinearError:
                         i["inverseRelations"] = {"nodes": [{"type": "blocks", "issue": None}]}
             self.blocked = {i["identifier"]: b for i in issues if (b := blockers(i))}
             for ident, b in self.blocked.items():
@@ -260,7 +277,7 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def last_move(self, issue, state, by_user=False):
+    def last_move(self, issue, state, *, by_user=False):
         if issue["id"] not in self.hist:
             self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
         return linear.last_move(
@@ -291,9 +308,9 @@ class Board:
             self.gql,
             issue["id"],
             body,
-            self.states[state],
-            self.states[frm],
-            self.cfg.human_members if state == "in_review" else (),
+            to=self.states[state],
+            frm=self.states[frm],
+            emails=self.cfg.human_members if state == "in_review" else (),
         )
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
@@ -301,9 +318,14 @@ class Board:
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
-                st = sessions.status(self.cfg.run_dir(ident), runtime_of(self.entries, sid), sid)
+                st = sessions.status(
+                    self.cfg.run_dir(ident),
+                    runtime_of(self.entries, sid),
+                    sid,
+                    driver=self.cfg.driver,
+                )
                 self.statuses[sid] = None if st.resumable == "unknown" else st
-            except Exception:
+            except (SessionConfigError, DriverError):
                 self.statuses[sid] = None
         return self.statuses[sid]
 
@@ -328,14 +350,20 @@ class Board:
         )
         return [(issue, sid) for issue, sid in mine if self.settle(issue, sid)]
 
-    def settle(self, issue, sid, wait=True):
+    def recent_session(self, ident):
+        latest = latest_sid(self.entries, ident)
+        if latest is None:
+            return False
+        status = self.status(ident, latest)
+        if status is None:
+            self.unknown(ident, latest)
+            return True
+        return status.last_active is not None and status.last_active > (self.now - LIVE).timestamp()
+
+    def settle(self, issue, sid, *, wait=True):
         ident = issue["identifier"]
-        if wait and (latest := latest_sid(self.entries, ident)):
-            st = self.status(ident, latest)
-            if st is None:
-                return self.unknown(ident, latest)
-            if st.last_active is not None and st.last_active > (self.now - LIVE).timestamp():
-                return False
+        if wait and self.recent_session(ident):
+            return False
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
             self.comment_and_move(issue, CAP_COMMENT, "in_review", "in_progress", "recover")
@@ -450,10 +478,10 @@ class Board:
         return taken, task, role, runtime
 
 
-def begin(mode, issue, sid, role, task, runtime, runs):
+def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
     ident = issue["identifier"]
     kind = "resume" if mode == "resume" else "start"
-    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime)
+    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime, now=now)
     return argparse.Namespace(
         issue=ident,
         project=issue["project"]["id"],
@@ -478,7 +506,7 @@ def outer(a, cfg, *, gql, run, keychain):
     role = config.role_for(cfg.roles, a.assignee)
     if role is None:
         return fail(a.issue, "config-error", f"{a.assignee!r} is not a role account", 2)
-    tasks, key = cfg.roles[role].tasks, cfg.roles[role].key
+    tasks, key = (cfg.roles[role].tasks, cfg.roles[role].key)
     if a.task is not None and a.task not in tasks:
         why = f"task {a.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         return fail(a.issue, "config-error", why, 2)
@@ -486,16 +514,18 @@ def outer(a, cfg, *, gql, run, keychain):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid)
+            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
             why = None if st.resumable == "yes" else st.resumable
-        except Exception as e:
+        except (SessionConfigError, DriverError) as e:
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
+    build = config.TASKS[role].kind == "build"
     try:
         issue = issues.read_issue(gql, a.issue)
-    except (Exception, SystemExit) as e:
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
+    # pylint: disable=duplicate-code  # Build writeback.context directly in both callers; no shared builder by design.
     ctx = writeback.context(
         cfg,
         role,
@@ -507,50 +537,62 @@ def outer(a, cfg, *, gql, run, keychain):
         project=a.project,
         target=None,
     )
-    build = config.TASKS[role].kind == "build"
+    # pylint: enable=duplicate-code
     if build:
         try:
             repo = target.check(
                 issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
             )
-        except Exception as e:
+        except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
-        if isinstance(repo, Transient) or isinstance(repo, Invalid) and a.mode == "resume":
+        if isinstance(repo, Transient) or (isinstance(repo, Invalid) and a.mode == "resume"):
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo.reason)
-            except (Exception, SystemExit) as e:
+            except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
             return 0
     else:
         repo = target.research_repo(issue, cfg.project_repos)
     if repo is not None:
-        repo = target.with_clone(repo, a.issue, cfg.local_clones, work=cfg.runs_dir, run=run)
+        repo = target.with_clone(
+            repo,
+            a.issue,
+            clones=cfg.local_clones,
+            work=cfg.runs_dir,
+            run=run,
+        )
     rd = cfg.run_dir(a.issue)
     try:
         sources = inputs.gather(issue, role, cfg.docs, run=run)
-    except Exception as e:
+    except (InputError, OSError, subprocess.TimeoutExpired) as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
     try:
         os.makedirs(rd, exist_ok=True)
         text = inputs.render(
-            issue, role, sources, humans=ctx.humans, target=repo, docs=cfg.docs
-        ).replace("\0", "")
-        text = text.encode("utf-8", "replace").decode()  # a lone surrogate would fail execve
-    except Exception as e:
+            issue,
+            role,
+            sources,
+            humans=ctx.humans,
+            target=repo,
+            docs=cfg.docs,
+        ).replace("\x00", "")
+        # a lone surrogate would fail execve
+        text = text.encode("utf-8", "replace").decode()
+    except OSError as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     try:
-        detach(
+        cfg.driver.detach(
             config.session(role, a.issue),
             [
                 sys.executable,
                 *RUN,
                 "--uuid",
                 issue.id,
-                *(["--target", f"{repo.owner}/{repo.name}"] if build else []),
+                *(["--target", f"{repo.owner}/{repo.name}"] if build and repo is not None else []),
                 *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
                 f"--input={text}",
             ],
@@ -581,9 +623,10 @@ def lock(runs, dry):
 
 
 class Held:
-    """A tick's walk log: plan, pick, usage-skip, pick-none and skip lines wait, written before the next other line. At
-    the walk's end, waiting usage-skips mean a usage-blocked walk: only they are written; else all are. A dry run and an
-    exception wait for nothing."""
+    """A tick's walk log: plan, pick, usage-skip, pick-none and skip lines wait, written before the
+    next other line. At the walk's end, waiting usage-skips mean a usage-blocked walk: only they are
+    written; else all are. A dry run and an exception wait for nothing.
+    """
 
     WAIT = {"plan", "pick", "usage-skip", "pick-none", "skip"}
 
@@ -629,7 +672,9 @@ def choose(board, gate, live_ids, full, counts):
     return "new", issue, str(uuid.uuid4()), role, task, runtime
 
 
-def tick(opts, cfg, gql, now, hour, start):
+def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
+    now = clock().astimezone(UTC)
+    hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -640,7 +685,7 @@ def tick(opts, cfg, gql, now, hour, start):
         if not free:
             say("skip", reason=BUSY)
             return 0
-        live = live_sessions(cfg.roles)
+        live = live_sessions(cfg.roles, driver=cfg.driver)
         if live is None:
             say("skip", reason="agent runs unknown")
             return 0
@@ -655,26 +700,31 @@ def tick(opts, cfg, gql, now, hour, start):
         if not dry:
             try:
                 trim(runs, now)
-            except Exception as e:
+            except (OSError, UnicodeDecodeError) as e:
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
-            gate = Gate(runs, now, dry, walk)
-            board = Board(gql, parse_log(runs), now, dry, cfg, gate, walk)
+            gate = Gate(runs, now, dry=dry, say=walk, driver=cfg.driver)
+            board = Board(gql, parse_log(runs), cfg, now=now, dry=dry, gate=gate, say=walk)
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
                 return 0
-            a = begin(*run, runs)
+            mode, issue, sid, role, task, runtime = run
+            a = begin(
+                runs,
+                mode=mode,
+                issue=issue,
+                sid=sid,
+                role=role,
+                task=task,
+                runtime=runtime,
+                now=clock,
+            )
             walk.write()  # the outer logs past the walk
-            try:
-                rc = start(a)
-            except (Exception, SystemExit) as e:
-                walk("launch-error", a.issue, error=one_line(e))
-                return 0
-            walk("launch", a.issue, exit=rc)
-            return 0
+            return start_run(start, a, walk)
 
 
-def run_issue(opts, cfg, gql, now, start):
+def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
+    now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 1
     with lock(runs, dry) as free:
@@ -682,16 +732,16 @@ def run_issue(opts, cfg, gql, now, start):
             log("router", "skip", ident, reason=BUSY)
             print(f"router.py: {BUSY}; try again", file=sys.stderr)
             return stop
-        live = live_sessions(cfg.roles)
+        live = live_sessions(cfg.roles, driver=cfg.driver)
         if live is None:
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            attach = attach_command(config.session(role, ident))
+            attach = cfg.driver.attach_command(config.session(role, ident))
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, now, dry, cfg, None)
+        board = Board(gql, entries, cfg, now=now, dry=dry)
         if issue := next(
             (i for i in board.issues("in_progress") if i["identifier"] == ident), None
         ):
@@ -705,11 +755,25 @@ def run_issue(opts, cfg, gql, now, start):
         else:
             issue, task, role, runtime = taken
             run = ("new", issue, str(uuid.uuid4()), role, task, runtime)
-        return 0 if dry else start(begin(*run, runs))
+        if dry:
+            return 0
+        mode, issue, sid, role, task, runtime = run
+        return start(
+            begin(
+                runs,
+                mode=mode,
+                issue=issue,
+                sid=sid,
+                role=role,
+                task=task,
+                runtime=runtime,
+                now=clock,
+            )
+        )
 
 
 def brake(role, cfg):
-    usage = read_usage(cfg.roles[role].run.runtime)
+    usage = read_usage(cfg.roles[role].run.runtime, driver=cfg.driver)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 
@@ -736,14 +800,18 @@ def options(argv):
 def main(
     argv,
     *,
-    gql=linear_gql,
-    now=None,
+    now=datetime.now,
     config_path=config.CONFIG,
     hour=None,
-    run=config.sh_run,
-    keychain=linear.has_key,
+    gql=None,
+    run=None,
+    keychain=None,
     start=None,
+    driver=None,
 ):
+    gql = gql or linear_gql
+    run = run or config.sh_run
+    keychain = keychain or linear.has_key
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
@@ -754,27 +822,49 @@ def main(
     os.environ["PATH"] = config.path()
     try:
         cfg = config.load(path=config_path)
-    except ConfigError as e:
-        if not e.logs_dir:
-            print(e.msg, file=sys.stderr)
-            return 1
-        linear.use_logs(e.logs_dir)
-        return config_error("router", e, opts["dry"])
+    except ConfigError as error:
+        config.report_error("router", error, dry=opts["dry"])
+        return 1
     linear.use_logs(cfg.logs_dir)
+    cfg = replace(cfg, driver=driver) if driver is not None else cfg
     if opts["brake"] is not None:
-        if opts["brake"] not in cfg.roles:
-            print(f"router.py: no role {opts['brake']}", file=sys.stderr)
+        role = opts["brake"]
+        if role not in cfg.roles:
+            print(f"router.py: no role {role}", file=sys.stderr)
             return 2
-        return brake(opts["brake"], cfg)
+        return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     start = start or functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain)
-    now = now or datetime.now(UTC)
     try:
         if opts["issue"]:
-            return run_issue(opts, cfg, gql, now, start)
-        return tick(opts, cfg, gql, now, datetime.now().hour if hour is None else hour, start)
+            return run_issue(opts, cfg, gql, start, clock=now)
+        return tick(
+            opts,
+            cfg,
+            gql,
+            hour=hour,
+            start=start,
+            clock=now,
+        )
+    except LinearError as e:
+        return linear.config_error("router", e, dry=opts["dry"])
     except Unavailable as e:
-        return linear_error("router", e, opts["dry"])
+        return linear_error("router", e, dry=opts["dry"])
+
+
+def start_run(start, args, say):
+    try:
+        result = start(args)
+    except (Exception, SystemExit) as error:  # noqa: BLE001  # A recorded launch may fail.
+        say(
+            "launch-error",
+            args.issue,
+            error=one_line(error),
+            traceback="".join(format_exception(error)),
+        )
+    else:
+        say("launch", args.issue, exit=result)
+    return 0
 
 
 if __name__ == "__main__":

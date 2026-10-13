@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 import functools
 import os
+import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from traceback import format_exception
+from typing import Any
 
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import ConfigError, Unavailable
+from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from agent_pm.linear_orchestrator.linear.linear import (
-    config_error,
     linear_error,
     linear_gql,
     log,
@@ -17,6 +20,19 @@ from agent_pm.linear_orchestrator.linear.linear import (
     role_ids,
     team,
 )
+
+
+@dataclass
+class Promotion:
+    source: dict[str, Any]
+    detail: dict[str, Any]
+    role: str
+    next: str
+    cutoff: str | None
+    first: str
+    latest: str
+    child: dict[str, Any] | None = None
+
 
 HELP = """Promote issues in Handoff to the next role.
 
@@ -69,8 +85,9 @@ def child_title(prefix, src_prefix, title):
 
 
 class Promoter:
-    def __init__(self, gql, cfg, now, dry, wait=True):
+    def __init__(self, gql, cfg, now, dry, *, tasks, wait=True):
         self.gql, self.cfg, self.now, self.dry, self.wait = gql, cfg, now, dry, wait
+        self.tasks = tasks
         self.team = team(gql, cfg)
         self.states = self.team.states
         self.humans = {e.lower() for e in cfg.human_members}
@@ -78,7 +95,7 @@ class Promoter:
         self.ids = {r: i for i, r in self.roles.items()}
         self.say = functools.partial(log, "promote", dry=dry)
 
-    def run(self):
+    def pending(self):
         issues = self.gql(Q_HANDOFF, t=self.team.id, s=self.states["handoff"], a=list(self.roles))[
             "issues"
         ]["nodes"]
@@ -91,12 +108,22 @@ class Promoter:
                     detail = self.gql(Q_DETAIL, i=src["id"])["issue"]
                     if detail["state"]["id"] != self.states["handoff"]:
                         continue
-                    work.append((self.moves(src, detail), src, detail, role, nxt))
+                    cutoff, first, latest = self.moves(src, detail)
+                    work.append(Promotion(src, detail, role, nxt, cutoff, first, latest))
                 except Unavailable:
                     raise
-                except (Exception, SystemExit) as e:
-                    self.say("handoff-error", src["identifier"], error=one_line(e))
-        for (cutoff, first, latest), src, detail, role, nxt in sorted(work, key=lambda w: w[0][2]):
+                except Exception as e:  # noqa: BLE001  # Keep reading the other handoffs.
+                    self.say(
+                        "handoff-error",
+                        src["identifier"],
+                        error=one_line(e),
+                        traceback="".join(format_exception(e)),
+                    )
+        return sorted(work, key=lambda handoff: handoff.latest)
+
+    def run(self):
+        for handoff in self.pending():
+            src, latest = handoff.source, handoff.latest
             if self.wait and self.now - parse_time(latest) < MATURE:
                 self.say(
                     "handoff-wait",
@@ -105,15 +132,19 @@ class Promoter:
                     reason=f"in Handoff under {MATURE.seconds // 60} min",
                 )
                 continue
-            found = [None]
             try:
-                self.promote(src, detail, role, nxt, cutoff, first, found)
+                self.promote(handoff)
             except Unavailable:
                 raise
-            except (Exception, SystemExit) as e:
-                self.say("handoff-error", src["identifier"], error=one_line(e))
+            except Exception as e:  # noqa: BLE001  # Keep processing other handoffs.
+                self.say(
+                    "handoff-error",
+                    src["identifier"],
+                    error=one_line(e),
+                    traceback="".join(format_exception(e)),
+                )
                 if self.now - parse_time(latest) > GRACE:
-                    self.bounce_failed(src, e, found[0])
+                    self.bounce_failed(src, e, handoff.child)
 
     def moves(self, src, detail):
         hist = sorted(detail["history"]["nodes"], key=lambda h: parse_time(h["createdAt"]))
@@ -148,23 +179,24 @@ class Promoter:
             key=lambda c: parse_time(c["createdAt"]),
         )
 
-    def promote(self, src, detail, role, nxt, cutoff, first, found):
-        comments = self.instructions(detail, cutoff)
+    def promote(self, handoff: Promotion):
+        src, detail, role, nxt = handoff.source, handoff.detail, handoff.role, handoff.next
+        comments = self.instructions(detail, handoff.cutoff)
         if not comments and self.cfg.roles[role].require_instructions:
             if self.comment_and_move(src, NO_INSTRUCTIONS, "handoff-bounce"):
                 self.say(
                     "handoff-bounce", src["identifier"], to="in_review", reason="no instructions"
                 )
             return
-        cid = child_id(src["id"], nxt, first)
+        cid = child_id(src["id"], nxt, handoff.first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
         if existing:
-            child = found[0] = existing[0]
+            child = handoff.child = existing[0]
         elif self.dry:
             self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
             return
         else:
-            child = found[0] = linear.call(
+            child = handoff.child = linear.call(
                 self.gql,
                 M_CREATE,
                 "issueCreate",
@@ -177,8 +209,8 @@ class Promoter:
                         "stateId": self.states["todo"],
                         "priority": src["priority"],
                         "title": child_title(
-                            config.TASKS[nxt].prefix,
-                            config.TASKS[role].prefix or None,
+                            self.tasks[nxt].prefix,
+                            self.tasks[role].prefix or None,
                             src["title"],
                         ),
                         "description": self.description(src, comments, detail),
@@ -199,7 +231,7 @@ class Promoter:
         self.say("promote", src["identifier"], to=child["identifier"])
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
-        except (Exception, SystemExit) as e:
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -236,7 +268,7 @@ class Promoter:
                 self.say("handoff-failed", src["identifier"], to="in_review")
         except Unavailable:
             raise
-        except (Exception, SystemExit) as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -261,9 +293,9 @@ class Promoter:
                 self.gql,
                 src["id"],
                 body,
-                self.states["in_review"],
-                self.states["handoff"],
-                self.cfg.human_members,
+                to=self.states["in_review"],
+                frm=self.states["handoff"],
+                emails=self.cfg.human_members,
             ),
         )
 
@@ -273,16 +305,30 @@ class Promoter:
         return left is None
 
 
-def run_prune(gql, now, dry, team, roles, work, pruner=None):
+def run_prune(gql, now, promoter, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
-        pruner(gql, now, dry, work=work, team=team, roles=roles).run()
+        pruner(
+            gql,
+            now,
+            dry=promoter.dry,
+            work=promoter.cfg.runs_dir,
+            team=promoter.team,
+            roles=promoter.roles,
+            driver=promoter.cfg.driver,
+        ).run()
     except Unavailable as e:
-        linear_error("prune", e, dry)
-    except (Exception, SystemExit) as e:
-        log("prune", "prune-error", dry=dry, error=one_line(e))
+        linear_error("prune", e, dry=promoter.dry)
+    except (Exception, SystemExit) as e:  # noqa: BLE001  # Prune failures leave promotions intact.
+        log(
+            "prune",
+            "prune-error",
+            dry=promoter.dry,
+            error=one_line(e),
+            traceback="".join(format_exception(e)),
+        )
 
 
 def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None):
@@ -293,21 +339,20 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     dry = "--dry-run" in argv
     try:
         cfg = config.load(path=config_path)
-    except ConfigError as e:
-        if not e.logs_dir:
-            print(e.msg, file=sys.stderr)  # no log dir yet
-            return 1
-        linear.use_logs(e.logs_dir)
-        return config_error("promote", e, dry)
+    except ConfigError as error:
+        config.report_error("promote", error, dry=dry)
+        return 1
     linear.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
     try:
-        promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
+        promoter = Promoter(gql, cfg, now, dry, tasks=config.TASKS, wait="--now" not in argv)
         promoter.run()
+    except LinearError as e:
+        return linear.config_error("promote", e, dry=dry)
     except Unavailable as e:
-        return linear_error("promote", e, dry)
-    run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner)
+        return linear_error("promote", e, dry=dry)
+    run_prune(gql, now, promoter, pruner)
     return 0
 
 

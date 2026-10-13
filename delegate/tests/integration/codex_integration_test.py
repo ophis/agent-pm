@@ -1,6 +1,9 @@
-"""delegate/cli.py as a subprocess, --runtime codex, over session/tests/integration/adapters/codex/fake_codex.py (on PATH as
-`codex`); HOME, its recovery store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from
-any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's part."""
+"""delegate/cli.py as a subprocess, --runtime codex, over
+session/tests/integration/adapters/codex/fake_codex.py (on PATH as `codex`); HOME, its recovery
+store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from any
+ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's
+part.
+"""
 
 import json
 import os

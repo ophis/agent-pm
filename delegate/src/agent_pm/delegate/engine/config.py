@@ -1,12 +1,12 @@
-"""The delegate's paths, their only home: CONFIG (read by read_project("delegate")), DELEGATE, IMPORT_ROOTS and
-PYTHONPATH (them joined: a child's); its keys' parsers, raising ValueError: harness_host (None unset, else one of
-`hosts`), policy, trusted_dirs."""
+"""The delegate's paths, their only home: CONFIG (read by read_project("delegate")), DELEGATE,
+IMPORT_ROOTS and PYTHONPATH (them joined: a child's); its keys' parsers, raising ValueError:
+harness_host (None unset, else one of `hosts`), policy, trusted_dirs.
+"""
 
 import os
 from collections.abc import Collection, Mapping
 
-from agent_pm.utils.config_file import read_project
-from agent_pm.utils.paths import import_roots, real_dirs
+from agent_pm.utils import import_roots, read_project, real_dirs
 
 DELEGATE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 IMPORT_ROOTS = import_roots()

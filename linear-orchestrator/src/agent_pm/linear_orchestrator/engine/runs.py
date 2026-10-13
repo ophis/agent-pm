@@ -1,5 +1,6 @@
-"""The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume lines as Entries, live
-limit rows (`limits`), `trim` to KEEP."""
+"""The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
+lines as Entries, live limit rows (`limits`), `trim` to KEEP.
+"""
 
 import json
 import os
@@ -7,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.utils.files import append_line, save
+from agent_pm.utils import append_line, save
 
 KEEP = timedelta(days=7)
 ERRORS = (ValueError, TypeError, KeyError, OverflowError)
@@ -22,9 +23,9 @@ class Entry(NamedTuple):
     runtime: str
 
 
-def note(path, kind, **fields):
+def note(path, kind, *, now=datetime.now, **fields):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = json.dumps({"ts": linear.stamp(), "kind": kind, **fields}, ensure_ascii=False)
+    line = json.dumps({"ts": linear.stamp(now=now), "kind": kind, **fields}, ensure_ascii=False)
     append_line(path, line + "\n", durable=True)
 
 

@@ -1,4 +1,6 @@
-"""The runner's unit fakes: fake runtime steps (said, limit), session events (turn, STOP), FakeHandle and no_child."""
+"""The runner's unit fakes: fake runtime steps (said, limit), session events (turn, STOP),
+FakeHandle and no_child.
+"""
 
 import contextlib
 import os
@@ -45,17 +47,19 @@ STOP = turn("Working.")
 
 
 class FakeHandle:
-    """agent_pm.session.Handle as the Delegate uses it: events() goes on through `events` across calls, up to an Exited (none
-    left: AssertionError); send (raising `fail`) and stop (raising `stop_fail`) recorded in `calls`. start:
-    agent_pm.session.start's stand-in."""
+    """agent_pm.session.Handle as the Delegate uses it: events() goes on through `events` across
+    calls, up to an Exited (none left: AssertionError); send (raising `fail`) and stop (raising
+    `stop_fail`) recorded in `calls`. start: agent_pm.session.start's stand-in.
+    """
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
+        self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
-    def start(self, runtime, mode, prompt, spec, **kw):
+    def start(self, runtime, mode, prompt, spec, *, resume=None, idle_timeout=None, events=None):
         os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = spec.name or NAME, kw["resume"] or spec.sid
+        self.name, self.sid = spec.name or NAME, resume or spec.sid
         return self
 
     def events(self):
@@ -63,7 +67,7 @@ class FakeHandle:
             yield event
             if isinstance(event, Exited):
                 return
-        raise AssertionError("no event left")
+        raise self.exhausted
 
     def send(self, text):
         self.calls.append(("send", text))

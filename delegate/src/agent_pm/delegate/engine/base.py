@@ -9,13 +9,14 @@ from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.types import Event, Result
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
-from agent_pm.utils.record import Record, Status
+from agent_pm.utils import Record, Status
 
 
 class Delegate(ABC):
-    """An implementation's constructor: (role, Spec, *, optional dependencies and placement), refusing with
-    ConfigError, writing nothing. run, detach run it; attach(record or workdir) views a started one. show,
-    attach_command: displayable sessions only, else NotDisplayable."""
+    """An implementation's constructor: (role, Spec, *, optional dependencies and placement),
+    refusing with ConfigError, writing nothing. run, detach run it; attach(record or workdir) views
+    a started one. show, attach_command: displayable sessions only, else NotDisplayable.
+    """
 
     @classmethod
     @abstractmethod

@@ -1,13 +1,18 @@
-"""Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness account under its
-session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it when a late write left an older one.
-status: a session's SessionStatus at its recorded cwd."""
+"""Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness
+account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it
+when a late write left an older one. status: a session's SessionStatus at its recorded cwd.
+"""
 
 import re
 import threading
 
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import (
+    LinearError,
+)
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import session_record, session_status
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
@@ -31,20 +36,27 @@ def is_comment(comment):
     )
 
 
-def base(*, sid, workdir, runtime, started_at):
-    return {"sid": sid, "workdir": workdir, "runtime": runtime, "started_at": started_at, "seq": 0}
+def base(*, sid, workdir, runtime, started_at, driver):
+    return {
+        "sid": sid,
+        "workdir": workdir,
+        "runtime": runtime,
+        "started_at": started_at,
+        "seq": 0,
+        "driver": driver,
+    }
 
 
-def status(workdir, runtime, sid):
+def status(workdir, runtime, sid, *, driver):
     # only cwd is read from the session entry: the agent run can write run.jsonl
-    entry = session_record(workdir, sid)
-    return session_status(runtime, sid, entry["cwd"] if entry else workdir)
+    entry = driver.session_record(workdir, sid)
+    return driver.session_status(runtime, sid, entry["cwd"] if entry else workdir)
 
 
 def command(rec):
     try:
-        st = status(rec["workdir"], rec["runtime"], rec["sid"])
-    except Exception:
+        st = status(rec["workdir"], rec["runtime"], rec["sid"], driver=rec["driver"])
+    except (SessionConfigError, DriverError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 
@@ -75,7 +87,7 @@ def _bounded(call, limit):
     def run():
         try:
             out["value"] = call()
-        except (Exception, SystemExit) as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             out["error"] = e
 
     t = threading.Thread(target=run, daemon=True)
@@ -84,7 +96,10 @@ def _bounded(call, limit):
     if t.is_alive():
         return None, f"timed out after {limit}s"
     if "error" in out:
-        return None, linear.one_line(out["error"])
+        error = out["error"]
+        if not isinstance(error, (Exception, SystemExit)):
+            raise error
+        return None, linear.one_line(error)
     return out["value"], None
 
 
@@ -94,7 +109,7 @@ def write(gql, sid, issue, text, limit=LIMIT):
     def call():
         try:
             done = gql(M_UPDATE, c=cid, b=text)["commentUpdate"]
-        except SystemExit as e:
+        except LinearError as e:
             if not linear.not_found(e):
                 raise
             done = None
@@ -113,9 +128,14 @@ def _text(rec):
     return out
 
 
-def post(issue, rec, rc=None, *, gql, ended_at=None, outcome=None, limit=False):
-    rec["args"] = (rc, None if rc is None else ended_at or now(), outcome, limit)
-    return write(gql, rec["sid"], issue, _text(rec))
+def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
+    rec["args"] = (
+        rc,
+        None if rc is None else ended_at or now(),
+        outcome,
+        limit,
+    )
+    return write(gql, rec["sid"], issue, _text(rec), limit=timeout)
 
 
 def repair(issue, issue_id, rec, *, gql, limit=LIMIT):

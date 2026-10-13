@@ -1,5 +1,6 @@
-"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log (log, into LOGS_DIR
-once an entry's main sets it), comments by client id and the checks of the config's Linear ids."""
+"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log (log,
+into LOGS_DIR once an entry's main sets it), comments by client id and the checks of the config's
+Linear ids."""
 
 import hashlib
 import http.client
@@ -15,12 +16,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.types import Unavailable
-from agent_pm.utils.files import append_line
-from agent_pm.utils.text import printable
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID as ISSUE_ID
+from agent_pm.linear_orchestrator.engine.types import STATES, ConfigError, LinearError, Unavailable
+from agent_pm.utils import append_line, printable
 
-SEAM = "AGENT_PM_LINEAR"
+
+@dataclass(frozen=True)
+class Team:
+    id: str
+    name: str
+    states: dict[str, str]
+
+
 URL = "https://api.linear.app/graphql"
 SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keychain
 LOGS_DIR = None
@@ -31,8 +38,8 @@ def use_logs(path):
     LOGS_DIR = path
 
 
-def stamp():
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+def stamp(*, now=datetime.now):
+    return now().astimezone().isoformat(timespec="seconds")
 
 
 def operation(query):
@@ -41,21 +48,15 @@ def operation(query):
 
 
 def linear_gql(query, *, service, timeout=30, **variables):
-    # the seam is read once, so its url and key pair
-    seam = _seam()
-    auth = _secret(service, timeout, seam)
+    # naming only service: urllib's header error would echo it
+    auth = key(service, timeout)
     req = urllib.request.Request(
-        seam[0] if seam else URL,
+        URL,
         data=json.dumps({"query": query, "variables": variables}).encode(),
         headers={"Content-Type": "application/json", "Authorization": auth},
     )
-    send = (
-        urllib.request.build_opener(urllib.request.ProxyHandler({})).open
-        if seam
-        else urllib.request.urlopen
-    )
     try:
-        with send(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as e:  # a URLError: before it
         if e.code >= 500:
@@ -71,51 +72,48 @@ def linear_gql(query, *, service, timeout=30, **variables):
         raise Unavailable(operation(query), reason=one_line(cause)) from None
     try:
         body = json.loads(raw)
-    except ValueError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         raise Unavailable(operation(query), reason="response not JSON") from None
+    if not isinstance(body, dict):
+        raise Unavailable(operation(query), reason="response not a GraphQL object")
     if body.get("errors"):
-        raise SystemExit(f"linear api error: {body['errors']}")
+        raise LinearError(f"linear api error: {body['errors']}")
+    if not isinstance(body.get("data"), dict):
+        raise Unavailable(operation(query), reason="response has no GraphQL data")
     return body["data"]
 
 
 def _rate_limited(e):
     try:
-        return any(
-            (x.get("extensions") or {}).get("code") == "RATELIMITED"
-            for x in json.loads(e.read())["errors"]
-        )
-    except Exception:
+        body = json.loads(e.read())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return False
+    if not isinstance(body, dict) or not isinstance(body.get("errors"), list):
+        return False
+    for error in body["errors"]:
+        if not isinstance(error, dict):
+            continue
+        extensions = error.get("extensions")
+        if isinstance(extensions, dict) and extensions.get("code") == "RATELIMITED":
+            return True
+    return False
 
 
 def key(service, timeout):
-    return _secret(service, timeout, _seam())
-
-
-def _secret(service, timeout, seam):
-    # a bad key fails naming only service: urllib's header error would echo it
-    if seam is None:
-        found = subprocess.run(
-            [SECURITY, "find-generic-password", "-s", service, "-w"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout,
-        ).stdout.strip()
-    elif service in seam[1]:
-        found = seam[1][service]
-    else:
-        raise SystemExit(f"{SEAM}: no key for {service}")
+    found = subprocess.run(
+        [SECURITY, "find-generic-password", "-s", service, "-w"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout,
+    ).stdout.strip()
     if not _clean(found):
-        raise SystemExit(f"Linear key of {service}: empty, not printable or holds whitespace")
+        raise LinearError(f"Linear key of {service}: empty, not printable or holds whitespace")
     return found
 
 
 def has_key(service):
     # no -w: its secret is never read
-    seam = _seam()
-    if seam is not None:
-        return service in seam[1]
     return (
         subprocess.run(
             [SECURITY, "find-generic-password", "-s", service],
@@ -126,76 +124,41 @@ def has_key(service):
     )
 
 
-def _seam():
-    path = os.environ.get(SEAM)
-    if not path:
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            seam = json.load(f)
-    except (OSError, ValueError):
-        raise SystemExit(f"{SEAM} {path}: unreadable or not JSON") from None
-    url, keys = (seam.get("url"), seam.get("keys")) if isinstance(seam, dict) else (None, None)
-    if (
-        not isinstance(url, str)
-        or not isinstance(keys, dict)
-        or not all(isinstance(k, str) for k in keys.values())
-    ):
-        raise SystemExit(
-            f"{SEAM} {path}: not an object with a url string and a keys object of strings"
-        )
-    if not _local(url):
-        raise SystemExit(
-            f"{SEAM} {path}: url not http://127.0.0.1:<port>/... or http://[::1]:<port>/..."
-        )
-    return url, keys
-
-
-def _local(url):
-    # parsed, never a prefix test
-    try:
-        u = urllib.parse.urlsplit(url)
-        port = u.port
-    except ValueError:
-        return False
-    return (
-        _clean(url)
-        and u.scheme == "http"
-        and u.hostname in ("127.0.0.1", "::1")
-        and port is not None
-        and u.username is None
-        and u.password is None
-    )
-
-
 def _clean(s):
     return bool(s) and s.isprintable() and not any(c.isspace() for c in s)
 
 
-ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
-CONFIG_ERRORS = (SystemExit, ValueError, OSError)
-_recent = {}
 
 
-def log(src, kind, issue=None, *, once=False, dry=False, **fields):
-    line = {
+def log(src, kind, issue=None, *, once=False, dry=False, now=datetime.now, **fields):
+    _log(_line(src, kind, issue, now=now, **fields), LOGS_DIR, once=once, dry=dry, now=now)
+
+
+def _line(src, kind, issue=None, *, now=datetime.now, **fields):
+    return {
         k: v
-        for k, v in {"ts": stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
+        for k, v in {
+            "ts": stamp(now=now),
+            "src": src,
+            "kind": kind,
+            "issue": issue,
+            **fields,
+        }.items()
         if v is not None
     }
-    logs = LOGS_DIR
+
+
+def _log(line, logs, *, once, dry, now=datetime.now):
     path, key = os.path.join(logs, "orchestrator.jsonl") if logs else None, _key(line)
-    if once and not dry and path and key in _recent_keys(path):
+    if once and not dry and path and key in _recent_keys(path, now=now):
         return
     text = json.dumps(line, ensure_ascii=False)
     try:
-        if not dry and path:
+        if not dry and path and logs:
             os.makedirs(logs, exist_ok=True)
             append_line(path, text + "\n")
-            if path in _recent:
-                _recent[path].add(key)
     except OSError:
         pass
     try:
@@ -205,25 +168,28 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
         pass
 
 
-def config_error(src, e, dry=False):
-    reason = one_line(e.code if isinstance(e, SystemExit) else e)
-    return _stop(src, "config-error", reason, dry, reason=reason)
+def config_error(src, e, *, dry=False, now=datetime.now):
+    reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
+    logs = e.logs_dir if isinstance(e, ConfigError) else LOGS_DIR
+    return _stop(src, "config-error", reason, dry, logs=logs, reason=reason, now=now)
 
 
-def linear_error(src, e, dry=False):
+def linear_error(src, e, *, dry=False, now=datetime.now):
     return _stop(
         src,
         "linear-error",
         f"Linear unavailable: {e}",
         dry,
+        logs=LOGS_DIR,
+        now=now,
         op=e.op,
         status=e.status,
         reason=e.reason,
     )
 
 
-def _stop(src, kind, message, dry, **fields):
-    log(src, kind, once=True, dry=dry, **fields)
+def _stop(src, kind, message, dry, *, logs, now=datetime.now, **fields):
+    _log(_line(src, kind, now=now, **fields), logs, once=True, dry=dry, now=now)
     try:
         if sys.stderr.isatty() and not dry:  # under a scheduler stderr is the log
             print(f"{src}.py: {message}", file=sys.stderr, flush=True)
@@ -236,22 +202,20 @@ def _key(line):
     return json.dumps([line.get(k) for k in ONCE])
 
 
-def _recent_keys(path):
-    if path not in _recent:
-        cutoff, keys = datetime.now(UTC) - WINDOW, set()
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for raw in f:
-                    try:
-                        line = json.loads(raw)
-                        if datetime.fromisoformat(line["ts"]) >= cutoff:
-                            keys.add(_key(line))
-                    except (ValueError, TypeError, KeyError):
-                        pass
-        except OSError:
-            pass
-        _recent[path] = keys
-    return _recent[path]
+def _recent_keys(path, *, now=datetime.now):
+    cutoff, keys = now(UTC) - WINDOW, set()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                try:
+                    line = json.loads(raw)
+                    if datetime.fromisoformat(line["ts"]) >= cutoff:
+                        keys.add(_key(line))
+                except (ValueError, TypeError, KeyError):
+                    pass
+    except OSError:
+        pass
+    return keys
 
 
 def one_line(x):
@@ -287,7 +251,7 @@ NOT_FOUND = "Entity not found"
 def call(gql, query, field, **v):
     out = gql(query, **v)[field]
     if not out["success"]:
-        raise RuntimeError(f"{field}: success: false")
+        raise LinearError(f"{field}: success: false")
     return out
 
 
@@ -296,7 +260,7 @@ def client_id(*parts):
 
 
 def not_found(e):
-    return isinstance(e, SystemExit) and NOT_FOUND in str(e)
+    return isinstance(e, LinearError) and NOT_FOUND in str(e)
 
 
 def comment(gql, issue, body, cid=None):
@@ -309,7 +273,7 @@ def comment(gql, issue, body, cid=None):
 def find_comment(gql, cid, issue_id):
     try:
         found = gql(Q_COMMENT, c=cid)["comment"]
-    except SystemExit as e:
+    except LinearError as e:
         if not_found(e):
             return None
         raise
@@ -318,15 +282,8 @@ def find_comment(gql, cid, issue_id):
     if (found.get("issue") or {}).get("id") != issue_id or not (found.get("user") or {}).get(
         "isMe"
     ):
-        raise RuntimeError(f"comment {cid} is not ours")
+        raise LinearError(f"comment {cid} is not ours")
     return found["body"]
-
-
-def reraise_signal(e):
-    # The signal handler raises SystemExit(128 + signum), which must reach the Delegate to stop its session;
-    # linear_gql's SystemExit (a str code) is an API error.
-    if isinstance(e, SystemExit) and isinstance(e.code, int):
-        raise e
 
 
 def subscribe(gql, issue, emails):
@@ -334,8 +291,7 @@ def subscribe(gql, issue, emails):
     for email in emails:
         try:
             call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except (Exception, SystemExit) as e:
-            reraise_signal(e)
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 
@@ -348,7 +304,7 @@ def move(gql, issue, to, frm):
     return None
 
 
-def comment_and_move(gql, issue, body, to, frm, emails=()):
+def comment_and_move(gql, issue, body, *, to, frm, emails=()):
     # move first: a failed or skipped move posts no comment, so a retry never repeats it
     notes = subscribe(gql, issue, emails)
     left = move(gql, issue, to, frm)
@@ -380,7 +336,7 @@ def humans(gql, cfg):
     emails = cfg.human_members
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
-        raise SystemExit(
+        raise LinearError(
             f"linear-orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}"
         )
     return ids
@@ -391,18 +347,11 @@ def role_ids(gql, roles):
     for name, role in roles.items():
         uid = user_id(gql, role.account)
         if not uid:
-            raise SystemExit(
+            raise LinearError(
                 f"linear-orchestrator/config.toml [roles.{name}]: account {role.account!r} not found in Linear"
             )
         out[uid] = name
     return out
-
-
-@dataclass(frozen=True)
-class Team:
-    id: str
-    name: str
-    states: dict
 
 
 Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
@@ -412,14 +361,14 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 def team(gql, cfg):
     nodes = gql(Q_TEAM, t=cfg.team)["teams"]["nodes"]
     if not nodes:
-        raise SystemExit(f"linear-orchestrator/config.toml: team {cfg.team} not found in Linear")
+        raise LinearError(f"linear-orchestrator/config.toml: team {cfg.team} not found in Linear")
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
-    if bad := [f"{k} {cfg.states[k]}" for k in config.STATES if cfg.states[k] not in ids]:
-        raise SystemExit(
+    if bad := [f"{k} {cfg.states[k]}" for k in STATES if cfg.states[k] not in ids]:
+        raise LinearError(
             f"linear-orchestrator/config.toml: [states] not workflow states of team {t['name']!r}: {', '.join(bad)}"
         )
-    return Team(t["id"], t["name"], {k: cfg.states[k] for k in config.STATES})
+    return Team(t["id"], t["name"], {k: cfg.states[k] for k in STATES})
 
 
 Q_TASK_GROUP = (
@@ -432,16 +381,16 @@ def task_group(gql, cfg):
     group = cfg.task_label_group
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
-    except SystemExit as e:
-        raise SystemExit(
-            f"linear-orchestrator/config.toml: task_label_group {group} not found in Linear: {e.code}"
+    except LinearError as e:
+        raise LinearError(
+            f"linear-orchestrator/config.toml: task_label_group {group} not found in Linear: {e}"
         ) from None
     if not label["isGroup"]:
-        raise SystemExit(
+        raise LinearError(
             f"linear-orchestrator/config.toml: task_label_group {group} is not a label group"
         )
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
-        raise SystemExit(
+        raise LinearError(
             f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {', '.join(bad)}"
         )

@@ -1,8 +1,10 @@
-"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the payload JSON on
-stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
-word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH. Payload strs are cut to CUT chars
-unless the word is done. Never prints on stdout and always exits 0 (a runtime may read both). Python 3.9, stdlib only,
-standalone."""
+"""Each tui hook runs `<python> -I tui_hook.py <session dir> <label>` with JSON on stdin. Checks
+session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
+"payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
+session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
+Standalone, stdlib only; never stdout, always exits 0. Failures append a full traceback to hook.log
+when writable and report one stderr line.
+"""
 
 from __future__ import annotations
 
@@ -13,17 +15,33 @@ import os
 import re
 import stat
 import sys
+import traceback
+from contextlib import suppress
 from datetime import datetime
 
-PAYLOAD_MAX = 16 << 20  # bytes of stdin parsed
+
+class HookError(Exception):
+    """One stderr line; the hook stops."""
+
+
+PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
+
 STATE_MAX = 1 << 20  # bytes of session.json read
+
 BLOCK = 1 << 16
+
 CUT = 4096
+
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
 RUNTIME = re.compile(r"[a-z][a-z0-9_]*")
+
 WORDS = ("done", "blocked", "working")
+
 STATE = "session.json"
+
 HOOKS = "hooks.jsonl"
+
 TMUX_HOST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosts/tmux/tmux_host.py"
 )
@@ -49,16 +67,16 @@ SESSION_STATE = {
 }
 
 
-class HookError(Exception):
-    """One stderr line; the hook stops."""
-
-
-def main(argv: list[str], stdin) -> None:
+def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
     if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
         raise HookError("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
     folder, label = argv
     state = read_state(os.path.join(folder, STATE))
+    if "adapter_hook" in state:
+        adapter = load_adapter(state["adapter_hook"])
+        if adapter.on_hook(label, payload, state) is False:
+            return
     word = state["words"].get(label)
     if word != "done":
         payload = cut(payload)
@@ -66,7 +84,7 @@ def main(argv: list[str], stdin) -> None:
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
     if word:
         tmux = check_tmux(state["tmux_path"])
-        tmux_host = load_tmux_host()
+        tmux_host = (load_tmux_host if load_host is None else load_host)()
         try:
             tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
@@ -74,7 +92,9 @@ def main(argv: list[str], stdin) -> None:
 
 
 def read_payload(stream) -> dict:
-    """stdin's JSON object, read to its end (the writer never stalls); {} when over PAYLOAD_MAX bytes or not one."""
+    """stdin's JSON object, read to its end (the writer never stalls); {} when over PAYLOAD_MAX bytes
+    or not one.
+    """
     chunks, size = [], 0
     while True:
         chunk = stream.read(BLOCK)
@@ -97,8 +117,9 @@ def read_payload(stream) -> dict:
 
 
 def read_state(path: str) -> dict:
-    """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing SESSION_STATE; else
-    HookError."""
+    """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
+    SESSION_STATE; else HookError.
+    """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
@@ -123,7 +144,28 @@ def read_state(path: str) -> dict:
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
+    if "adapter_hook" in state and not _abs(state["adapter_hook"]):
+        raise HookError(f"{path}: bad adapter_hook")
+    if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
+        raise HookError(f"{path}: bad adapter_state")
     return state
+
+
+def load_adapter(path: str):
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        raise HookError(f"adapter hook {path}: {error.strerror}") from error
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+        raise HookError(f"adapter hook {path}: not a regular file owned by you or root")
+    spec = importlib.util.spec_from_file_location("_agent_pm_adapter_hook", path)
+    if spec is None or spec.loader is None:
+        raise HookError(f"adapter hook {path}: cannot load Python module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "on_hook", None)):
+        raise HookError(f"adapter hook {path}: missing on_hook callback")
+    return module
 
 
 def check_tmux(path: str) -> str:
@@ -172,8 +214,10 @@ def append(path: str, record: dict) -> None:
 
 
 def load_tmux_host():
-    """By path: nothing joins sys.path or sys.modules."""
+    """Load the host by path, without changing the search path or caching the host module."""
     spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
+    if spec is None or spec.loader is None:
+        raise HookError(f"{TMUX_HOST}: cannot load Python module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -188,6 +232,17 @@ def say(text: str) -> None:
 if __name__ == "__main__":
     try:
         main(sys.argv[1:], sys.stdin.buffer)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
+        if len(sys.argv) > 1 and _abs(sys.argv[1]):
+            with (
+                suppress(OSError),
+                open(
+                    os.path.join(sys.argv[1], "hook.log"),
+                    "a",
+                    encoding="utf-8",
+                    errors="backslashreplace",
+                ) as file,
+            ):
+                file.write(traceback.format_exc())
         say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
     sys.exit(0)

@@ -1,4 +1,6 @@
-"""load(path, base): the class a `module.path:Class` names (PATH), a concrete subclass of base; else ValueError."""
+"""load(path, base): the class a `module.path:Class` names (PATH), a concrete subclass of base; else
+ValueError.
+"""
 
 import importlib
 import inspect

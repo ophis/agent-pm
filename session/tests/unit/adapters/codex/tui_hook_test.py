@@ -31,62 +31,68 @@ class HookTest(Base):
             {"session_id": "invalid"},
             {"hook_event_name": "PermissionRequest"},
         ):
-            with self.subTest(fields=fields):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertFalse(
-                        tui_hook.bind("Stop", self.payload(**fields), str(self.work), self.spec.sid)
-                    )
+            with self.subTest(fields=fields), contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(
+                    tui_hook.bind("Stop", self.payload(**fields), str(self.work), self.spec.sid)
+                )
         self.assertFalse(tui_hook.bind("unknown", self.payload(), str(self.work), self.spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
 
-    def test_run_by_path_isolated_it_loads_its_siblings_and_refuses_bad_arguments(self):
-        result = subprocess.run(
-            [sys.executable, "-I", tui_hook.__file__], input="", capture_output=True, text=True
-        )
-        self.assertEqual(
-            (result.returncode, result.stdout, result.stderr),
-            (0, "", "codex hook: expected WORKDIR SID STORE HOOK_JSON LABEL\n"),
-        )
-
-    def test_payload_drains_oversized_input_and_rejects_non_objects(self):
-        for value in (None, [], "bad"):
-            self.assertEqual(tui_hook.payload(io.BytesIO(json.dumps(value).encode())), {})
-        stream = io.BytesIO(b"x" * (tui_hook.PAYLOAD_MAX + 10))
-        self.assertEqual(tui_hook.payload(stream), {})
-        self.assertEqual(stream.read(), b"")
-        self.assertEqual(
-            tui_hook.payload(io.BytesIO(json.dumps(self.payload()).encode())), self.payload()
-        )
-
-    def test_main_is_silent_and_does_not_publish_invalid_binding(self):
+    def test_callback_binds_and_adds_label_without_another_payload_reader(self):
         self.prepare()
-        stdin = mock.Mock(buffer=io.BytesIO(json.dumps(self.payload(agent_id=CHILD)).encode()))
-        with (
-            mock.patch.object(tui_hook.sys, "stdin", stdin),
-            mock.patch.object(tui_hook, "forward") as forward,
-        ):
-            tui_hook.main(
-                [
-                    str(self.work),
-                    self.spec.sid,
-                    sessions.store_root(),
-                    json.dumps(["/protected/python", "hook.py"]),
-                    "Stop",
-                ]
-            )
-        forward.assert_not_called()
-        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
+        payload = self.payload(last_assistant_message="reply")
+        state = {
+            "workdir": str(self.work),
+            "sid": self.spec.sid,
+            "adapter_state": {"store": sessions.store_root()},
+        }
+        self.assertTrue(tui_hook.on_hook("Stop", payload, state))
+        self.assertEqual(payload["hook_event_name"], "Stop")
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+        self.assertFalse(tui_hook.on_hook("Stop", self.payload(agent_id=CHILD), state))
 
-    def test_forward_passes_seekable_stdin_and_opaque_exact_argv(self):
-        with mock.patch("os.dup2") as dup, mock.patch("os.execv") as execute:
-            tui_hook.forward(
-                ["/protected/python", "-I", "/protected/hook.py", "context"], "Stop", self.payload()
-            )
-        dup.assert_called_once()
-        execute.assert_called_once_with(
-            "/protected/python",
-            ["/protected/python", "-I", "/protected/hook.py", "context", "Stop"],
+    def test_generic_isolated_hook_loads_binding_callback_and_records_once(self):
+        self.prepare()
+        folder = self.root / "hook-session"
+        folder.mkdir()
+        from agent_pm.session.modes import tui_hook as driver_hook
+
+        state = {
+            "runtime": "codex",
+            "sid": self.spec.sid,
+            "workdir": str(self.work),
+            "cwd": str(self.cwd),
+            "project": False,
+            "transcript": "",
+            "resume": "",
+            "events": None,
+            "words": {},
+            "tmux_path": sys.executable,
+            "adapter_hook": tui_hook.__file__,
+            "adapter_state": {"store": sessions.store_root()},
+        }
+        (folder / "session.json").write_text(json.dumps(state))
+        result = subprocess.run(
+            [sys.executable, "-I", driver_hook.__file__, str(folder), "Stop"],
+            input=json.dumps(self.payload(last_assistant_message="reply")),
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        records = [json.loads(line) for line in (folder / "hooks.jsonl").read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+        result = subprocess.run(
+            [sys.executable, "-I", driver_hook.__file__, str(folder), "Stop"],
+            input=json.dumps(self.payload(agent_id=CHILD)),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual(len((folder / "hooks.jsonl").read_text().splitlines()), 1)
 
     def test_missing_malformed_and_fifo_record_fail_without_forwarding(self):
         with contextlib.redirect_stderr(io.StringIO()):

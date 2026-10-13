@@ -1,13 +1,16 @@
-"""TOML config loading and table merging, and the projects' config files: each project's <root>/<name>/config.toml,
-merged in LEVELS order (a higher level's key wins), with LOCAL, this machine's one local file, on top of all.
+"""TOML config loading and table merging, and the projects' config files: each project's
+<root>/<name>/config.toml, merged in LEVELS order (a higher level's key wins), with LOCAL, this
+machine's one local file, on top of all.
 
-Merge rules (merge): tables merge key by key, the higher layer's value wins, any other value (a list too) replaces
-the lower one's whole; a layer cannot drop a key a lower one sets.
+Merge rules (merge): tables merge key by key, the higher layer's value wins, any other value (a list
+too) replaces the lower one's whole; a layer cannot drop a key a lower one sets.
 
-Ownership of a local key: a top-level key in one project's config.toml is that project's. A top-level table in
-several (roles) is resolved by the full dotted key, among the projects with that table: those whose config.toml has
-the key, else the same table, depth and last key (roles.<new role>.account), else a suffix of the key
-(roles.<role>.cwd: cwd), else all of them; a local top-level key no project has is a ValueError."""
+Ownership of a local key: a top-level key in one project's config.toml is that project's. A
+top-level table in several (roles) is resolved by the full dotted key, among the projects with that
+table: those whose config.toml has the key, else the same table, depth and last key (roles.<new
+role>.account), else a suffix of the key (roles.<role>.cwd: cwd), else all of them; a local
+top-level key no project has is a ValueError.
+"""
 
 import os
 import tomllib
@@ -18,6 +21,10 @@ from agent_pm.utils.paths import ROOT, STATE
 LOCAL = f"{STATE}/config.local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
 UNCONFIGURED = ("utils", "manager")  # no own file
+
+
+class ConfigFileError(ValueError):
+    pass
 
 
 def merge(base: dict, over: dict) -> dict:
@@ -35,8 +42,10 @@ def load(path: str) -> dict:
 def read_project(
     name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
-    """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`: `name`'s file and
-    the local keys it owns. `path` stands in for `name`'s config.toml. Missing: `path` or an own file is an OSError."""
+    """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`:
+    `name`'s file and the local keys it owns. `path` stands in for `name`'s config.toml. Missing:
+    `path` or an own file is an OSError.
+    """
     rank = _rank(name)
     own_file = path or os.path.join(root, name, "config.toml")
     if (path or name not in UNCONFIGURED) and (
@@ -54,21 +63,25 @@ def read_project(
         layer = {}
         for project in level:
             if clash := sorted(set(layer) & set(configs[project])):
-                raise ValueError(
+                raise ConfigFileError(
                     f"{project}/config.toml: {clash[0]} is also a same-level project's"
                 )
             layer.update(configs[project])
         out = merge(out, layer)
     found = _load(os.path.expanduser(local))
     if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
-        raise ValueError(f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it")
+        raise ConfigFileError(
+            f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it"
+        )
     if own:
         return merge(configs[name], _owned(found, known, lambda owners: name in owners))
     return merge(out, _owned(found, known, lambda owners: min(map(_rank, owners)) <= rank))
 
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
-    """The dotted `keys` (a `*` segment: each subtable) missing from `cfg` or still "" there: required, unset."""
+    """The dotted `keys` (a `*` segment: each subtable) missing from `cfg` or still "" there:
+    required, unset.
+    """
     return [k for key in keys for k, v in _values(cfg, key.split("."), []) if v in (None, "")]
 
 
@@ -76,7 +89,7 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    raise ValueError(
+    raise ConfigFileError(
         f"project {name!r}: want one of {', '.join(p for level in LEVELS for p in level)}"
     )
 

@@ -1,19 +1,15 @@
-"""parse(table): an already-read [hosts] table as Hosts(default, tables), the [hosts] parser's only home (callers:
-Session.parse_hosts); else ValueError. An implementation is checked only for the module.path:Class form, never imported."""
+"""parse(table): an already-read [hosts] table as Hosts(default, tables), the [hosts] parser's only
+home (caller: Session.parse_hosts); else ValueError. An implementation is checked only for the
+module.path:Class form, never imported.
+"""
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
 
-from agent_pm.utils import registry
+from agent_pm.session.hosts.types import Hosts
+from agent_pm.utils import CLASS_PATH
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
-
-
-@dataclass(frozen=True)
-class Hosts:
-    default: str
-    tables: dict[str, dict]
 
 
 def parse(table) -> Hosts:
@@ -30,7 +26,7 @@ def parse(table) -> Hosts:
         if not NAME.match(key):
             raise ValueError(f"[hosts.{key}]: want a name matching [a-z][a-z0-9_]*")
         implementation = value.get("implementation")
-        if not isinstance(implementation, str) or not registry.PATH.fullmatch(implementation):
+        if not isinstance(implementation, str) or not CLASS_PATH.fullmatch(implementation):
             raise ValueError(f"[hosts.{key}].implementation: want module.path:Class")
         tables[key] = dict(value)
     default = table.get("default")

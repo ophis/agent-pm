@@ -1,9 +1,11 @@
 """The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...].
 
-Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then runs the scenario, a JSON list of
-steps (or {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj} prints obj as JSON, {"raw": text}
-prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n}, {"hook": label, "payload": obj} runs HOOK + [label]
-with obj on stdin, {"read": true} reads a stdin line; then exits 0."""
+Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then runs the scenario,
+a JSON list of steps (or {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj}
+prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n},
+{"hook": label, "payload": obj} runs HOOK + [label] with obj on stdin, {"read": true} reads a stdin
+line; then exits 0.
+"""
 
 import argparse
 import json
@@ -40,6 +42,10 @@ def main() -> int:
     steps = (
         scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
     )
+    return execute(steps, args.hook)
+
+
+def execute(steps, hook):
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
@@ -53,7 +59,7 @@ def main() -> int:
             return step["exit"]
         elif "hook" in step:
             subprocess.run(
-                [*args.hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True
+                [*hook, step["hook"]], input=json.dumps(step.get("payload", {})), text=True
             )
         elif "read" in step:
             sys.stdin.readline()

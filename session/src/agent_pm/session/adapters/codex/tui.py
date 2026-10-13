@@ -6,12 +6,21 @@ import shutil
 import sys
 
 from agent_pm.session.adapters.base import Tui
-from agent_pm.session.engine.types import ConfigError, Launch, LimitHit
-from agent_pm.utils.paths import import_roots
-
-from . import sessions
-from .common import LIMIT_PREFIXES, added_dirs, flags, native_id, passed, refuse, reset_at
-from .hook_schema import HOOKS
+from agent_pm.session.adapters.codex import sessions
+from agent_pm.session.adapters.codex.common import (
+    LIMIT_PREFIXES,
+    CodexCommon,
+    added_dirs,
+    flags,
+    native_id,
+    passed,
+    refuse,
+    reset_at,
+)
+from agent_pm.session.adapters.codex.hook_schema import HOOKS
+from agent_pm.session.adapters.codex.sessions import split_flags
+from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
+from agent_pm.utils import import_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,15 +36,16 @@ class CodexTui(Tui):
         "Sign in with ChatGPT to use Codex",
     )
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, common: CodexCommon):
+        self.common = common
         self.state = None
         self.last_reply = ""
         self.native = ""
+        self.store = ""
 
-    def launch(self, prompt, spec, resume, hook):
-        common = self.adapter.common
-        self.state = common.prepare(spec, resume, persist=False)
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+        common = self.common
+        self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
         saved_flags = tuple(snapshot["flags"])
         refuse(saved_flags)
@@ -44,7 +54,7 @@ class CodexTui(Tui):
         unset = common.UNSET
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
-        store = sessions.store_root()
+        store = self.store = sessions.store_root()
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
             raise ConfigError("codex not found on PATH")
@@ -69,34 +79,22 @@ class CodexTui(Tui):
             raise ConfigError(str(exc)) from exc
         if not resume:
             self.state = common.save(self.state)
-        commands = {
-            event: shlex.join(
-                (
-                    os.path.realpath(sys.executable),
-                    "-I",
-                    os.path.join(DIRECTORY, "tui_hook.py"),
-                    self.state.workdir,
-                    self.state.sid,
-                    store,
-                    json.dumps(list(hook), ensure_ascii=False),
-                    event,
-                )
-            )
-            for event in self.hooks
-        }
+        commands = {event: shlex.join((*hook, event)) for event in self.hooks}
         hook_flags = [
             word
             for event, command in commands.items()
             for word in (
                 "-c",
-                f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
-                f"timeout={3 if event == 'Interrupt' else 10}}}]}}]",
+                (
+                    f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
+                    f"timeout={3 if event == 'Interrupt' else 10}}}]}}]"
+                ),
             )
         ]
-        _, literal = sessions.split_flags(saved_flags)
+        _, literal = split_flags(saved_flags)
         argv = [
             exe,
-            *self.adapter.select_session(self.native, resume),
+            *self.common.selector(self.native, resume=resume),
             "--no-daemon",
             "-C",
             snapshot["cwd"],
@@ -135,6 +133,12 @@ class CodexTui(Tui):
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
+
+    def hook_state(self) -> dict:
+        return {
+            "adapter_hook": os.path.join(DIRECTORY, "tui_hook.py"),
+            "adapter_state": {"store": self.store},
+        }
 
     def session_id(self, payload):
         native, cwd = payload.get("session_id"), payload.get("cwd")
@@ -192,7 +196,7 @@ class CodexTui(Tui):
                 return LimitHit(
                     reset_at(
                         reset.group() if reset else message,
-                        self.adapter.common.config.get("env", {}),
+                        self.common.config.get("env", {}),
                     )
                 )
         return None

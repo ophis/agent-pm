@@ -1,12 +1,14 @@
-"""The session layer's data types, used by two or more of its modules. Access.dirs are granted write, Access.reads
-only read; Spec.flags/env are caller-supplied for every Mode; times are epoch seconds."""
+"""The session layer's data types, used by two or more of its modules. Access.dirs are granted
+write, Access.reads only read; Spec.flags/env are caller-supplied for every Mode; times are epoch
+seconds.
+"""
 
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import printable_abs, sid_error
 
 __all__ = [
     "Access",
@@ -33,33 +35,28 @@ __all__ = [
     "Window",
 ]
 
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
-TAG = re.compile(r"[A-Za-z0-9_-]+")
-
 
 class ConfigError(Exception):
     pass
 
 
-def _strings(value) -> bool:
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+TAG = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _string_tuple(value) -> bool:
     return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
 
 
-def _clean(value) -> bool:
+def _clean_string(value) -> bool:
     return isinstance(value, str) and "\0" not in value
 
 
-def env_ok(env) -> bool:
+def _env_ok(env) -> bool:
     return isinstance(env, Mapping) and all(
-        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean(v)
+        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
         for k, v in env.items()
     )
-
-
-def sid_error(sid) -> str | None:
-    if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
-        return None
-    return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -73,9 +70,9 @@ class Access:
 
     def __post_init__(self):
         for name in ("dirs", "commands", "reads"):
-            if not _strings(getattr(self, name)):
+            if not _string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
-        if not env_ok(self.env):
+        if not _env_ok(self.env):
             raise ConfigError(
                 "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
             )
@@ -111,9 +108,9 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
-        if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
+        if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
             raise ConfigError("flags must be a tuple of strings without NUL")
-        if not env_ok(self.env):
+        if not _env_ok(self.env):
             raise ConfigError("env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if self.name is not None and not isinstance(self.name, str):
@@ -146,12 +143,13 @@ class Launch:
             raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
-            ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
+            ("argv", isinstance(self.argv, tuple) and all(map(_clean_string, self.argv))),
             (
                 "env",
-                isinstance(env, Mapping) and all(_clean(k) and _clean(v) for k, v in env.items()),
+                isinstance(env, Mapping)
+                and all(_clean_string(k) and _clean_string(v) for k, v in env.items()),
             ),
-            ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
+            ("unset", isinstance(self.unset, tuple) and all(map(_clean_string, self.unset))),
         ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")
@@ -251,7 +249,9 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None none."""
+    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None
+    none.
+    """
 
     name: str
     sid: str | None

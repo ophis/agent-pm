@@ -1,5 +1,6 @@
 """Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
 
+import contextlib
 import json
 import os
 import re
@@ -17,7 +18,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import printable_abs
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
@@ -45,7 +46,11 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
         except (ValueError, RecursionError):
             settings = None
         own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
-        if not isinstance(own, dict) or not all(isinstance(own.get(e, []), list) for e in hooks):
+        if (
+            not isinstance(settings, dict)
+            or not isinstance(own, dict)
+            or not all(isinstance(own.get(e, []), list) for e in hooks)
+        ):
             raise ConfigError(
                 f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
             )
@@ -175,7 +180,7 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return common.resume_command(cwd, env, ("claude", *self.selector(sid, True), *added))
+        return common.resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
 
     @staticmethod
     def uuid(sid) -> str:
@@ -186,15 +191,19 @@ class ClaudeCommon:
     def launch(
         self,
         spec: Spec,
-        resume: bool,
         settings: Mapping | None,
+        *,
+        resume: bool = False,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments; `env` under the
-        config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in spec.flags would drop."""
+        """Build a Claude command with configured settings, access grants and output arguments; env
+        under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
+        spec.flags would drop.
+        """
+
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -206,10 +215,13 @@ class ClaudeCommon:
             *self.allow,
         )
         strict = "--strict-mcp-config" in _before_end(spec.flags)
+        selection = self.selector(sid, resume=resume)
+        if not isinstance(sid, str):
+            raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
         argv = (
             "claude",
             *head,
-            *self.selector(sid, resume),
+            *selection,
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *(("--name", spec.name) if spec.name is not None else ()),
@@ -284,8 +296,6 @@ class ClaudeCommon:
             paths += (os.path.join(top, name) for name in files)
         times = []
         for each in paths:
-            try:
+            with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-            except OSError:
-                pass
         return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))

@@ -1,6 +1,8 @@
-"""One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit ends the run, the
-deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy (POLICIES) starts the session, sends
-the fix and answers each turn end and IdleTimeout: go on (None), END or GiveUp."""
+"""One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit
+ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy
+(POLICIES) starts the session, sends the fix and answers each turn end and IdleTimeout: go on
+(None), END or GiveUp.
+"""
 
 import os
 import sys
@@ -21,12 +23,15 @@ from agent_pm.delegate.engine.types import (
     Progress,
     Result,
     Spec,
+    Stopped,
 )
-from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
+from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
+from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
+    Driver,
     DriverError,
     Exited,
     Handle,
@@ -35,13 +40,10 @@ from agent_pm.session import (
     Reply,
     Stderr,
     TurnEnd,
-    attach_command,
     holds,
     note,
-    start,
 )
-from agent_pm.utils.files import save
-from agent_pm.utils.text import printable
+from agent_pm.utils import printable, save
 
 IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
@@ -67,8 +69,8 @@ class Headless:
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
         s = p.spec
-        return start(
-            s.runtime,
+        return p.driver.start(
+            p.runtime,
             s.mode,
             p.prompt,
             replace(p.session, sid=s.sid, name=name),
@@ -79,7 +81,14 @@ class Headless:
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
-        return start(s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT)
+        return p.driver.start(
+            p.runtime,
+            s.mode,
+            text,
+            p.session,
+            resume=s.sid,
+            idle_timeout=IDLE_TIMEOUT,
+        )
 
     def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
         return None
@@ -92,8 +101,10 @@ class Headless:
 
 
 class Tui(Headless):
-    """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a progress mark resets
-    that count; a turn end with work pending is ignored. FR-24: an IdleTimeout gives up. The session is left open."""
+    """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a
+    progress mark resets that count; a turn end with work pending is ignored. FR-24: an IdleTimeout
+    gives up. The session is left open.
+    """
 
     def __init__(self, note: Callable[..., None]):
         super().__init__(note)
@@ -101,7 +112,10 @@ class Tui(Headless):
 
     def start(self, p: Plan) -> Handle:
         handle = super().start(p, p.spec.name, p.spec.events)
-        say(f"delegate: tui session {handle.name}: {attach_command(handle.name)}")
+        name = handle.name
+        if name is None:
+            raise DriverError("tui session has no name")
+        say(f"delegate: tui session {name}: {p.driver.attach_command(name)}")
         return handle
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
@@ -140,11 +154,18 @@ def say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
-def run(run: RunConfig, spec: Spec, *, on_event: Callable[[Event], None] | None = None) -> Result:
-    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
-    the session and propagates."""
-    p = plan(run, spec)
-    attempts = _Attempts(p, on_event or (lambda event: None))
+def run(
+    run: RunConfig,
+    spec: Spec,
+    *,
+    on_event: Callable[[Event], None] | None = None,
+    driver: Driver,
+) -> Result:
+    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
+    its exception stops the session and propagates.
+    """
+    p = plan(run, spec, driver=driver)
+    attempts = _Attempts(p, on_event or (lambda _event: None))
     try:
         result = attempts.result()
     except BaseException as e:
@@ -152,7 +173,7 @@ def run(run: RunConfig, spec: Spec, *, on_event: Callable[[Event], None] | None 
             text = " ".join(str(e).split())
             attempts.close(
                 {"error": f"stopped: {type(e).__name__}" + (f": {text}" if text else "")},
-                e.code if isinstance(e, SystemExit) and isinstance(e.code, int) else 1,
+                e.code if isinstance(e, (Stopped, SystemExit)) and isinstance(e.code, int) else 1,
             )
         raise
     closing = {"error": result.error}
@@ -166,6 +187,8 @@ def run(run: RunConfig, spec: Spec, *, on_event: Callable[[Event], None] | None 
 
 
 def _resets(at: float | None) -> str:
+    if at is None:
+        return "reset time unknown"
     try:
         return f"resets at {datetime.fromtimestamp(at).astimezone().isoformat(timespec='seconds')}"
     except (TypeError, ValueError, OverflowError, OSError):
@@ -207,7 +230,7 @@ class _Attempts:
             if stale:
                 self.stop(handle)
                 return Result(1, None, stale)
-            self.on_event(Begun(p.spec.sid))
+            self.on_event(Begun(p.sid))
             fixed = False
             while True:
                 rc, last, limit = self.attempt(handle)
@@ -244,7 +267,9 @@ class _Attempts:
         return True
 
     def drop_stale_out(self) -> str:
-        """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
+        """Removes a new run's earlier `out`, only once the Driver took the run; returns why it
+        could not, else "".
+        """
         s = self.plan.spec
         if (
             s.out and not s.resume and not os.path.isdir(s.out)
@@ -257,15 +282,17 @@ class _Attempts:
 
     def attempt(self, handle: Handle) -> tuple[int, str | None, Limit | None]:
         """rc 0 when the policy ended it, the session running on."""
-        rc = last = limit = replied = None
+        rc: int | None = None
+        last: str | None = None
+        limit: Limit | None = None
+        replied: str | None = None
         for event in handle.events():
             answer = None
             if isinstance(event, Reply):
                 last = replied = self.reply(event.text)
             elif isinstance(event, TurnEnd):
-                if (
-                    event.reply and event.reply != replied
-                ):  # a headless turn's Reply comes again at its end
+                if event.reply and event.reply != replied:
+                    # A headless turn repeats its Reply at turn end.
                     last = self.reply(event.reply)
                 replied = None
                 if not limit:
@@ -285,8 +312,11 @@ class _Attempts:
                 rc = event.returncode
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
+                name = handle.name
+                if name is None:
+                    raise DriverError("tui session has no name")
                 say(
-                    f"delegate: {answer.reason}; session {handle.name} left open: {attach_command(handle.name)}"
+                    f"delegate: {answer.reason}; session {name} left open: {self.plan.driver.attach_command(name)}"
                 )
                 return 0, None, None
             if answer == END:

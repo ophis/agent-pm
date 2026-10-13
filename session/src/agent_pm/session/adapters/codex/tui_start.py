@@ -7,7 +7,6 @@ import json
 import os
 import re
 import signal
-import stat
 import sys
 import time
 
@@ -15,6 +14,7 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
 def _sibling(name):
+    # pylint: disable=duplicate-code  # standalone stdlib-only scripts cannot share code
     key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
     if key in sys.modules:
         found = getattr(sys.modules[key], "__file__", None)
@@ -22,13 +22,16 @@ def _sibling(name):
             raise ImportError(f"{key} is {found}, not {path}")
         return sys.modules[key]
     spec = importlib.util.spec_from_file_location(key, path)
-    # registered before it runs: dataclasses with postponed annotations look up their module
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{path}: cannot load Python module")
+    # Postponed dataclass annotations resolve through their registered module.
     module = sys.modules[key] = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
     except BaseException:
         del sys.modules[key]
         raise
+    # pylint: enable=duplicate-code
     return module
 
 
@@ -36,11 +39,17 @@ sessions = _sibling("sessions")
 app_server = _sibling("app_server")
 HOOKS = _sibling("hook_schema").HOOKS
 
+
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
+
 LOCK_WAIT = 30
+
 ANSWER_WAIT = 20
+
 RETRY = 1
+
 POLL = 0.1
+
 ANSWER_MAX = 64 << 20
 
 
@@ -48,7 +57,7 @@ class StartError(Exception):
     pass
 
 
-class _Terminated(BaseException):
+class Stopped(BaseException):
     def __init__(self, signum):
         self.signum = signum
 
@@ -73,7 +82,7 @@ class _Termination:
 
     def check(self):
         if self.signum:
-            raise _Terminated(self.signum)
+            raise Stopped(self.signum)
 
     def before_exec(self):
         for signum in self.previous:
@@ -86,11 +95,13 @@ def hook_trust(
     args: list[str],
     cwd: str,
     env: dict[str, str],
-    commands: dict[str, str],
     *,
+    commands: dict[str, str],
     root=None,
     termination=None,
+    listing=None,
 ) -> str:
+    listing = hooks_list if listing is None else listing
     root = sessions.store_directory(create=False, root=root)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
@@ -103,33 +114,16 @@ def hook_trust(
         raise StartError(f"codex hooks/list: {lock}: {e.strerror}") from e
     try:
         info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o600
-        ):
+        if not sessions.private_file(info):
             raise StartError("codex hooks/list: unsafe startup lock")
-        deadline = time.monotonic() + LOCK_WAIT
-        while True:
-            if termination is not None:
-                termination.check()
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() > deadline:
-                    raise StartError(
-                        f"codex hooks/list: another Codex worker's start held {lock} for "
-                        f"{LOCK_WAIT} s"
-                    ) from None
-                time.sleep(POLL)
+        _acquire_lock(fd, lock, termination)
         try:
-            result = hooks_list(exe, args, cwd, env, termination=termination)
+            result = listing(exe, args, cwd, env, termination=termination)
         except app_server.Exited:
             time.sleep(RETRY)
             if termination is not None:
                 termination.check()
-            result = hooks_list(exe, args, cwd, env, termination=termination)
+            result = listing(exe, args, cwd, env, termination=termination)
     except app_server.Exited as e:
         raise StartError(f"codex hooks/list: app-server exited {e} before answering") from None
     finally:
@@ -155,31 +149,16 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
 
 
 def trusted(result, cwd: str, commands: dict[str, str]) -> str:
-    data = result.get("data") if isinstance(result, dict) else None
-    data = data if isinstance(data, list) else []
-    if len(data) != 1:
-        raise StartError(f"codex hooks/list: want one answer for {cwd}, got {len(data)}")
-    entry = data[0] if isinstance(data[0], dict) else {}
-    if entry.get("errors"):
-        raise StartError(
-            f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}"
-        )
-    hooks = entry.get("hooks")
-    if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
-        raise StartError(f"codex hooks/list: malformed hooks for {cwd}")
-    if not hooks:
-        raise StartError(
-            "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
-        )
+    hooks = _listed_hooks(result, cwd)
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
     trusted = []
     for event, name, _ in HOOKS:
         command = commands[event]
         rows = [h for h in ours if h.get("eventName") == name]
         if len(rows) != 1:
+            count = len(rows)
             raise StartError(
-                f"codex hooks/list: {len(rows) or 'no'} session-flags {name} hook"
-                f"{'s' if len(rows) > 1 else ''}"
+                f"codex hooks/list: {count or 'no'} session-flags {name} hook{('s' if count > 1 else '')}"
             )
         h = rows[0]
         why = (
@@ -206,9 +185,10 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
             and h.get("isManaged") is not True
             and h.get("trustStatus") in ("untrusted", "modified")
         ):
+            key = h.get("key")
+            status = h["trustStatus"]
             raise StartError(
-                f"codex hooks/list: your hook {h.get('key')} is {h['trustStatus']}: review it in your "
-                "own Codex session (/hooks) first"
+                f"codex hooks/list: your hook {key} is {status}: review it in your own Codex session (/hooks) first"
             )
     return (
         "hooks.state={"
@@ -221,12 +201,89 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
     )
 
 
-def main(argv):
+def main(argv, *, trust=hook_trust):
     with _Termination() as termination:
-        return _start(argv, termination)
+        return _start(argv, termination, trust)
 
 
-def _start(argv, termination):
+def _start(argv, termination, trust):
+    data = _launch_data(argv)
+    commands = data["commands"]
+    sessions.absolute_path(data["store"], "store")
+    state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
+    if state is None:
+        raise StartError("Codex tui launch: missing recovery state")
+    env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
+    sessions.protect(
+        state,
+        [
+            sys.prefix,
+            sys.base_prefix,
+            sys.executable,
+            data["argv"][0],
+            data["store"],
+            *(word for word in data["hook"] if os.path.isabs(word)),
+            *data["protect"],
+        ],
+        env,
+        data["add_dirs"],
+    )
+    cwd = state.snapshot["cwd"]
+    termination.check()
+    trusted_state = trust(
+        exe=data["argv"][0],
+        args=data["hook_flags"],
+        cwd=cwd,
+        env=env,
+        root=data["store"],
+        termination=termination,
+        commands=commands,
+    )
+    command = data["argv"].copy()
+    index = command.index("--") if "--" in command else len(command)
+    command[index:index] = ["-c", trusted_state]
+    os.chdir(cwd)
+    termination.before_exec()
+    os.execve(command[0], command, env)
+
+
+def _acquire_lock(fd, lock, termination):
+    deadline = time.monotonic() + LOCK_WAIT
+    while True:
+        if termination is not None:
+            termination.check()
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise StartError(
+                    f"codex hooks/list: another Codex worker's start held {lock} for {LOCK_WAIT} s"
+                ) from None
+            time.sleep(POLL)
+
+
+def _listed_hooks(result, cwd):
+    data = result.get("data") if isinstance(result, dict) else None
+    data = data if isinstance(data, list) else []
+    if len(data) != 1:
+        raise StartError(f"codex hooks/list: want one answer for {cwd}, got {len(data)}")
+    entry = data[0] if isinstance(data[0], dict) else {}
+    if entry.get("errors"):
+        raise StartError(
+            f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}"
+        )
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
+        raise StartError(f"codex hooks/list: malformed hooks for {cwd}")
+    if not hooks:
+        raise StartError(
+            "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
+        )
+    return hooks
+
+
+def _launch_data(argv):
     if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
         raise StartError("Codex tui launch: expected bounded launch data")
     try:
@@ -267,48 +324,13 @@ def _start(argv, termination):
             for path in data[key]
         ):
             raise StartError(f"Codex tui launch: invalid {key} paths")
-    sessions.absolute_path(data["store"], "store")
-    state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
-    if state is None:
-        raise StartError("Codex tui launch: missing recovery state")
-    env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
-    sessions.protect(
-        state,
-        [
-            sys.prefix,
-            sys.base_prefix,
-            sys.executable,
-            data["argv"][0],
-            data["store"],
-            *(word for word in data["hook"] if os.path.isabs(word)),
-            *data["protect"],
-        ],
-        env,
-        data["add_dirs"],
-    )
-    cwd = state.snapshot["cwd"]
-    termination.check()
-    trusted_state = hook_trust(
-        data["argv"][0],
-        data["hook_flags"],
-        cwd,
-        env,
-        commands,
-        root=data["store"],
-        termination=termination,
-    )
-    command = data["argv"].copy()
-    index = command.index("--") if "--" in command else len(command)
-    command[index:index] = ["-c", trusted_state]
-    os.chdir(cwd)
-    termination.before_exec()
-    os.execve(command[0], command, env)
+    return data
 
 
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
-    except _Terminated as exc:
+    except Stopped as exc:
         sys.exit(128 + exc.signum)
     except (StartError, sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex tui: {exc}", file=sys.stderr)

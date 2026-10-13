@@ -1,10 +1,12 @@
-"""SessionStatusLog, an events file's writer and the status log line's only home (tests/guards.py status_log_format):
-one line per event, `<HH:MM:SS> <name> <word>[ <field>…]`. Each write reopens the file by path, so a rotation never
-loses a line; a Host's hook command builds its clock from CLOCK."""
+"""SessionStatusLog, an events file's writer and the status log line's only home (tests/guards.py
+status_log_format): one line per event, `<HH:MM:SS> <name> <word>[ <field>…]`. Each write reopens
+the file by path, so a rotation never loses a line; a Host's hook command builds its clock from
+CLOCK.
+"""
 
 import time
 
-from agent_pm.utils.files import append_line
+from agent_pm.utils import append_line
 
 
 def _text(label: str, value, *, one_word: bool = False) -> str:

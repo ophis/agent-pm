@@ -50,7 +50,21 @@ def rule(path):
 
 def tracked(root):
     listed = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--", "*.py"], capture_output=True, text=True
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-C",
+            str(root),
+            "ls-files",
+            "-z",
+            "--",
+            "*.py",
+        ],
+        capture_output=True,
+        text=True,
     )
     if listed.returncode:
         raise ValueError(f"git ls-files failed: {listed.stderr.strip()}")

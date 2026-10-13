@@ -1,7 +1,10 @@
-"""The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two daemon threads pump
-its events and Stderr lines into one queue, and the session ends at both pipes' EOF. stop() kills the whole group, so a
-grandchild holding the pipes dies too; every wait is bounded. probe() runs a short command for its stdout."""
+"""The Driver's headless Mode: a Headless's command on pipes, leading its own process group; two
+daemon threads pump its events and Stderr lines into one queue, and the session ends at both pipes'
+EOF. stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is
+bounded. probe() runs a short command for its stdout.
+"""
 
+import contextlib
 import os
 import queue
 import signal
@@ -15,20 +18,17 @@ from agent_pm.session.engine.types import DriverError, Event, Stderr
 STOP_WAIT = 5
 
 
-def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
-    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so signal nothing.
+def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STOP_WAIT) -> None:
+    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so
+    # signal nothing.
     if not (ended and proc.returncode is not None):
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
-    try:
-        proc.wait(timeout=STOP_WAIT)
-    except subprocess.TimeoutExpired:
-        pass
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=wait)
 
 
 def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
@@ -52,11 +52,13 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
         kill_group(proc)
         return None
     finally:
+        assert proc.stdout is not None
         proc.stdout.close()
 
 
 class HeadlessMode:
-    def __init__(self, run: Headless):
+    def __init__(self, run: Headless, *, stop_wait: float = STOP_WAIT):
+        self.stop_wait = stop_wait
         self.run, self.proc = run, None
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], popen=None) -> None:
@@ -88,7 +90,7 @@ class HeadlessMode:
             with pipe:
                 for event in events:
                     self.items.put(event)
-        except BaseException as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             self.items.put(e)
         else:
             eof.set()
@@ -107,6 +109,8 @@ class HeadlessMode:
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
+        if self.proc is None:
+            raise DriverError("headless process has not started")
         try:
             return self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -123,4 +127,4 @@ class HeadlessMode:
 
     def stop(self) -> None:
         if self.proc is not None:
-            kill_group(self.proc, all(eof.is_set() for eof in self.eof))
+            kill_group(self.proc, ended=all(eof.is_set() for eof in self.eof), wait=self.stop_wait)

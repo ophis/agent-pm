@@ -1,11 +1,11 @@
-"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`.
-Its Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into a Launch
-whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and the runtime's output into
-Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs the session on a Driver thread, stopped at
-its next yield, changing no global state (cwd, environ, signals): it applies spec.access.cwd, not its env.
-Starts no process."""
+"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`. Its
+Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
+a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
+the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
+the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
+signals): it applies spec.access.cwd, not its env. Starts no process.
+"""
 
-import json
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 
@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
+from agent_pm.utils import json_records
 
 TURN_END = "turn_end"
 BLOCKED = "blocked"
@@ -47,11 +48,13 @@ class Adapter(ABC):
 
     def __init__(self, config: Mapping):
         if extra := sorted(set(config) - self.keys):
-            raise ConfigError(f"unknown key {extra[0]!r} in {type(self).__name__}'s config")
+            key = extra[0]
+            adapter = type(self).__name__
+            raise ConfigError(f"unknown key {key!r} in {adapter}'s config")
         self.config = dict(config)
 
-    def select_session(self, native: str, resume: bool) -> tuple[str, ...]:
-        return select(native, resume, self.selection, uuid=self.selection_uuid)
+    def select_session(self, native: str, *, resume: bool) -> tuple[str, ...]:
+        return select(native, self.selection, uuid=self.selection_uuid, resume=resume)
 
     @abstractmethod
     def headless(self) -> "Headless | None":
@@ -77,7 +80,7 @@ class Adapter(ABC):
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
-    def writable_dirs(self, spec: Spec, resume: bool) -> tuple[str, ...]:
+    def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
         """Own write dirs (resume: spec.sid's)."""
         return ()
 
@@ -87,20 +90,15 @@ class Headless(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, resume: bool) -> Launch:
+    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
         """The command; resume continues spec.sid."""
 
     @abstractmethod
     def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
 
     def events(self, lines: Iterable[str]) -> Iterator[Event | Stderr]:
-        for line in lines:
-            try:
-                record = json.loads(line)
-            except (ValueError, RecursionError):
-                continue
-            if isinstance(record, dict):
-                yield from self.parse(record)
+        for record in json_records(lines):
+            yield from self.parse(record)
 
 
 class Tui(ABC):
@@ -111,8 +109,15 @@ class Tui(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
-        """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its payload on stdin."""
+    def launch(
+        self, prompt: str, spec: Spec, hook: tuple[str, ...], *, resume: bool = False
+    ) -> Launch:
+        """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
+        payload on stdin.
+        """
+
+    def hook_state(self) -> dict:
+        return {}
 
     @abstractmethod
     def reply(self, payload: dict) -> str: ...
@@ -157,8 +162,8 @@ class InProcess(ABC):
         self.adapter = adapter
 
     @abstractmethod
-    def run(self, prompt: str, spec: Spec, resume: bool) -> Iterable[Event | Stderr]:
+    def run(self, prompt: str, spec: Spec, *, resume: bool = False) -> Iterable[Event | Stderr]:
         """The session's events; resume continues spec.sid."""
 
-    def check(self, prompt: str, spec: Spec, resume: bool) -> None:
-        pass
+    def check(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
+        return None

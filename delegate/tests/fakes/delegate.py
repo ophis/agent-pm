@@ -1,6 +1,7 @@
-"""FakeDelegate, a Delegate with one session that runs nothing: its state is <workdir>/delegate.json (0600), so a view
-from attach and the Delegate that wrote it agree. end(workdir) and finish(workdir) stand for its sessions ending,
-without and with an outcome."""
+"""FakeDelegate, a Delegate with one session that runs nothing: its state is <workdir>/delegate.json
+(0600), so a view from attach and the Delegate that wrote it agree. end(workdir) and finish(workdir)
+stand for its sessions ending, without and with an outcome.
+"""
 
 import json
 import os
@@ -18,8 +19,7 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.session import NotDisplayable, SessionStatus
-from agent_pm.utils import files
-from agent_pm.utils.record import Record, Status
+from agent_pm.utils import Record, Status, save
 
 FILE = "delegate.json"
 
@@ -33,7 +33,7 @@ def _load(workdir) -> dict:
 
 
 def _save(workdir: str, state: dict) -> dict:
-    files.save(os.path.join(workdir, FILE), json.dumps(state))
+    save(os.path.join(workdir, FILE), json.dumps(state))
     return state
 
 
@@ -137,7 +137,7 @@ class FakeDelegate(Delegate):
         return self._record(_update(self.workdir, outer=dict(outer or {}), alive=True, starts=1))
 
     def run(self, on_event=None):
-        emit = on_event or (lambda event: None)
+        emit = on_event or (lambda _event: None)
         result = Result(0, self.outcome_result)
         emit(Begun(_load(self.workdir)["sid"]))
         emit(Progress("start", self.input))

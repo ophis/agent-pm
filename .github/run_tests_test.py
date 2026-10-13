@@ -1,8 +1,11 @@
-""".github/run_tests.py: annotations, the step summary and crash detection, in-process and as CI runs it."""
+""".github/run_tests.py: annotations, the step summary and crash detection, in-process and as CI
+runs it.
+"""
 
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -32,7 +35,8 @@ class Cases:
             self.fail("a:b, c% |")
 
 
-# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit 134 instead.
+# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit
+# 134 instead.
 SCRIPT = """import faulthandler, os, sys, unittest
 sys.path.insert(0, {github!r})
 import run_tests
@@ -97,6 +101,15 @@ class Run(unittest.TestCase):
         self.assertFalse(self.summary.exists())
         self.assertEqual(self.state.read_text(), f"start {__name__}.T.test_pass\npassed\n")
 
+    def test_durations_are_recorded_outside_the_checkout(self):
+        timings = self.tmp / "durations.jsonl"
+        with mock.patch.dict(os.environ, {"RUN_TESTS_DURATIONS": str(timings)}):
+            self.run_tests("test_pass")
+
+        row = json.loads(timings.read_text())
+        self.assertEqual(row["test"], f"{__name__}.T.test_pass")
+        self.assertGreaterEqual(row["seconds"], 0)
+
     def test_annotation_text_is_escaped(self):
         self.assertEqual(runner.escape("a%\r\n:,"), "a%25%0D%0A:,")
         self.assertEqual(runner.escape("a%\r\n:,", prop=True), "a%25%0D%0A%3A%2C")
@@ -148,7 +161,8 @@ class Supervise(unittest.TestCase):
         (tmp / "pkg").mkdir()
         (tmp / "pkg" / "__init__.py").write_text("")
         (tmp / "pkg" / "x_test.py").write_text(
-            "import unittest\n\n\nclass X(unittest.TestCase):\n    def test_x(self):\n        self.fail('no')\n"
+            "import unittest\n\n\nclass X(unittest.TestCase):\n"
+            "    def test_x(self):\n        self.fail('no')\n"
         )
         env = {
             k: v
@@ -164,3 +178,19 @@ class Supervise(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout, "::error title=pkg.x_test.X.test_x::AssertionError: no\n")
+
+
+class Discovery(unittest.TestCase):
+    def test_top_level_preserves_project_packages_and_normalized_tests(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        regular = root / "session/tests/unit"
+        normalized = root / "linear-orchestrator/tests/orchestrator_tests/unit"
+        for path in (regular, normalized):
+            path.mkdir(parents=True)
+            (path / "__init__.py").touch()
+        (normalized.parent / "__init__.py").touch()
+        self.assertEqual(runner.discovery_top(root, regular), root.resolve())
+        self.assertEqual(runner.discovery_top(root, normalized), normalized.parent.parent.resolve())
+        self.assertEqual(
+            runner.discovery_top(root, (root / ".github").resolve()), (root / ".github").resolve()
+        )

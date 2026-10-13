@@ -1,15 +1,15 @@
-"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts' sibling loading."""
+"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts'
+sibling loading.
+"""
 
-import ast
+import contextlib
 import copy
 import dataclasses
 import json
 import os
 import pathlib
-import runpy
 import subprocess
 import sys
-import types
 from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
@@ -22,7 +22,6 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 SCRIPTS = ("tui_hook.py", "tui_start.py")
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
 SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
-ROOTS = ("agent_pm", "session", "delegate", "manager", "adapters", "utils")
 LOADED = """import json, runpy, sys
 before = list(sys.path)
 runpy.run_path(sys.argv[1])
@@ -41,23 +40,33 @@ class SiblingTest(Case):
                     text=True,
                     check=True,
                 )
-                self.assertEqual(json.loads(result.stdout), [SIBLINGS, True])
+                self.assertEqual(json.loads(result.stdout), [sorted(SIBLINGS), True])
 
-    def test_a_private_name_holding_another_file_is_refused(self):
-        foreign = types.ModuleType(SIBLINGS[1])
-        foreign.__file__ = os.path.join(self.home, "sessions.py")
+    def test_registered_private_names_must_point_to_the_same_file(self):
+        code = """import runpy, sys, types
+name = "_agent_pm_codex_sessions"
+foreign = types.ModuleType(name)
+foreign.__file__ = "/foreign/sessions.py"
+sys.modules[name] = foreign
+try:
+    runpy.run_path(sys.argv[1])
+except ImportError as error:
+    print(error)
+"""
         for name in SCRIPTS:
-            with (
-                self.subTest(name=name),
-                mock.patch.dict(sys.modules, {SIBLINGS[1]: foreign}),
-                self.assertRaisesRegex(ImportError, SIBLINGS[1]),
-            ):
-                runpy.run_path(str(DIRECTORY / name))
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", code, str(DIRECTORY / name)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertIn("not " + str(DIRECTORY / "sessions.py"), result.stdout)
 
-    def test_both_scripts_share_the_registered_siblings(self):
+    def test_scripts_reuse_the_same_registered_dependencies(self):
+        for script in (tui_start, tui_hook):
+            self.assertEqual(script.sessions.__file__, str(DIRECTORY / "sessions.py"))
         self.assertIs(tui_start.sessions, tui_hook.sessions)
-        self.assertIs(sys.modules[SIBLINGS[1]], tui_start.sessions)
-        self.assertEqual(tui_start.sessions.__file__, str(DIRECTORY / "sessions.py"))
 
     def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(
@@ -139,8 +148,16 @@ class StartTest(Base):
         with self.assertRaisesRegex(tui_start.StartError, "review"):
             tui_start.trusted(result, str(self.cwd), commands)
 
-    def test_standalone_dependencies_use_python39_syntax_and_stdlib(self):
-        directory = pathlib.Path(tui_start.__file__).parent
+    def test_standalone_dependencies_use_stdlib(self):
+        script = """import json, runpy, sys
+imports = set()
+def record(event, args):
+    if event == "import":
+        imports.add(args[0].partition(".")[0])
+sys.addaudithook(record)
+runpy.run_path(sys.argv[1])
+print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names)))
+"""
         for name in (
             "sessions.py",
             "tui_start.py",
@@ -149,31 +166,32 @@ class StartTest(Base):
             "app_server.py",
         ):
             with self.subTest(name=name):
-                tree = ast.parse((directory / name).read_text(), feature_version=(3, 9))
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ImportFrom):
-                        self.assertFalse((node.module or "").startswith(ROOTS))
-                    if isinstance(node, ast.Import):
-                        self.assertFalse(any(n.name.startswith(ROOTS) for n in node.names))
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", script, str(DIRECTORY / name)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(json.loads(result.stdout), [])
 
     def test_start_adds_transient_trust_and_execs_saved_home_without_config_write(self):
         run = self.adapter.tui()
         hook = (sys.executable, "-I", "/protected/driver_hook.py")
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = run.launch("prompt", self.spec, False, hook)
+            launch = run.launch("prompt", self.spec, hook, resume=False)
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir") as chdir,
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]])
+            tui_start.main([launch.argv[-1]], trust=trust)
         chdir.assert_called_once_with(str(self.cwd))
         exe, argv, env = execute.call_args.args
         self.assertEqual(exe, "/protected/codex")
         self.assertEqual(argv[-4:], ["-c", "hooks.state={exact}", "--", "prompt"])
         self.assertEqual(env["CODEX_HOME"], str(self.codex_home))
-        self.assertEqual(trust.call_args.args[2], str(self.cwd))
+        self.assertEqual(trust.call_args.kwargs["cwd"], str(self.cwd))
         self.assertEqual(
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
@@ -183,24 +201,31 @@ class StartTest(Base):
         spec = dataclasses.replace(self.spec, access=access)
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "prompt", spec, False, (sys.executable, "-I", "/protected/hook.py")
+                "prompt", spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         with (
             mock.patch.dict(os.environ, launch.env),
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}"),
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]])
+            tui_start.main([launch.argv[-1]], trust=trust)
         self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
         proc = mock.Mock()
         proc.stdout.fileno.return_value = 42
         with (
-            mock.patch.object(tui_start.app_server.subprocess, "Popen", return_value=proc) as popen,
-            mock.patch.object(tui_start.app_server, "answer", side_effect=[{}, {"data": []}]),
-            mock.patch.object(tui_start.app_server, "close") as close,
+            mock.patch.object(subprocess, "Popen", return_value=proc) as popen,
+            mock.patch("select.select", return_value=([42], [], [])),
+            mock.patch(
+                "os.read",
+                side_effect=[
+                    b'{"id":1,"result":{}}\n{"id":2,"result":{"data":[]}}\n',
+                    b" ".strip(),
+                ],
+            ),
+            mock.patch("os.killpg"),
         ):
             self.assertEqual(
                 tui_start.hooks_list("/protected/fake", ["-c", "hook"], str(self.cwd), {}),
@@ -212,31 +237,41 @@ class StartTest(Base):
             [msg["method"] for msg in sent], ["initialize", "initialized", "hooks/list"]
         )
         self.assertEqual(sent[-1]["params"], {"cwds": [str(self.cwd)]})
-        close.assert_called_once_with(proc, None, tui_start.app_server.EXIT_WAIT)
+        proc.stdin.close.assert_called_once_with()
+        proc.stdout.close.assert_called_once_with()
 
     def test_retry_once_after_appserver_exit_and_start_lock_timeout(self):
         self.prepare()
         result, commands = self.catalog()
         with (
-            mock.patch.object(
-                tui_start, "hooks_list", side_effect=[tui_start.app_server.Exited(1), result]
+            contextlib.nullcontext(
+                mock.Mock(side_effect=[tui_start.app_server.Exited(1), result])
             ) as listing,
             mock.patch("time.sleep"),
         ):
             self.assertTrue(
                 tui_start.hook_trust(
-                    "fake", [], str(self.cwd), {"CODEX_HOME": str(self.codex_home)}, commands
+                    exe="fake",
+                    args=[],
+                    cwd=str(self.cwd),
+                    env={"CODEX_HOME": str(self.codex_home)},
+                    listing=listing,
+                    commands=commands,
                 ).startswith("hooks.state=")
             )
         self.assertEqual(listing.call_count, 2)
         with (
             mock.patch("fcntl.flock", side_effect=BlockingIOError),
             mock.patch("time.monotonic", side_effect=[0, 31]),
+            self.assertRaisesRegex(tui_start.StartError, "held"),
         ):
-            with self.assertRaisesRegex(tui_start.StartError, "held"):
-                tui_start.hook_trust(
-                    "fake", [], str(self.cwd), {"CODEX_HOME": str(self.codex_home)}, commands
-                )
+            tui_start.hook_trust(
+                exe="fake",
+                args=[],
+                cwd=str(self.cwd),
+                env={"CODEX_HOME": str(self.codex_home)},
+                commands=commands,
+            )
 
     def test_missing_duplicate_foreign_hook_rows_and_disabled_user_hooks(self):
         result, commands = self.catalog()
@@ -260,7 +295,7 @@ class StartTest(Base):
             )
 
     def test_bad_launch_data_does_not_spawn(self):
-        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
+        with mock.patch.object(subprocess, "Popen") as proc:
             for data in ("null", "not-json", "{}"):
                 with self.assertRaises(tui_start.StartError):
                     tui_start.main([data])
@@ -270,7 +305,7 @@ class StartTest(Base):
         run = self.adapter.tui()
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = run.launch(
-                "prompt", self.spec, False, (sys.executable, "-I", "/protected/hook.py")
+                "prompt", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
             with self.subTest(signum=signum):
@@ -279,7 +314,7 @@ class StartTest(Base):
                 proc.wait.return_value = 0
                 original = tui_start.signal.getsignal(signum)
 
-                def spawn(*args, **kwargs):
+                def spawn(*_args, proc=proc, signum=signum, **_kwargs):
                     tui_start.signal.raise_signal(signum)
                     return proc
 
@@ -287,7 +322,7 @@ class StartTest(Base):
                     mock.patch("subprocess.Popen", side_effect=spawn) as popen,
                     mock.patch("os.killpg") as kill,
                     mock.patch("os.execve") as execute,
-                    self.assertRaises(tui_start._Terminated),
+                    self.assertRaises(tui_start.Stopped),
                 ):
                     tui_start.main([launch.argv[-1]])
                 self.assertEqual(popen.call_count, 1)
@@ -300,7 +335,7 @@ class StartTest(Base):
     def test_wrapper_checks_effective_tmpdir_before_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                "hi", self.spec, False, (sys.executable, "-I", "/protected/hook.py")
+                "hi", self.spec, (sys.executable, "-I", "/protected/hook.py"), resume=False
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
@@ -314,9 +349,9 @@ class StartTest(Base):
 
 
 class ProtectTest(Base):
-    def launch(self, spec, resume=False):
+    def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            return self.adapter.tui().launch("prompt", spec, resume, HOOK).argv[-1]
+            return self.adapter.tui().launch("prompt", spec, HOOK, resume=resume).argv[-1]
 
     def test_the_recheck_keeps_carried_protect_paths_out_of_the_saved_roots(self):
         link = self.root / "protected-link"
@@ -355,7 +390,7 @@ class ProtectTest(Base):
 
     def test_bad_protect_launch_data_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
-        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
+        with mock.patch.object(subprocess, "Popen") as proc:
             for key in ("protect", "add_dirs"):
                 for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
                     with (
@@ -394,16 +429,16 @@ class ProtectTest(Base):
         spec = dataclasses.replace(self.spec, flags=flags)
         data = self.launch(spec)
         with (
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([data])
+            tui_start.main([data], trust=trust)
         argv = execute.call_args.args[1]
         start = argv.index("-c", 6)
         self.assertEqual(argv[start : start + len(flags)], list(flags))
         hook_flags = [word for word in json.loads(data)["hook_flags"]][:-4]
         self.assertEqual(
-            trust.call_args.args[1],
+            trust.call_args.kwargs["args"],
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],
         )

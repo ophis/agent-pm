@@ -1,20 +1,147 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-per-file-target-version = { "session/src/agent_pm/session/hosts/tmux/tmux_host.py" = "py39", "session/src/agent_pm/session/modes/tui_hook.py" = "py39" }
 
 [tool.ruff.lint]
-select = ["E", "F", "UP", "B", "SIM", "I", "ERA001"]
-ignore = [
-    "E501",  # the formatter owns line length (100); the lines it can't wrap (strings, docstrings, comments) are a follow-up
-    "SIM105",  # try/except/pass is the repo's best-effort idiom; contextlib.suppress only adds an import
+select = [
+    "E101", "E401", "E402", "E701", "E702", "E703", "E711", "E712", "E713", "E714",
+    "E721", "E722", "E731", "E741", "E742", "E743", "E902", "F",
+    "UP", "B", "SIM", "I", "ERA001", "PLR0917", "PLR0133",
+    "ARG001", "ARG004", "ARG005", "TID", "BLE", "TRY002", "TRY201", "TRY203", "TRY300",
+    "TRY400", "TRY401", "FBT",
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# B023: a test loop's closures (subTest cases, fakes) run within that iteration
-# SIM117: merging nested `with` blocks would only reindent test bodies
-"**/tests/**" = ["B023", "SIM117"]
-# B027: InProcess.check is an optional hook whose default does nothing
-"session/src/agent_pm/session/adapters/base.py" = ["B027"]
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.format]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+reportUnnecessaryComparison = "error"
+reportUnnecessaryCast = "error"
+pythonVersion = "3.11"
+include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+
+[tool.importlinter]
+include_external_packages = true
+contract_types = ["units: tests.import_contracts.UnitsContract"]
+root_packages = ["agent_pm", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests", "utils.tests", "tests"]
+
+[[tool.importlinter.contracts]]
+name = "Production layers"
+type = "layers"
+layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
+
+[[tool.importlinter.contracts]]
+name = "manager uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.manager", "manager.tests"]
+forbidden_modules = ["agent_pm.linear_orchestrator.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "manager tests respect layer ownership"
+type = "forbidden"
+source_modules = ["manager.tests"]
+forbidden_modules = ["tests"]
+
+[[tool.importlinter.contracts]]
+name = "linear_orchestrator uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.linear_orchestrator", "orchestrator_tests"]
+forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "linear_orchestrator tests respect layer ownership"
+type = "forbidden"
+source_modules = ["orchestrator_tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "manager.tests"]
+
+[[tool.importlinter.contracts]]
+name = "delegate uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.delegate", "delegate.tests"]
+forbidden_modules = ["agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "delegate tests respect layer ownership"
+type = "forbidden"
+source_modules = ["delegate.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "manager.tests", "orchestrator_tests"]
+
+[[tool.importlinter.contracts]]
+name = "session uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.session", "session.tests"]
+forbidden_modules = ["agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "session tests respect layer ownership"
+type = "forbidden"
+source_modules = ["session.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "manager.tests", "orchestrator_tests", "delegate.tests"]
+
+[[tool.importlinter.contracts]]
+name = "utils tests respect layer ownership"
+type = "forbidden"
+source_modules = ["utils.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
+
+[[tool.importlinter.contracts]]
+name = "Modes do not import the session API"
+type = "forbidden"
+source_modules = ["agent_pm.session.modes"]
+forbidden_modules = ["agent_pm.session.engine.api"]
+
+[[tool.importlinter.contracts]]
+name = "Session units follow the main import rules"
+type = "units"
+container = "agent_pm.session"
+units = ["agent_pm.session.engine.api", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.modes", "agent_pm.session.adapters", "agent_pm.session.hosts", "agent_pm.session.hosts.base"]
+dependencies = [
+    "agent_pm.session.engine.api -> agent_pm.session.adapters agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.session.engine.records agent_pm.utils",
+    "agent_pm.session.modes -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.adapters -> agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.adapters.registry -> agent_pm.session.hosts agent_pm.session.hosts.base",
+    "agent_pm.session.engine.base -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base",
+    "agent_pm.session.engine.types -> agent_pm.utils",
+    "agent_pm.session.engine.records -> agent_pm.utils",
+    "agent_pm.session.hosts -> agent_pm.utils",
+    "agent_pm.session.hosts.base -> agent_pm.session.engine.types agent_pm.utils",
+    "outside -> agent_pm.session.engine.api agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "Delegate units and shared modules follow the main import rules"
+type = "units"
+container = "agent_pm.delegate"
+units = ["agent_pm.delegate", "agent_pm.delegate.composer", "agent_pm.delegate.event", "agent_pm.delegate.engine.config", "agent_pm.delegate.team.tools"]
+unimported_units = ["agent_pm.delegate.team.tools"]
+dependencies = [
+    "agent_pm.delegate -> agent_pm.delegate.composer agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
+    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.event -> agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.engine.config -> agent_pm.utils",
+    "agent_pm.delegate.team.tools -> agent_pm.delegate.engine.config agent_pm.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "Utils imports only itself and the standard library"
+type = "units"
+container = "agent_pm.utils"
+units = ["agent_pm.utils"]
+dependencies = []
+
+[tool.typos.files]
+ignore-hidden = false
+
+[tool.typos.default.extend-words]
+# Escaped café filenames test Unicode handling.
+caf = "caf"
+# English ordinal suffix in 2nd, parsed by the runtime's reset-time protocol.
+nd = "nd"

@@ -1,6 +1,7 @@
-"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
-dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included, read
-dirs (the tasks dir among them) never added nor counted."""
+"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and
+prompt; main's team dir checks (TeamRuns), for a custom team and for the configured team dirs,
+Codex's own writable dirs included, read dirs (the tasks dir among them) never added nor counted.
+"""
 
 import io
 import json
@@ -14,27 +15,23 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, composer
+from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine import plan as plan_module
-from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Session, note
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session.adapters import registry
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.session import Access, note
+from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.unit.composer.teams import POET, VERSE
 from delegate.tests.unit.engine.plans import SID, Base
+from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 TEAM_FILES = {"roles/poet.md": POET, "tasks/verse.md": VERSE}
-# A custom team dir must lie outside every temp dir (check_team_dirs): under the repo's gitignored work/.
 TEAMS = os.path.join(REPO, "work", "new-team-dirs-tests")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 
@@ -60,14 +57,10 @@ class ReplyTags(Base):
 
 
 class Configures(Base):
-    def test_plan_never_configures_the_session(self):
-        registry.reset()
-        with mock.patch.object(Session, "configure") as configure:
-            got, _ = self.planned()
+    def test_plan_keeps_the_callers_driver(self):
+        got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
-        configure.assert_not_called()
-        with self.assertRaisesRegex(SessionConfigError, "not configured"):
-            registry.configured()
+        self.assertIs(got.driver, self.driver)
 
 
 class Cwd(Base):
@@ -80,7 +73,9 @@ class Cwd(Base):
             os.makedirs(d)
 
     def placed(self, *trusted, cwd=None, key="", resume=None):
-        """(place's (cwd, project), stderr) for researcher with run key cwd `key` and trusted_dirs `trusted`."""
+        """(place's (cwd, project), stderr) for researcher with run key cwd `key` and trusted_dirs
+        `trusted`.
+        """
         self.local(f"trusted_dirs = {json.dumps(list(trusted))}\n")
         err = io.StringIO()
         with redirect_stderr(err):
@@ -349,7 +344,9 @@ class Planned(Base):
 
 
 class ConfiguredTeamDirs(Base):
-    """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir) checked only for overlap."""
+    """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir)
+    checked only for overlap.
+    """
 
     def setUp(self):
         super().setUp()
@@ -386,7 +383,7 @@ class ConfiguredTeamDirs(Base):
                 )
 
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
-        with mock.patch.object(plan_module, "writable_dirs", return_value=()) as asked:
+        with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
             asked.assert_called_once_with("fake", got.session, SID)
             asked.reset_mock()
@@ -423,7 +420,9 @@ class ConfiguredTeamDirs(Base):
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CustomTeam(Base):
-    """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run can write."""
+    """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run
+    can write.
+    """
 
     def setUp(self):
         super().setUp()
@@ -437,7 +436,9 @@ class CustomTeam(Base):
         self.found = composer.team(composer.TEAM, [self.team])
 
     def read_unadded(self, role, task, reads, **kw):
-        """`role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs."""
+        """
+        `role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs.
+        """
         home = os.path.join(self.tmp, "codex")
         for runtime in ("fake", "codex"):
             with (
@@ -492,7 +493,9 @@ class CustomTeam(Base):
 
 
 class Policy(Base):
-    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's replacing the core's."""
+    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's
+    replacing the core's.
+    """
 
     SHIPPED = {
         "claude": (
@@ -542,11 +545,26 @@ class Policy(Base):
             "[policy.claude]\nenv = { K = 1 }\n",
             '[policy.claude]\nunset = ["K"]\n',
         ):
-            with self.subTest(text=text), mock.patch.object(runner, "start") as start:
+            with self.subTest(text=text), mock.patch.object(self.driver, "start") as start:
                 self.local(text)
                 self.assertIn("policy", self.refused(runtime="claude"))
                 start.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
+class PrintPromptPlans(PrintPromptCase):
+    def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
+        for local in ("", GITHUB):
+            with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
+                f.write(local)
+            for role in ROLES:
+                with self.subTest(github=bool(local), role=role):
+                    first, *others = (
+                        plan(*args, driver=self.driver)
+                        for args in (
+                            self.given(role, runtime=runtime, mode=mode)
+                            for runtime, mode in RUNTIMES
+                        )
+                    )
+                    for p in others:
+                        self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
+        self.assertEqual(composer.resolve("researcher").output["type"], "github")

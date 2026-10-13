@@ -1,8 +1,10 @@
-"""delegate/engine/runner.py over the fake runtime (session/tests/fake_adapter/, registered in-process): callbacks and replies
-(FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21), idle (FR-22), a usage limit (FR-58), and main's
-drive_test Start, HostFailure and Sinks cases: records, saving, the missing start mark, stops, printable lines. The tui
-policy (FR-21, FR-23, FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the
-in_process-only fake, with no child process."""
+"""delegate/engine/runner.py over the fake runtime (session/tests/fake_adapter/, registered in-
+process): callbacks and replies (FR-17, FR-18), deliverable_file (FR-19), the fix resume (FR-21),
+idle (FR-22), a usage limit (FR-58), and main's drive_test Start, HostFailure and Sinks cases:
+records, saving, the missing start mark, stops, printable lines. The tui policy (FR-21, FR-23,
+FR-24) over a FakeHandle: main's drive_test tui cases. The in_process Mode over the in_process-only
+fake, with no child process.
+"""
 
 import dataclasses
 import io
@@ -13,10 +15,8 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import time
-import unittest
 from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import datetime
@@ -31,26 +31,19 @@ from agent_pm.delegate import (
     Result,
     Spec,
     composer,
+    plan,
     run,
 )
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
-from agent_pm.session import (
-    MODES,
-    Activity,
-    Blocked,
-    DriverError,
-    Exited,
-    IdleTimeout,
-    LimitHit,
-    Session,
-)
-from agent_pm.session.adapters import registry
-from agent_pm.utils import text as text_utils
-from agent_pm.utils.files import save
+from agent_pm.delegate.engine.types import Stopped
+from agent_pm.delegate.event.reply import marks
+from agent_pm.session import MODES, Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit
+from agent_pm.utils import printable
 
 from delegate.tests.case import Case
 from delegate.tests.replies import bare, block, running
+from delegate.tests.unit.engine.print_prompt import ROLES, STARTED, PrintPromptCase
 from delegate.tests.unit.runs import (
     DONE,
     GAVE_UP,
@@ -64,6 +57,7 @@ from delegate.tests.unit.runs import (
     turn,
 )
 from session.tests import fake_adapter
+from session.tests.modules import adapter_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
 NEEDS = {**DONE, "status": "needs_input", "questions": ["Which repo?"], "deliverable": ""}
@@ -83,7 +77,9 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 
 class Base(Case):
-    """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd the workdir."""
+    """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd
+    the workdir.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -95,8 +91,9 @@ class Base(Case):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
         )
-        sys.modules["agent_pm.session.adapters.fake"] = fake_adapter
-        self.addCleanup(sys.modules.pop, "agent_pm.session.adapters.fake", None)
+        self.driver_dependencies = {
+            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+        }
         self.configure_session(
             {
                 "fake": {
@@ -108,8 +105,9 @@ class Base(Case):
         )
 
     def go(self, *steps, fixes=None, output=None, on_event=None, **kw) -> Result:
-        """run() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets each callback, self.err
-        the stderr."""
+        """run() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets each
+        callback, self.err the stderr.
+        """
         with open(self.scenario, "w") as f:
             json.dump(
                 {"steps": list(steps), **({"resume": list(fixes)} if fixes is not None else {})}, f
@@ -133,7 +131,12 @@ class Base(Case):
         }
         try:
             with redirect_stderr(err):
-                return run(config, Spec(kw.pop("input"), self.work, task="echo", **kw), on_event=on)
+                return run(
+                    config,
+                    Spec(kw.pop("input"), self.work, task="echo", **kw),
+                    on_event=on,
+                    driver=self.driver,
+                )
         finally:
             self.err = err.getvalue()
 
@@ -164,21 +167,22 @@ class Base(Case):
         shutil.rmtree(self.work, ignore_errors=True)
 
     def spy_save(self):
-        patch = mock.patch.object(runner, "save", wraps=save)
+        patch = mock.patch("os.replace", wraps=os.replace)
         self.addCleanup(patch.stop)
         return patch.start()
 
 
+LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
+
+
 class Configures(Base):
-    def test_run_never_configures_the_session_the_callers_settings_reach_it(self):
-        with mock.patch.object(Session, "configure") as configure:
-            r = self.go(said(START, block(DONE)))
-        configure.assert_not_called()
+    def test_the_callers_settings_reach_the_run(self):
+        r = self.go(said(START, block(DONE)))
         self.assertEqual((r.outcome.status, len(self.launches())), ("done", 1))
 
-    def test_unconfigured_it_starts_nothing(self):
-        registry.reset()
-        with self.assertRaisesRegex(ConfigError, "not configured"):
+    def test_a_fresh_driver_without_the_runtime_starts_nothing(self):
+        self.configure_session({})
+        with self.assertRaisesRegex(ConfigError, r"\[adapters.fake\]"):
             self.go(said(START, block(DONE)))
         self.assertFalse(os.path.exists(self.log))
 
@@ -225,7 +229,9 @@ class Callbacks(Base):
 
 
 class Fix(Base):
-    """FR-21: one fix resume of the same session after an invalid outcome block, only when the client exited 0."""
+    """FR-21: one fix resume of the same session after an invalid outcome block, only when the
+    client exited 0.
+    """
 
     def test_an_invalid_block_is_fixed_by_one_resume_of_the_session(self):
         r = self.go(said(START, block(INVALID)), fixes=[said(block(DONE))])
@@ -289,7 +295,12 @@ class Fix(Base):
 class Idle(Base):
     def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
         self.assertEqual(IDLE_TIMEOUT, 2 * 60 * 60)
-        with mock.patch.object(runner, "IDLE_TIMEOUT", 0.3):
+        start = self.driver.start
+        with mock.patch.object(
+            self.driver,
+            "start",
+            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
+        ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
         idle = [e for e in self.records() if e["kind"] == "idle"]
@@ -298,7 +309,9 @@ class Idle(Base):
 
 
 class UsageLimit(Base):
-    """FR-58: a usage limit stops the session and ends the run: no outcome read, no fix resume, no Finished."""
+    """FR-58: a usage limit stops the session and ends the run: no outcome read, no fix resume, no
+    Finished.
+    """
 
     def test_a_limit_stops_the_session_and_is_the_result(self):
         at = 1767225600.0
@@ -321,6 +334,189 @@ class UsageLimit(Base):
             (r.outcome, r.error, r.limit), (None, "usage limit; reset time unknown", Limit(None))
         )
         self.assertEqual((self.last("limit")["resets_at"], len(self.launches())), (None, 1))
+
+
+class Stops(Base):
+    """
+    Main's HostFailure cases: a session stopped on an exception, its record closed `stopped: …`.
+    """
+
+    def test_an_on_event_raise_stops_the_session_and_propagates(self):
+        failure = RuntimeError("boom")
+
+        def boom(event):
+            if isinstance(event, Progress):
+                raise failure
+
+        with self.assertRaises(RuntimeError) as caught:
+            self.go(said(START), {"sleep": 30}, said(block(DONE)), on_event=boom)
+        self.assertIs(caught.exception, failure)
+        self.assertFalse(running(self.launches()[0]["pid"]))
+        result, end = self.records()[-2:]
+        self.assertEqual((result["error"], end["rc"]), ("stopped: RuntimeError: boom", 1))
+
+    def test_an_exception_ends_the_record_stopped(self):
+        for error, rc, text in (
+            (Stopped(128 + signal.SIGTERM), 143, "stopped: Stopped: 143"),
+            (SystemExit(129), 129, "stopped: SystemExit: 129"),
+            (SystemExit("bye"), 1, "stopped: SystemExit: bye"),
+            (KeyboardInterrupt(), 1, "stopped: KeyboardInterrupt"),
+            (RuntimeError("one\ntwo"), 1, "stopped: RuntimeError: one two"),
+        ):
+
+            def raise_(event, error=error):
+                if isinstance(event, Progress):
+                    raise error
+
+            with self.subTest(error=error):
+                self.fresh()
+                with self.assertRaises(type(error)) as cm:
+                    self.go(said(START), {"sleep": 30}, on_event=raise_)
+                self.assertIs(cm.exception, error)
+                self.assertFalse(running(self.launches()[-1]["pid"]))
+                self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
+                result, end = self.records()[-2:]
+                self.assertEqual(
+                    (bare(result), bare(end)),
+                    (
+                        {"kind": "result", "error": text},
+                        {"kind": "end", "sid": end["sid"], "rc": rc},
+                    ),
+                )
+
+    def test_the_closing_writes_never_mask_the_runs_exception(self):
+        def swap(_event):
+            os.remove(self.channel)
+            os.mkdir(self.channel)
+            raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.go({"sleep": 30}, on_event=swap)
+        self.assertEqual(len(re.findall(r"^delegate: .*run\.jsonl", self.err, re.M)), 2, self.err)
+
+    def test_a_spawn_failure_is_the_result(self):
+        with mock.patch(
+            "subprocess.Popen", side_effect=FileNotFoundError(2, "No such file or directory", "x")
+        ):
+            r = self.go(said(START, block(DONE)))
+        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, []))
+        self.assertTrue(r.error.startswith("headless: cannot start "), r.error)
+        self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
+        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (r.error, 1))
+
+    def test_a_driver_refusal_is_a_config_error_and_nothing_is_recorded(self):
+        with self.assertRaises(ConfigError) as cm:
+            self.go(said(START, block(DONE)), runtime="nope")
+        self.assertIn("nope", str(cm.exception))
+        self.assertEqual(
+            (os.path.lexists(self.channel), os.path.lexists(self.log), self.events),
+            (False, False, []),
+        )
+
+
+class InProcess(Base):
+    """The in_process-only fake, its run with no child process."""
+
+    def setUp(self):
+        super().setUp()
+        self.configure_session(
+            {
+                "fake": {
+                    "implementation": "adapters.fake:InProcessFakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+            }
+        )
+
+    def go(self, *steps, **kw) -> Result:
+        with no_child():
+            return super().go(*steps, mode="in_process", **kw)
+
+    def test_a_policy_for_each_mode_in_process_the_headless_one(self):
+        self.assertEqual(set(POLICIES), set(MODES))
+        self.assertIs(POLICIES["in_process"], POLICIES["headless"])
+
+    def test_a_done_run(self):
+        r = self.go(said(START, block(DONE)))
+        sid = self.events[0].sid
+        self.assertEqual(self.events, [Begun(sid), Progress("start", "go"), Finished(r)])
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
+        self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
+        self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
+
+    def test_a_raise_is_the_client_exiting_1_its_traceback_on_stderr(self):
+        r = self.go(said(START), {"raise": "boom"})
+        self.assertEqual(r, Result(1, None, "the client exited 1"))
+        self.assertEqual(
+            ([type(e) for e in self.events], self.last("end")["rc"]), ([Begun, Progress], 1)
+        )
+        lines = self.err.splitlines()
+        self.assertLess(
+            lines.index("Traceback (most recent call last):"), lines.index("RuntimeError: boom")
+        )
+        r = self.go(said(START, block(DONE)), {"raise": "boom"})
+        self.assertEqual(
+            (r.returncode, r.outcome.status, r.error), (1, "done", "the client exited 1")
+        )
+
+    def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
+        start = self.driver.start
+        with mock.patch.object(
+            self.driver,
+            "start",
+            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
+        ):
+            r = self.go({"sleep": 1.0}, said(START, block(DONE)))
+        self.assertEqual(r.outcome.status, "done")
+        idle = [e for e in self.records() if e["kind"] == "idle"]
+        self.assertTrue(idle)
+        self.assertEqual({e["seconds"] for e in idle}, {0.3})
+
+    def test_an_invalid_block_is_fixed_by_one_resume_of_the_session(self):
+        r = self.go(said(START, block(INVALID)), fixes=[said(block(DONE))])
+        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
+        first, second = self.launches()
+        sid = self.events[0].sid
+        self.assertEqual(
+            (first["sid"], first["resume"], second["sid"], second["resume"]),
+            (sid, False, sid, True),
+        )
+        self.assertEqual(second["prompt"], FIX.format(error=INVALID_ERROR))
+        self.assertEqual(
+            self.kinds(), ["session", "input", "progress", "invalid", "session", "result", "end"]
+        )
+
+
+class Terminal(Base):
+    """Main's Sinks case: what reaches the terminal is printable."""
+
+    def test_printable_is_the_utils_one(self):
+        self.assertIs(runner.printable, printable)
+
+    def test_replies_progress_and_stderr_lines_are_printed_printable(self):
+        self.go(
+            {"err": "w\x1b[2Jarn"},
+            said(
+                "a\x1b]52;c;ZXZpbA==\x07b\tc",
+                "",
+                "[agent-pm-progress:round] x\x1b[2J",
+                START,
+                block(DONE),
+            ),
+        )
+        lines = self.err.splitlines()
+        for want in (
+            "w[2Jarn",
+            "a]52;c;ZXZpbA==b\tc",
+            "[agent-pm-progress:round] x[2J",
+            "Progress (round): x[2J",
+            "Progress (start): go",
+        ):
+            self.assertIn(want, lines)
+        self.assertLess(lines.index("a]52;c;ZXZpbA==b\tc"), lines.index("Progress (round): x[2J"))
+        self.assertNotIn("", lines)
+        self.assertFalse([c for c in self.err if not c.isprintable() and c not in "\t\n"])
 
 
 class Start(Base):
@@ -511,7 +707,7 @@ class Start(Base):
                     (self.out if dest == "local" else "", "# Doc\n"),
                 )
 
-    def test_an_out_not_a_regular_file_holding_the_deliverable_is_replaced_never_followed_or_waited_on(
+    def test_output_replaces_unusable_files_without_following_or_waiting(
         self,
     ):
         save_spy, target = self.spy_save(), os.path.join(self.tmp, "zshrc")
@@ -537,7 +733,7 @@ class Start(Base):
                 save_spy.reset_mock()
                 self.go(
                     said(START, block(DONE)),
-                    on_event=lambda e: plant() if isinstance(e, Begun) else None,
+                    on_event=lambda e, plant=plant: plant() if isinstance(e, Begun) else None,
                 )
                 self.assertEqual(
                     (
@@ -612,181 +808,6 @@ class Start(Base):
                 self.assertNotIn("missing", self.kinds())
 
 
-class Stops(Base):
-    """Main's HostFailure cases: a session stopped on an exception, its record closed `stopped: …`."""
-
-    def test_an_on_event_raise_stops_the_session_and_propagates(self):
-        def boom(event):
-            if isinstance(event, Progress):
-                raise RuntimeError("boom")
-
-        with self.assertRaises(RuntimeError):
-            self.go(said(START), {"sleep": 30}, said(block(DONE)), on_event=boom)
-        self.assertFalse(running(self.launches()[0]["pid"]))
-        result, end = self.records()[-2:]
-        self.assertEqual((result["error"], end["rc"]), ("stopped: RuntimeError: boom", 1))
-
-    def test_an_exception_ends_the_record_stopped(self):
-        for error, rc, text in (
-            (SystemExit(129), 129, "stopped: SystemExit: 129"),
-            (SystemExit("bye"), 1, "stopped: SystemExit: bye"),
-            (KeyboardInterrupt(), 1, "stopped: KeyboardInterrupt"),
-            (RuntimeError("one\ntwo"), 1, "stopped: RuntimeError: one two"),
-        ):
-
-            def raise_(event, error=error):
-                if isinstance(event, Progress):
-                    raise error
-
-            with self.subTest(error=error):
-                self.fresh()
-                with self.assertRaises(type(error)) as cm:
-                    self.go(said(START), {"sleep": 30}, on_event=raise_)
-                self.assertIs(cm.exception, error)
-                self.assertFalse(running(self.launches()[-1]["pid"]))
-                self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
-                result, end = self.records()[-2:]
-                self.assertEqual(
-                    (bare(result), bare(end)),
-                    (
-                        {"kind": "result", "error": text},
-                        {"kind": "end", "sid": end["sid"], "rc": rc},
-                    ),
-                )
-
-    def test_the_closing_writes_never_mask_the_runs_exception(self):
-        def swap(event):
-            os.remove(self.channel)
-            os.mkdir(self.channel)
-            raise KeyboardInterrupt
-
-        with self.assertRaises(KeyboardInterrupt):
-            self.go({"sleep": 30}, on_event=swap)
-        self.assertEqual(len(re.findall(r"^delegate: .*run\.jsonl", self.err, re.M)), 2, self.err)
-
-    def test_a_spawn_failure_is_the_result(self):
-        with mock.patch(
-            "subprocess.Popen", side_effect=FileNotFoundError(2, "No such file or directory", "x")
-        ):
-            r = self.go(said(START, block(DONE)))
-        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, []))
-        self.assertTrue(r.error.startswith("headless: cannot start "), r.error)
-        self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
-        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (r.error, 1))
-
-    def test_a_driver_refusal_is_a_config_error_and_nothing_is_recorded(self):
-        with self.assertRaises(ConfigError) as cm:
-            self.go(said(START, block(DONE)), runtime="nope")
-        self.assertIn("nope", str(cm.exception))
-        self.assertEqual(
-            (os.path.lexists(self.channel), os.path.lexists(self.log), self.events),
-            (False, False, []),
-        )
-
-
-class InProcess(Base):
-    """The in_process-only fake, its run with no child process."""
-
-    def setUp(self):
-        super().setUp()
-        self.configure_session(
-            {
-                "fake": {
-                    "implementation": "adapters.fake:InProcessFakeAdapter",
-                    "scenario": self.scenario,
-                    "log": self.log,
-                }
-            }
-        )
-
-    def go(self, *steps, **kw) -> Result:
-        with no_child():
-            return super().go(*steps, mode="in_process", **kw)
-
-    def test_a_policy_for_each_mode_in_process_the_headless_one(self):
-        self.assertEqual(set(POLICIES), set(MODES))
-        self.assertIs(POLICIES["in_process"], POLICIES["headless"])
-
-    def test_a_done_run(self):
-        r = self.go(said(START, block(DONE)))
-        sid = self.events[0].sid
-        self.assertEqual(self.events, [Begun(sid), Progress("start", "go"), Finished(r)])
-        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
-        self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
-        self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
-
-    def test_a_raise_is_the_client_exiting_1_its_traceback_on_stderr(self):
-        r = self.go(said(START), {"raise": "boom"})
-        self.assertEqual(r, Result(1, None, "the client exited 1"))
-        self.assertEqual(
-            ([type(e) for e in self.events], self.last("end")["rc"]), ([Begun, Progress], 1)
-        )
-        lines = self.err.splitlines()
-        self.assertLess(
-            lines.index("Traceback (most recent call last):"), lines.index("RuntimeError: boom")
-        )
-        r = self.go(said(START, block(DONE)), {"raise": "boom"})
-        self.assertEqual(
-            (r.returncode, r.outcome.status, r.error), (1, "done", "the client exited 1")
-        )
-
-    def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
-        with mock.patch.object(runner, "IDLE_TIMEOUT", 0.3):
-            r = self.go({"sleep": 1.0}, said(START, block(DONE)))
-        self.assertEqual(r.outcome.status, "done")
-        idle = [e for e in self.records() if e["kind"] == "idle"]
-        self.assertTrue(idle)
-        self.assertEqual({e["seconds"] for e in idle}, {0.3})
-
-    def test_an_invalid_block_is_fixed_by_one_resume_of_the_session(self):
-        r = self.go(said(START, block(INVALID)), fixes=[said(block(DONE))])
-        self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
-        first, second = self.launches()
-        sid = self.events[0].sid
-        self.assertEqual(
-            (first["sid"], first["resume"], second["sid"], second["resume"]),
-            (sid, False, sid, True),
-        )
-        self.assertEqual(second["prompt"], FIX.format(error=INVALID_ERROR))
-        self.assertEqual(
-            self.kinds(), ["session", "input", "progress", "invalid", "session", "result", "end"]
-        )
-
-
-class Terminal(Base):
-    """Main's Sinks case: what reaches the terminal is printable."""
-
-    def test_printable_is_the_utils_one(self):
-        self.assertIs(runner.printable, text_utils.printable)
-
-    def test_replies_progress_and_stderr_lines_are_printed_printable(self):
-        self.go(
-            {"err": "w\x1b[2Jarn"},
-            said(
-                "a\x1b]52;c;ZXZpbA==\x07b\tc",
-                "",
-                "[agent-pm-progress:round] x\x1b[2J",
-                START,
-                block(DONE),
-            ),
-        )
-        lines = self.err.splitlines()
-        for want in (
-            "w[2Jarn",
-            "a]52;c;ZXZpbA==b\tc",
-            "[agent-pm-progress:round] x[2J",
-            "Progress (round): x[2J",
-            "Progress (start): go",
-        ):
-            self.assertIn(want, lines)
-        self.assertLess(lines.index("a]52;c;ZXZpbA==b\tc"), lines.index("Progress (round): x[2J"))
-        self.assertNotIn("", lines)
-        self.assertFalse([c for c in self.err if not c.isprintable() and c not in "\t\n"])
-
-
-LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
-
-
 class TuiPolicy(Base):
     """The tui policy over a FakeHandle (start patched as delegate.engine.runner sees it)."""
 
@@ -797,10 +818,10 @@ class TuiPolicy(Base):
 
     def faked(self, *events, fail=None, stop_fail=None, mode="tui", **kw) -> Result:
         self.handle = FakeHandle(events, fail, stop_fail)
-        with mock.patch.object(runner, "start", side_effect=self.handle.start) as self.started:
+        with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
-    def test_the_policys_values(self):
+    def test_the_policies_values(self):
         self.assertEqual(STOP_LIMIT, 3)
         self.assertEqual(
             NUDGE,
@@ -808,6 +829,14 @@ class TuiPolicy(Base):
             "(`agent-pm-outcome`), as your instructions' Return says. If you are waiting for "
             "background work, wait for it first.",
         )
+
+    def test_a_tui_handle_without_a_name_reports_a_driver_error(self):
+        os.makedirs(self.work)
+        handle = FakeHandle([])
+        handle.name = None
+        with mock.patch.object(self.driver, "start", return_value=handle):
+            result = self.go(mode="tui")
+        self.assertEqual((result.returncode, result.error), (1, "tui: tui session has no name"))
 
     def test_start_hands_the_plan_to_the_driver_and_prints_the_attach_command(self):
         events = os.path.join(self.tmp, "events.log")
@@ -826,7 +855,11 @@ class TuiPolicy(Base):
                 self.assertEqual((args[:2], r.outcome.status), (("fake", "tui"), "done"))
                 self.assertEqual(
                     (given, args[3].sid, args[3].name),
-                    ({"idle_timeout": IDLE_TIMEOUT, **want[0]}, self.events[0].sid, want[1]),
+                    (
+                        {"idle_timeout": IDLE_TIMEOUT, **want[0]},
+                        self.events[0].sid,
+                        want[1],
+                    ),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
 
@@ -944,7 +977,7 @@ class TuiPolicy(Base):
         )
         with (
             mock.patch("time.monotonic", lambda: now[0]),
-            mock.patch.object(runner, "start", side_effect=handle.start),
+            mock.patch.object(self.driver, "start", side_effect=handle.start),
         ):
             r = self.go(mode="tui")
         self.assertEqual((r.outcome.status, handle.calls, now[0]), ("done", [], 15 * 60 * 60))
@@ -978,12 +1011,15 @@ class TuiPolicy(Base):
                 self.assertNotIn(("stop",), self.handle.calls)
 
     def test_an_on_event_raise_stops_the_session_and_propagates(self):
+        failure = RuntimeError("boom")
+
         def boom(event):
             if isinstance(event, Progress):
-                raise RuntimeError("boom")
+                raise failure
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as caught:
             self.faked(turn(START), on_event=boom)
+        self.assertIs(caught.exception, failure)
         self.assertEqual(self.handle.calls, [("stop",)])
         self.assertEqual(self.last("result")["error"], "stopped: RuntimeError: boom")
 
@@ -1028,7 +1064,7 @@ class TuiPolicy(Base):
 
     def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
         os.makedirs(self.work)
-        with mock.patch.object(runner, "start", side_effect=DriverError("no tmux")):
+        with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
         with self.assertRaises(ConfigError) as cm:
@@ -1055,5 +1091,37 @@ class TuiPolicy(Base):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
+class PrintPromptRuns(PrintPromptCase):
+    def test_each_role_is_done_its_deliverable_the_planned_prompt_saved_to_out(self):
+        for role in ROLES:
+            with self.subTest(role=role):
+                args = self.given(role)
+                want, events = plan(*args, driver=self.driver).prompt, []
+                with no_child(), redirect_stderr(io.StringIO()):
+                    r = run(*args, on_event=events.append, driver=self.driver)
+                self.assertEqual(
+                    (r.returncode, r.outcome.status, r.outcome.deliverable), (0, "done", want)
+                )
+                with open(args[1].out) as f:
+                    self.assertEqual(f.read(), want)
+                self.assertEqual(marks(want), [("round", "a mark line in the input")])
+                self.assertEqual(events, [Begun(SID), STARTED, Finished(r)])
+
+    def test_headless_is_refused_and_nothing_starts(self):
+        args = self.given("dummy-tester", mode="headless")
+        with (
+            no_child(),
+            self.assertRaisesRegex(
+                ConfigError, "runtime 'print_prompt' does not support headless mode"
+            ),
+        ):
+            run(*args, driver=self.driver)
+        self.assertFalse(os.path.exists(args[1].workdir))
+
+    def test_a_resume_is_refused(self):
+        args = self.given("dummy-tester", resume=True)
+        with (
+            no_child(),
+            self.assertRaisesRegex(ConfigError, "print_prompt has no session to resume"),
+        ):
+            run(*args, driver=self.driver)

@@ -1,6 +1,7 @@
-"""delegate.run in process over session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`, the session config's Adapter table), HOME
-and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the fix resume (FR-21), a usage limit
-(FR-58)."""
+"""delegate.run in process over session/tests/integration/adapters/claude/fake_claude.py (on PATH as
+`claude`, the session config's Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback order
+over a real process (FR-17), the fix resume (FR-21), a usage limit (FR-58).
+"""
 
 import io
 import json
@@ -12,8 +13,8 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Session
-from agent_pm.utils.config_file import read_project
+from agent_pm.session import Driver
+from agent_pm.utils import read_project
 
 from delegate.tests.case import Case
 from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
@@ -45,7 +46,7 @@ class Base(Case):
                 },
             )
         )
-        Session.configure_from(read_project("session"))
+        self.driver = Driver.from_config(read_project("session"))
 
     def go(self, steps, **scenario):
         """run() with the fake's `steps`; self.events gets each callback."""
@@ -65,6 +66,7 @@ class Base(Case):
                     cwd=self.work,
                 ),
                 on_event=self.events.append,
+                driver=self.driver,
             )
 
     def calls(self) -> list[dict]:

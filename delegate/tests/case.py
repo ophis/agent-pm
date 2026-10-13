@@ -1,5 +1,6 @@
-"""Case, every delegate test's base; the committed [adapters] (committed); child helpers (PY, child_env); this
-tree's import roots (REPO, SRC, ROOTS, PYTHONPATH)."""
+"""Case, every delegate test's base; the committed [adapters] (committed); child helpers (PY,
+child_env); this tree's import roots (REPO, SRC, ROOTS, PYTHONPATH).
+"""
 
 import os
 import sys
@@ -8,10 +9,8 @@ import unittest
 from unittest import mock
 
 import agent_pm
-from agent_pm.session import Session
-from agent_pm.session.adapters import registry
-from agent_pm.utils.config_file import read_project
-from agent_pm.utils.paths import import_roots
+from agent_pm.session import Driver
+from agent_pm.utils import import_roots, read_project
 
 from session.tests.case import settings
 
@@ -21,17 +20,20 @@ SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
-_settings = registry.settings
 
 
 def committed(local: str = os.devnull) -> dict:
-    """The session config's [adapters], `local` merged (default none), even under Case.configure_session."""
-    return _settings(read_project("session", local=local))["adapters"]
+    """The session config's [adapters], `local` merged (default none), even under
+    Case.configure_session.
+    """
+    return read_project("session", local=local)["adapters"]
 
 
 class Case(unittest.TestCase):
-    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session
+    settings.
+    """
 
     def run(self, result=None):
         if foreign := _foreign():
@@ -49,21 +51,16 @@ class Case(unittest.TestCase):
         ):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
-            registry.reset()
-            try:
-                return super().run(result)
-            finally:
-                registry.reset()
+            self.configure_session({})
+            return super().run(result)
 
     def configure_session(self, adapters, tmux=None) -> None:
-        """Session.configure with settings(adapters, tmux), also what registry.settings returns for the rest
-        of the test, so an entry's Session.configure_from keeps them."""
-        given = settings(adapters, tmux)
-        self.enterContext(mock.patch.object(registry, "settings", return_value=given))
-        Session.configure(**given)
+        self.driver = FakeDriver(
+            Driver(**settings(adapters, tmux), **getattr(self, "driver_dependencies", {}))
+        )
 
 
-def _foreign() -> str | None:
+def _foreign(modules=None) -> str | None:
     own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
     for path in agent_pm.__path__:
         if os.path.realpath(path) not in own:
@@ -72,7 +69,7 @@ def _foreign() -> str | None:
         return (
             f"agent_pm.__path__ lacks {', '.join(sorted(missing))}: run with PYTHONPATH={RUN_WITH}"
         )
-    for name, module in list(sys.modules.items()):
+    for name, module in list((sys.modules if modules is None else modules).items()):
         top, _, sub = name.partition(".")
         where = getattr(module, "__file__", None)
         if top == "agent_pm" and sub and "." not in sub and where:
@@ -96,3 +93,13 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
         **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
         "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
     }
+
+
+class FakeDriver:
+    """A forwarding fake whose per-test methods may be replaced."""
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def __getattr__(self, name):
+        return getattr(self.driver, name)

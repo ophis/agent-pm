@@ -1,41 +1,25 @@
-"""An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates it against SCHEMA
-and what SCHEMA can't say. Its text stays untrusted: a path is shown as a repr, at most 200 characters."""
+"""An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates
+it against SCHEMA and what SCHEMA can't say. Its text stays untrusted: a path is shown as a repr, at
+most 200 characters.
+"""
 
-import functools
 import json
 import os
 import posixpath
 import re
-import stat
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, get_args
 from urllib.parse import unquote, urlsplit
 
+from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome
+from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
+
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
-OutcomeStatus = Literal["done", "needs_input", "failed"]
-STATUSES = get_args(OutcomeStatus)
 SAVES_DELIVERABLE = (
     "local",
     "orchestrator",
 )  # destinations whose deliverable comes back in the outcome
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
-
-
-class InvalidOutcome(Exception):
-    pass
-
-
-@dataclass(frozen=True)
-class Outcome:
-    status: OutcomeStatus
-    title: str
-    summary: str
-    questions: list[str] = field(default_factory=list)
-    url: str = ""
-    files: list[str] = field(default_factory=list)
-    deliverable: str = ""
 
 
 def read(body: str, output: Mapping, workdir: str) -> Outcome:
@@ -90,7 +74,6 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     return outcome
 
 
-@functools.cache
 def _schema() -> dict:
     with open(SCHEMA) as f:
         return json.load(f)
@@ -175,27 +158,24 @@ def _file(path, workdir: str) -> str:
 
 def _read_file(real: str, workdir: str) -> str:
     """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
-
-    def invalid(reason: str) -> InvalidOutcome:
-        return InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}")
-
     cap = 4 * _schema()["properties"]["deliverable"]["maxLength"]
     try:
-        with os.fdopen(os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
-            opened = os.fstat(f.fileno())
-            if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
-                raise invalid("not a single-link regular file")
-            if not Path(os.path.realpath(real)).is_relative_to(os.path.realpath(workdir)):
-                raise invalid("no longer under the workdir")
-            now = os.stat(real)
-            if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
-                raise invalid("replaced while it was opened")
-            data = f.read(cap + 1)
-    except OSError as e:
-        raise invalid(e.strerror or "unreadable") from None
-    if len(data) > cap:
-        raise invalid(f"too large (over {cap} bytes)")
+        data = read_confined(real, workdir, limit=cap)
+    except ConfinedFileError as error:
+        path = str(real)[:200]
+        messages = {
+            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a single-link regular file",
+            ConfinedReason.SINGLE_LINK: f"deliverable_file {path!r}: not a single-link regular file",
+            ConfinedReason.SUFFIX: f"file {path!r} is not a single-link .md file under the workdir",
+            ConfinedReason.OUTSIDE: f"deliverable_file {path!r}: no longer under the workdir",
+            ConfinedReason.REPLACED: f"deliverable_file {path!r}: replaced while it was opened",
+            ConfinedReason.TOO_LARGE: f"deliverable_file {path!r}: too large (over {cap} bytes)",
+        }
+        raise InvalidOutcome(messages[error.reason]) from None
+    except OSError as error:
+        reason = error.strerror or "unreadable"
+        raise InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}") from None
     try:
         return data.decode()
     except UnicodeDecodeError:
-        raise invalid("not UTF-8 text") from None
+        raise InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: not UTF-8 text") from None

@@ -1,8 +1,9 @@
-"""The test-only Adapter, runtime `fake`, importing only adapters.base: a test registers it, as
-agent_pm.session.adapters.fake, in sys.modules or a core copy. Config keys: scenario, log, tui (true: a Tui).
-Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to LimitHit, an exit
-record to Exited(99), which the Driver drops. InProcessFakeAdapter, in_process only, logs {prompt, sid, resume, pid,
-thread} and runs out, err, sleep, exit and raise steps."""
+"""The test-only Adapter, runtime `fake`, importing only adapters.base; caller-owned loader tables
+supply it. Config keys: scenario, log, tui (true: a Tui). Its runtime is runtime.py (RUNTIME), run
+by this Python; a limit record {resets_at} parses to LimitHit, an exit record to Exited(99), which
+the Driver drops. InProcessFakeAdapter, in_process only, logs {prompt, sid, resume, pid, thread} and
+runs out, err, sleep, exit and raise steps.
+"""
 
 import json
 import os
@@ -28,6 +29,7 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Reply,
     SessionBound,
+    Spec,
     Stderr,
     TurnEnd,
 )
@@ -92,7 +94,7 @@ def _parse(record):
 
 
 class FakeHeadless(Headless):
-    def launch(self, prompt, spec, resume):
+    def launch(self, prompt, spec: Spec, *, resume: bool = False):
         return Launch(
             _argv(self.adapter, prompt, spec, resume),
             transcript=os.path.join(spec.workdir, f"fake-{spec.sid}.jsonl"),
@@ -104,7 +106,7 @@ class FakeHeadless(Headless):
 
 
 class FakeInProcess(InProcess):
-    def run(self, prompt, spec, resume):
+    def run(self, prompt, spec: Spec, *, resume: bool = False):
         config = self.adapter.config
         with open(config["log"], "a", encoding="utf-8") as f:
             f.write(
@@ -141,7 +143,7 @@ class FakeInProcess(InProcess):
 class FakeTui(Tui):
     hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
 
-    def launch(self, prompt, spec, resume, hook):
+    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
         return Launch((*_argv(self.adapter, prompt, spec, resume), *hook))
 
     def reply(self, payload):
