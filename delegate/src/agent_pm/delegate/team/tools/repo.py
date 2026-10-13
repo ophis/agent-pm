@@ -29,7 +29,6 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -38,11 +37,9 @@ from agent_pm.utils import (
     LOCAL,
     LONG,
     SHORT,
-    ConfigFileError,
     GitError,
     Invalid,
     Once,
-    PathError,
     Repo,
     Runner,
     check_slug,
@@ -453,7 +450,7 @@ def main(
     try:
         cfg = read_project("delegate", path=config, local=local)
         links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
-    except (ConfigFileError, tomllib.TOMLDecodeError, PathError, ValueError, OSError) as e:
+    except (ValueError, OSError) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 1
     try:

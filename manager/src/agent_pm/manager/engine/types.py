@@ -1,6 +1,5 @@
 """The manager's types: crew.py's Spec, crew.py's and roster.py's errors."""
 
-import argparse
 from dataclasses import dataclass
 
 
@@ -22,38 +21,9 @@ class Spec:
     split_from: str | None = None
 
 
-UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
-ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
-
-
 class RosterError(Exception):
     pass
 
 
 class Stale(RosterError):
-    pass
-
-
-class Held(RosterError):
-    def __init__(self, directory: str, session: str, since: str):
-        super().__init__(
-            f"manager directory {directory}: held by tmux session {session} since {since}; "
-            "ask that manager to run crew.py release, or end that session"
-        )
-
-
-class WorkersError(Exception):
-    pass
-
-
-class NotAWorker(WorkersError):
-    def __init__(self, name: str):
-        super().__init__(f"{name}: not a worker")
-
-
-class Refused(WorkersError):
-    pass
-
-
-class CommandArgumentError(argparse.ArgumentTypeError):
     pass

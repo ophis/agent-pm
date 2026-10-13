@@ -28,7 +28,6 @@ from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
-    PathError,
     import_roots,
     printable_abs,
     real_dirs,
@@ -55,7 +54,6 @@ __all__ = [
     "NAME",
     "OWNER",
     "Once",
-    "PathError",
     "Record",
     "Repo",
     "Runner",

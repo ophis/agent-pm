@@ -24,7 +24,8 @@ from agent_pm.manager.engine import crew, roster
 from agent_pm.manager.engine import crew as controls
 from agent_pm.manager.engine import crew as monitor
 from agent_pm.manager.engine import crew as workers
-from agent_pm.manager.engine.types import NotAWorker, Spec
+from agent_pm.manager.engine.crew import NotAWorker
+from agent_pm.manager.engine.types import Spec
 from agent_pm.session import (
     Access,
     Activity,
@@ -208,16 +209,6 @@ def result(**fields):
     return json.dumps({"ts": "2026-10-09T12:00:00", "kind": "result", **fields}) + "\n"
 
 
-class FakeDriverError(DriverError):
-    @classmethod
-    def close_failed(cls, name):
-        return cls(f"cannot close tui session {name}: tmux: boom")
-
-    @classmethod
-    def no_tui(cls, name):
-        return cls(f"no tui session {name}")
-
-
 class Handle:
     def __init__(self, script):
         self.script, self.taken = script, 0
@@ -307,13 +298,13 @@ class Api:
     def close(self, name):
         self.calls.append(("close", name))
         if name in self.stuck:
-            raise FakeDriverError.close_failed(name)
+            raise DriverError(f"cannot close tui session {name}: tmux: boom")
         self.rows.pop(name, None)
 
     def attach(self, name):
         self.calls.append(("attach", name))
         if name not in self.tuis:
-            raise FakeDriverError.no_tui(name)
+            raise DriverError(f"no tui session {name}")
         return Attached(self, name)
 
     def ran(self, what):

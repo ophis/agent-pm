@@ -233,11 +233,6 @@ def events(path: str) -> list[str]:
         return []
 
 
-class WaitTimeout(AssertionError):
-    def __init__(self, timeout, what, value):
-        super().__init__(f"timed out after {timeout} s waiting for {what}; last value: {value!r}")
-
-
 def wait(check, timeout: float = TIMEOUT, what: str = "check() to hold"):
     """check()'s first truthy value; an AssertionError counts as falsy."""
     deadline = time.monotonic() + timeout
@@ -250,7 +245,9 @@ def wait(check, timeout: float = TIMEOUT, what: str = "check() to hold"):
             if value:
                 return value
         if time.monotonic() > deadline:
-            raise WaitTimeout(timeout, what, value)
+            raise AssertionError(
+                f"timed out after {timeout} s waiting for {what}; last value: {value!r}"
+            )
         time.sleep(POLL)
 
 

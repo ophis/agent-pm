@@ -7,43 +7,6 @@ import time
 import uuid
 from pathlib import Path
 
-
-class NativeError(RuntimeError):
-    @classmethod
-    def expected_exec(cls):
-        return cls("expected exec")
-
-    @classmethod
-    def prompt_boundary(cls):
-        return cls("expected caller prompt after --")
-
-    @classmethod
-    def approval_settings(cls):
-        return cls("missing approval settings")
-
-    @classmethod
-    def stdin_closed(cls):
-        return cls("stdin was not closed")
-
-    @classmethod
-    def snapshot_count(cls, count):
-        error = cls("expected one durable launch snapshot")
-        error.count = count
-        return error
-
-    @classmethod
-    def missing_binding(cls, native):
-        error = cls("missing bound native session")
-        error.native = native
-        return error
-
-    @classmethod
-    def unknown_step(cls, step):
-        error = cls("unknown fake step")
-        error.step = step
-        return error
-
-
 NATIVE = "11111111-2222-3333-4444-555555555555"
 MARKERS = (
     "CODEX_THREAD_ID",
@@ -59,7 +22,7 @@ DEFAULTS = {"NO_COLOR": "1", "CODEX_CI": "1", "PAGER": "cat", "GIT_PAGER": "cat"
 
 def parse(args):
     if not args or args[0] != "exec":
-        raise NativeError.expected_exec()
+        raise RuntimeError("expected exec")
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--json", action="store_true", required=True)
     parser.add_argument("--skip-git-repo-check", action="store_true", required=True)
@@ -68,7 +31,7 @@ def parse(args):
     parser.add_argument("-c", action="append", default=[])
     parser.add_argument("--add-dir", action="append", default=[])
     if "--" not in args or args.index("--") != len(args) - 2:
-        raise NativeError.prompt_boundary()
+        raise RuntimeError("expected caller prompt after --")
     prefix, prompt = args[:-2], args[-1]
     if len(prefix) >= 3 and prefix[-2] == "resume":
         native = prefix[-1]
@@ -78,7 +41,7 @@ def parse(args):
         native = None
         options = parser.parse_args(prefix[1:])
     if not {'approval_policy="on-request"', 'approvals_reviewer="auto_review"'} <= set(options.c):
-        raise NativeError.approval_settings()
+        raise RuntimeError("missing approval settings")
     return native, prompt
 
 
@@ -103,15 +66,15 @@ def main():
     ready, _, _ = select.select([sys.stdin], [], [], 1)
     stdin_eof = bool(ready) and os.read(sys.stdin.fileno(), 1) == b""
     if not stdin_eof:
-        raise NativeError.stdin_closed()
+        raise RuntimeError("stdin was not closed")
     records = list(
         (Path(os.environ["HOME"]) / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")
     )
     if len(records) != 1:
-        raise NativeError.snapshot_count(len(records))
+        raise RuntimeError("expected one durable launch snapshot")
     state = json.loads(records[0].read_text())
     if resume and (state["native_id"] != resume or not session_path(resume).is_file()):
-        raise NativeError.missing_binding(resume)
+        raise RuntimeError("missing bound native session")
     scenario = json.loads(Path(os.environ["FAKE_SCENARIO"]).read_text())
     native = scenario.get("thread_id", resume or NATIVE)
     path = session_path(native)
@@ -169,7 +132,7 @@ def main():
         elif "exit" in step:
             return step["exit"]
         else:
-            raise NativeError.unknown_step(step)
+            raise RuntimeError("unknown fake step")
     return 0
 
 

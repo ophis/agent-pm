@@ -31,15 +31,9 @@ from typing import TypeGuard
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import (
-    ROTATE_MSG,
-    UNPRINTABLE,
-    CommandArgumentError,
-    NotAWorker,
-    Refused,
     RosterError,
     Spec,
     Stale,
-    WorkersError,
 )
 from agent_pm.session import (
     Access,
@@ -55,8 +49,23 @@ from agent_pm.session import (
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import printable_abs, read_project, save
 
+ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
+UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
+
+
+class WorkersError(Exception):
+    pass
+
+
+class NotAWorker(WorkersError):
+    pass
+
+
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 
+
+class Refused(WorkersError):
+    pass
 
 @contextlib.contextmanager
 def driver_errors() -> Iterator[None]:
@@ -640,7 +649,7 @@ def _recorded(workdir: str, name: str, sid: str) -> dict:
     try:
         fd = os.open(os.path.join(workdir, RECORD), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
-        raise NotAWorker(name) from None
+        raise NotAWorker(f"{name}: not a worker") from None
     try:
         st = os.fstat(fd)
         raw = b""
@@ -653,7 +662,7 @@ def _recorded(workdir: str, name: str, sid: str) -> dict:
     finally:
         os.close(fd)
     if not _worker(data, name, sid):
-        raise NotAWorker(name)
+        raise NotAWorker(f"{name}: not a worker")
     return data
 
 
@@ -662,7 +671,7 @@ def restart(name: str, *, own: str | None, driver=None) -> None:
     check_name(name)
     row = session(name, driver=driver)
     if row is None or row.sid is None or not roster.SID.fullmatch(row.sid):
-        raise NotAWorker(name)
+        raise NotAWorker(f"{name}: not a worker")
     workdir = _worker_dir(row.sid)
     record = _recorded(workdir, name, row.sid)
     spec = _spec(record, workdir)
@@ -829,13 +838,13 @@ def _after(value: str) -> int | None:
         return None
     if re.fullmatch(r"[0-9]+", value):
         return int(value)
-    raise CommandArgumentError(f"{value!r}: use a line number or end")
+    raise argparse.ArgumentTypeError(f"{value!r}: use a line number or end")
 
 
 def _number(value: str) -> int:
     if re.fullmatch(r"[0-9]+", value):
         return int(value)
-    raise CommandArgumentError(f"{value!r}: use a non-negative integer")
+    raise argparse.ArgumentTypeError(f"{value!r}: use a non-negative integer")
 
 
 def _drop_import_root() -> None:

@@ -486,11 +486,6 @@ class ReadStateTest(Base):
         return False
 
 
-class MissingPane(tmux_host.TuiError):
-    def __init__(self, target):
-        super().__init__(f"tmux: can't find pane: {target}")
-
-
 class BoundTest(Base):
     """A begun Mode is its pane's (%1): another pane under its name, or stop(), ends it."""
 
@@ -634,7 +629,7 @@ class SwapTest(Base):
             def call(target, *_args):
                 pane = at(target)
                 if pane is None and method != "option":
-                    raise MissingPane(target)
+                    raise tmux_host.TuiError(f"tmux: can't find pane: {target}")
                 if pane is not None:
                     reached.append((method, pane))
                 return result

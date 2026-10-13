@@ -28,9 +28,14 @@ import unicodedata
 from collections.abc import Iterator
 from typing import overload
 
-from agent_pm.manager.engine.types import Held, RosterError, Stale
+from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import Driver, DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
+
+
+class Held(RosterError):
+    pass
+
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -503,7 +508,10 @@ def _holds(r: dict, directory: str, own: str | None, *, driver=None) -> bool:
     if holder["session"] == own:
         return True
     if _live(holder["session"], driver=driver):
-        raise Held(directory, holder["session"], holder["since"])
+        raise Held(
+            f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
+            "ask that manager to run crew.py release, or end that session"
+        )
     return False
 
 

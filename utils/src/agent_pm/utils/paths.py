@@ -11,11 +11,6 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4)
 STATE = "~/.agent-pm"
 
 
-class PathError(ValueError):
-    def __init__(self, label, path):
-        super().__init__(f"{label}: {path!r:.80} is not an absolute or expandable ~ path")
-
-
 def real_dirs(paths, label: str) -> frozenset[str]:
     if not isinstance(paths, list):
         raise ValueError(f"{label}: want a list of local paths")
@@ -25,7 +20,7 @@ def real_dirs(paths, label: str) -> frozenset[str]:
             or not p.startswith(("/", "~"))
             or os.path.expanduser(p).startswith("~")
         ):
-            raise PathError(label, p)
+            raise ValueError(f"{label}: {p!r:.80} is not an absolute or expandable ~ path")
     return frozenset(os.path.realpath(os.path.expanduser(p)) for p in paths)
 
 

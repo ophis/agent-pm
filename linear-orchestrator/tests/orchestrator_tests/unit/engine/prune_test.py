@@ -19,7 +19,6 @@ from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import TEAM, team_node
 from orchestrator_tests.unit.fake_api import FakeApi
-from orchestrator_tests.unit.fixture_errors import CommandAssertion
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
@@ -112,7 +111,7 @@ class Git:
     def __call__(self, argv, timeout):
         self.calls.append(argv)
         if not self.real:
-            raise CommandAssertion.git_ran(argv)
+            raise AssertionError(f"git ran: {argv}")
         return sh(argv, timeout)
 
 

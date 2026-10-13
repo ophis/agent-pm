@@ -32,16 +32,6 @@ WAIT = 20  # upper bound on any wait, in seconds
 DIALOG = "Pick one: 1. this 2. that"
 
 
-class MissingEvent(AssertionError):
-    def __init__(self, seconds):
-        super().__init__(f"no event within {seconds} s")
-
-
-class UnexpectedEvent(AssertionError):
-    def __init__(self, seconds, event):
-        super().__init__(f"an event within {seconds} s: {event!r}")
-
-
 class Stream:
     """A Handle's events(), drained by `thread` into a queue."""
 
@@ -66,7 +56,7 @@ class Stream:
                 item = self.queue.get(timeout=live_tmux.POLL)
             except queue.Empty:
                 if time.monotonic() > deadline:
-                    raise MissingEvent(WAIT) from None
+                    raise AssertionError(f"no event within {WAIT} s") from None
                 if poke:
                     poke()
                 continue
@@ -85,7 +75,7 @@ class Stream:
     def quiet(self, seconds: float) -> None:
         time.sleep(seconds)
         if not self.queue.empty():
-            raise UnexpectedEvent(seconds, self.queue.get())
+            raise AssertionError(f"an event within {seconds} s: {self.queue.get()!r}")
 
 
 class Live(Case):

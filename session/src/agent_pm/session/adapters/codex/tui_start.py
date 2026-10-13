@@ -33,17 +33,7 @@ ANSWER_MAX = 64 << 20
 
 
 class StartError(Exception):
-    @staticmethod
-    def _hook_problem(hook: dict, command: str) -> str:
-        if hook.get("enabled") is not True:
-            return "is disabled"
-        if hook.get("handlerType") != "command" or hook.get("command") != command:
-            return "is not our command"
-        if not isinstance(hook.get("key"), str):
-            return "has no key"
-        if not isinstance(hook.get("currentHash"), str) or not HASH.fullmatch(hook["currentHash"]):
-            return "has no sha256 hash"
-        return ""
+    pass
 
 
 class Stopped(BaseException):
@@ -150,10 +140,19 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
                 f"codex hooks/list: {count or 'no'} session-flags {name} hook{('s' if count > 1 else '')}"
             )
         h = rows[0]
-        if StartError._hook_problem(h, command):
-            raise StartError(
-                f"codex hooks/list: the session-flags {name} hook {StartError._hook_problem(h, command)}"
-            )
+        why = (
+            "is disabled"
+            if h.get("enabled") is not True
+            else "is not our command"
+            if h.get("handlerType") != "command" or h.get("command") != command
+            else "has no key"
+            if not isinstance(h.get("key"), str)
+            else "has no sha256 hash"
+            if not isinstance(h.get("currentHash"), str) or not HASH.fullmatch(h["currentHash"])
+            else ""
+        )
+        if why:
+            raise StartError(f"codex hooks/list: the session-flags {name} hook {why}")
         trusted.append(h)
     for h in ours:
         if not any(h is t for t in trusted):

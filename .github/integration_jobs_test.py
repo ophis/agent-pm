@@ -30,7 +30,7 @@ class Assignment(unittest.TestCase):
 
     def test_invalid_durations_fail(self):
         for duration in (-1, 0, float("inf"), float("nan"), True, "slow"):
-            with self.subTest(duration=duration), self.assertRaises(gate.AssignmentError):
+            with self.subTest(duration=duration), self.assertRaises(ValueError):
                 gate.weights([case("A")], {"unused": duration})
 
     def test_missing_duplicate_and_empty_shards_fail(self):
@@ -41,7 +41,7 @@ class Assignment(unittest.TestCase):
             {"1": [a], "2": [case("C")]},
             {"1": [a, b]},
         ):
-            with self.subTest(suites=suites), self.assertRaises(gate.AssignmentError):
+            with self.subTest(suites=suites), self.assertRaises(ValueError):
                 gate.validate([a, b], suites, ("1", "2"))
 
 
@@ -53,7 +53,7 @@ class Workflow(unittest.TestCase):
                 if matrix == "[]":
                     self.assertEqual(gate.workflow_jobs(text), [])
                 else:
-                    with self.assertRaises(gate.AssignmentError):
+                    with self.assertRaises(ValueError):
                         gate.workflow_jobs(text)
         text = 'jobs:\n  integration:\n    strategy:\n      matrix:\n        job: ["1", "2"]\n'
         self.assertEqual(gate.workflow_jobs(text), ["1", "2"])

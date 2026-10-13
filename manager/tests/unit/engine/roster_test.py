@@ -283,11 +283,6 @@ def numbered(count, *, start=1, first=WIDTH):
     )
 
 
-class BusySession(DriverError):
-    def __init__(self, name):
-        super().__init__(f"cannot close tui session {name}: tmux: busy")
-
-
 class Tmux:
     def __init__(self):
         self.alive, self.stuck, self.own, self.error, self.calls = set(), set(), None, None, []
@@ -304,7 +299,7 @@ class Tmux:
         if self.error:
             raise self.error
         if name in self.stuck:
-            raise BusySession(name)
+            raise DriverError(f"cannot close tui session {name}: tmux: busy")
         self.alive.discard(name)
 
 

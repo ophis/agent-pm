@@ -246,17 +246,14 @@ def hold(test, path):
     return lambda: fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-class DeadlineError(AssertionError):
-    def __init__(self, seconds):
-        super().__init__(f"still running after {seconds} s")
-
-
 @contextmanager
 def deadline(seconds=5):
     """Fail after the deadline, interrupting a blocked open."""
 
     def expire(*_):
-        raise DeadlineError(seconds)  # An OSError would become a TuiError.
+        raise AssertionError(
+            f"still running after {seconds} s"
+        )  # An OSError would become a TuiError.
 
     old = signal.signal(signal.SIGALRM, expire)
     signal.setitimer(signal.ITIMER_REAL, seconds)

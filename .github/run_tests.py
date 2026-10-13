@@ -151,11 +151,6 @@ def discovery_top(root, start):
     return root
 
 
-class DiscoveryError(ValueError):
-    def __init__(self, errors):
-        super().__init__("\n".join(errors))
-
-
 def discover(root, directories):
     suite = unittest.TestSuite()
     for directory in directories:
@@ -167,7 +162,7 @@ def discover(root, directories):
             )
         )
         if loader.errors:
-            raise DiscoveryError(loader.errors)
+            raise ValueError("\n".join(loader.errors))
     return suite
 
 

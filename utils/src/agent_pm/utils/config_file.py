@@ -27,11 +27,6 @@ class ConfigFileError(ValueError):
     pass
 
 
-class MissingConfig(FileNotFoundError):
-    def __init__(self, path):
-        super().__init__(f"{path}: missing")
-
-
 def merge(base: dict, over: dict) -> dict:
     out = dict(base)
     for k, v in over.items():
@@ -56,7 +51,7 @@ def read_project(
     if (path or name not in UNCONFIGURED) and (
         os.path.isdir(own_file) or not os.path.exists(own_file)
     ):
-        raise MissingConfig(own_file)
+        raise FileNotFoundError(f"{own_file}: missing")
     configs = _configs(root, name, path)
     known = (
         {**configs, name: merge(_load(os.path.join(root, name, "config.toml")), configs[name])}

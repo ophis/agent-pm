@@ -17,18 +17,6 @@ DURATIONS = ROOT / ".github/integration_durations.json"
 JOBS = tuple(str(number) for number in range(1, 9))
 
 
-class AssignmentError(ValueError):
-    def __init__(self, kind, labels=()):
-        messages = {
-            "matrix": "workflow: matrix.job must be one inline JSON array of unique strings",
-            "durations": "integration durations must be finite positive seconds",
-            "coverage": "integration shards must be nonempty and contain every test exactly once",
-            "labels": "workflow matrix.job differs from the duration shards",
-            "usage": "give --check or a shard number: " + ", ".join(labels),
-        }
-        super().__init__(messages[kind])
-
-
 def directories(root):
     return [
         "tests/integration",
@@ -61,7 +49,7 @@ def workflow_jobs(text):
         or not all(isinstance(label, str) for label in labels)
         or len(set(labels)) != len(labels)
     ):
-        raise AssignmentError("matrix")
+        raise ValueError("workflow: matrix.job must be one inline JSON array of unique strings")
     return labels
 
 
@@ -73,7 +61,7 @@ def weights(found, durations):
         or value <= 0
         for value in durations.values()
     ):
-        raise AssignmentError("durations")
+        raise ValueError("integration durations must be finite positive seconds")
     known = [durations[test.id()] for test in found if test.id() in durations]
     fallback = statistics.median(known) if known else 1.0
     return {test.id(): durations.get(test.id(), fallback) for test in found}
@@ -98,13 +86,13 @@ def validate(found, suites, labels):
         or counts != expected
         or any(count != 1 for count in counts.values())
     ):
-        raise AssignmentError("coverage")
+        raise ValueError("integration shards must be nonempty and contain every test exactly once")
 
 
 def check(root, labels, durations, workflow):
     matrix = workflow_jobs(workflow)
     if set(matrix) != set(labels):
-        raise AssignmentError("labels")
+        raise ValueError("workflow matrix.job differs from the duration shards")
     found = list(tests(run_tests.discover(root, directories(root))))
     split = assign(found, labels, durations)
     validate(found, split, matrix)
@@ -113,7 +101,7 @@ def check(root, labels, durations, workflow):
 
 def main(argv):
     if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
-        raise AssignmentError("usage", JOBS)
+        raise ValueError("give --check or a shard number: " + ", ".join(JOBS))
     title = f"Integration {argv[0]}"
     code = None if argv == ["--check"] else run_tests.supervise(title)
     if code is not None:
@@ -131,5 +119,5 @@ def main(argv):
 if __name__ == "__main__":
     try:
         sys.exit(main(sys.argv[1:]))
-    except AssignmentError as error:
+    except ValueError as error:
         sys.exit(str(error))

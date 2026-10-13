@@ -59,20 +59,6 @@ else:
 """
 
 
-class StreamError(AssertionError):
-    @classmethod
-    def incomplete_consumer(cls):
-        return cls("event consumer did not finish")
-
-    @classmethod
-    def event_deadline(cls):
-        return cls("no event before deadline")
-
-    @classmethod
-    def unexpected_event(cls, event):
-        return cls(f"unexpected event: {event!r}")
-
-
 class Stream:
     def __init__(self, case, handle):
         self.queue = queue.Queue()
@@ -90,7 +76,7 @@ class Stream:
         try:
             self.result.result(timeout=2)
         except TimeoutError:
-            raise StreamError.incomplete_consumer() from None
+            raise AssertionError("event consumer did not finish") from None
         finally:
             self.executor.shutdown(wait=False, cancel_futures=True)
 
@@ -105,7 +91,7 @@ class Stream:
                     self.result.result()
                 self.server.tmux("run-shell", "-b", "true")
                 if time.monotonic() > deadline:
-                    raise StreamError.event_deadline() from None
+                    raise AssertionError("no event before deadline") from None
         return event
 
     def until(self, kind):
@@ -116,7 +102,7 @@ class Stream:
 
     def quiet(self):
         try:
-            raise StreamError.unexpected_event(self.queue.get(timeout=0.4))
+            raise AssertionError(f"unexpected event: {self.queue.get(timeout=0.4)!r}")
         except queue.Empty:
             pass
 

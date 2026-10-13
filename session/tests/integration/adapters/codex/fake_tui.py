@@ -14,30 +14,13 @@ import uuid
 from pathlib import Path
 
 
-class SiblingError(ImportError):
-    def __init__(self, key, found, path):
-        super().__init__(f"{key} is {found}, not {path}")
-
-
-class OverrideError(ValueError):
-    def __init__(self, value):
-        super().__init__("expected key=value")
-        self.value = value
-
-
-class StepError(ValueError):
-    def __init__(self, step):
-        super().__init__("unknown interactive step")
-        self.step = step
-
-
 def _sibling(name):
     key = "_agent_pm_" + name
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py")
     if key in sys.modules:
         found = getattr(sys.modules[key], "__file__", None)
         if found != path:
-            raise SiblingError(key, found, path)
+            raise ImportError(f"{key} is {found}, not {path}")
         return sys.modules[key]
     spec = importlib.util.spec_from_file_location(key, path)
     module = sys.modules[key] = importlib.util.module_from_spec(spec)
@@ -108,7 +91,7 @@ def configure(overrides):
     for value in overrides:
         key, separator, raw = value.partition("=")
         if not separator:
-            raise OverrideError(value)
+            raise ValueError("expected key=value")
         try:
             parsed = tomllib.loads("value=" + raw)["value"]
         except tomllib.TOMLDecodeError:
@@ -348,7 +331,7 @@ class InteractiveSession:
             while not Path(step["file"]).exists():
                 time.sleep(0.02)
         else:
-            raise StepError(step)
+            raise ValueError("unknown interactive step")
         return False
 
     def turn(self, text, steps):
