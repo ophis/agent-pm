@@ -170,7 +170,7 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
     )
 
 
-def flags(snapshot: dict, *, interactive: bool) -> list[str]:
+def launch_flags(snapshot: dict, *, interactive: bool) -> list[str]:
     model = [
         *(("-m", snapshot["model"]) if snapshot["model"] is not None else ()),
         *(
@@ -378,7 +378,7 @@ class CodexCommon:
         argv = [
             "codex",
             *selection[:-1],
-            *flags(snapshot, interactive=True),
+            *launch_flags(snapshot, interactive=True),
             *selection[-1:],
             *literal,
         ]

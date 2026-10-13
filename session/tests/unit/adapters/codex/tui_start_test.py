@@ -36,8 +36,8 @@ print(json.dumps([
     sys.path[:len(roots)] == roots,
     all(sys.path.count(root) == 1 for root in roots),
     sys.path == before,
-    sessions.argv_flags is flags,
-    type(next(sessions.argv_flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
+    sessions.flags is flags,
+    type(next(sessions.flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
     dataclasses.is_dataclass(sessions.SessionState),
     sessions.SessionState is types.SessionState,
     typing.get_type_hints(sessions.SessionState)["snapshot"] is dict,
@@ -119,8 +119,8 @@ from agent_pm.session.adapters import flags
 from agent_pm.session.adapters.codex import sessions, tui_hook, tui_start
 print(json.dumps([
     sys.path == before,
-    sessions.argv_flags is flags,
-    type(next(sessions.argv_flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
+    sessions.flags is flags,
+    type(next(sessions.flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
     tui_start.sessions is sessions,
     tui_hook.sessions is sessions,
     sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),

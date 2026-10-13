@@ -11,7 +11,7 @@ from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
     added_dirs,
-    flags,
+    launch_flags,
     passed,
     refuse,
     reset_at,
@@ -100,7 +100,7 @@ class CodexTui(Tui):
             snapshot["cwd"],
             "-c",
             'tui.notification_method="bel"',
-            *flags(snapshot, interactive=True),
+            *launch_flags(snapshot, interactive=True),
             *hook_flags,
             *(
                 [*literal, *([prompt] if prompt else [])]

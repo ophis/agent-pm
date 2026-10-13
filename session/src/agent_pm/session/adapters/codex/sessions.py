@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from typing import Literal, overload
 
-from agent_pm.session.adapters import flags as argv_flags
+from agent_pm.session.adapters import flags
 from agent_pm.session.adapters.codex.types import SessionFile, SessionState
 
 
@@ -47,10 +47,10 @@ VALUED = {
 }
 
 
-def added_dirs(flags, cwd: str) -> list[str]:
+def added_dirs(argv, cwd: str) -> list[str]:
     return [
         os.path.join(cwd, flag.value)
-        for flag in argv_flags.scan(flags, VALUED)
+        for flag in flags.scan(argv, VALUED)
         if flag.word == "--add-dir" and flag.value is not None
     ]
 
