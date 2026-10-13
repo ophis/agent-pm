@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass
 from unittest import mock
 
+from agent_pm import session
 from agent_pm.manager.engine import crew, roster
 from agent_pm.manager.engine.crew import NotAWorker
 from agent_pm.manager.engine.types import Spec
@@ -262,6 +263,15 @@ class CrewCase(Case):
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
         self.api = Api(own=None)
+        self.real_sessions, self.real_close = session.sessions, session.close
+        self.enterContext(
+            mock.patch.object(
+                session, "sessions", side_effect=functools.partial(self.call, "sessions")
+            )
+        )
+        self.enterContext(
+            mock.patch.object(session, "close", side_effect=functools.partial(self.call, "close"))
+        )
         self.event_source = types.SimpleNamespace(next=crew.next_event)
         self.sleep = self.enterContext(mock.patch.object(time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
@@ -305,7 +315,7 @@ class CrewCase(Case):
 class WorkerCase(CrewCase):
     def setUp(self):
         super().setUp()
-        self.directory = roster.directory("m1", driver=self.api)
+        self.directory = roster.directory("m1")
         roster.ensure(self.directory)
         self.events = os.path.join(self.directory, "events")
         self.roster = os.path.join(self.directory, "roster.json")
@@ -1107,6 +1117,8 @@ class MainTest(WorkerCase):
                         file.write(event + "\n")
                     out, err = io.StringIO(), io.StringIO()
                     with (
+                        mock.patch.object(session, "sessions", self.real_sessions),
+                        mock.patch.object(session, "close", self.real_close),
                         mock.patch.object(subprocess, "Popen", return_value=process),
                         contextlib.redirect_stdout(out),
                         contextlib.redirect_stderr(err),
@@ -1169,10 +1181,10 @@ class ManagerDirTest(CrewCase):
         return rc, [x for x in err.splitlines() if not x.startswith("tui: ")], events
 
     def test_default_is_the_own_sessions_events(self):
-        for cmd, session in ((self.CMDS[0], "m1"), (self.CMDS[1], "m2"), (["start", "w2"], "w1")):
-            with self.subTest(cmd=cmd[0], session=session):
-                self.attached(own=session)
-                self.assertEqual(self.run_as(Api(session), cmd), (0, [], self.events_of(session)))
+        for cmd, manager in ((self.CMDS[0], "m1"), (self.CMDS[1], "m2"), (["start", "w2"], "w1")):
+            with self.subTest(cmd=cmd[0], session=manager):
+                self.attached(own=manager)
+                self.assertEqual(self.run_as(Api(manager), cmd), (0, [], self.events_of(manager)))
 
     def test_the_own_rows_runtime_is_the_default(self):
         self.attached(own="m1")
@@ -1368,7 +1380,7 @@ class NextEventTest(CrewCase):
             w1=row("w1", view=SessionView(state="dead")),
             w2=row("w2", view=SessionView(state="dead")),
         )
-        path = roster.events(roster.directory("m1", driver=self.api), create=False)
+        path = roster.events(roster.directory("m1"), create=False)
         self.append(nl(self.A, self.B), path)
         with self.sleeping():
             self.assertEqual(
@@ -1387,7 +1399,7 @@ class NextEventTest(CrewCase):
             w1=row("w1", view=SessionView(state="dead")),
             w2=row("w2", view=SessionView(state="dead")),
         )
-        path = roster.events(roster.directory("m1", driver=self.api), create=False)
+        path = roster.events(roster.directory("m1"), create=False)
         self.append(nl(self.A, self.B), path)
         for text in ("x = \n", "bogus = 1\n"):
             self.local(text)
@@ -1430,7 +1442,7 @@ class NextEventContentTest(CrewCase):
     def setUp(self):
         super().setUp()
         self.attached("--manager", "m1")
-        self.path = roster.events(roster.directory("m1", driver=self.api), create=False)
+        self.path = roster.events(roster.directory("m1"), create=False)
 
     def run_event(self, event, *rows):
         self.api.rows.update((r.name, r) for r in rows)
@@ -1504,6 +1516,7 @@ class NextEventContentTest(CrewCase):
                     file.write(event + "\n")
                 out, err = io.StringIO(), io.StringIO()
                 with (
+                    mock.patch.object(session, "sessions", self.real_sessions),
                     mock.patch.object(subprocess, "Popen", return_value=process),
                     contextlib.redirect_stdout(out),
                     contextlib.redirect_stderr(err),
@@ -1538,6 +1551,7 @@ class NextEventContentTest(CrewCase):
 
                     out, err = io.StringIO(), io.StringIO()
                     with (
+                        mock.patch.object(session, "sessions", self.real_sessions),
                         mock.patch.object(subprocess, "Popen", side_effect=spawn),
                         mock.patch.dict(os.environ, {"TMUX": ""}),
                         contextlib.redirect_stdout(out),
@@ -1564,6 +1578,7 @@ class NextEventContentTest(CrewCase):
                     file.write(event + "\n")
                 out, err = io.StringIO(), io.StringIO()
                 with (
+                    mock.patch.object(session, "sessions", self.real_sessions),
                     mock.patch.object(subprocess, "Popen", return_value=process),
                     contextlib.redirect_stdout(out),
                     contextlib.redirect_stderr(err),
@@ -2554,12 +2569,12 @@ class RosterCommandsTest(RosterCase):
             "p1": entry("pipeline", tui="p1-tui"),
         }
         fake = Api(rows=[row("w1"), row("r1"), row("r2-tui"), row("p1-tui")])
-        for name, session in (("w1", "w1"), ("r1", "r1"), ("r2", "r2-tui"), ("p1", "p1-tui")):
+        for name, live_session in (("w1", "w1"), ("r1", "r1"), ("r2", "r2-tui"), ("p1", "p1-tui")):
             with self.subTest(name):
                 before = self.seed(MGR, **entries)
                 self.assertEqual(
                     self.main_with(fake, "forget", name),
-                    (1, "", f"workers: {name}: session {session} is live\n"),
+                    (1, "", f"workers: {name}: session {live_session} is live\n"),
                 )
                 self.assertEqual(self.bytes(), before)
 

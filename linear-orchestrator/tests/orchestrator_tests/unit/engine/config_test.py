@@ -776,7 +776,8 @@ class TeamDirectoryIsolation(ConfigFile, Case):
         self.work = os.path.join(os.path.dirname(self.agent_pm), "work")
 
     def seen(self):
-        pm = self.load(PIPELINE).roles["pm"]
+        cfg = self.load(PIPELINE)
+        pm = cfg.roles["pm"]
         return pm, delegate.plan(
             pm.run,
             delegate.Spec(
@@ -787,6 +788,7 @@ class TeamDirectoryIsolation(ConfigFile, Case):
                 out=os.path.join(self.work, "out.md"),
                 cwd=self.work,
             ),
+            driver=cfg.driver,
         )
 
     def test_team_dirs_change_no_orchestrator_run(self):

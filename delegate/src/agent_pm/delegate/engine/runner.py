@@ -159,7 +159,7 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: Driver | None = None,
+    driver: Driver,
 ) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
     its exception stops the session and propagates.

@@ -1,5 +1,5 @@
 """One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing. The
-caller supplies its Driver, or configure builds one from config. A refusal is ConfigError, a Driver
+caller supplies its Driver (configure builds one from config). A refusal is ConfigError, a Driver
 one keeping its message.
 """
 
@@ -92,9 +92,8 @@ def place(
 
 
 @_own
-def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
+def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
-    driver = configure() if driver is None else driver
     if spec.mode not in MODES:
         raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {spec.mode!r}")
     if spec.mode != "tui" and spec.name is not None:

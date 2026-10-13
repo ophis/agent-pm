@@ -28,8 +28,9 @@ import unicodedata
 from collections.abc import Iterator
 from typing import Literal, NoReturn, overload
 
+from agent_pm import session
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import DriverError, close, sessions
+from agent_pm.session import DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
 
 ROOT = f"{STATE}/managers"
@@ -79,17 +80,17 @@ class Held(RosterError):
 
 
 @overload
-def directory(manager: str, *, driver) -> str: ...
+def directory(manager: str) -> str: ...
 
 
 @overload
-def directory(manager: None = None, *, driver) -> str | None: ...
+def directory(manager: None = None) -> str | None: ...
 
 
-def directory(manager: str | None = None, *, driver) -> str | None:
+def directory(manager: str | None = None) -> str | None:
     if manager is None:
         try:
-            rows = sessions() if driver is None else driver.sessions()
+            rows = session.sessions()
             manager = next((row.name for row in rows if row.own), None)
         except DriverError as e:
             raise RosterError(f"{e}; give --manager <name>") from e
@@ -165,8 +166,8 @@ def events(directory: str, *, create: bool = True) -> str:
     return path
 
 
-def home(name: str | None, events: str | None, *, driver) -> str | None:
-    d = directory(name, driver=driver)
+def home(name: str | None, events: str | None) -> str | None:
+    d = directory(name)
     if d is None or not os.path.isdir(d) or events is None:
         return None
     return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
@@ -437,22 +438,20 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
                 _write(directory, path, text)
 
 
-def _live(session: str, *, driver) -> bool:
+def _live(name: str) -> bool:
     try:
-        return bool(
-            sessions(re.escape(session)) if driver is None else driver.sessions(re.escape(session))
-        )
+        return bool(session.sessions(re.escape(name)))
     except DriverError:
         return False
 
 
-def _holds(r: dict, directory: str, own: str | None, *, driver) -> bool:
+def _holds(r: dict, directory: str, own: str | None) -> bool:
     holder = r["holder"]
     if holder is None:
         return False
     if holder["session"] == own:
         return True
-    if _live(holder["session"], driver=driver):
+    if _live(holder["session"]):
         raise Held(
             f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
             "ask that manager to run crew.py release, or end that session"
@@ -460,15 +459,15 @@ def _holds(r: dict, directory: str, own: str | None, *, driver) -> bool:
     return False
 
 
-def take(r: dict, directory: str, own: str | None, *, driver) -> None:
-    if not _holds(r, directory, own, driver=driver) and own is not None:
+def take(r: dict, directory: str, own: str | None) -> None:
+    if not _holds(r, directory, own) and own is not None:
         r["holder"] = {"session": own, "since": now()}
 
 
-def check(r: dict, directory: str, own: str | None, *, driver) -> None:
+def check(r: dict, directory: str, own: str | None) -> None:
     # the lease holds only for this block: a take-over can follow, so a later write must not assume
     # it
-    if not _holds(r, directory, own, driver=driver) and own is not None:
+    if not _holds(r, directory, own) and own is not None:
         raise RosterError(f"manager directory {directory} not attached: run crew.py attach first")
 
 
@@ -540,7 +539,7 @@ def remove(r: dict, name: str) -> dict:
         raise RosterError(f"{name} not in roster") from None
 
 
-def stop(r: dict, name: str, *, driver) -> str:
+def stop(r: dict, name: str) -> str:
     entries = r["entries"]
     key = (
         name
@@ -549,16 +548,13 @@ def stop(r: dict, name: str, *, driver) -> str:
     )
     if key is None:
         raise RosterError(f"{name} not in roster")
-    for session in (key, entries[key]["tui"]):
-        if session is None:
+    for live_name in (key, entries[key]["tui"]):
+        if live_name is None:
             continue
         with contextlib.suppress(DriverError):
-            if driver is None:
-                close(session)
-            else:
-                driver.close(session)
-        if _live(session, driver=driver):
-            raise RosterError(f"{key}: session {session} still live after tmux kill-session")
+            session.close(live_name)
+        if _live(live_name):
+            raise RosterError(f"{key}: session {live_name} still live after tmux kill-session")
     remove(r, key)
     return key
 
