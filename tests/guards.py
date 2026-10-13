@@ -4,6 +4,7 @@ import ast
 import os
 import re
 import tomllib
+from itertools import pairwise
 
 from agent_pm.utils.config_file import LEVELS
 
@@ -11,6 +12,8 @@ from tests.guard_ast import (
     _at_import,
     _bindings,
     _changes,
+    _comment_blocks,
+    _doc_blocks,
     _dotted,
     _files,
     _is,
@@ -44,7 +47,7 @@ SUBPACKAGES = {
     "linear-orchestrator": {"linear"},
 }
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
-TREES = (*PROJECTS, "tests")
+TREES = (*PROJECTS, "tests", ".github")
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
 CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
@@ -463,3 +466,17 @@ def _tree_files(repo, suffixes):
     for tree in TREES:
         for rel, text in _files(os.path.join(repo, tree), suffixes):
             yield f"{tree}/{rel}", text
+
+
+def comment_wrap(repo: str) -> list[str]:
+    found = []
+    for rel, text in _tree_files(repo, ".py"):
+        lines = text.splitlines()
+        blocks = [*_comment_blocks(text), *_doc_blocks(text)]
+        for block in blocks:
+            for (line, body, _), (_, following, _) in pairwise(block):
+                if body and following and not re.match(r"(?:[-*]|\d+[.)])\s", following):
+                    word = following.split()[0]
+                    if len(lines[line - 1].rstrip()) + len(word) + 1 <= 100:
+                        found.append(f"{rel}:{line}: next word {word!r} fits within 100 columns")
+    return sorted(found)

@@ -1,7 +1,9 @@
 """AST and file traversal helpers for repository design checks."""
 
 import ast
+import io
 import os
+import tokenize
 
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}
 
@@ -103,3 +105,36 @@ def _strings(tree):
         for n in ast.walk(tree)
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
     )
+
+
+def _comment_blocks(text):
+    lines = text.splitlines()
+    blocks, current = [], []
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type != tokenize.COMMENT or lines[token.start[0] - 1][: token.start[1]].strip():
+            continue
+        line, indent = token.start
+        if current and (line != current[-1][0] + 1 or indent != current[-1][2]):
+            blocks.append(current)
+            current = []
+        current.append((line, token.string[1:].strip(), indent))
+    blocks.append(current)
+    return blocks
+
+
+def _doc_blocks(text):
+    lines, blocks = text.splitlines(), []
+    for node in ast.walk(ast.parse(text)):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body or not isinstance(body[0], ast.Expr):
+            continue
+        value = body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            entries = [
+                (line, lines[line - 1].strip(), 0)
+                for line in range(value.lineno, value.end_lineno + 1)
+            ]
+            entries[0] = (entries[0][0], entries[0][1].lstrip("rRuU")[3:], 0)
+            entries[-1] = (entries[-1][0], entries[-1][1][:-3], 0)
+            blocks.append(entries)
+    return blocks
