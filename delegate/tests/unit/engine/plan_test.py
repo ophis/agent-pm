@@ -27,7 +27,7 @@ from agent_pm.utils.paths import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.unit.composer.teams import POET, VERSE
-from delegate.tests.unit.plans import SID, Base
+from delegate.tests.unit.engine.plans import SID, Base
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")

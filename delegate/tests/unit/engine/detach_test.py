@@ -17,7 +17,7 @@ from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, api
 
 from delegate.tests.case import Case
-from delegate.tests.unit.plans import SID, Base
+from delegate.tests.unit.engine.plans import SID, Base
 
 TUI = "dummy-tester-11111111"
 DRIVER = f"{TUI}-drive"
