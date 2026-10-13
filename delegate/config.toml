@@ -6,8 +6,8 @@
 #
 # Each layer reads only its own keys (paths from the repo root): the Composer (delegate/src/agent_pm/delegate/composer/)
 # the run keys, [output], [roles.<role>], trusted_dirs and team_dirs; delegate/src/agent_pm/delegate/team/tools/repo.py
-# users and trusted_dirs; manager/src/agent_pm/manager/roster.py runtime (the default of
-# manager/src/agent_pm/manager/crew.py's workers); delegate/src/agent_pm/delegate/engine/config.py [delegates]; the
+# users and trusted_dirs; manager/src/agent_pm/manager/engine/roster.py runtime (the default of
+# manager/src/agent_pm/manager/engine/crew.py's workers); delegate/src/agent_pm/delegate/engine/config.py [delegates]; the
 # Delegate (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<runtime>]. [adapters] and [hosts]: session/config.toml.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
