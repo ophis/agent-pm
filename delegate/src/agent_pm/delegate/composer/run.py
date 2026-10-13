@@ -20,7 +20,7 @@ from agent_pm.delegate.composer.teams import (
 from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
 from agent_pm.delegate.engine import config as delegate_config
 from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH
-from agent_pm.utils.config_file import LOCAL
+from agent_pm.utils import LOCAL
 
 RUN_KEYS = frozenset(
     {

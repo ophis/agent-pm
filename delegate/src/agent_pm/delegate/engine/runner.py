@@ -27,6 +27,7 @@ from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
+    Driver,
     DriverError,
     Exited,
     Handle,
@@ -35,13 +36,10 @@ from agent_pm.session import (
     Reply,
     Stderr,
     TurnEnd,
-    attach_command,
     holds,
     note,
-    start,
 )
-from agent_pm.utils.files import save
-from agent_pm.utils.text import printable
+from agent_pm.utils import printable, save
 
 IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
@@ -67,7 +65,7 @@ class Headless:
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
         s = p.spec
-        return start(
+        return p.driver.start(
             s.runtime,
             s.mode,
             p.prompt,
@@ -79,7 +77,9 @@ class Headless:
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
-        return start(s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT)
+        return p.driver.start(
+            s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT
+        )
 
     def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
         return None
@@ -101,7 +101,7 @@ class Tui(Headless):
 
     def start(self, p: Plan) -> Handle:
         handle = super().start(p, p.spec.name, p.spec.events)
-        say(f"delegate: tui session {handle.name}: {attach_command(handle.name)}")
+        say(f"delegate: tui session {handle.name}: {p.driver.attach_command(handle.name)}")
         return handle
 
     def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
@@ -140,10 +140,16 @@ def say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
-def run(run: RunConfig, spec: Spec, *, on_event: Callable[[Event], None] | None = None) -> Result:
+def run(
+    run: RunConfig,
+    spec: Spec,
+    *,
+    on_event: Callable[[Event], None] | None = None,
+    driver: Driver | None = None,
+) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
     the session and propagates."""
-    p = plan(run, spec)
+    p = plan(run, spec, driver=driver)
     attempts = _Attempts(p, on_event or (lambda event: None))
     try:
         result = attempts.result()
@@ -286,7 +292,7 @@ class _Attempts:
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
                 say(
-                    f"delegate: {answer.reason}; session {handle.name} left open: {attach_command(handle.name)}"
+                    f"delegate: {answer.reason}; session {handle.name} left open: {self.plan.driver.attach_command(handle.name)}"
                 )
                 return 0, None, None
             if answer == END:

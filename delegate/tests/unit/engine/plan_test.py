@@ -17,15 +17,11 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, composer
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine import plan as plan_module
-from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Session, note
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session.adapters import registry
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.session import Access, note
+from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.unit.composer.teams import POET, VERSE
@@ -60,14 +56,10 @@ class ReplyTags(Base):
 
 
 class Configures(Base):
-    def test_plan_never_configures_the_session(self):
-        registry.reset()
-        with mock.patch.object(Session, "configure") as configure:
-            got, _ = self.planned()
+    def test_plan_keeps_the_callers_driver(self):
+        got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
-        configure.assert_not_called()
-        with self.assertRaisesRegex(SessionConfigError, "not configured"):
-            registry.configured()
+        self.assertIs(got.driver, self.driver)
 
 
 class Cwd(Base):
@@ -386,7 +378,7 @@ class ConfiguredTeamDirs(Base):
                 )
 
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
-        with mock.patch.object(plan_module, "writable_dirs", return_value=()) as asked:
+        with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
             asked.assert_called_once_with("fake", got.session, SID)
             asked.reset_mock()
@@ -542,7 +534,7 @@ class Policy(Base):
             "[policy.claude]\nenv = { K = 1 }\n",
             '[policy.claude]\nunset = ["K"]\n',
         ):
-            with self.subTest(text=text), mock.patch.object(runner, "start") as start:
+            with self.subTest(text=text), mock.patch.object(self.driver, "start") as start:
                 self.local(text)
                 self.assertIn("policy", self.refused(runtime="claude"))
                 start.assert_not_called()

@@ -7,7 +7,6 @@ import threading
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import session_record, session_status
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
@@ -31,19 +30,26 @@ def is_comment(comment):
     )
 
 
-def base(*, sid, workdir, runtime, started_at):
-    return {"sid": sid, "workdir": workdir, "runtime": runtime, "started_at": started_at, "seq": 0}
+def base(*, sid, workdir, runtime, started_at, driver):
+    return {
+        "sid": sid,
+        "workdir": workdir,
+        "runtime": runtime,
+        "started_at": started_at,
+        "seq": 0,
+        "driver": driver,
+    }
 
 
-def status(workdir, runtime, sid):
+def status(workdir, runtime, sid, *, driver):
     # only cwd is read from the session entry: the agent run can write run.jsonl
-    entry = session_record(workdir, sid)
-    return session_status(runtime, sid, entry["cwd"] if entry else workdir)
+    entry = driver.session_record(workdir, sid)
+    return driver.session_status(runtime, sid, entry["cwd"] if entry else workdir)
 
 
 def command(rec):
     try:
-        st = status(rec["workdir"], rec["runtime"], rec["sid"])
+        st = status(rec["workdir"], rec["runtime"], rec["sid"], driver=rec["driver"])
     except Exception:
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
@@ -113,9 +119,9 @@ def _text(rec):
     return out
 
 
-def post(issue, rec, rc=None, *, gql, ended_at=None, outcome=None, limit=False):
+def post(issue, rec, rc=None, *, gql, ended_at=None, outcome=None, limit=False, timeout=LIMIT):
     rec["args"] = (rc, None if rc is None else ended_at or now(), outcome, limit)
-    return write(gql, rec["sid"], issue, _text(rec))
+    return write(gql, rec["sid"], issue, _text(rec), limit=timeout)
 
 
 def repair(issue, issue_id, rec, *, gql, limit=LIMIT):

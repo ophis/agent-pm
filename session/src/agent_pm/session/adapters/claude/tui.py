@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import LimitHit
-from agent_pm.utils.files import read_regular
+from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")

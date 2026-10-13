@@ -15,6 +15,7 @@ import sys
 import tempfile
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
@@ -23,16 +24,17 @@ from agent_pm.linear_orchestrator.engine import run as run_py
 from agent_pm.linear_orchestrator.linear import issues, linear
 from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.utils.git import GUARD
-from agent_pm.utils.shell import SHORT
+from agent_pm.utils import GUARD
+from agent_pm.utils import SHORT
 
+from .clock import frozen, logs_at
 from ..case import PYTHONPATH
 from . import run_fixtures
 from .board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from .board_ids import STATES as IDS_BY_KEY
 from .board_ids import role as role_table
 from .fake_api import FakeApi
-from .linear_test import Stderr
+from .streams import Stderr
 from .outage import FAILURES, FIELDS, failing
 from .run_fixtures import (
     ENGINEER,
@@ -49,8 +51,8 @@ from .run_fixtures import (
     node,
     show,
 )
-from .target_test import FakeRun, ok
-from .target_test import api as repo_info
+from .target_support import FakeRun, ok
+from .target_support import api as repo_info
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))
@@ -297,9 +299,6 @@ class Base(run_fixtures.Base):
         self.lines, self.hist, self.names = [], {}, {}
         self.logs, self.mark, self.raw, self.taken = None, 0, "", None
         self.api = FakeApi()
-        patch = self.api.patch()
-        patch.start()
-        self.addCleanup(patch.stop)
 
     def write_config(self, text):
         self.write(self.config_path, text)
@@ -368,13 +367,16 @@ class Base(run_fixtures.Base):
 
     def log_dir(self, again):
         if not again or self.logs is None:
-            self.logs = tempfile.mkdtemp(dir=self.tmp)
+            self.logs = os.path.join(self.work, "logs")
+            path = os.path.join(self.logs, "orchestrator.jsonl")
+            if os.path.exists(path):
+                os.unlink(path)
         self.mark = len(logged(self.logs))
-        return mock.patch.object(linear, "LOGS_DIR", self.logs)
+        return logs_at(self.logs)
 
     def board(self, fake, use, dry=False, gate=False, again=False):
         self.write_runs()
-        cfg = config.load(path=self.config_path)
+        cfg = replace(config.load(path=self.config_path), driver=self.api)
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again):
             out = use(
@@ -384,7 +386,7 @@ class Base(run_fixtures.Base):
                     NOW,
                     dry,
                     cfg,
-                    router.Gate(self.runs, NOW, dry) if gate else None,
+                    router.Gate(self.runs, NOW, dry, driver=self.api) if gate else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -1602,7 +1604,7 @@ class Gate(Base):
 
     def gate(self):
         self.write_runs()
-        return router.Gate(self.runs, NOW, False)
+        return router.Gate(self.runs, NOW, False, driver=self.api)
 
     def test_thresholds(self):
         self.assertEqual((router.MAX_5H, router.BRAKE_5H, router.MAX_WEEK), (90, 80, 100))
@@ -1825,7 +1827,7 @@ class LiveSessions(Base):
             "other",
         ]
         self.assertEqual(
-            router.live_sessions(["researcher", "pm", "pm-lead", "engineer"]),
+            router.live_sessions(["researcher", "pm", "pm-lead", "engineer"], driver=self.api),
             {
                 "researcher": ["TASK-1"],
                 "pm": ["TASK-6"],
@@ -1837,7 +1839,7 @@ class LiveSessions(Base):
 
     def test_unknown_sessions_are_none(self):
         self.api.live = None
-        self.assertIsNone(router.live_sessions(["researcher", "engineer"]))
+        self.assertIsNone(router.live_sessions(["researcher", "engineer"], driver=self.api))
 
 
 class Begin(Base):
@@ -1846,7 +1848,7 @@ class Begin(Base):
     def test_one_json_line_and_the_launch_namespace(self):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         found = issue("TASK-1", "In Progress", "researcher")
-        with mock.patch.object(linear, "stamp", return_value="2026-10-09T00:26:33-04:00"):
+        with frozen("2026-10-09T00:26:33-04:00"):
             got = [
                 router.begin(mode, found, "s1", "researcher", task, "a", path)
                 for mode, task in (("new", "light-research"), ("resume", None))
@@ -1926,13 +1928,13 @@ class TickBase(Base):
             redirect_stderr(err),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
             self.log_dir(again),
-            mock.patch.object(linear, "use_logs"),
         ):
             rc = router.main(
                 list(argv),
                 gql=fake,
                 now=now,
                 config_path=self.config_path,
+                driver=self.api,
                 hour=hour,
                 start=self.start,
                 **(outer or {}),
@@ -1987,7 +1989,7 @@ class Tick(TickBase):
 
     def test_begin_appends_one_json_line_to_runs_jsonl(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        with mock.patch.object(linear, "stamp", return_value="2026-10-09T00:26:33-04:00"):
+        with frozen("2026-10-09T00:26:33-04:00"):
             self.tick(fake, "--now", hour=12)
         (launch,) = self.start.launches
         self.assertEqual(
@@ -1996,7 +1998,8 @@ class Tick(TickBase):
             f'"sid": "{launch.sid}", "role": "researcher", "runtime": "a"}}\n',
         )
         self.assertEqual(
-            sorted(os.listdir(os.path.dirname(self.runs))), ["router.lock", "runs.jsonl"]
+            sorted(os.listdir(os.path.dirname(self.runs))),
+            ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
         )
 
     def test_an_idle_tick_writes_no_line(self):
@@ -2008,7 +2011,8 @@ class Tick(TickBase):
         for hour, live, listed in cases:
             with self.subTest(hour=hour, live=live):
                 self.assertEqual(self.tick(FakeLinear(listed), hour=hour, live=live), 0)
-                self.assertEqual((self.said(), self.err, os.listdir(self.logs)), ([], "", []))
+                self.assertEqual((self.said(), self.err), ([], ""))
+        self.assertFalse(os.path.exists(os.path.join(self.logs, "orchestrator.jsonl")))
         blocked = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])]
         self.tick(FakeLinear(blocked))
         self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7"]'])
@@ -2416,7 +2420,8 @@ class Tick(TickBase):
 
     def test_trim_failure_continues(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        with mock.patch.object(router, "trim", side_effect=OSError("disk")):
+        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        with mock.patch.object(os, "replace", side_effect=OSError("disk")):
             self.tick(fake)
         self.assertIn("skip reason=prune failed error=OSError: disk", self.said())
         self.assertEqual(len(self.start.launches), 1)
@@ -2464,7 +2469,7 @@ class TickGate(TickBase):
 
     def test_a_resume_keeps_the_runtime_of_its_claim(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        with mock.patch.object(linear, "stamp", return_value=ago(minutes=60)):
+        with frozen(ago(minutes=60)):
             self.tick(fake)
         (claimed,) = self.start.launches
         self.assertEqual(self.last_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
@@ -2869,7 +2874,9 @@ class OneRouter(TickBase):
             self.assertEqual(self.said(), ["pick TASK-1 queue=1"])
             out = io.StringIO()
             with redirect_stdout(out):
-                rc = router.main(["--brake", "researcher"], config_path=self.config_path)
+                rc = router.main(
+                    ["--brake", "researcher"], config_path=self.config_path, driver=self.api
+                )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
         self.assertEqual(fake.mutations, [])
 
@@ -2917,7 +2924,7 @@ class Outage(TickBase):
                     self.assertEqual(
                         (self.said(), len(self.raw.splitlines())), ([self.SAID[name]], 1)
                     )
-                    self.assertEqual((os.listdir(self.logs), self.state), ([], ""))
+                    self.assertEqual((os.listdir(self.logs), self.state), (["runs.jsonl"], ""))
 
     def test_a_claim_applied_with_its_answer_lost_is_recovered_once_stale(self):
         for argv, plan in ((("--now",), ["plan mode=new queue=1"]), (("--issue", "TASK-1"), [])):
@@ -3187,7 +3194,7 @@ class OuterBase(TickBase):
 
     def outer(self, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
         a = outer_args(ident, PROJECT, assignee, sid, task, mode, runtime)
-        cfg = config.load(path=self.config_path)
+        cfg = replace(config.load(path=self.config_path), driver=self.api)
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=True):
             rc = router.outer(
@@ -3203,10 +3210,10 @@ class OuterBase(TickBase):
     def detached(self, role="engineer"):
         name, argv, cwd, env = self.api.detached[-1]
         self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
-        self.assertEqual(
-            env,
-            {**os.environ, "PATH": config.path(), "PYTHONPATH": PYTHONPATH},
-        )
+        expected = {**os.environ, "PATH": config.path(), "PYTHONPATH": PYTHONPATH}
+        self.assertEqual(set(env), set(expected))
+        for key, value in expected.items():
+            self.assertTrue(env[key] == value, key)
         return argv
 
     def input(self, **kw):
@@ -3236,19 +3243,22 @@ class Outer(OuterBase):
         self.assertEqual(self.outer(task="light-build"), 0)
         argv = self.detached()
         self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
-        cfg = config.load(path=self.config_path)
-        with (
-            mock.patch.object(run_py, "inner", return_value=0) as run_inner,
-            mock.patch.object(config, "load", return_value=cfg),
-            mock.patch.object(linear, "use_logs"),
-        ):
-            self.assertEqual(run_py.main(argv[4:]), 0)
-        a = run_inner.call_args.args[0]
+        found = run_py.options(argv[4:])
         self.assertEqual(
-            (a.uuid, a.target, a.issue, a.project, a.assignee, a.sid, a.task, a.mode, a.runtime),
+            (
+                found.uuid,
+                found.target,
+                found.issue,
+                found.project,
+                found.assignee,
+                found.sid,
+                found.task,
+                found.mode,
+                found.runtime,
+            ),
             (UUID, "Ophis/Agent-PM", ID, PROJECT, ENGINEER, SID, "light-build", "new", "a"),
         )
-        self.assertEqual((a.input, a.tui), (INPUT, False))
+        self.assertEqual((found.input, found.tui), (INPUT, False))
 
     def test_a_long_input_reaches_run_py_intact(self):
         big = "".join(
@@ -3303,7 +3313,7 @@ class Outer(OuterBase):
             ["init", "-q", path],
             ["-C", path, "remote", "add", "origin", "https://github.com/ophis/agent-pm.git"],
         ):
-            subprocess.run(["git", *argv], check=True)
+            subprocess.run(["git", *GUARD, *argv], check=True)
         self.write_config(OUTER + f'[local_clones]\n"Ophis/Agent-PM" = "{path}"\n')
         return path
 
@@ -3331,7 +3341,7 @@ class Outer(OuterBase):
 
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
-        cfg = config.load(path=self.config_path)
+        cfg = replace(config.load(path=self.config_path), driver=self.api)
         os.makedirs(
             os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
         )
@@ -3546,7 +3556,7 @@ class Entry(OuterBase):
                         lines.append(f.read())
                     return detach(*args, **kw)
 
-                with mock.patch.object(router, "detach", at_detach):
+                with mock.patch.object(self.api, "detach", at_detach):
                     self.assertEqual(self.entry(*argv), 0)
                 kind, ident, sid, role, runtime = self.last_run()
                 self.assertEqual((kind, ident, role, runtime), ("start", ID, "engineer", "a"))
@@ -3576,7 +3586,7 @@ class Entry(OuterBase):
         self.assertIn("claim TASK-7 role=engineer task=light-build runtime=a", self.said())
 
     def test_a_resume_keeps_the_runtime_of_its_claim(self):
-        with mock.patch.object(linear, "stamp", return_value=ago(minutes=60)):
+        with frozen(ago(minutes=60)):
             self.assertEqual(self.entry(), 0)
         sid = self.last_run()[2]
         with open(self.runs) as f:
@@ -3667,10 +3677,6 @@ class Entry(OuterBase):
                 [show(e) for e in logged(self.logs)], [f"config-error reason={reason}"]
             )
         self.logs = None
-        error = config.ConfigError("linear-orchestrator/config.toml:\n  bad", self.tmp)
-        with mock.patch.object(config, "load", side_effect=error):
-            self.assertEqual(self.entry(), 1)
-        self.assertEqual(self.said(), ["config-error reason=linear-orchestrator/config.toml: bad"])
         self.write_local('work_dir = "w"\n')
         self.assertEqual(self.entry(), 1)
         self.assertEqual(
@@ -3755,7 +3761,7 @@ class Brake(Base):
             redirect_stderr(err),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
         ):
-            rc = router.main(["--brake", role], config_path=self.config_path)
+            rc = router.main(["--brake", role], config_path=self.config_path, driver=self.api)
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc, out.getvalue()

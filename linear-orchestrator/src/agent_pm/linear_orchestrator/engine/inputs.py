@@ -10,7 +10,7 @@ from agent_pm.linear_orchestrator.engine.config import TASKS, sh_run
 from agent_pm.linear_orchestrator.engine.target import pr_title
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.linear_orchestrator.linear.linear import parse_time
-from agent_pm.utils.shell import SHORT, err_text
+from agent_pm.utils import SHORT, err_text
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 RAW = "Accept: application/vnd.github.raw+json"

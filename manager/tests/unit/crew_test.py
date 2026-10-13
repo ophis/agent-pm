@@ -3,6 +3,7 @@ are the Driver's now, and the worker record replaces the session options."""
 
 import contextlib
 import dataclasses
+import datetime
 import errno
 import fcntl
 import functools
@@ -16,6 +17,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import types
 import unittest
 import uuid
 from unittest import mock
@@ -34,11 +37,9 @@ from agent_pm.session import (
     SessionRow,
 )
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.session.adapters import registry
-from agent_pm.utils import config_file
+from agent_pm.utils import LOCAL
 
 from manager.tests.case import PYTHONPATH, SRC, Case
-from session.tests.patch import Patched
 
 CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")
 MODULE = ["-P", "-m", "agent_pm.manager.crew"]
@@ -53,9 +54,17 @@ DEAD_TEXT = "Error: boom\n\n  \n" + "\n" * 10 + "Pane is dead (status 1)\n"
 DEAD_MSG = "w1: rt0 exited 1 at once; its pane's last lines:\nError: boom\nPane is dead (status 1)"
 MGR = {"session": "mgr", "since": WHEN}
 OTHER = {"session": "other", "since": WHEN}
-LOCAL = os.path.basename(config_file.LOCAL)
+LOCAL = os.path.basename(LOCAL)
 WIDTH = 64
 SPAN = roster.EVENTS_MAX // WIDTH
+
+
+@contextlib.contextmanager
+def fixed_time(text):
+    instant = datetime.datetime.fromisoformat(text)
+    with mock.patch.object(datetime, "datetime", wraps=datetime.datetime) as clock:
+        clock.now.return_value = instant
+        yield
 
 
 def nl(*lines):
@@ -197,7 +206,7 @@ class Api:
 
 
 def start(name, directory, *, own, **kw):
-    place = {k: kw.pop(k) for k in ("own_runtime", "split", "split_from") if k in kw}
+    place = {k: kw.pop(k) for k in ("own_runtime", "split", "split_from", "driver") if k in kw}
     return crew.start(Spec(name, **kw), directory=directory, own=own, **place)
 
 
@@ -230,17 +239,15 @@ class Runs:
 
 
 class CrewCase(Case):
-    """The session's functions faked by self.api (replaceable), sleep patched, stderr captured."""
+    """A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
         self.api = Api(own=None)
-        names = ("sessions", "start", "show", "attach_command", "close", "attach")
-        fakes = {name: functools.partial(self.call, name) for name in names}
-        self.enterContext(Patched("agent_pm.manager", **fakes))
-        self.sleep = self.enterContext(mock.patch.object(crew.time, "sleep"))
+        self.event_source = types.SimpleNamespace(next=crew.next_event)
+        self.sleep = self.enterContext(mock.patch.object(time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": PYTHONPATH}))
         self.local('runtime = "rt0"\n')
@@ -258,7 +265,7 @@ class CrewCase(Case):
     def run_main(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = crew.main(list(argv))
+            rc = crew.main(list(argv), driver=self.api, event_source=self.event_source)
         return rc, out.getvalue(), err.getvalue()
 
     def main_with(self, fake, *argv):
@@ -282,14 +289,14 @@ class CrewCase(Case):
 class WorkerCase(CrewCase):
     def setUp(self):
         super().setUp()
-        self.directory = roster.directory("m1")
+        self.directory = roster.directory("m1", driver=self.api)
         roster.ensure(self.directory)
         self.events = os.path.join(self.directory, "events")
         self.roster = os.path.join(self.directory, "roster.json")
 
     def started(self, name="w1", **kw):
         kw.setdefault("cwd", self.dir)
-        return start(name, self.directory, own=None, **kw)
+        return start(name, self.directory, own=None, driver=self.api, **kw)
 
     def entries(self):
         if not os.path.exists(self.roster):
@@ -479,7 +486,11 @@ class EarlyWatchTest(WorkerCase):
         if run == "restart":
             self.started(resume=SID)
         setup()
-        return self.started(resume=SID) if run == "start" else crew.restart("w1", own=None)
+        return (
+            self.started(resume=SID)
+            if run == "start"
+            else crew.restart("w1", own=None, driver=self.api)
+        )
 
     def fails(self, run, setup):
         with self.assertRaises(crew.WorkersError) as cm:
@@ -511,7 +522,7 @@ class EarlyWatchTest(WorkerCase):
                 clock[0] = t
                 yield Activity()
 
-        with mock.patch.object(crew.time, "monotonic", lambda: clock[0]):
+        with mock.patch.object(time, "monotonic", lambda: clock[0]):
             for run in self.RUNS:
                 with self.subTest(run=run):
                     self.api, clock[0] = Api(own=None), 0.0
@@ -591,7 +602,7 @@ class RestartTest(WorkerCase):
         entry, record = self.entries()["w1"], self.record_of(sid)
         self.local('runtime = "rt9"\n')
         self.api.calls.clear()
-        self.assertIsNone(crew.restart("w1", own=None))
+        self.assertIsNone(crew.restart("w1", own=None, driver=self.api))
         first, second = self.api.starts
         self.assertEqual(second, {**first, "prompt": "", "resume": sid})
         self.assertEqual(second["runtime"], "rt1")
@@ -619,12 +630,12 @@ class RestartTest(WorkerCase):
 
     def test_a_bad_name_touches_nothing(self):
         with self.assertRaises(crew.WorkersError):
-            crew.restart("a b", own=None)
+            crew.restart("a b", own=None, driver=self.api)
         self.assertEqual(self.api.calls, [])
 
     def assert_not_a_worker(self):
         with self.assertRaises(crew.NotAWorker) as cm:
-            crew.restart("w1", own=None)
+            crew.restart("w1", own=None, driver=self.api)
         self.assertEqual(str(cm.exception), "w1: not a worker")
         self.assertEqual(self.api.ran("close"), [])
         self.assertEqual(len(self.api.starts), 1)
@@ -693,13 +704,13 @@ class RestartTest(WorkerCase):
     def test_a_record_another_user_owns_not_a_worker(self):
         self.started(resume=SID)
         other = mock.Mock(st_mode=stat.S_IFREG | 0o600, st_uid=os.getuid() + 1, st_size=10)
-        with mock.patch.object(crew.os, "fstat", return_value=other):
+        with mock.patch.object(os, "fstat", return_value=other):
             self.assert_not_a_worker()
 
     def test_a_record_the_spec_refuses_closes_nothing(self):
         self.tamper(lambda path: crew.save(path, json.dumps(self.record(SID, env={"A-B": "x"}))))
         with self.assertRaises(crew.WorkersError) as cm:
-            crew.restart("w1", own=None)
+            crew.restart("w1", own=None, driver=self.api)
         self.assertEqual(str(cm.exception), "env must map variable names to strings without NUL")
         self.assertEqual((self.api.ran("close"), len(self.api.starts)), ([], 1))
 
@@ -707,7 +718,7 @@ class RestartTest(WorkerCase):
         self.started(resume=SID)
         self.api.stuck.add("w1")
         with self.assertRaisesRegex(crew.WorkersError, "^cannot close tui session w1: tmux: boom$"):
-            crew.restart("w1", own=None)
+            crew.restart("w1", own=None, driver=self.api)
         self.assertEqual(len(self.api.starts), 1)
 
     def test_the_entry_re_recorded_best_effort(self):
@@ -717,7 +728,7 @@ class RestartTest(WorkerCase):
         self.api.rows["other"] = row("other")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            crew.restart("w1", own=None)
+            crew.restart("w1", own=None, driver=self.api)
         self.assertIn(
             f"manager: entry w1 not written: manager directory {self.directory}: held by tmux session "
             f"other since {WHEN}; ask that manager to run crew.py release, or end that session\n",
@@ -759,18 +770,18 @@ class RuntimeTest(WorkerCase):
 class ReplyTest(CrewCase):
     def test_a_bad_name_touches_nothing(self):
         with self.assertRaisesRegex(crew.WorkersError, r"^bad name 'a b': use \[A-Za-z0-9_-\]\+$"):
-            crew.reply("a b")
+            crew.reply("a b", driver=self.api)
         self.assertEqual(self.api.calls, [])
 
     def test_its_tui_sessions_reply(self):
         for reply in ("done", "", None):
             with self.subTest(reply=reply):
                 self.api.tuis["w1"] = (reply, "")
-                self.assertEqual(crew.reply("w1"), reply)
+                self.assertEqual(crew.reply("w1", driver=self.api), reply)
 
     def test_no_tui_session(self):
         with self.assertRaisesRegex(crew.WorkersError, "^no tui session w1$"):
-            crew.reply("w1")
+            crew.reply("w1", driver=self.api)
 
 
 class MainTest(WorkerCase):
@@ -998,29 +1009,27 @@ class MainTest(WorkerCase):
         self.assertEqual((rc, out, err), (0, "", "tui: session w1: tmux attach -t '=w1'\n"))
         self.assertEqual(self.api.starts[-1]["resume"], SID)
 
-    def test_main_configures_the_session_from_the_session_config_before_reaching_it(self):
-        seen, attach = [], crew.attach_session
+    def test_main_uses_the_callers_session_driver(self):
         self.api.tuis["w1"] = ("done", "")
-        with mock.patch.object(
-            crew, "attach_session", lambda name: seen.append(registry.configured()) or attach(name)
-        ):
-            self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
-        self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
+        self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
+        self.assertEqual(self.api.ran("attach"), ["w1"])
 
     def test_start_configures_the_session_before_starting_it(self):
         seen, start = [], self.api.start
-        self.api.start = lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
+        self.api.start = lambda *a, **kw: seen.append(self.api) or start(*a, **kw)
         rc, _, err = self.run_main("start", "w1", "--manager", "m1")
-        self.assertEqual((rc, seen), (0, [["claude", "codex", "print_prompt"]]), err)
+        self.assertEqual((rc, seen), (0, [self.api]), err)
 
     def test_a_config_error_exits_1(self):
+        fake = self.api
+        self.api = None
         for text in ("x = \n", "bogus = 1\n"):
             with self.subTest(text):
                 self.local(text)
                 rc, out, err = self.run_main("reply", "w1")
                 self.assertEqual((rc, out), (1, ""))
                 self.assertTrue(err.startswith("workers: config: "), err)
-        self.assertEqual(self.api.calls, [])
+        self.assertEqual(fake.calls, [])
 
     def test_the_other_commands_work_with_a_bad_config(self):
         for text in ("x = \n", "bogus = 1\n"):
@@ -1067,7 +1076,7 @@ class MainTest(WorkerCase):
     def test_usage_error(self):
         for argv in (["start"], ["start", "w1", "--manager", "m1", "--split", "left"]):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
-                crew.main(argv)
+                crew.main(argv, driver=self.api)
             self.assertEqual(cm.exception.code, 2, argv)
 
 
@@ -1078,7 +1087,9 @@ class ManagerDirTest(CrewCase):
         super().setUp()
         self.managers = os.path.join(self.agent_pm, "managers")
         self.nxt = self.enterContext(
-            mock.patch.object(crew, "next_event", return_value=(1, "10:00:01 w1 outcome done"))
+            mock.patch.object(
+                self.event_source, "next", return_value=(1, "10:00:01 w1 outcome done")
+            )
         )
 
     def events_of(self, name):
@@ -1143,11 +1154,13 @@ class ManagerDirTest(CrewCase):
         for cmd in self.CMDS:
             with (
                 self.subTest(cmd=cmd[0]),
-                mock.patch.object(crew, "start") as start,
+                mock.patch.object(self.api, "start") as start,
                 contextlib.redirect_stderr(io.StringIO()),
                 self.assertRaises(SystemExit) as cm,
             ):
-                crew.main([cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]])
+                crew.main(
+                    [cmd[0], "--events", os.path.join(self.dir, "e"), *cmd[1:]], driver=self.api
+                )
             self.assertEqual(cm.exception.code, 2)
             self.assertFalse(start.called or self.nxt.called)
             self.assertEqual(self.made(), [])
@@ -1190,7 +1203,7 @@ class NextEventTest(CrewCase):
                 raise AssertionError("next_event kept waiting")
             step()
 
-        return mock.patch.object(crew.time, "sleep", side_effect=sleep)
+        return mock.patch.object(time, "sleep", side_effect=sleep)
 
     def error(self, reason, after=0, path=None):
         path = path or self.path
@@ -1287,7 +1300,7 @@ class NextEventTest(CrewCase):
     def test_main_prints_line_and_event(self):
         self.attached("--manager", "m1")
         self.api.rows.update(w1=row("w1", state="dead"), w2=row("w2", state="dead"))
-        path = roster.events(roster.directory("m1"), create=False)
+        path = roster.events(roster.directory("m1", driver=self.api), create=False)
         self.append(nl(self.A, self.B), path)
         with self.sleeping():
             self.assertEqual(
@@ -1303,7 +1316,7 @@ class NextEventTest(CrewCase):
     def test_main_with_a_bad_config(self):
         self.attached("--manager", "m1")
         self.api.rows.update(w1=row("w1", state="dead"), w2=row("w2", state="dead"))
-        path = roster.events(roster.directory("m1"), create=False)
+        path = roster.events(roster.directory("m1", driver=self.api), create=False)
         self.append(nl(self.A, self.B), path)
         for text in ("x = \n", "bogus = 1\n"):
             self.local(text)
@@ -1316,7 +1329,7 @@ class NextEventTest(CrewCase):
     def test_main_error_exit(self):
         self.attached("--manager", "m1")
         err = crew.WorkersError(f"events file {self.path}: {os.strerror(errno.EISDIR)}")
-        with mock.patch.object(crew, "next_event", side_effect=err):
+        with mock.patch.object(self.event_source, "next", side_effect=err):
             self.assertEqual(
                 self.run_main("next-event", "--manager", "m1", "--after", "0", "--gen", "0"),
                 (1, "", f"workers: {err}\n"),
@@ -1335,7 +1348,7 @@ class NextEventTest(CrewCase):
                 contextlib.redirect_stderr(io.StringIO()),
                 self.assertRaises(SystemExit) as cm,
             ):
-                crew.main(["next-event", "--manager", "m1", *argv])
+                crew.main(["next-event", "--manager", "m1", *argv], driver=self.api)
             self.assertEqual(cm.exception.code, 2, argv)
 
 
@@ -1346,7 +1359,7 @@ class NextEventContentTest(CrewCase):
     def setUp(self):
         super().setUp()
         self.attached("--manager", "m1")
-        self.path = roster.events(roster.directory("m1"), create=False)
+        self.path = roster.events(roster.directory("m1", driver=self.api), create=False)
 
     def run_event(self, event, *rows):
         self.api.rows.update((r.name, r) for r in rows)
@@ -1413,19 +1426,17 @@ class NextEventContentTest(CrewCase):
         self.assertEqual(self.api.ran("screen"), [])
 
     def test_a_done_events_reply_is_read_only_after_configure(self):
-        registry.reset()
         seen, attach = [], self.api.attach
-        self.api.attach = lambda name: seen.append(registry.configured()) or attach(name)
+        self.api.attach = lambda name: seen.append(self.api) or attach(name)
         got = self.run_event("10:00:01 w1 done", self.live("r"))
         self.assertEqual(got, (0, nl("1 10:00:01 w1 done", "r"), ""))
-        self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
+        self.assertEqual(seen, [self.api])
 
-    def test_a_bad_config_is_a_done_events_content(self):
+    def test_content_uses_the_supplied_driver_despite_an_unrelated_config(self):
         self.local("bogus = 1\n")
         rc, out, err = self.run_event("10:00:01 w1 done", self.live("r"))
-        self.assertEqual((rc, out.split("\n")[0], err), (0, "1 10:00:01 w1 done", ""))
-        self.assertTrue(out.split("\n")[1].startswith("workers: config: "), out)
-        self.assertEqual(self.api.ran("attach"), [])
+        self.assertEqual((rc, out, err), (0, "1 10:00:01 w1 done\nr\n", ""))
+        self.assertEqual(self.api.ran("attach"), ["w1"])
 
     def test_a_content_failure_is_printed_on_stdout_exit_0(self):
         cases = (
@@ -1488,7 +1499,7 @@ class RosterCase(CrewCase):
         self.lock = os.path.join(self.mdir, "roster.lock")
         self.api, self.runs = Api(), Runs()
         self.enterContext(
-            mock.patch.object(crew.subprocess, "run", lambda *a, **kw: self.runs(*a, **kw))
+            mock.patch.object(subprocess, "run", lambda *a, **kw: self.runs(*a, **kw))
         )
 
     def seed(self, holder=None, cursor=0, gen=0, **entries):
@@ -1544,7 +1555,7 @@ class AttachTest(RosterCase):
         return out
 
     def test_first_attach_makes_the_directory_and_files_and_takes_the_lease(self):
-        with mock.patch.object(roster, "now", return_value=WHEN):
+        with fixed_time(WHEN):
             self.assertEqual(self.synced(self.server()), HEADER + tail(self.mdir))
         self.assertEqual(stat.S_IMODE(os.stat(self.mdir).st_mode), 0o700)
         for name in ("events", "roster.json", "roster.lock"):
@@ -1555,7 +1566,7 @@ class AttachTest(RosterCase):
             json.loads(self.bytes()),
             {"version": 1, "holder": MGR, "cursor": 0, "gen": 0, "entries": {}},
         )
-        with mock.patch.object(roster, "now", return_value="2026-10-10T00:00:00+00:00"):
+        with fixed_time("2026-10-10T00:00:00+00:00"):
             self.synced(self.server())
         self.assertEqual(json.loads(self.bytes())["holder"], MGR)
 
@@ -1798,11 +1809,11 @@ class AttachTest(RosterCase):
                 row("r2"),
             ]
         )
-        with mock.patch.object(roster, "locked", wraps=roster.locked) as locked:
+        with mock.patch("fcntl.flock", wraps=fcntl.flock) as locked:
             out = self.synced(fake)
         self.assertEqual(self.shows, [("r1-tui", True), ("w1", True)])
         self.assertEqual(fake.shows, [("r1-tui", "right", None), ("w1", "below", "mgr")])
-        self.assertEqual(locked.call_count, 2)
+        self.assertEqual(locked.call_count, 4)
         self.assertEqual(
             {n: (e["pane"], e["opener"]) for n, e in self.entries().items()},
             {
@@ -1817,7 +1828,7 @@ class AttachTest(RosterCase):
 
     def test_no_reopen_no_second_roster_block(self):
         self.seed(w1=entry())
-        with mock.patch.object(roster, "locked", wraps=roster.locked) as locked:
+        with mock.patch("fcntl.flock", wraps=fcntl.flock) as locked:
             self.synced(self.server(rows=[row("w1", SID, shown="mgr")]))
         self.assertEqual((locked.call_count, self.shows), (1, []))
 
@@ -1991,7 +2002,9 @@ class LeaseTest(RosterCase):
     def setUp(self):
         super().setUp()
         self.nxt = self.enterContext(
-            mock.patch.object(crew, "next_event", return_value=(1, "10:00:01 w1 outcome done"))
+            mock.patch.object(
+                self.event_source, "next", return_value=(1, "10:00:01 w1 outcome done")
+            )
         )
 
     def rest(self, cmd):
@@ -2061,7 +2074,7 @@ class StartEntryTest(RosterCase):
         self.seed(MGR)
 
     def start(self, **kw):
-        return start("w1", self.mdir, own="mgr", cwd=self.dir, **kw)
+        return start("w1", self.mdir, own="mgr", cwd=self.dir, driver=self.api, **kw)
 
     def resume(self, sid, *rest):
         return [
@@ -2100,7 +2113,7 @@ class StartEntryTest(RosterCase):
         )
         for kw, flags, rest in cases:
             with self.subTest(**kw, flags=flags):
-                with mock.patch.object(roster, "now", return_value=WHEN):
+                with fixed_time(WHEN):
                     sid = self.start(flags=flags, note="check it", **kw)
                 self.assertEqual(
                     self.entries(),
@@ -2269,8 +2282,6 @@ class RosterCommandsTest(RosterCase):
             with self.subTest(cmd=cmd[0]):
                 fake = Api(rows=[row("w1", SID)])
                 self.assertEqual(self.main_with(fake, *cmd)[0], 0)
-        with self.assertRaisesRegex(ConfigError, "not configured"):
-            registry.configured()
 
     def test_release_by_the_holder_keeps_the_cursor(self):
         self.seed(MGR, cursor=7, w1=entry())
@@ -2775,7 +2786,7 @@ class CursorTest(RosterCase):
         self.mevents = os.path.join(self.mdir, "events")
         self.old = self.mevents + ".1"
         self.waits = []
-        self.enterContext(mock.patch.object(crew, "next_event", side_effect=self.wait))
+        self.enterContext(mock.patch.object(self.event_source, "next", side_effect=self.wait))
 
     def wait(self, events, after):
         self.waits.append((events, after, json.loads(self.bytes())["cursor"]))
@@ -2857,8 +2868,6 @@ class CursorTest(RosterCase):
         root = os.path.join(self.dir, "my src")
         with (
             mock.patch.dict(os.environ, {"HOME": home, "PYTHONPATH": root}),
-            mock.patch.object(crew, "PYTHONPATH", root),
-            mock.patch.object(crew, "IMPORT_ROOTS", (root,)),
         ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))
@@ -2874,7 +2883,7 @@ class CursorTest(RosterCase):
                 ],
                 [
                     "env",
-                    f"PYTHONPATH={root}",
+                    f"PYTHONPATH={PYTHONPATH}:{root}",
                     "python3",
                     *MODULE,
                     "attach",
@@ -2888,7 +2897,7 @@ class CursorTest(RosterCase):
                 ],
                 [
                     "env",
-                    f"PYTHONPATH={root}",
+                    f"PYTHONPATH={PYTHONPATH}:{root}",
                     "python3",
                     *MODULE,
                     "next-event",
@@ -2943,7 +2952,7 @@ class CursorTest(RosterCase):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
-                    crew.main(["attach", "--manager", "mgr", *argv])
+                    crew.main(["attach", "--manager", "mgr", *argv], driver=self.api)
                 self.assertEqual(cm.exception.code, 2)
                 if want:
                     self.assertTrue(err.getvalue().endswith(want), err.getvalue())
@@ -3084,7 +3093,7 @@ class CursorTest(RosterCase):
         data = numbered(15)
         self.fill(data)
         with (
-            mock.patch.object(crew, "next_event", side_effect=KeyboardInterrupt),
+            mock.patch.object(self.event_source, "next", side_effect=KeyboardInterrupt),
             self.assertRaises(KeyboardInterrupt),
         ):
             self.next_event(12)

@@ -246,10 +246,10 @@ class Stop(Base):
 
     def test_waits_at_most_stop_wait_and_ignores_a_vanished_process(self):
         self.begin(SLEEPER)
+        self.mode.stop_wait = 0.3
         with (
             mock.patch("os.killpg", side_effect=ProcessLookupError),
             mock.patch.object(self.mode.proc, "kill", side_effect=ProcessLookupError) as killed,
-            mock.patch.object(headless, "STOP_WAIT", 0.3),
         ):
             began = time.monotonic()
             self.promptly(self.mode.stop)

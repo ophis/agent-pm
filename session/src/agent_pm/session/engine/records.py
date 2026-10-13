@@ -8,8 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.utils.files import append_line, read_regular
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import append_line, printable_abs, read_regular
 
 CHANNEL = "run.jsonl"
 

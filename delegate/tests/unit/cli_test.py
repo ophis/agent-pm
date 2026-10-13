@@ -1,6 +1,6 @@
 """delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
 drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake;
---detach over a patched detach, and the driver form with signal's calls recorded."""
+--detach over a fake driver, and the driver form with signal's calls recorded."""
 
 import errno
 import io
@@ -21,10 +21,8 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, Outcome, Result, cli, composer
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine import detach, runner
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import SIGNALS, ConfigError, DriverError, attach_command
-from agent_pm.session.adapters import registry
+from agent_pm.session import SIGNALS, ConfigError, DriverError
 
 from delegate.tests.case import PY, Case, child_env, committed
 from delegate.tests.replies import block
@@ -68,6 +66,21 @@ class RefusingRun(fake_adapter.FakeInProcess):
         raise ConfigError("refused by check")
 
 
+class FakeApplication:
+    def __init__(self, case):
+        self.case = case
+
+    @property
+    def driver(self):
+        return self.case.driver
+
+    def plan(self, config, spec):
+        return cli.Application(self.driver).plan(config, spec)
+
+    def run(self, config, spec, *, on_event):
+        return cli.Application(self.driver).run(config, spec, on_event=on_event)
+
+
 class Base(Case):
     """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work` (not made)."""
 
@@ -92,6 +105,7 @@ class Base(Case):
                 }
             }
         )
+        self.application = FakeApplication(self)
         self.steps(said(START, block(DONE)))
 
     def steps(self, *steps):
@@ -111,7 +125,7 @@ class Base(Case):
             mock.patch("sys.stdin", io.StringIO(stdin)),
         ):
             try:
-                code = cli.main(list(argv))
+                code = cli.main(list(argv), application=self.application)
             except SystemExit as e:
                 code = e.code
         return code, out.getvalue(), err.getvalue()
@@ -210,23 +224,21 @@ class List(Base):
 
 
 class Configures(Base):
-    def test_a_run_configures_the_session_before_starting_it(self):
-        registry.reset()
-        seen, start = [], runner.start
-        with mock.patch.object(
-            runner, "start", lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
-        ):
+    def test_a_run_uses_the_callers_driver(self):
+        start = self.driver.start
+        with mock.patch.object(self.driver, "start", wraps=start) as started:
             code, _, err = self.runs()
-        self.assertEqual((code, len(seen)), (0, 1), err)
-        self.assertIn("fake", seen[0])
+        self.assertEqual((code, started.call_count), (0, 1), err)
 
     def test_a_session_config_error_exits_2_and_starts_nothing(self):
-        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
-            code, out, err = self.runs()
-        self.assertEqual((code, out, err), (2, "", "delegate: session config: [hosts]: missing\n"))
+        self.configure_session({})
+        code, out, err = self.runs()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("[adapters.fake]", err)
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
+        self.application = None
         for text, want in (
             ('[delegates]\nharness_host = "nope"\n', "[delegates] harness_host: want one of tmux"),
             ("[delegates]\nkind = 1\n", "[delegates] kind: the delegate takes only harness_host"),
@@ -237,13 +249,10 @@ class Configures(Base):
                 self.assertEqual((code, out, err), (2, "", f"delegate: delegate config: {want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
-    def test_list_never_configures_and_works_with_a_bad_session_config(self):
-        registry.reset()
-        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
-            code, _, err = self.cli("--list")
+    def test_list_works_without_a_runtime(self):
+        self.configure_session({})
+        code, _, err = self.cli("--list")
         self.assertEqual((code, err), (0, ""))
-        with self.assertRaisesRegex(ConfigError, "not configured"):
-            registry.configured()
 
 
 class Usage(Base):
@@ -365,10 +374,9 @@ class DryRun(Base):
         )
 
     def test_a_dry_run_configures_the_session(self):
-        registry.reset()
-        code, _, err = self.runs("--dry-run")
+        code, stdout, err = self.runs("--dry-run")
         self.assertEqual(code, 0, err)
-        self.assertIn("fake", registry.configured())
+        self.assertEqual(json.loads(stdout)["runtime"], "fake")
 
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
         code, out, _ = self.runs("--dry-run", task=None)
@@ -485,7 +493,10 @@ class Exits(Base):
                 "delegate: status done",
             ),
         ):
-            with self.subTest(want=want), mock.patch.object(cli, "run", return_value=result):
+            with (
+                self.subTest(want=want),
+                mock.patch.object(self.application, "run", return_value=result),
+            ):
                 self.assertEqual(self.runs(), (want, "", f"{line}\n"))
 
 
@@ -506,7 +517,7 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, "a]0;xb\n\tc[2Jde\n"), err)
 
     def test_a_dry_run_with_out_dash_plans_no_out(self):
-        with mock.patch.object(cli, "plan", wraps=cli.plan) as planned:
+        with mock.patch.object(self.application, "plan", wraps=self.application.plan) as planned:
             code, out, err = self.runs("--dry-run", out="-")
         self.assertEqual(code, 0, err)
         self.assertIsNone(planned.call_args.args[1].out)
@@ -527,7 +538,7 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, ""), err)
         self.assertNotIn("delegate: deliverable", err)
         elsewhere = Result(0, Outcome("done", "t", "s", deliverable="# Doc\n"))
-        with mock.patch.object(cli, "run", return_value=elsewhere):
+        with mock.patch.object(self.application, "run", return_value=elsewhere):
             self.assertEqual(self.runs(), (0, "", "delegate: status done\n"))
 
 
@@ -614,7 +625,7 @@ class Tui(Base):
         ):
             with self.subTest(want=want):
                 handle = FakeHandle(events)
-                with mock.patch.object(runner, "start", side_effect=handle.start) as start:
+                with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
                     code, out, err = self.runs("--mode", "tui")
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 kw = start.call_args.kwargs
@@ -638,8 +649,10 @@ class Detach(Base):
     def setUp(self):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(detach, "detach_session"))
-        self.layout = self.enterContext(mock.patch.object(detach, "layout", return_value="mgr"))
+        self.started = self.enterContext(mock.patch.object(self.driver, "detach"))
+        self.layout = self.enterContext(
+            mock.patch.object(self.driver, "layout", return_value="mgr")
+        )
 
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
@@ -707,8 +720,8 @@ class Detach(Base):
     def test_detach_names_its_sessions_and_exits_0_at_once(self):
         lines = [
             f"delegate: session {SID}",
-            f"delegate: driver session {DRIVER}: {attach_command(DRIVER)}",
-            f"delegate: tui session {TUI}: {attach_command(TUI)}",
+            f"delegate: driver session {DRIVER}: {self.driver.attach_command(DRIVER)}",
+            f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}",
         ]
         for mode, extra, shown, tail in (
             ("headless", (), lines[:2], [f"--events={self.events}", "--task=echo"]),
@@ -728,12 +741,11 @@ class Detach(Base):
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_detach_configures_the_session_before_reaching_it(self):
-        registry.reset()
         seen = []
-        self.started.side_effect = lambda *a, **kw: seen.append(registry.configured())
+        self.started.side_effect = lambda *a, **kw: seen.append(self.driver)
         code, _, err = self.detaches()
         self.assertEqual((code, len(seen)), (0, 1), err)
-        self.assertIn("fake", seen[0])
+        self.assertIs(seen[0], self.driver)
 
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
@@ -757,7 +769,7 @@ class DriverForm(Base):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
         self.calls, self.handler = [], None
-        self.show = self.enterContext(mock.patch.object(cli, "show", return_value=None))
+        self.show = self.enterContext(mock.patch.object(self.driver, "show", return_value=None))
         self.enterContext(mock.patch.object(signal, "signal", side_effect=self.installed))
         self.enterContext(mock.patch.object(signal, "pthread_sigmask", side_effect=self.masked))
 
@@ -784,7 +796,7 @@ class DriverForm(Base):
         self.assertRegex(self.written(), rf"\A\d\d:\d\d:\d\d {DRIVER} outcome {status}\n\Z")
 
     def ran(self, result=DONE_RESULT, effect=None):
-        """cli.run patched: Begun, then `effect` (raised when an exception, else called) and `result`; noted in
+        """the fake application: Begun, then `effect` (raised when an exception, else called) and `result`; noted in
         self.calls."""
 
         def run(*args, on_event, **kw):
@@ -796,15 +808,14 @@ class DriverForm(Base):
                 effect()
             return result
 
-        return mock.patch.object(cli, "run", side_effect=run)
+        return mock.patch.object(self.application, "run", side_effect=run)
 
     def test_the_driver_form_configures_the_session_before_its_run(self):
-        registry.reset()
         seen = []
-        with self.ran(effect=lambda: seen.append(registry.configured())):
+        with self.ran(effect=lambda: seen.append(self.driver)):
             code, _, err = self.drives()
         self.assertEqual((code, len(seen)), (0, 1), err)
-        self.assertIn("fake", seen[0])
+        self.assertIs(seen[0], self.driver)
 
     def test_the_handler_on_each_signal_unblocked_for_the_run_blocked_for_the_outcome_line(self):
         with self.ran():
@@ -865,7 +876,7 @@ class DriverForm(Base):
 
     def test_a_tui_run_in_its_named_session_given_up_and_left_open_writes_error_exits_1(self):
         handle = FakeHandle([STOP] * (1 + STOP_LIMIT))
-        with mock.patch.object(runner, "start", side_effect=handle.start) as start:
+        with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
             code, out, err = self.drives(mode="tui")
         self.assertEqual(
             (code, out, err.splitlines()[-1]),
@@ -873,7 +884,7 @@ class DriverForm(Base):
         )
         spec, kw = start.call_args.args[3], start.call_args.kwargs
         self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
-        self.assertIn(f"delegate: tui session {TUI}: {attach_command(TUI)}", err)
+        self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")
 

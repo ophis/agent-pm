@@ -15,8 +15,7 @@ import time
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.types import Key, Paste
-from agent_pm.utils.paths import import_roots
-from agent_pm.utils.record import Display, Record
+from agent_pm.utils import Display, Record, import_roots
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}

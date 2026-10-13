@@ -17,7 +17,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import printable_abs
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"

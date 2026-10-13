@@ -261,18 +261,60 @@ class Hook(Case):
             b'"text"',
             b"\xff\xfe\xfd",
             b"[" * 100000,
-            b'{"a": "' + b"x" * (16 << 20) + b'"}',
         )
         for data in cases:
             with self.subTest(data[:20]):
                 self.assertError(self.hook("tool", data), "payload")
         self.assertEqual([r["payload"] for r in self.records()], [{}] * len(cases))
 
-    def test_a_payload_of_16_mib_is_read(self):
-        data = b'{"a": "' + b"x" * ((16 << 20) - 9) + b'"}'
-        self.assertEqual(len(data), 16 << 20)
+    def test_a_payload_of_64_mib_is_read(self):
+        data = b'{"a": "' + b"x" * ((64 << 20) - 9) + b'"}'
+        self.assertEqual(len(data), 64 << 20)
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                'def on_hook(label, payload, state):\n    payload["length"] = len(payload["a"])\n'
+            )
+        self.state["adapter_hook"] = callback
+        write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
-        self.assertEqual([r["payload"] for r in self.records()], [{"a": "x" * 4096}])
+        self.assertEqual(
+            [r["payload"] for r in self.records()], [{"a": "x" * 4096, "length": (64 << 20) - 9}]
+        )
+
+    def test_overflow_drains_stdin_and_writes_no_record(self):
+        stream = io.BytesIO(b"x" * (tui_hook.PAYLOAD_MAX + 1))
+        with self.assertRaisesRegex(tui_hook.HookError, "payload: over"):
+            tui_hook.main([self.dir, "stop"], stream)
+        self.assertEqual(stream.read(), b"")
+        self.assertNothingWritten()
+
+    def test_adapter_callback_receives_full_payload_before_truncation_and_can_skip(self):
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                'def on_hook(label, payload, state):\n    payload["original_length"] = len(payload.get("text", ""))\n    return label != "ask"\n'
+            )
+        self.state["adapter_hook"] = callback
+        write_state(self.dir, self.state)
+        self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
+        record = self.records()[0]
+        self.assertEqual(record["payload"], {"text": "x" * 4096, "original_length": 5000})
+        marked = self.calls()
+        self.assertEqual(self.hook("ask", {"text": "skip"}), "")
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual(self.calls(), marked)
+
+    def test_callback_file_requires_absolute_regular_owned_module_with_on_hook(self):
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write("value = 1\n")
+        for path in ("relative.py", os.path.join(self.root, "absent.py"), self.root, callback):
+            with self.subTest(path=path):
+                self.state["adapter_hook"] = path
+                write_state(self.dir, self.state)
+                self.assertError(self.hook("stop"), "adapter")
+        self.assertNothingWritten()
 
     def test_bad_arguments_write_nothing(self):
         for args in (
@@ -434,11 +476,10 @@ class InProcess(Case):
             return executable if path == self.tmux else real_access(path, how, *args, **kwargs)
 
         with (
-            unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=self.fake),
             unittest.mock.patch("os.stat", fake_stat),
             unittest.mock.patch("os.access", fake_access),
         ):
-            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"))
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), load_host=lambda: self.fake)
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
@@ -464,14 +505,15 @@ class InProcess(Case):
         fake = self.fake
         calls = unittest.mock.Mock()
         with (
-            unittest.mock.patch.object(tui_hook, "load_tmux_host", return_value=fake),
             unittest.mock.patch("fcntl.flock", wraps=fcntl.flock) as flock,
             unittest.mock.patch("os.write", wraps=os.write) as write,
         ):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
             calls.attach_mock(fake.mark, "mark")
-            tui_hook.main([self.dir, "tool"], io.BytesIO(b'{"tool_name": "Bash"}'))
+            tui_hook.main(
+                [self.dir, "tool"], io.BytesIO(b'{"tool_name": "Bash"}'), load_host=lambda: fake
+            )
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
         fd = calls.mock_calls[0].args[0]

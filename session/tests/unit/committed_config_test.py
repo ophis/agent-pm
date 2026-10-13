@@ -5,11 +5,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.session import Session, Spec
+from agent_pm.session import Driver, Spec
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils import read_project
 
 from session.tests.case import Case, settings
 
@@ -22,12 +22,12 @@ def committed() -> dict:
 
 class Committed(Case):
     def test_the_committed_adapters_build_print_prompt(self):
-        Session.configure(**settings(committed()))
-        self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
+        self.driver = Driver(**settings(committed()))
+        self.assertEqual(self.driver.registry.configured(), ["claude", "codex", "print_prompt"])
         for name, table in committed().items():
             with self.subTest(name=name):
                 self.assertEqual({"roles", "output"} & set(table), set())
-        self.assertIs(type(registry.adapter("print_prompt")), PrintPromptAdapter)
+        self.assertIs(type(self.driver.registry.adapter("print_prompt")), PrintPromptAdapter)
 
     def test_the_claude_table_builds_a_claude_adapter(self):
         tmp = tempfile.TemporaryDirectory()
@@ -47,8 +47,8 @@ class Committed(Case):
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },
         )
-        Session.configure(**settings(tables))
-        adapter = registry.adapter("claude")
+        self.driver = Driver(**settings(tables))
+        adapter = self.driver.registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (
             adapter.headless()

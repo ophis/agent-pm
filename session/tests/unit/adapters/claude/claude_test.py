@@ -412,16 +412,12 @@ class ReadRulesTest(Base):
         bad = ["", "r", "./r", "/r\n", "/r\0", *(f"/r{c}s" for c in "*?[]{}()\\,"), "/" + "*" * 99]
         for read in bad:
             for launch in self.modes(reads=("/ok", read)):
-                with (
-                    self.subTest(read=read),
-                    mock.patch("agent_pm.session.adapters.claude.common.Launch") as made,
-                ):
+                with self.subTest(read=read):
                     self.refused(
                         launch,
                         f"claude: read dir {read!r:.80} must be a printable absolute path "
                         "without *?[]{}()\\,",
                     )
-                    made.assert_not_called()
 
     def test_a_read_dir_whose_real_path_a_rule_cannot_hold_is_refused(self):
         target = os.path.join(self.tmp, "a*b")

@@ -1,28 +1,27 @@
 """The Linear orchestrator's config: load() reads its own keys once (linear-orchestrator/config.toml with the keys of
 ~/.agent-pm/config.local.toml it owns: TOP_KEYS, and ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and
-the delegate's, configures the session from the session's (every entry's main calls load first) and returns a frozen
-Config with a resolved RunConfig per role, or raises ConfigError; plus TUI names and shared helpers."""
+the delegate's, constructs a caller-owned Driver and returns a frozen Config with a resolved RunConfig per role,
+or raises ConfigError; plus TUI names and shared helpers."""
 
 import os
 import re
 import shlex
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal
 
-from agent_pm import delegate
-from agent_pm.delegate import composer
+from agent_pm import delegate, utils
+from agent_pm.session import Driver
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import config_file, repos
-from agent_pm.utils.git import GUARD
-from agent_pm.utils.paths import STATE, import_roots, temp_dirs, under
-from agent_pm.utils.repos import NAME, OWNER
+from agent_pm.utils import GUARD
+from agent_pm.utils import STATE, import_roots, temp_dirs, under
+from agent_pm.utils import NAME, OWNER
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
-LOCAL = config_file.LOCAL
+LOCAL = utils.LOCAL
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
@@ -128,6 +127,7 @@ class Config:
     work_dir: str
     docs: Docs
     stages: Mapping[str, int]
+    driver: Driver | None = None
 
     @property
     def runs_dir(self) -> str:
@@ -153,17 +153,17 @@ def load(
     core: str = delegate.CONFIG,
 ) -> Config:
     try:
-        cfg = config_file.read_project("linear-orchestrator", path=path, local=local, own=True)
+        cfg = utils.read_project("linear-orchestrator", path=path, local=local, own=True)
     except (OSError, ValueError) as e:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg, root)
     try:
         found, core_cfg = _load(cfg, root, work, local, core)
         try:
-            delegate.configure(local=local, cfg=core_cfg)
+            driver = delegate.configure(local=local, cfg=core_cfg)
         except delegate.ConfigError as e:
             raise ConfigError(str(e)) from None
-        return found
+        return replace(found, driver=driver)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -228,10 +228,10 @@ def clone_error(path, slug, *, run=sh_run):
     if not os.path.exists(path):
         return f"{path} does not exist"
     try:
-        found, _ = repos.resolve(
+        found, _ = utils.resolve(
             path, run=lambda argv, timeout: run(["git", *GUARD, *argv[1:]], timeout)
         )
-    except repos.Invalid as e:
+    except utils.Invalid as e:
         return str(e)
     except (
         OSError,
@@ -272,7 +272,7 @@ def _work_dir(cfg, root, clones=None):
 def _load(cfg, root, work, local, core):
     _load_config(cfg, root, local)
     try:
-        core_cfg = config_file.read_project("delegate", path=core, local=local)
+        core_cfg = utils.read_project("delegate", path=core, local=local)
     except (OSError, ValueError) as e:
         raise ConfigError(f"core: {e}") from None
     roles = _runnable(cfg, root, work, core, core_cfg, local)
@@ -321,7 +321,7 @@ def _check_ids(cfg):
 
 
 def _load_config(cfg, root, local):
-    if missing := config_file.unset(cfg, REQUIRED):
+    if missing := utils.unset(cfg, REQUIRED):
         raise ConfigError(
             f"linear-orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} "
             "(linear-orchestrator/config.toml's `# local:` lines)"
@@ -427,8 +427,8 @@ def _fill_root(value, root):
 def _runnable(cfg, root, work, core, core_cfg, local):
     try:
         core_roles = core_cfg.get("roles", {})
-        trusted = composer.trusted_dirs(core, local, cfg=core_cfg)
-    except (OSError, ValueError, composer.ConfigError) as e:
+        trusted = delegate.trusted_dirs(core, local, cfg=core_cfg)
+    except (OSError, ValueError, delegate.ComposerConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
         if under(work, [d]):
@@ -444,7 +444,7 @@ def _runnable(cfg, root, work, core, core_cfg, local):
                 f"linear-orchestrator/config.toml: role {name!r} has no entry in config.TASKS"
             )
         try:
-            run = composer.resolve(
+            run = delegate.resolve_run(
                 name,
                 None,
                 overlays=[overlay],
@@ -453,8 +453,8 @@ def _runnable(cfg, root, work, core, core_cfg, local):
                 local=local,
                 cfg=core_cfg,
             )
-            tasks = tuple(composer.index(name, config=core, local=local, cfg=core_cfg))
-        except composer.ConfigError as e:
+            tasks = tuple(delegate.task_index(name, config=core, local=local, cfg=core_cfg))
+        except delegate.ComposerConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(
             p["account"],

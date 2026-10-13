@@ -15,7 +15,7 @@ from agent_pm.session.engine.types import DriverError, Event, Stderr
 STOP_WAIT = 5
 
 
-def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
+def kill_group(proc: subprocess.Popen, ended: bool = False, *, wait: float = STOP_WAIT) -> None:
     # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so signal nothing.
     if not (ended and proc.returncode is not None):
         try:
@@ -26,7 +26,7 @@ def kill_group(proc: subprocess.Popen, ended: bool = False) -> None:
             except ProcessLookupError:
                 pass
     try:
-        proc.wait(timeout=STOP_WAIT)
+        proc.wait(timeout=wait)
     except subprocess.TimeoutExpired:
         pass
 
@@ -56,7 +56,8 @@ def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: flo
 
 
 class HeadlessMode:
-    def __init__(self, run: Headless):
+    def __init__(self, run: Headless, *, stop_wait: float = STOP_WAIT):
+        self.stop_wait = stop_wait
         self.run, self.proc = run, None
 
     def begin(self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], popen=None) -> None:
@@ -123,4 +124,4 @@ class HeadlessMode:
 
     def stop(self) -> None:
         if self.proc is not None:
-            kill_group(self.proc, all(eof.is_set() for eof in self.eof))
+            kill_group(self.proc, all(eof.is_set() for eof in self.eof), wait=self.stop_wait)

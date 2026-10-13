@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine import api
 from agent_pm.session.engine.types import Usage, Window
 
 from session.tests.case import REPO, Case
@@ -66,7 +65,7 @@ class UsageIntegrationTest(Case):
             }
         )
         started = time.monotonic()
-        result = api.usage("codex")
+        result = self.driver.usage("codex")
         self.assertLess(time.monotonic() - started, 12)
         if self.log.exists():
             rows = [json.loads(line) for line in self.log.read_text().splitlines()]

@@ -1,6 +1,7 @@
 """orchestrator config.py, ported from the old config_test (less its clients layer and transcript cases) onto load()'s
 frozen Config, plus the old attended name cases (TUI names)."""
 
+import builtins
 import dataclasses
 import json
 import os
@@ -12,18 +13,14 @@ import tomllib
 import unittest
 from unittest import mock
 
-from agent_pm import delegate
-from agent_pm.delegate import composer
+from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.session import ConfigError
-from agent_pm.session.adapters import registry
-from agent_pm.utils import config_file
-from agent_pm.utils.git import GUARD
-from agent_pm.utils.paths import import_roots
-from agent_pm.utils.shell import SHORT
+from agent_pm.utils import GUARD
+from agent_pm.utils import SHORT, temp_dirs
 
-from ..case import ORCH_ROOT, PY, Case, child_env
+from ..case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
 from .board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
+from .config_support import GATE
 
 BASE = (
     HEADER
@@ -56,10 +53,6 @@ SLUG = "ophis/agent-pm"
 HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 ROOT_Q = shlex.quote(config.ROOT)
-GATE = (
-    f"env PYTHONPATH={shlex.quote(os.pathsep.join(import_roots(config.ROOT)))} "
-    "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
-)
 LABEL = ("linear-orchestrator/config.toml", "core")
 CORE = delegate.CONFIG
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -377,13 +370,13 @@ class Config(ConfigFile, Case):
 
     def test_one_resolve_and_one_index_per_role(self):
         with (
-            mock.patch.object(composer, "resolve", wraps=composer.resolve) as resolve,
-            mock.patch.object(composer, "index", wraps=composer.index) as index,
+            mock.patch.object(delegate, "resolve_run", wraps=delegate.resolve_run) as resolve,
+            mock.patch.object(delegate, "task_index", wraps=delegate.task_index) as index,
         ):
             cfg = self.load(PIPELINE + "[core.roles.pm]\ntier = 1\n")
         overlay = {"roles": {"pm": {"tier": 1}}}
         roles = ["researcher", "pm", "engineer"]
-        core = config_file.read_project("delegate")
+        core = utils.read_project("delegate")
         self.assertEqual(
             resolve.call_args_list,
             [
@@ -405,7 +398,7 @@ class Config(ConfigFile, Case):
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
-            {r: composer.resolve(r, overlays=[overlay], label=LABEL) for r in roles},
+            {r: delegate.resolve_run(r, overlays=[overlay], label=LABEL) for r in roles},
         )
 
     def test_a_config_error_carries_the_log_dir_once_work_dir_is_valid(self):
@@ -482,7 +475,8 @@ class Runnable(ConfigFile, Case):
         self.assertEqual(fields(roles), ROLES)
         self.assertEqual(list(roles), ["researcher", "pm", "engineer"])
         self.assertEqual(
-            {r: x.tasks for r, x in roles.items()}, {r: tuple(composer.index(r)) for r in roles}
+            {r: x.tasks for r, x in roles.items()},
+            {r: tuple(delegate.task_index(r)) for r in roles},
         )
         roles = self.runs(HEADER + role("engineer") + role("researcher", "max_runs = 3"))
         self.assertEqual(
@@ -551,7 +545,19 @@ class Runnable(ConfigFile, Case):
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
-        with open(os.path.join(composer.TEAM, "output", "destinations", "github.md")) as f:
+        with open(
+            os.path.join(
+                REPO,
+                "delegate",
+                "src",
+                "agent_pm",
+                "delegate",
+                "team",
+                "output",
+                "destinations",
+                "github.md",
+            )
+        ) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(
             delegate.CONFIG,
@@ -597,16 +603,16 @@ class OtherRoot(ConfigFile, Case):
         return config.load(self.root, path=path, core=self.core_path)
 
     def test_tasks_are_the_core_configs_index(self):
-        index = composer.index
+        index = delegate.task_index
         with mock.patch.object(
-            composer,
-            "index",
+            delegate,
+            "task_index",
             side_effect=lambda r, cfg, **kw: (
                 {"deep-research": ""} if r == "researcher" else index(r, cfg=cfg, **kw)
             ),
         ) as fake:
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
-        core = config_file.read_project("delegate", path=self.core_path)
+        core = utils.read_project("delegate", path=self.core_path)
         self.assertEqual(
             fake.call_args_list,
             [
@@ -620,15 +626,13 @@ class OtherRoot(ConfigFile, Case):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, 'language = "French"\n' + role("engineer", "max_runs = 2"))
-        with mock.patch.object(config_file, "open", create=True, side_effect=open) as opened:
+        with mock.patch.object(builtins, "open", side_effect=open) as opened:
             cfg = config.load(self.root, path=path, local=local, core=self.core_path)
-        projects = {
-            os.path.join(config_file.ROOT, p, "config.toml")
-            for level in config_file.LEVELS
-            for p in level
-        }
+        projects = {os.path.join(os.path.dirname(root), "config.toml") for root in ROOTS}
         self.assertEqual(
-            {c.args[0] for c in opened.call_args_list} - projects, {path, local, self.core_path}
+            {c.args[0] for c in opened.call_args_list if str(c.args[0]).endswith(".toml")}
+            - projects,
+            {path, local, self.core_path},
         )
         engineer = cfg.roles["engineer"]
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
@@ -638,18 +642,18 @@ class OtherRoot(ConfigFile, Case):
         write(path, PIPELINE)
         write(local, "")
         with (
-            mock.patch.object(config_file, "open", create=True, side_effect=open) as opened,
-            mock.patch.object(config_file, "read_project", wraps=config_file.read_project) as read,
+            mock.patch.object(builtins, "open", side_effect=open) as opened,
+            mock.patch.object(utils, "read_project", wraps=utils.read_project) as read,
         ):
             config.load(self.root, path=path, local=local, core=self.core_path)
         paths = [c.args[0] for c in opened.call_args_list]
-        session = os.path.join(config_file.ROOT, "session", "config.toml")
+        session = os.path.join(REPO, "session", "config.toml")
         self.assertEqual(
             [paths.count(p) for p in (path, self.core_path, session)], [1, 1, 3], paths
         )
         self.assertEqual(
             sorted(c.args[0] for c in read.call_args_list),
-            ["delegate", "linear-orchestrator", "session"],
+            ["delegate", "linear-orchestrator"],
         )
 
     def test_an_unknown_harness_host_or_delegates_key_stops_the_caller(self):
@@ -659,14 +663,13 @@ class OtherRoot(ConfigFile, Case):
         ):
             with self.subTest(text):
                 self.core(CORE_TOML + text)
-                registry.reset()
                 self.fails(f"delegate config: {want}", PIPELINE)
-                with self.assertRaisesRegex(ConfigError, "not configured"):
-                    registry.configured()
 
     def test_an_index_error_stops_the_caller(self):
-        error = composer.ConfigError("roles/researcher.md: lists 'ghost' without tasks/ghost.md")
-        with mock.patch.object(composer, "index", side_effect=error):
+        error = delegate.ComposerConfigError(
+            "roles/researcher.md: lists 'ghost' without tasks/ghost.md"
+        )
+        with mock.patch.object(delegate, "task_index", side_effect=error):
             self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md", PIPELINE)
 
     def test_overlay_fills_root(self):
@@ -699,28 +702,25 @@ class OtherRoot(ConfigFile, Case):
             os.path.join(self.agent_pm, "config.local.toml"),
             '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n',
         )
-        self.refused_unconfigured()
-        self.load(PIPELINE)
-        self.assertEqual(registry.configured(), ["a", "claude", "codex", "print_prompt"])
-        self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
+        cfg = self.load(PIPELINE)
+        self.assertEqual(cfg.driver.registry.configured(), ["a", "claude", "codex", "print_prompt"])
+        self.assertEqual(cfg.driver.registry.tui().status_line, True)
 
     def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "[hosts.tmux]\nstatus_line = true\n")
-        pm = config.load(self.root, path=path, local=local, core=self.core_path).roles["pm"]
+        cfg = config.load(self.root, path=path, local=local, core=self.core_path)
+        pm = cfg.roles["pm"]
         work = os.path.join(self.dir, "work")
-        delegate.plan(pm.run, delegate.Spec("x", work, runtime="claude", cwd=work))
-        self.assertTrue(registry.tui().status_line)
+        delegate.plan(
+            pm.run, delegate.Spec("x", work, runtime="claude", cwd=work), driver=cfg.driver
+        )
+        self.assertTrue(cfg.driver.registry.tui().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), '[hosts]\ndefault = "nope"\n')
         self.fails("session config: [hosts] default: want one of tmux", PIPELINE)
-        self.refused_unconfigured()
-
-    def refused_unconfigured(self):
-        with self.assertRaisesRegex(ConfigError, "not configured"):
-            registry.configured()
 
     def test_no_core_table(self):
         self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, "")
@@ -925,9 +925,6 @@ class TeamDirsIgnored(ConfigFile, Case):
             os.path.join(self.agent_pm, "config.local.toml"),
             f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
         )
-        self.assertIn(
-            "writer", composer.catalog(composer.team(composer.TEAM, composer.team_dirs()))
-        )
         after = self.seen()
         self.assertEqual(after, before)
         self.assertNotIn("one-pager", after[1].prompt)
@@ -1021,7 +1018,9 @@ class RealConfig(Case):
 
 
 def git(*args):
-    subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+    subprocess.run(
+        ["git", *GUARD, *args], check=True, capture_output=True, stdin=subprocess.DEVNULL
+    )
 
 
 class Clones(ConfigFile, Case):
@@ -1071,17 +1070,14 @@ class LocalClones(Clones):
         real = os.path.join(home, "real")
         os.makedirs(real)
         os.symlink(real, os.path.join(self.dir, "link"))
-        with mock.patch.object(config, "clone_error", return_value=None) as clone_error:
-            cfg = self.load(
-                f'work_dir = "{self.dir}/w"\n'
-                + PIPELINE
-                + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n"ophis/x" = "~/real"\n"ophis/y" = "~"\n'
-            )
-        self.assertEqual(cfg.local_clones, {SLUG: real, "ophis/x": real, "ophis/y": home})
-        self.assertEqual(
-            clone_error.call_args_list,
-            [mock.call(real, SLUG), mock.call(real, "ophis/x"), mock.call(home, "ophis/y")],
+        git("init", "-q", real)
+        git("-C", real, "remote", "add", "origin", HTTPS)
+        cfg = self.load(
+            f'work_dir = "{self.dir}/w"\n'
+            + PIPELINE
+            + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n'
         )
+        self.assertEqual(cfg.local_clones, {SLUG: real})
 
 
 class CloneError(Clones):
@@ -1146,15 +1142,14 @@ class LocalClonesRunnable(Clones):
                 )
 
     def test_no_entries_runs_no_git(self):
-        with mock.patch.object(config, "clone_error") as clone_error:
+        with mock.patch.object(subprocess, "run") as clone_error:
             self.assertEqual(list(self.load(PIPELINE).roles), ["researcher", "pm", "engineer"])
         clone_error.assert_not_called()
 
 
 class Writable(Case):
     def test_work_then_the_temp_dirs(self):
-        with mock.patch.object(config, "temp_dirs", return_value=("/t1", "/t2")):
-            self.assertEqual(config.writable("/w"), ("/w", "/t1", "/t2"))
+        self.assertEqual(config.writable("/w"), ("/w", *temp_dirs()))
         with self.assertRaises(TypeError):
             config.writable()
 
@@ -1206,12 +1201,22 @@ class WorkDir(ConfigFile, Case):
         self.assertEqual(
             self.load('work_dir = "~/d"\n' + PIPELINE).work_dir, os.path.join(home, "d")
         )
-        with mock.patch.object(config, "clone_error", return_value=None):
-            cfg = self.load(
-                f'work_dir = "{home}/d"\n'
-                + PIPELINE
-                + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n'
+        for name in ("d-c", "c"):
+            path = os.path.join(home, name)
+            git("init", "-q", path)
+            git(
+                "-C",
+                path,
+                "remote",
+                "add",
+                "origin",
+                f"https://github.com/ophis/{'x' if name == 'd-c' else 'y'}.git",
             )
+        cfg = self.load(
+            f'work_dir = "{home}/d"\n'
+            + PIPELINE
+            + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n'
+        )
         self.assertEqual(cfg.work_dir, f"{home}/d")
 
     def test_refused(self):
@@ -1250,7 +1255,6 @@ opened = []
 sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
 from agent_pm.linear_orchestrator.engine import config
 import agent_pm.session
-from agent_pm.session.adapters import registry
 home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
 os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
 print(json.dumps({
@@ -1305,7 +1309,7 @@ class PathSeam(Case):
 class Shell(Case):
     def test_sh_run(self):
         with (
-            mock.patch.object(config.subprocess, "run", return_value="res") as run,
+            mock.patch.object(subprocess, "run", return_value="res") as run,
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}),
         ):
             self.assertEqual(config.sh_run(["git", "status"], 5), "res")

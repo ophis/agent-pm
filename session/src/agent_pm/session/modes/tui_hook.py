@@ -1,8 +1,8 @@
 """The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the payload JSON on
-stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
+stdin. Checks session.json, calls its optional adapter_hook on_hook(label, payload, state), then appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
 word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH. Payload strs are cut to CUT chars
-unless the word is done. Never prints on stdout and always exits 0 (a runtime may read both). Python 3.9, stdlib only,
-standalone."""
+unless the word is done. Never prints on stdout and always exits 0 (a runtime may read both). stdlib only,
+standalone. False from the callback skips recording and marking; overflow drains stdin and stops the hook."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import stat
 import sys
 from datetime import datetime
 
-PAYLOAD_MAX = 16 << 20  # bytes of stdin parsed
+PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
 STATE_MAX = 1 << 20  # bytes of session.json read
 BLOCK = 1 << 16
 CUT = 4096
@@ -53,12 +53,16 @@ class HookError(Exception):
     """One stderr line; the hook stops."""
 
 
-def main(argv: list[str], stdin) -> None:
+def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
     if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
         raise HookError("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
     folder, label = argv
     state = read_state(os.path.join(folder, STATE))
+    if "adapter_hook" in state:
+        adapter = load_adapter(state["adapter_hook"])
+        if adapter.on_hook(label, payload, state) is False:
+            return
     word = state["words"].get(label)
     if word != "done":
         payload = cut(payload)
@@ -66,7 +70,7 @@ def main(argv: list[str], stdin) -> None:
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
     if word:
         tmux = check_tmux(state["tmux_path"])
-        tmux_host = load_tmux_host()
+        tmux_host = (load_tmux_host if load_host is None else load_host)()
         try:
             tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
@@ -74,7 +78,7 @@ def main(argv: list[str], stdin) -> None:
 
 
 def read_payload(stream) -> dict:
-    """stdin's JSON object, read to its end (the writer never stalls); {} when over PAYLOAD_MAX bytes or not one."""
+    """stdin's JSON object, read to its end (the writer never stalls); {} when not one; overflow raises HookError."""
     chunks, size = [], 0
     while True:
         chunk = stream.read(BLOCK)
@@ -84,8 +88,7 @@ def read_payload(stream) -> dict:
         if size <= PAYLOAD_MAX:
             chunks.append(chunk)
     if size > PAYLOAD_MAX:
-        say(f"payload: over {PAYLOAD_MAX} bytes")
-        return {}
+        raise HookError(f"payload: over {PAYLOAD_MAX} bytes")
     try:
         payload = json.loads(b"".join(chunks))
     except (ValueError, RecursionError):
@@ -123,7 +126,28 @@ def read_state(path: str) -> dict:
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
+    if "adapter_hook" in state and not _abs(state["adapter_hook"]):
+        raise HookError(f"{path}: bad adapter_hook")
+    if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
+        raise HookError(f"{path}: bad adapter_state")
     return state
+
+
+def load_adapter(path: str):
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        raise HookError(f"adapter hook {path}: {error.strerror}") from error
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+        raise HookError(f"adapter hook {path}: not a regular file owned by you or root")
+    spec = importlib.util.spec_from_file_location("_agent_pm_adapter_hook", path)
+    if spec is None or spec.loader is None:
+        raise HookError(f"adapter hook {path}: cannot load Python module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "on_hook", None)):
+        raise HookError(f"adapter hook {path}: missing on_hook callback")
+    return module
 
 
 def check_tmux(path: str) -> str:

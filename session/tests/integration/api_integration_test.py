@@ -34,6 +34,7 @@ from agent_pm.session.engine.types import (
 
 from session.tests import fake_adapter
 from session.tests.case import Case
+from session.tests.modules import module_slot
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds
@@ -114,16 +115,9 @@ class Base(Case):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
-        patch = mock.patch.dict(
-            sys.modules,
-            {
-                "agent_pm.session.adapters.fake": fake_adapter,
-                "agent_pm.session.adapters.launching": LAUNCHING,
-                "agent_pm.session.adapters.script": SCRIPT,
-            },
-        )
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.enterContext(module_slot("agent_pm.session.adapters.fake", fake_adapter))
+        self.enterContext(module_slot("agent_pm.session.adapters.launching", LAUNCHING))
+        self.enterContext(module_slot("agent_pm.session.adapters.script", SCRIPT))
         self.configure()
 
     def steps(self, *steps):
@@ -144,7 +138,7 @@ class Base(Case):
         self.configure_session(tables)
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
-        handle = api.start(
+        handle = self.driver.start(
             runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
         self.addCleanup(handle.stop)

@@ -5,20 +5,25 @@ import http.client
 import io
 import json
 import os
+import subprocess
 import re
 import sys
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.linear_orchestrator.linear import linear
 
+from .clock import frozen, logs_at
 from ..case import Case
 from .board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
 from .outage import FAILURES, failing
+
+from .streams import Stderr
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 OTHER = "00000000-0000-4000-8000-000000000023"
@@ -27,7 +32,10 @@ OTHER = "00000000-0000-4000-8000-000000000023"
 class RoleIds(Case):
     def test_role_ids(self):
         roles = {r: SimpleNamespace(account=a) for r, a in ACCOUNTS.items()}
-        gql = lambda q, **v: {"users": {"nodes": [{"id": "u-" + v["e"]}]}}  # noqa: E731
+
+        def gql(query, **variables):
+            return {"users": {"nodes": [{"id": "u-" + variables["e"]}]}}
+
         self.assertEqual(linear.role_ids(gql, roles), {f"u-{a}": r for r, a in ACCOUNTS.items()})
         with self.assertRaises(SystemExit) as cm:
             linear.role_ids(
@@ -155,7 +163,6 @@ class TaskGroupCheck(Case):
                 self.assertEqual(len(gql.calls), 1)
 
 
-SEAM = "AGENT_PM_LINEAR"
 SECRET = "lin_api_SECRET"
 VIEWER = "query { viewer { id } }"
 
@@ -168,11 +175,9 @@ def respond(body=b'{"data": {}}'):
 
 def refused(case, call):
     with (
+        mock.patch.object(urllib.request, "urlopen", side_effect=AssertionError("request sent")),
         mock.patch.object(
-            linear.urllib.request, "urlopen", side_effect=AssertionError("request sent")
-        ),
-        mock.patch.object(
-            linear.urllib.request, "build_opener", side_effect=AssertionError("request sent")
+            urllib.request, "build_opener", side_effect=AssertionError("request sent")
         ),
         case.assertRaises(SystemExit) as cm,
     ):
@@ -181,33 +186,21 @@ def refused(case, call):
     return cm.exception.code
 
 
-def no_seam(case):
-    env = mock.patch.dict(os.environ)
-    env.start()
-    case.addCleanup(env.stop)
-    os.environ.pop(SEAM, None)
-
-
 class LinearGql(Case):
-    def setUp(self):
-        no_seam(self)
-
     def gql(self, query=VIEWER, body=b'{"data": {}}', **kw):
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
         with (
-            mock.patch.object(linear.subprocess, "run", run),
+            mock.patch.object(subprocess, "run", run),
             mock.patch.object(
-                linear.urllib.request, "build_opener", side_effect=AssertionError("opener built")
+                urllib.request, "build_opener", side_effect=AssertionError("opener built")
             ),
-            mock.patch.object(
-                linear.urllib.request, "urlopen", return_value=respond(body)
-            ) as urlopen,
+            mock.patch.object(urllib.request, "urlopen", return_value=respond(body)) as urlopen,
         ):
             return linear.linear_gql(query, **kw), run, urlopen
 
     def test_key_by_service_only_sent_by_urlopen(self):
-        for env, service in (({}, "svc-h"), ({SEAM: ""}, "svc-h"), ({}, "linear-api-key-pm")):
-            with self.subTest(env=env, service=service), mock.patch.dict(os.environ, env):
+        for service in ("svc-h", "linear-api-key-pm"):
+            with self.subTest(service=service):
                 out, run, urlopen = self.gql(
                     body=b'{"data": {"viewer": {"id": "v"}}}', service=service
                 )
@@ -238,11 +231,9 @@ class LinearGql(Case):
 
     def test_the_service_is_required(self):
         with (
+            mock.patch.object(subprocess, "run", side_effect=AssertionError("Keychain read")),
             mock.patch.object(
-                linear.subprocess, "run", side_effect=AssertionError("Keychain read")
-            ),
-            mock.patch.object(
-                linear.urllib.request, "urlopen", side_effect=AssertionError("request sent")
+                urllib.request, "urlopen", side_effect=AssertionError("request sent")
             ),
             self.assertRaises(TypeError),
         ):
@@ -253,9 +244,7 @@ class LinearGql(Case):
         for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
             with (
                 self.subTest(key=key),
-                mock.patch.object(
-                    linear.subprocess, "run", return_value=SimpleNamespace(stdout=out)
-                ),
+                mock.patch.object(subprocess, "run", return_value=SimpleNamespace(stdout=out)),
             ):
                 code = refused(self, lambda: linear.linear_gql(VIEWER, service="svc"))
                 self.assertIn("svc", code)
@@ -275,10 +264,7 @@ def errors(*codes):
 
 class Unavailable(Case):
     def setUp(self):
-        no_seam(self)
-        p = mock.patch.object(
-            linear.subprocess, "run", return_value=SimpleNamespace(stdout=SECRET + "\n")
-        )
+        p = mock.patch.object(subprocess, "run", return_value=SimpleNamespace(stdout=SECRET + "\n"))
         p.start()
         self.addCleanup(p.stop)
 
@@ -286,9 +272,7 @@ class Unavailable(Case):
         resp = respond(body)
         if read:
             resp.__enter__.return_value = mock.Mock(read=mock.Mock(side_effect=read))
-        with mock.patch.object(
-            linear.urllib.request, "urlopen", side_effect=opened, return_value=resp
-        ):
+        with mock.patch.object(urllib.request, "urlopen", side_effect=opened, return_value=resp):
             return linear.linear_gql(query, service="svc")
 
     def unavailable(self, query, **kw):
@@ -405,19 +389,17 @@ class Outage(Case):
             "URLError": (None, "ConnectionRefusedError: [Errno 61] Connection refused"),
         }
         self.assertEqual(set(FAILURES), set(want))
-        with mock.patch.dict(os.environ, {SEAM: os.path.join(self.home, "missing.json")}):
-            for name, error in FAILURES.items():
-                with self.subTest(name):
-                    gql = failing(error)
-                    for _ in range(2):
-                        with self.assertRaises(linear.Unavailable) as cm:
-                            gql(linear.Q_TEAM, t=TEAM)
-                        self.assertEqual(
-                            (cm.exception.op, cm.exception.status, cm.exception.reason),
-                            ("teams", *want[name]),
-                        )
-                    self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})] * 2)
-            self.assertEqual(os.environ[SEAM], os.path.join(self.home, "missing.json"))
+        for name, error in FAILURES.items():
+            with self.subTest(name):
+                gql = failing(error)
+                for _ in range(2):
+                    with self.assertRaises(linear.Unavailable) as cm:
+                        gql(linear.Q_TEAM, t=TEAM)
+                    self.assertEqual(
+                        (cm.exception.op, cm.exception.status, cm.exception.reason),
+                        ("teams", *want[name]),
+                    )
+                self.assertEqual(gql.failed, [(linear.Q_TEAM, {"t": TEAM})] * 2)
 
     def test_ops_names_the_failing_operations(self):
         gql = failing(
@@ -431,167 +413,15 @@ class Outage(Case):
 
 
 class HasKey(Case):
-    def test_without_the_seam_the_secret_is_never_read(self):
-        no_seam(self)
+    def test_key_existence_check_never_reads_the_secret(self):
         for code, want in ((0, True), (44, False)):
             with mock.patch.object(
-                linear.subprocess, "run", return_value=SimpleNamespace(returncode=code)
+                subprocess, "run", return_value=SimpleNamespace(returncode=code)
             ) as m:
                 self.assertIs(linear.has_key("svc"), want)
             self.assertEqual(
                 m.call_args.args[0], ["/usr/bin/security", "find-generic-password", "-s", "svc"]
             )
-
-
-class Seam(Case):
-    URL = "http://127.0.0.1:8123/graphql"
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = tmp.name
-        for p in (
-            mock.patch.dict(os.environ),
-            mock.patch.object(
-                linear.subprocess, "run", side_effect=AssertionError("Keychain read")
-            ),
-        ):
-            p.start()
-            self.addCleanup(p.stop)
-
-    def seam(self, data):
-        self.path = os.path.join(self.tmp, "missing.json")
-        if data is not None:
-            fd, self.path = tempfile.mkstemp(dir=self.tmp)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(data if isinstance(data, str) else json.dumps(data))
-        os.environ[SEAM] = self.path
-
-    def request(self, service="svc-h", **kw):
-        with mock.patch.object(linear.urllib.request, "build_opener") as build:
-            build.return_value.open.return_value = respond()
-            linear.linear_gql(VIEWER, service=service, **kw)
-        return build.return_value.open.call_args[0][0]
-
-    def assert_refused(self, *hidden):
-        for call in (
-            lambda: linear.linear_gql(VIEWER, service="svc-h"),
-            lambda: linear.key("svc-h", 30),
-            lambda: linear.has_key("svc-h"),
-        ):
-            code = refused(self, call)
-            self.assertIn(SEAM, code)
-            self.assertIn(self.path, code)
-            for h in hidden:
-                self.assertNotIn(h, code)
-
-    def test_url_and_keys_from_the_file_read_per_call(self):
-        self.assertEqual(linear.SEAM, SEAM)
-        self.seam({"url": self.URL, "keys": {"svc-h": "key-h", "svc-a": "key-a"}})
-        for service, key in (("svc-h", "key-h"), ("svc-a", "key-a")):
-            req = self.request(service)
-            self.assertEqual((req.full_url, req.get_header("Authorization")), (self.URL, key))
-        self.assertEqual(linear.key("svc-a", 30), "key-a")
-        self.seam({"url": "http://127.0.0.1:9/graphql", "keys": {"svc-h": "key-2"}})
-        req = self.request()
-        self.assertEqual(
-            (req.full_url, req.get_header("Authorization")), ("http://127.0.0.1:9/graphql", "key-2")
-        )
-
-    def test_each_call_reads_the_file_once(self):
-        self.seam({"url": self.URL, "keys": {"svc-h": "key-h", "svc-a": "key-a"}})
-        for service in ("svc-h", "svc-a"):
-            with (
-                self.subTest(service=service),
-                mock.patch.object(linear, "open", create=True, wraps=open) as opened,
-            ):
-                self.request(service)
-            self.assertEqual([c.args[0] for c in opened.call_args_list], [self.path])
-
-    def test_the_request_skips_proxies(self):
-        self.seam({"url": self.URL, "keys": {"svc-h": "key-h"}})
-        for name in ("HTTP_PROXY", "ALL_PROXY", "all_proxy", "no_proxy", "NO_PROXY"):
-            os.environ.pop(name, None)
-        os.environ["http_proxy"] = "http://proxy.invalid:3128"
-        sent = []
-
-        def do_open(handler, http_class, req, **kw):
-            sent.append((req.host, req.timeout))
-            resp = respond(b'{"data": {"viewer": {"id": "v"}}}')
-            resp.code = 200
-            return resp
-
-        with mock.patch.object(linear.urllib.request.AbstractHTTPHandler, "do_open", do_open):
-            self.assertEqual(
-                linear.linear_gql(VIEWER, service="svc-h", timeout=5), {"viewer": {"id": "v"}}
-            )
-        self.assertEqual(sent, [("127.0.0.1:8123", 5)])
-
-    def test_has_key_is_service_in_keys(self):
-        self.seam({"url": self.URL, "keys": {"svc": SECRET}})
-        self.assertEqual((linear.has_key("svc"), linear.has_key("other")), (True, False))
-
-    def test_a_bad_file_raises_without_its_text(self):
-        cases = {
-            "unreadable": None,
-            "not JSON": SECRET + " {",
-            "not an object": json.dumps([self.URL, {"svc-h": SECRET}]),
-            "no url": {"keys": {"svc-h": SECRET}},
-            "url not a str": {"url": [self.URL], "keys": {"svc-h": SECRET}},
-            "no keys": {"url": self.URL, "key": SECRET},
-            "keys not an object": {"url": self.URL, "keys": [SECRET]},
-            "a key not a str": {"url": self.URL, "keys": {"svc-h": [SECRET]}},
-        }
-        for case, data in cases.items():
-            with self.subTest(case):
-                self.seam(data)
-                self.assert_refused(SECRET)
-
-    def test_url_guard(self):
-        for url in ("http://127.0.0.1:1/graphql", "http://[::1]:1/graphql"):
-            with self.subTest(url=url):
-                self.seam({"url": url, "keys": {"svc-h": "k"}})
-                self.assertEqual(self.request().full_url, url)
-        for url in (
-            "https://127.0.0.1:1/",
-            "http://localhost:1/",
-            "http://127.0.0.1/",
-            "http://127.0.0.1:1@evil/",
-            "http://127.0.0.1.evil:1/",
-            "http://[::1]:1@x/",
-            "http://u:p@127.0.0.1:1/",
-            "http://127.0.0.1:1/graphql ",
-        ):
-            with self.subTest(url=url):
-                self.seam({"url": url, "keys": {"svc-h": SECRET}})
-                self.assert_refused(url, SECRET)
-
-    def test_a_missing_service_raises_naming_it(self):
-        self.seam({"url": self.URL, "keys": {"svc-a": SECRET}})
-        for call in (
-            lambda: linear.key("svc-b", 30),
-            lambda: linear.linear_gql(VIEWER, service="svc-b"),
-        ):
-            code = refused(self, call)
-            self.assertIn("svc-b", code)
-            self.assertNotIn(SECRET, code)
-
-    def test_a_bad_key_raises_naming_only_the_service(self):
-        for key in (
-            "",
-            "lin api",
-            " lin_api",
-            "lin_api\n",
-            "lin\tapi",
-            "lin\x00api",
-            "lin\u00a0api",
-        ):
-            with self.subTest(key=key):
-                self.seam({"url": self.URL, "keys": {"svc-h": key}})
-                code = refused(self, lambda: linear.linear_gql(VIEWER, service="svc-h"))
-                self.assertIn("svc-h", code)
-                if key:
-                    self.assertNotIn(key, code)
 
 
 class Helpers(Case):
@@ -609,20 +439,6 @@ class Helpers(Case):
         self.assertRegex(linear.stamp(), r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\Z")
 
 
-class Stderr(io.StringIO):
-    def __init__(self, tty=False, fail=None):
-        super().__init__()
-        self.tty, self.fail = tty, fail
-
-    def isatty(self):
-        return self.tty
-
-    def write(self, s):
-        if self.fail:
-            raise self.fail
-        return super().write(s)
-
-
 class Logs(Case):
     TS = "2026-10-09T00:26:33-04:00"
 
@@ -632,15 +448,13 @@ class Logs(Case):
         self.tmp = tmp.name
         self.logs = os.path.join(self.tmp, "logs")
         self.path = os.path.join(self.logs, "orchestrator.jsonl")
-        p = mock.patch.object(linear, "LOGS_DIR", self.logs)
-        p.start()
-        self.addCleanup(p.stop)
+        linear.use_logs(self.logs)
 
     def stderr(self, call, tty=False, fail=None):
         err = Stderr(tty, fail)
         with (
             mock.patch.object(sys, "stderr", err),
-            mock.patch.object(linear, "stamp", return_value=self.TS),
+            frozen(self.TS),
         ):
             out = call()
         return out, err.getvalue()
@@ -685,7 +499,7 @@ class Log(Logs):
         self.log("run", "end", "TASK-1", sid="s", exit=0)
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
         other = os.path.join(self.tmp, "other")
-        with mock.patch.object(linear, "LOGS_DIR", other):
+        with logs_at(other):
             self.log("run", "end", "TASK-2", sid="s", exit=0)
         self.assertEqual([d["issue"] for d in self.lines()], ["TASK-1"])
         with open(os.path.join(other, "orchestrator.jsonl")) as f:
@@ -700,16 +514,14 @@ class Log(Logs):
 
     def test_no_logs_dir_writes_no_file(self):
         with (
-            mock.patch.object(linear, "LOGS_DIR", None),
-            mock.patch.object(linear, "append_line") as append,
-            mock.patch.object(linear.os, "makedirs") as makedirs,
+            logs_at(None),
+            mock.patch.object(os, "makedirs") as makedirs,
         ):
             self.assertEqual(
                 self.log("run", "end", "TASK-1", once=True, tty=True),
                 self.json("run", "end", "TASK-1"),
             )
             self.assertEqual(self.log("run", "end", "TASK-1"), "")
-        append.assert_not_called()
         makedirs.assert_not_called()
         self.assertEqual(os.listdir(self.tmp), [])
 
@@ -722,7 +534,7 @@ class Log(Logs):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "elsewhere")))
         file = os.path.join(self.tmp, "file")
         open(file, "w").close()
-        with mock.patch.object(linear, "LOGS_DIR", os.path.join(file, "logs")):
+        with logs_at(os.path.join(file, "logs")):
             self.log("run", "end", "TASK-1")
 
     def test_an_oserror_from_stderr_never_raises(self):
@@ -780,7 +592,7 @@ class Log(Logs):
         self.assertEqual(len(self.lines()), 7)
 
     def test_once_reads_the_last_24_hours_of_the_file(self):
-        now = datetime.now().astimezone()
+        now = datetime.fromisoformat(self.TS)
         recent, old = (now - timedelta(hours=h) for h in (23, 25))
         os.makedirs(self.logs)
         lines = [
@@ -855,7 +667,7 @@ class Log(Logs):
     def test_once_keeps_a_cache_per_log_path(self):
         other = os.path.join(self.tmp, "other")
         for logs, written in ((self.logs, 1), (other, 1), (self.logs, 0), (other, 0)):
-            with mock.patch.object(linear, "LOGS_DIR", logs):
+            with logs_at(logs):
                 path = os.path.join(logs, "orchestrator.jsonl")
                 before = len(self.text(path).splitlines())
                 self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])

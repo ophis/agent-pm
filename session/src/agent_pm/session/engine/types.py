@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils import printable_abs
 
 __all__ = [
     "Access",

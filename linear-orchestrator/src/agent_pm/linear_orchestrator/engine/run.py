@@ -9,25 +9,25 @@ import os
 import re
 import signal
 import sys
+from dataclasses import replace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
-from agent_pm.session import SIGNALS, DriverError, close, show
+from agent_pm.session import SIGNALS, DriverError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import sessions as tui_sessions
-from agent_pm.utils.text import printable
+from agent_pm.utils import printable
 
 
 def _stop(signum, frame):
     raise SystemExit(128 + signum)  # the Delegate then stops its session
 
 
-def _close_tuis(a, role):
+def _close_tuis(a, role, cfg):
     try:
-        found = tui_sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
+        found = cfg.driver.sessions(re.escape(config.tui_prefix(role, a.issue)) + ".*")
     except DriverError:
         log("run", "tui-error", a.issue, msg="tmux sessions unknown")
         return
@@ -35,14 +35,14 @@ def _close_tuis(a, role):
         if config.tui_issue(name) != (role, a.issue):
             continue
         try:
-            close(name)
+            cfg.driver.close(name)
         except (SessionConfigError, DriverError) as e:
             log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         else:
             log("run", "tui-closed", a.issue, session=name)
 
 
-def inner(a, cfg, *, gql, run=delegate.run):
+def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
@@ -61,10 +61,12 @@ def inner(a, cfg, *, gql, run=delegate.run):
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
-    _close_tuis(a, role)
+    _close_tuis(a, role, cfg)
     rd = cfg.run_dir(a.issue)
     harness = functools.partial(gql, service=cfg.harness_key, timeout=sessions.LIMIT)
-    rec = sessions.base(sid=a.sid, workdir=rd, runtime=a.runtime, started_at=sessions.now())
+    rec = sessions.base(
+        sid=a.sid, workdir=rd, runtime=a.runtime, started_at=now(), driver=cfg.driver
+    )
     ctx = writeback.context(
         cfg,
         role,
@@ -79,7 +81,9 @@ def inner(a, cfg, *, gql, run=delegate.run):
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):
-        if error := sessions.post(a.issue, rec, rc, gql=harness, outcome=outcome, limit=limit):
+        if error := sessions.post(
+            a.issue, rec, rc, gql=harness, ended_at=now(), outcome=outcome, limit=limit
+        ):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
 
     def on_event(event):
@@ -87,7 +91,7 @@ def inner(a, cfg, *, gql, run=delegate.run):
             post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
             if name is not None:
                 try:
-                    if command := show(name, a.split, a.split_from, a.opener):
+                    if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
                         print(printable(command), file=sys.stderr, flush=True)
                 except (SessionConfigError, DriverError) as e:
                     log("run", "tui-error", a.issue, session=name, msg=one_line(e))
@@ -112,7 +116,7 @@ def inner(a, cfg, *, gql, run=delegate.run):
             out=os.path.join(rd, "out.md"),
             cwd=rd,
         )
-        result = run(cfg.roles[role].run, spec, on_event=on_event)
+        result = run(cfg.roles[role].run, spec, driver=cfg.driver, on_event=on_event)
         rc = result.returncode
     except (Exception, SystemExit) as e:
         if isinstance(e, SystemExit) and isinstance(e.code, int):
@@ -142,17 +146,8 @@ def inner(a, cfg, *, gql, run=delegate.run):
     return 0
 
 
-def main(argv, *, gql=linear.linear_gql, run=delegate.run):
-    ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--runtime", "--input"):
-        ap.add_argument(f, required=True)
-    ap.add_argument("--mode", choices=("new", "resume"), required=True)
-    ap.add_argument("--task")
-    ap.add_argument("--target")
-    ap.add_argument("--tui", action="store_true")
-    for f in ("--split", "--split-from", "--opener", "--events"):
-        ap.add_argument(f)
-    a = ap.parse_args(argv)
+def main(argv, *, gql=linear.linear_gql, run=delegate.run, driver=None, now=sessions.now):
+    a = options(argv)
     if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
         return _usage(f"bad issue or session id: {a.issue} {a.sid}")
     if not a.tui and any(v is not None for v in (a.split, a.split_from, a.opener, a.events)):
@@ -176,7 +171,21 @@ def main(argv, *, gql=linear.linear_gql, run=delegate.run):
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     linear.use_logs(cfg.logs_dir)
-    return inner(a, cfg, gql=gql, run=run)
+    cfg = replace(cfg, driver=driver) if driver is not None else cfg
+    return inner(a, cfg, gql=gql, run=run, now=now)
+
+
+def options(argv):
+    ap = argparse.ArgumentParser(prog="run.py")
+    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--runtime", "--input"):
+        ap.add_argument(f, required=True)
+    ap.add_argument("--mode", choices=("new", "resume"), required=True)
+    ap.add_argument("--task")
+    ap.add_argument("--target")
+    ap.add_argument("--tui", action="store_true")
+    for f in ("--split", "--split-from", "--opener", "--events"):
+        ap.add_argument(f)
+    return ap.parse_args(argv)
 
 
 def _usage(msg):

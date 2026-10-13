@@ -166,7 +166,8 @@ class Base(Case):
         self.rd = os.path.join(self.work, "work", ID)
         self.logs = os.path.join(self.work, "logs")
         self.runs = os.path.join(self.logs, "runs.jsonl")
-        for p in (mock.patch.object(linear, "LOGS_DIR", None), mock.patch.dict(os.environ)):
+        linear.use_logs(None)
+        for p in (mock.patch.dict(os.environ),):
             p.start()
             self.addCleanup(p.stop)
         self.gql = Gql()

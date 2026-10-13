@@ -7,7 +7,6 @@ from unittest import mock
 
 from agent_pm.session import ConfigError, Session
 from agent_pm.session.hosts.tables import Hosts, parse
-from agent_pm.utils import registry
 
 from session.tests.case import Case
 
@@ -98,11 +97,9 @@ class ParseTest(Case):
     def test_the_class_is_never_loaded(self):
         found = table(TWO.replace("pkg.mod:AHost", "agent_pm.session.hosts.tmux:TmuxHost"))
         with (
-            mock.patch.object(registry, "load") as load,
             mock.patch("importlib.import_module") as imp,
         ):
             self.assertEqual(parse(found).default, "a")
-        load.assert_not_called()
         imp.assert_not_called()
 
 

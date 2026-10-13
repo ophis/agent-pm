@@ -1149,17 +1149,18 @@ class Status(Base):
         )
         self.assertEqual(code, 1)
 
-    def test_the_defaults_are_the_delegate_config_and_the_local_file(self):
-        with unittest.mock.patch.object(repo, "read_project", return_value={}) as read:
-            code = repo.main(
-                ["status", "o/n", "--branch", "b", "--dir", self.dir],
-                run=Fake([]),
-                out=io.StringIO(),
-                err=io.StringIO(),
-            )
-        self.assertEqual(code, 2)
-        read.assert_called_once_with("delegate", path=repo.CONFIG, local=repo.LOCAL)
-        self.assertEqual(repo.LOCAL, "~/.agent-pm/config.local.toml")
+    def test_the_defaults_load_the_local_file(self):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as stream:
+            stream.write("users = [\n")
+        errors = io.StringIO()
+        code = repo.main(
+            ["status", "o/n", "--branch", "b", "--dir", self.dir],
+            run=Fake([]),
+            out=io.StringIO(),
+            err=errors,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Invalid value", errors.getvalue())
 
     def test_needs_a_checkout(self):
         code, _, err = self.main(["status", "o/n", "--branch", "b", "--dir", self.dir], Fake([]))

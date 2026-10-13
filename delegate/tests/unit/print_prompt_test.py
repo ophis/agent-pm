@@ -1,4 +1,4 @@
-"""Runtime print_prompt through the Delegate's API, the real config's registry: per built-in role a done run whose
+"""Runtime print_prompt through the Delegate's API, a driver built from the real config: per built-in role a done run whose
 deliverable is the planned prompt, saved to out, no child process; headless and resume refused; each role's
 destination and prompt the same under claude, codex and print_prompt."""
 
@@ -53,9 +53,9 @@ class PrintPrompt(Case):
         for role in ROLES:
             with self.subTest(role=role):
                 args = self.given(role)
-                want, events = plan(*args).prompt, []
+                want, events = plan(*args, driver=self.driver).prompt, []
                 with no_child(), redirect_stderr(io.StringIO()):
-                    r = run(*args, on_event=events.append)
+                    r = run(*args, on_event=events.append, driver=self.driver)
                 self.assertEqual(
                     (r.returncode, r.outcome.status, r.outcome.deliverable), (0, "done", want)
                 )
@@ -72,7 +72,7 @@ class PrintPrompt(Case):
                 ConfigError, "runtime 'print_prompt' does not support headless mode"
             ),
         ):
-            run(*args)
+            run(*args, driver=self.driver)
         self.assertFalse(os.path.exists(args[1].workdir))
 
     def test_a_resume_is_refused(self):
@@ -81,7 +81,7 @@ class PrintPrompt(Case):
             no_child(),
             self.assertRaisesRegex(ConfigError, "print_prompt has no session to resume"),
         ):
-            run(*args)
+            run(*args, driver=self.driver)
 
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
@@ -90,7 +90,7 @@ class PrintPrompt(Case):
             for role in ROLES:
                 with self.subTest(github=bool(local), role=role):
                     first, *others = (
-                        plan(*args)
+                        plan(*args, driver=self.driver)
                         for args in (
                             self.given(role, runtime=runtime, mode=mode)
                             for runtime, mode in RUNTIMES

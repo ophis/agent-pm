@@ -11,7 +11,7 @@ from unittest import mock
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
 from agent_pm.session.engine.types import ConfigError, Reply, SessionStatus, Spec, TurnEnd
-from agent_pm.utils.markdown import fenced
+from agent_pm.utils import fenced
 
 from session.tests.case import SPAWNS, Case
 

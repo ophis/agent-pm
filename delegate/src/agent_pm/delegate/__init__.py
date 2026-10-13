@@ -1,7 +1,10 @@
 """The Delegate: runs one role as an agent session, its prompt and access from the Composer, its session from the
 Driver, read from its replies' progress marks and outcome block."""
 
-from agent_pm.delegate.composer import RunConfig
+from agent_pm.delegate.composer import ConfigError as ComposerConfigError
+from agent_pm.delegate.composer import RunConfig, trusted_dirs
+from agent_pm.delegate.composer import index as task_index
+from agent_pm.delegate.composer import resolve as resolve_run
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import CONFIG, IMPORT_ROOTS, PYTHONPATH, harness_host
 from agent_pm.delegate.engine.plan import configure, plan
@@ -22,6 +25,10 @@ from agent_pm.delegate.event.outcome import STATUSES, InvalidOutcome, Outcome
 
 __all__ = [
     "ConfigError",
+    "ComposerConfigError",
+    "resolve_run",
+    "task_index",
+    "trusted_dirs",
     "Spec",
     "Plan",
     "configure",

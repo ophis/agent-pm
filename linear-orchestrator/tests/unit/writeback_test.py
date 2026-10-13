@@ -1,6 +1,7 @@
 """orchestrator writeback.py, ported from the old writeback_test (the sink's cases on progress), plus comment steps by
 client id found again on resume (FR-54), the usage-limit path (FR-59), runs.note and the Context builder."""
 
+import fcntl
 import functools
 import hashlib
 import json
@@ -13,14 +14,15 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
-import agent_pm.utils.files
 from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 
+from .clock import logs_at
 from ..case import Case
 from . import board_ids, run_fixtures
 from .run_fixtures import logged, show
+from .writeback_support import APPROVE_MAPPED, DOC, PR, PRD
 
 ID, UUID = "ENG-7", "11111111-2222-4333-8444-555555555555"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -32,18 +34,11 @@ STATES = board_ids.STATES
 PROJECT = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 REPOS = {PROJECT: "ophis/agent-pm"}
 TARGET = ("ophis", "agent-pm")
-DOC = "https://github.com/ophis/private_docs/blob/main/Research/RES-4-queues.md"
-PRD = "https://github.com/ophis/private_docs/blob/main/Product%20Design/PRD-3-registry.md"
-PR = "https://github.com/ophis/agent-pm/pull/7"
 TREE = "https://github.com/ophis/agent-pm/tree/ENG-7-session-registry"
 SPEC_TEXT = "# Spec\n\nBuild the registry.\n"
 PLAN_TEXT = "# Plan\n\nRESUME: phase=2\n\n- [ ] task 1\n"
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 APPROVE = "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
-APPROVE_MAPPED = (
-    "**🔴 Target repo:** `ophis/agent-pm` **(from the project mapping). To approve, move this issue to "
-    "Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**"
-)
 NOT_FOUND = SystemExit("linear api error: [{'message': 'Entity not found: Comment'}]")
 START = Progress("start", "x")
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
@@ -203,15 +198,16 @@ class ProcFcntl:
 
 class Base(Case):
     def setUp(self):
-        if not hasattr(writeback.fcntl, "F_GETPATH"):
-            patch = mock.patch.object(writeback, "fcntl", ProcFcntl)
+        if not hasattr(fcntl, "F_GETPATH"):
+            patch = mock.patch.object(fcntl, "fcntl", ProcFcntl.fcntl)
+            flag = mock.patch.object(fcntl, "F_GETPATH", ProcFcntl.F_GETPATH, create=True)
+            flag.start()
+            self.addCleanup(flag.stop)
             patch.start()
             self.addCleanup(patch.stop)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
-        p = mock.patch.object(linear, "LOGS_DIR", os.path.join(self.tmp, "logs"))
-        p.start()
-        self.addCleanup(p.stop)
+        linear.use_logs(os.path.join(self.tmp, "logs"))
 
     def ctx(
         self,
@@ -553,9 +549,7 @@ class FinishLedger(Base):
 
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()
-        with mock.patch.object(
-            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
-        ):
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
             err = writeback._step(ctx, "comment", lambda: None)
         self.assertIsInstance(err, OSError)
         self.assertEqual(os.listdir(ctx.workdir), [])
@@ -592,9 +586,7 @@ class CommentIds(Base):
     def test_a_resume_finds_a_post_whose_ledger_write_was_lost(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
-        with mock.patch.object(
-            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
-        ):
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
             writeback.progress(ctx, START)
         self.assertEqual(gql.calls, [post("start", "Build started: x")])
         self.assertEqual(self.lines(), [f"step-error {ID} step=start error=OSError: disk full"])
@@ -1079,7 +1071,7 @@ class ProgressEvents(Base):
     def test_never_raises(self):
         gql = Gql(fail=lambda name, v: RuntimeError("boom"))
         open(os.path.join(self.tmp, "file"), "w").close()
-        with mock.patch.object(linear, "LOGS_DIR", os.path.join(self.tmp, "file", "logs")):
+        with logs_at(os.path.join(self.tmp, "file", "logs")):
             writeback.progress(self.ctx(gql=gql), START)
         writeback.progress(replace(self.ctx(), role="nope"), START)
         self.assertEqual(self.lines(), [f"step-error {ID} step=sink error=KeyError: 'nope'"])
@@ -1340,10 +1332,10 @@ class RunsNote(Case):
         self.addCleanup(shutil.rmtree, tmp)
         path = os.path.join(tmp, "logs", "runs.jsonl")
         at = "2026-10-11T18:00:00+08:00"
-        with mock.patch.object(runs, "append_line", wraps=runs.append_line) as spy:
+        with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
             runs.note(path, "limit", issue=ID, sid=SID, runtime="claude", resets_at=None)
             runs.note(path, "limit", issue=ID, sid=OTHER_SID, runtime="claude", resets_at=at)
-        self.assertEqual([c.kwargs for c in spy.call_args_list], [{"durable": True}] * 2)
+        self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             text = f.read()
         self.assertTrue(text.endswith("\n"))

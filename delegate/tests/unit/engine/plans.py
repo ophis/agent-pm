@@ -16,8 +16,7 @@ SID = "11111111-2222-3333-4444-555555555555"
 
 
 class Base(Case):
-    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and the registry's
-    adapters: the core config's and the fake runtime."""
+    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and fresh session settings: the core config's adapters and the fake runtime."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -48,7 +47,9 @@ class Base(Case):
         run = run or replace(composer.resolve(role, team=team), **(keys or {}))
         err = io.StringIO()
         with redirect_stderr(err):
-            got = plan(run, Spec(kw.pop("input"), workdir, task=task, team=team, **kw))
+            got = plan(
+                run, Spec(kw.pop("input"), workdir, task=task, team=team, **kw), driver=self.driver
+            )
         return got, err.getvalue()
 
     def refused(self, *args, **kw) -> str:

@@ -30,7 +30,7 @@ from agent_pm.delegate.composer.base import (
 )
 from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
-from agent_pm.utils.markdown import unfenced
+from agent_pm.utils import unfenced
 
 RESUME = (
     "Resumed agent run after an interruption. These rules are current and may have changed since this session "

@@ -12,7 +12,7 @@ from contextlib import redirect_stderr
 from datetime import datetime
 
 from agent_pm.session.engine import records
-from agent_pm.utils import files
+from agent_pm.utils import append_line
 
 from session.tests.case import Case
 
@@ -100,7 +100,7 @@ class Note(Base):
 
 class AppendLine(Case):
     def test_is_the_utils_one(self):
-        self.assertIs(records.append_line, files.append_line)
+        self.assertIs(records.append_line, append_line)
 
 
 class Holds(Base):

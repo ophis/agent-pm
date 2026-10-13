@@ -6,15 +6,15 @@ import os
 import re
 from dataclasses import dataclass, replace
 
-import agent_pm.utils.repos
+from agent_pm.utils import checkout as clone_checkout
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
 from agent_pm.linear_orchestrator.engine.types import Invalid, Transient
 from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.utils.git import GUARD, common_dir
-from agent_pm.utils.paths import under
-from agent_pm.utils.repos import NAME, OWNER
-from agent_pm.utils.shell import SHORT, err_text
+from agent_pm.utils import GUARD, common_dir
+from agent_pm.utils import under
+from agent_pm.utils import NAME, OWNER
+from agent_pm.utils import SHORT, err_text
 
 MAPPED = "project mapping "
 
@@ -105,7 +105,7 @@ def _repo_info(o, n, run):
 
 
 def checkout(ident, owner, name, *, work) -> str:
-    return agent_pm.utils.repos.checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+    return clone_checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
 def _branches(ident, o, n, run, work, roles):

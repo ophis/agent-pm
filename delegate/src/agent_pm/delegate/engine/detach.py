@@ -10,9 +10,8 @@ from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, SessionStatusLog, layout
-from agent_pm.session import detach as detach_session
-from agent_pm.utils.files import append_line
+from agent_pm.session import DriverError, SessionStatusLog
+from agent_pm.utils import append_line
 
 MODES = ("headless", "tui")
 
@@ -52,7 +51,7 @@ def detach(
     opener = None
     if tui is not None:
         try:
-            opener = layout(split, split_from)
+            opener = p.driver.layout(split, split_from)
         except DriverError as e:
             if split_from is not None:
                 raise ConfigError(str(e)) from None
@@ -87,7 +86,7 @@ def detach(
         *(["--resume"] if p.spec.resume else []),
     ]
     try:
-        detach_session(
+        p.driver.detach(
             driver,
             argv,
             cwd=os.getcwd(),

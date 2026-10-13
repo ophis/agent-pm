@@ -20,7 +20,7 @@ from agent_pm.delegate.composer.run import check_old_keys
 from agent_pm.delegate.composer.teams import START
 from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.delegate.event.outcome import SCHEMA
-from agent_pm.utils.markdown import unfenced
+from agent_pm.utils import unfenced
 
 from delegate.tests.case import REPO, ROOTS, Case
 from delegate.tests.unit.composer.prompts import (

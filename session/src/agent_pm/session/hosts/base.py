@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import DriverError, Key, Paste
-from agent_pm.utils.record import Display, Record
+from agent_pm.utils import Display, Record
 
 
 class NotDisplayable(DriverError):

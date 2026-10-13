@@ -24,15 +24,27 @@ from agent_pm.delegate import Begun, ConfigError, Plan, Spec, composer, configur
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import say
-from agent_pm.session import MODES, SIGNALS, DriverError, attach_command, holds, show
+from agent_pm.session import MODES, SIGNALS, DriverError, holds
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils.args import Once
-from agent_pm.utils.text import printable
+from agent_pm.utils import Once, printable
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
 
-def main(argv: list[str]) -> int:
+class Application:
+    """The configured session owner for command-line planning and execution."""
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def plan(self, config, spec):
+        return plan(config, spec, driver=self.driver)
+
+    def run(self, config, spec, *, on_event):
+        return run(config, spec, driver=self.driver, on_event=on_event)
+
+
+def main(argv: list[str], *, application=None) -> int:
     ap = argparse.ArgumentParser(prog="delegate")
     ap.add_argument(
         "--list",
@@ -66,7 +78,7 @@ def main(argv: list[str]) -> int:
     if not a.list and a.role is None:
         ap.error("the following arguments are required: --role")
     if a.driver is None:
-        return _main(a)[0]
+        return _main(a, application=application)[0]
     if None in (a.events, a.sid):
         ap.error("--driver needs --events and --sid")
     status = None
@@ -75,7 +87,7 @@ def main(argv: list[str]) -> int:
             signal.signal(s, _stop)
         try:
             signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # detach blocked them
-            code, status = _main(a)
+            code, status = _main(a, application=application)
             return code
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -83,7 +95,7 @@ def main(argv: list[str]) -> int:
         detach.outcome(a.events, a.driver, status)
 
 
-def _main(a: argparse.Namespace) -> tuple[int, str | None]:
+def _main(a: argparse.Namespace, *, application=None) -> tuple[int, str | None]:
     """(exit code, the valid outcome's status)."""
     try:
         if not a.list and None in (a.input, a.out, a.workdir):
@@ -96,7 +108,8 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
             print(listing(team), end="")
             return 0, None
         config = composer.resolve(a.role, a.task, team=team)
-        configure()
+        application = Application(configure()) if application is None else application
+        driver = application.driver
         text = sys.stdin.read() if a.input == "-" and a.driver is None else a.input
         spec = Spec(
             text,
@@ -112,13 +125,13 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
             team=team,
         )
         if a.detach:
-            return _detach(a, plan(config, spec)), None
+            return _detach(a, application.plan(config, spec)), None
         if a.dry_run:
-            print(json.dumps(_shown(plan(config, spec)), ensure_ascii=False, indent=1))
+            print(json.dumps(_shown(application.plan(config, spec)), ensure_ascii=False, indent=1))
             return 0, None
         tui = detach.names(config.role, a.sid, a.mode)[0] if a.driver else None
         spec = replace(spec, name=tui)
-        result = run(config, spec, on_event=functools.partial(_begun, a, tui))
+        result = application.run(config, spec, on_event=functools.partial(_begun, a, tui, driver))
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2, None
@@ -158,9 +171,9 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
         say(f"delegate: {e}")
         return 3
     say(f"delegate: session {p.spec.sid}")
-    say(f"delegate: driver session {d.driver}: {attach_command(d.driver)}")
+    say(f"delegate: driver session {d.driver}: {p.driver.attach_command(d.driver)}")
     if d.tui is not None:
-        say(f"delegate: tui session {d.tui}: {attach_command(d.tui)}")
+        say(f"delegate: tui session {d.tui}: {p.driver.attach_command(d.tui)}")
     return 0
 
 
@@ -209,13 +222,13 @@ def _shown(p: Plan) -> dict:
     }
 
 
-def _begun(a: argparse.Namespace, tui: str | None, event) -> None:
+def _begun(a: argparse.Namespace, tui: str | None, driver, event) -> None:
     if not isinstance(event, Begun):
         return
     say(f"delegate: session {event.sid}")
     if tui is not None and a.opener is not None:
         try:
-            if command := show(tui, a.split, a.split_from, a.opener):
+            if command := driver.show(tui, a.split, a.split_from, a.opener):
                 say(command)
         except (SessionConfigError, DriverError) as e:
             say(f"delegate: show {tui}: {e}")

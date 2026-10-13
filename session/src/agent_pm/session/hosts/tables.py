@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from agent_pm.utils import registry
+from agent_pm.utils import CLASS_PATH
 
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
@@ -30,7 +30,7 @@ def parse(table) -> Hosts:
         if not NAME.match(key):
             raise ValueError(f"[hosts.{key}]: want a name matching [a-z][a-z0-9_]*")
         implementation = value.get("implementation")
-        if not isinstance(implementation, str) or not registry.PATH.fullmatch(implementation):
+        if not isinstance(implementation, str) or not CLASS_PATH.fullmatch(implementation):
             raise ValueError(f"[hosts.{key}].implementation: want module.path:Class")
         tables[key] = dict(value)
     default = table.get("default")

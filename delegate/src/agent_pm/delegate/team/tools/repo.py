@@ -30,12 +30,26 @@ import sys
 from datetime import datetime
 
 from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
-from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, read_project
-from agent_pm.utils.git import git
-from agent_pm.utils.paths import temp_dirs, under
-from agent_pm.utils.repos import Invalid, Repo, check_slug, checkout, origin, resolve
-from agent_pm.utils.shell import LONG, SHORT, Runner, err_text, redact, sh
+from agent_pm.utils import (
+    LOCAL,
+    LONG,
+    SHORT,
+    Invalid,
+    Once,
+    Repo,
+    Runner,
+    check_slug,
+    checkout,
+    err_text,
+    origin,
+    read_project,
+    redact,
+    resolve,
+    sh,
+    temp_dirs,
+    under,
+)
+from agent_pm.utils import run_git as git
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")

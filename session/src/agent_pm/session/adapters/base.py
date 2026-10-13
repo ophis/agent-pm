@@ -114,6 +114,9 @@ class Tui(ABC):
     def launch(self, prompt: str, spec: Spec, resume: bool, hook: tuple[str, ...]) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its payload on stdin."""
 
+    def hook_state(self) -> dict:
+        return {}
+
     @abstractmethod
     def reply(self, payload: dict) -> str: ...
 

@@ -18,7 +18,7 @@ from agent_pm.delegate.engine.config import (
     trusted_dirs,
 )
 from agent_pm.session import Session
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils import read_project
 
 from delegate.tests import case
 from delegate.tests.case import Case

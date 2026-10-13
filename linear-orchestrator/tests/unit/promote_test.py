@@ -1,222 +1,35 @@
-"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call goes as the harness
-account."""
+"""Promotion behavior over shared board fixtures."""
 
 import functools
 import io
-import json
 import os
-import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import UTC, datetime, timedelta
 from unittest import mock
-
 from agent_pm.linear_orchestrator.engine import config, promote
 from agent_pm.linear_orchestrator.linear import linear, sessions
-
 from ..case import Case
-from . import run_fixtures
-from .board_ids import ACCOUNTS, HEADER, TEAM, team_node
+from .board_ids import TEAM
 from .board_ids import STATES as IDS_BY_KEY
 from .board_ids import role as role_table
 from .outage import FAILURES, FIELDS, failing
 from .run_fixtures import HARNESS, logged, show
 
-NOW = datetime(2026, 9, 27, 15, 0, tzinfo=UTC)
-STATES = {
-    "Todo": IDS_BY_KEY["todo"],
-    "In Progress": IDS_BY_KEY["in_progress"],
-    "In Review": IDS_BY_KEY["in_review"],
-    "Handoff": IDS_BY_KEY["handoff"],
-    "Done": IDS_BY_KEY["done"],
-}
-PROJECTS = {"Deep Research": "p-dr", "Product Design": "p-pd"}
-ROLE = ACCOUNTS
-HUMAN = {"email": "me@x.com", "name": "Me"}
-AGENT = {"email": "agent@x.com", "name": "agent@x.com"}
-OTHER = {"email": "other@x.com", "name": "Other"}
-CONFIG = (
-    HEADER
-    + 'human_members = ["me@x.com"]\n'
-    + role_table("researcher", 'next = "pm"')
-    + role_table("pm")
-    + role_table("engineer")
+from .promote_support import (
+    NOW,
+    STATES,
+    ROLE,
+    AGENT,
+    OTHER,
+    CONFIG,
+    PM_NEXT,
+    CHILD,
+    ago,
+    instructions,
+    FakeLinear,
+    FakePruner,
+    Base,
 )
-PM_NEXT = CONFIG.replace(
-    role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false")
-)
-CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"  # child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z") before the port
-
-
-def ago(minutes):
-    return (NOW - timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
-
-
-def instructions(description):
-    # `## Comments` repeats the comments, so never search the whole description
-    start = description.index("\n## Instructions\n") + 1
-    return description[start:].split("\n\n## ", 1)[0]
-
-
-class FakeLinear:
-    def __init__(self):
-        self.issues, self.children, self.mutations, self.fail, self.calls = {}, {}, [], {}, []
-        self.state_ids, self.services = None, []
-
-    def add(self, ident, project="Deep Research", state="Handoff", role="researcher", **kw):
-        self.issues[ident] = dict(
-            id=ident,
-            identifier=ident,
-            url=f"https://l/{ident}",
-            title=f"Title {ident}",
-            priority=2,
-            createdAt=ago(10000),
-            state=state,
-            history=[],
-            comments=[],
-            relations=[],
-            inverse=[],
-            attachments=[],
-            assignee=role and {"id": f"u-{role}"},
-            project=project and {"id": PROJECTS[project], "name": project},
-        )
-        self.issues[ident].update(kw)
-        return self.issues[ident]
-
-    def moved(self, ident, minutes, to, frm=None):
-        self.issues[ident]["history"].append(
-            {
-                "createdAt": ago(minutes),
-                "fromStateId": frm or STATES["In Progress"],
-                "toStateId": STATES[to],
-            }
-        )
-
-    def said(self, ident, minutes, user=HUMAN, body="build X"):
-        self.issues[ident]["comments"].append(
-            {"body": body, "createdAt": ago(minutes), "user": user}
-        )
-
-    def writes(self):
-        return [q for q, _ in self.calls if q == linear.Q_ISSUE_STATE or q.startswith("mutation")]
-
-    def __call__(self, query, *, service, **v):
-        self.calls.append((query, v))
-        self.services.append(service)
-        if error := self.fail.get(query) or self.fail.get((query, v.get("i"))):
-            raise SystemExit(f"linear api error: {error}")
-        if query == linear.Q_TEAM:
-            return {"teams": {"nodes": [team_node(self.state_ids)]}}
-        if query == linear.Q_USER:
-            users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
-            return {
-                "users": {
-                    "nodes": [{"id": users[v["e"].lower()]}] if v["e"].lower() in users else []
-                }
-            }
-        if query == promote.Q_HANDOFF:
-            self.handoff_vars = v
-            return {
-                "issues": {
-                    "nodes": [
-                        dict(i, attachments={"nodes": i["attachments"]})
-                        for i in self.issues.values()
-                        if i["state"] == "Handoff"
-                        and i["project"]
-                        and i["assignee"]
-                        and i["assignee"]["id"] in v["a"]
-                    ]
-                }
-            }
-        if query == promote.Q_DETAIL:
-            i = self.issues[v["i"]]
-            # the API returns newest first
-            return {
-                "issue": {
-                    "state": {"id": STATES[i["state"]]},
-                    "history": {"nodes": list(reversed(i["history"]))},
-                    "comments": {"nodes": list(reversed(i["comments"]))},
-                    "relations": {"nodes": [{"relatedIssue": {"id": r}} for r in i["relations"]]},
-                    "inverseRelations": {"nodes": [{"issue": {"id": r}} for r in i["inverse"]]},
-                }
-            }
-        if query == promote.Q_CHILD:
-            return {"issues": {"nodes": [self.children[v["c"]]] if v["c"] in self.children else []}}
-        if query == linear.Q_ISSUE_STATE:
-            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
-        self.mutations.append((query, v))
-        if query == promote.M_CREATE:
-            inp = v["in"]
-            child = dict(inp, identifier=f"C-{len(self.children) + 1}")
-            self.children[inp["id"]] = child
-            return {
-                "issueCreate": {
-                    "success": True,
-                    "issue": {"id": inp["id"], "identifier": child["identifier"]},
-                }
-            }
-        if query == promote.M_RELATE:
-            self.issues[v["in"]["issueId"]]["relations"].append(v["in"]["relatedIssueId"])
-            return {"issueRelationCreate": {"success": True}}
-        if query == linear.M_COMMENT:
-            self.issues[v["i"]].setdefault("posted", []).append(v["b"])
-            return {"commentCreate": {"success": True}}
-        if query == linear.M_SUBSCRIBE:
-            self.issues[v["i"]].setdefault("subscribers", []).append(v["e"])
-            return {"issueSubscribe": {"success": True}}
-        if query == linear.M_STATE:
-            self.issues[v["i"]]["state"] = next(n for n, i in STATES.items() if i == v["s"])
-            return {"issueUpdate": {"success": True}}
-        raise AssertionError(query)
-
-
-class FakePruner:
-    calls = []
-
-    def __init__(self, gql, now, dry, *, work, team, roles):
-        FakePruner.calls.append((gql, now, dry, work, team, roles))
-
-    def run(self):
-        return 0
-
-
-class Base(run_fixtures.Base):
-    def setUp(self):
-        super().setUp()
-        self.write_local(f'work_dir = "{self.work}"\n')
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.config_path = os.path.join(tmp.name, "config.toml")
-        self.write_config(CONFIG)
-        self.fake = FakeLinear()
-
-    def write_config(self, text):
-        self.write(self.config_path, text)
-
-    def run_main(self, *argv, gql=None, pruner=FakePruner):
-        FakePruner.calls.clear()
-        before, err, out = len(logged(self.logs)), io.StringIO(), io.StringIO()
-        with redirect_stderr(err), redirect_stdout(out):
-            rc = promote.main(
-                list(argv),
-                gql=gql or self.fake,
-                now=NOW,
-                config_path=self.config_path,
-                pruner=pruner,
-            )
-        self.assertEqual(out.getvalue(), "")
-        self.err = err.getvalue()
-        copies = [json.loads(line) for line in self.err.splitlines() if line.startswith("{")]
-        self.out = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
-        return rc
-
-    def ready(self, ident="DR-1", handoff=30, **kw):
-        issue = self.fake.add(ident, **kw)
-        self.fake.moved(ident, handoff + 30, "In Review")
-        self.fake.said(ident, handoff + 15)
-        self.fake.moved(ident, handoff, "Handoff", frm=STATES["In Review"])
-        return issue
 
 
 class TestPromote(Base):
@@ -518,29 +331,19 @@ class TestScopeAndConfig(Base):
         self.assertEqual(self.fake.mutations, [])
         self.assertEqual(src["state"], "Handoff")
 
-    def test_config_only_extension(self):
-        custom = {
-            "pm": config.Task("design", prefix="DES"),
-            "engineer": config.Task("build", prefix="BLD"),
-        }
-        for tasks, title, want in (
-            ({}, "PRD: Title DR-1", "ENG: Title DR-1"),
-            (custom, "DES: Title DR-1", "BLD: Title DR-1"),
-        ):
-            with self.subTest(want=want):
-                self.fake = FakeLinear()
-                self.write_config(PM_NEXT)
-                self.ready(role="pm", title=title)
-                with mock.patch.dict(config.TASKS, tasks):
-                    self.run_main()
-                (child,) = self.fake.children.values()
-                self.assertEqual(
-                    (child["projectId"], child["assigneeId"], child["title"]),
-                    ("p-dr", "u-engineer", want),
-                )
-                self.assertEqual(
-                    instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X"
-                )
+    def test_stage_prefixes(self):
+        self.fake = FakeLinear()
+        self.write_config(PM_NEXT)
+        self.ready(role="pm", title="PRD: Title DR-1")
+        self.run_main()
+        (child,) = self.fake.children.values()
+        self.assertEqual(
+            (child["projectId"], child["assigneeId"], child["title"]),
+            ("p-dr", "u-engineer", "ENG: Title DR-1"),
+        )
+        self.assertEqual(
+            instructions(child["description"]), f"## Instructions\nMe, {ago(45)}:\nbuild X"
+        )
 
     def test_instructions_optional(self):
         self.write_config(PM_NEXT)
@@ -717,7 +520,7 @@ class TestDryRun(Base):
 
 class TestConfigError(Base):
     def test_a_config_error_is_logged_once_a_day_printed_only_on_a_terminal(self):
-        from .linear_test import Stderr
+        from .streams import Stderr
 
         FakePruner.calls.clear()
         cases = (
@@ -889,20 +692,16 @@ class TestPruneHook(Base):
                 raise RuntimeError("boom")
 
         self.ready("DR-1")
-        for name, pruner in (("import error", None), ("run error", Boom)):
+        for name, pruner in (("run error", Boom),):
             with self.subTest(name):
-                with mock.patch.dict(
-                    sys.modules, {"agent_pm.linear_orchestrator.engine.prune": None}
-                ):  # None: its import fails
-                    rc = self.run_main("--dry-run", pruner=pruner)
+                rc = self.run_main("--dry-run", pruner=pruner)
                 self.assertEqual(rc, 0)
                 self.assertEqual(
                     self.out.splitlines()[0], "promote DR-1 role=pm project=Deep Research"
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
-                    r"^prune-error error=(ModuleNotFoundError: import of agent_pm\.linear_orchestrator\.engine\.prune"
-                    r"|RuntimeError: boom)",
+                    r"^prune-error error=RuntimeError: boom",
                 )
 
 

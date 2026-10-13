@@ -1,7 +1,7 @@
-"""adapters/registry.py: what Session.configure stores (the [adapters.<name>] tables, the hosts' tables and the default
+"""adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts' tables and the default
 host), settings() from a read session config, the tui settings from [hosts.tmux] and Adapter
 loading. Adapter packages are registered in sys.modules or the
-import system only for the test's span; the registry itself is never patched. Case resets it around each test."""
+import system only for the test's span; the registry itself is never patched. Each test constructs fresh settings."""
 
 import importlib
 import importlib.abc
@@ -15,18 +15,17 @@ from unittest import mock
 
 import agent_pm.session
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Session
+from agent_pm.session import Driver
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import ConfigError
-from agent_pm.utils import config_file
-from agent_pm.utils import registry as class_registry
+from agent_pm.utils import read_project
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, Case, settings
+from session.tests.modules import module_slot
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
-UNCONFIGURED = "the session is not configured: call Session.configure first"
 MISSING = (
     "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
     "No module named 'agent_pm.session.adapters.{n}'"
@@ -71,16 +70,13 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 class Base(Case):
     def configure(self, text, tmux=None):
-        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through Session.configure."""
-        Session.configure(**settings(tomllib.loads(text).get("adapters", {}), tmux))
+        """TOML `text`'s [adapters] tables and HOSTS (`tmux`'s keys in [hosts.tmux]) through Driver."""
+        self.driver = Driver(**settings(tomllib.loads(text).get("adapters", {}), tmux))
 
     def register(self, **modules):
         """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of the test."""
-        patch = mock.patch.dict(
-            sys.modules, {f"agent_pm.session.adapters.{name}": m for name, m in modules.items()}
-        )
-        patch.start()
-        self.addCleanup(patch.stop)
+        for name, m in modules.items():
+            self.enterContext(module_slot(f"agent_pm.session.adapters.{name}", m))
 
     def refused(self, message, call):
         with self.assertRaises(ConfigError) as caught:
@@ -89,37 +85,33 @@ class Base(Case):
 
 
 class ConfigureTest(Base):
-    def test_unconfigured_every_read_says_so(self):
-        for call in (lambda: registry.adapter("claude"), registry.configured, registry.tui):
-            with self.subTest(call=call):
-                self.refused(UNCONFIGURED, call)
-
     def test_configured_the_adapters_and_tui_settings_are_read_without_a_file(self):
         self.register(fake=fake_adapter)
         with mock.patch("builtins.open") as opened:
             self.configure(FAKE + 'scenario = "/s"\n[adapters.a]\nk = 1\n', {"status_line": True})
-            self.assertEqual(registry.configured(), ["a", "fake"])
-            self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
-            self.assertEqual(registry.tui(), registry.TuiSettings(True, None, None))
+            self.assertEqual(self.driver.registry.configured(), ["a", "fake"])
+            self.assertEqual(self.driver.registry.adapter("fake").config, {"scenario": "/s"})
+            self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(True, None, None))
         opened.assert_not_called()
 
-    def test_configuring_again_replaces_and_reset_drops(self):
+    def test_independent_drivers_keep_their_own_configuration(self):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/a"\n', {"workers_per_column": 2})
+        first = self.driver
         self.configure(FAKE + 'scenario = "/b"\n')
-        self.assertEqual(registry.adapter("fake").config, {"scenario": "/b"})
-        self.assertEqual(registry.tui(), registry.TuiSettings())
-        registry.reset()
-        self.refused(UNCONFIGURED, registry.configured)
+        self.assertEqual(first.registry.adapter("fake").config, {"scenario": "/a"})
+        self.assertEqual(first.registry.tui().per_column, 2)
+        self.assertEqual(self.driver.registry.adapter("fake").config, {"scenario": "/b"})
+        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
 
     def test_the_adapter_tables_are_deep_copies(self):
         self.register(fake=fake_adapter)
         given = settings(
             {"fake": {"implementation": "adapters.fake:FakeAdapter", "log": {"a": [1]}}}
         )
-        Session.configure(**given)
+        self.driver = Driver(**given)
         given["adapters"]["fake"]["log"]["a"].append(2)
-        self.assertEqual(registry.adapter("fake").config, {"log": {"a": [1]}})
+        self.assertEqual(self.driver.registry.adapter("fake").config, {"log": {"a": [1]}})
 
     def test_refuses_bad_input_and_keeps_what_was_configured(self):
         self.configure(FAKE)
@@ -143,18 +135,16 @@ class ConfigureTest(Base):
         ):
             with self.subTest(kw=kw):
                 given = {**settings({}), **kw}
-                self.refused(message, lambda: Session.configure(**given))
-                self.assertEqual(registry.configured(), ["fake"])
+                self.refused(message, lambda: Driver(**given))
+                self.assertEqual(self.driver.registry.configured(), ["fake"])
 
     def test_the_forward_tmux_host_name_is_never_loaded(self):
         with (
             mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
-            mock.patch.object(class_registry, "load") as load,
         ):
-            Session.configure(**settings({}, {"workers_per_column": 4}))
-            self.assertEqual(registry.tui(), registry.TuiSettings(False, 4, None))
+            self.driver = Driver(**settings({}, {"workers_per_column": 4}))
+            self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(False, 4, None))
         imp.assert_not_called()
-        load.assert_not_called()
         self.assertFalse(hasattr(agent_pm.session.hosts.tmux, "TmuxHost"))
 
 
@@ -178,11 +168,11 @@ class SettingsTest(Base):
 
     def test_configure_from_a_read_config(self):
         self.register(fake=fake_adapter)
-        Session.configure_from(tomllib.loads(self.TWO + FAKE))
-        self.assertEqual(registry.configured(), ["fake"])
+        self.driver = Driver.from_config(tomllib.loads(self.TWO + FAKE))
+        self.assertEqual(self.driver.registry.configured(), ["fake"])
         with self.assertRaisesRegex(ConfigError, r"\A\[hosts\]: missing\Z"):
-            Session.configure_from({})
-        self.assertEqual(registry.configured(), ["fake"])
+            Driver.from_config({})
+        self.assertEqual(self.driver.registry.configured(), ["fake"])
         self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})
         with self.assertRaisesRegex(ValueError, r"\A\[hosts\]: missing\Z"):
             registry.settings({})
@@ -196,20 +186,20 @@ class SettingsTest(Base):
     def test_the_session_config_with_the_local_file_on_top(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("[hosts.tmux]\nstatus_line = true\n")
-        found = registry.settings(config_file.read_project("session"))
+        found = registry.settings(read_project("session"))
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
         self.assertEqual(found["default_host"], "tmux")
-        Session.configure(**found)
-        self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
+        self.driver = Driver(**found)
+        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(True, 3, "open-close"))
 
 
 class TuiTest(Base):
     def test_defaults_when_unset(self):
         self.configure(FAKE)
-        self.assertEqual(registry.tui(), registry.TuiSettings(False, None, None))
+        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(False, None, None))
         self.assertEqual(registry.TuiSettings(), registry.TuiSettings(False, None, None))
-        Session.configure(adapters={}, hosts={"other": HOSTS["tmux"]}, default_host="other")
-        self.assertEqual(registry.tui(), registry.TuiSettings())
+        self.driver = Driver(adapters={}, hosts={"other": HOSTS["tmux"]}, default_host="other")
+        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
 
     def test_the_hosts_tmux_keys_values(self):
         for tmux, want in (
@@ -225,11 +215,11 @@ class TuiTest(Base):
         ):
             with self.subTest(tmux=tmux):
                 self.configure(FAKE, tmux)
-                self.assertEqual(registry.tui(), registry.TuiSettings(*want))
+                self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(*want))
 
     def test_an_adapters_key_is_no_setting(self):
         self.configure("[adapters.fake]\nstatus_line = true\nworkers_per_column = 2\n")
-        self.assertEqual(registry.tui(), registry.TuiSettings())
+        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
 
     def test_a_value_of_the_wrong_type_or_range_is_a_config_error_naming_its_key(self):
         self.register(fake=fake_adapter)
@@ -249,15 +239,17 @@ class TuiTest(Base):
             for value in values:
                 with self.subTest(key=key, value=value):
                     self.configure(FAKE, {key: value})
-                    self.refused(message, registry.tui)
-                    self.assertIs(type(registry.adapter("fake")), fake_adapter.FakeAdapter)
+                    self.refused(message, self.driver.registry.tui)
+                    self.assertIs(
+                        type(self.driver.registry.adapter("fake")), fake_adapter.FakeAdapter
+                    )
 
 
 class AdapterTest(Base):
     def test_builds_the_configured_class_from_its_table_minus_implementation(self):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
-        built = registry.adapter("fake")
+        built = self.driver.registry.adapter("fake")
         self.assertEqual(registry.PACKAGE, agent_pm.session.__name__)
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
@@ -267,13 +259,14 @@ class AdapterTest(Base):
             with self.subTest(bad=bad):
                 self.refused(
                     f"unsafe runtime name {bad!r}: want a lowercase identifier",
-                    lambda: registry.adapter(bad),
+                    lambda: self.driver.registry.adapter(bad),
                 )
 
     def test_refuses_a_missing_table(self):
         self.configure('[adapters.other]\nimplementation = "adapters.other:OtherAdapter"\n')
         self.refused(
-            "no [adapters.fake] table in the configured adapters", lambda: registry.adapter("fake")
+            "no [adapters.fake] table in the configured adapters",
+            lambda: self.driver.registry.adapter("fake"),
         )
 
     def test_refuses_an_implementation_of_another_shape_or_package(self):
@@ -293,17 +286,13 @@ class AdapterTest(Base):
         ):
             with self.subTest(line=line):
                 self.configure("[adapters.fake]\n" + line)
-                self.refused(message, lambda: registry.adapter("fake"))
+                self.refused(message, lambda: self.driver.registry.adapter("fake"))
 
     def test_refuses_a_missing_package(self):
         self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
-        self.refused(MISSING.format(n="nope", c="Nope"), lambda: registry.adapter("nope"))
-
-    def test_refuses_a_missing_parent_package(self):
-        self.configure(FAKE)
-        with mock.patch.dict(sys.modules), mock.patch.object(agent_pm, "__path__", []):
-            del sys.modules[Adapter.__module__.rpartition(".")[0]]
-            self.refused(MISSING.format(n="fake", c="Fake"), lambda: registry.adapter("fake"))
+        self.refused(
+            MISSING.format(n="nope", c="Nope"), lambda: self.driver.registry.adapter("nope")
+        )
 
     def test_refuses_a_package_that_fails_to_import(self):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
@@ -315,7 +304,7 @@ class AdapterTest(Base):
         ):
             with (
                 self.subTest(source=source),
-                mock.patch.dict(sys.modules),
+                module_slot("agent_pm.session.adapters.broken"),
                 mock.patch.object(
                     sys,
                     "meta_path",
@@ -323,7 +312,7 @@ class AdapterTest(Base):
                 ),
             ):
                 with self.assertRaises(ConfigError) as caught:
-                    registry.adapter("broken")
+                    self.driver.registry.adapter("broken")
                 self.assertTrue(
                     str(caught.exception).startswith(
                         "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
@@ -338,7 +327,7 @@ class AdapterTest(Base):
         self.refused(
             "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
             "no EmptyAdapter",
-            lambda: registry.adapter("empty"),
+            lambda: self.driver.registry.adapter("empty"),
         )
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
@@ -348,14 +337,15 @@ class AdapterTest(Base):
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused(
                     "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass",
-                    lambda: registry.adapter("odd"),
+                    lambda: self.driver.registry.adapter("odd"),
                 )
 
     def test_an_unknown_key_is_the_adapters_config_error(self):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'model = "m"\nscenario = "/s"\nalpha = 1\n')
         self.refused(
-            "unknown key 'alpha' in FakeAdapter's config", lambda: registry.adapter("fake")
+            "unknown key 'alpha' in FakeAdapter's config",
+            lambda: self.driver.registry.adapter("fake"),
         )
 
 

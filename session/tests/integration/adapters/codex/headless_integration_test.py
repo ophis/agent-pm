@@ -11,11 +11,10 @@ import threading
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import Session
-from agent_pm.session.adapters import registry
+from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.sessions import store_root
-from agent_pm.session.engine import api, records
+from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -101,7 +100,7 @@ class HeadlessIntegrationTest(Case):
                 },
             )
         )
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
 
     def scene(self, steps=None, **fields):
         if steps is not None:
@@ -184,7 +183,7 @@ class HeadlessIntegrationTest(Case):
         self.assertFalse(root.exists())
 
     def test_driver_replies_native_sid_and_snapshot(self):
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
         )
 
@@ -225,7 +224,9 @@ class HeadlessIntegrationTest(Case):
     def test_fresh_launch_has_exact_flags_prompt_cwd_and_stdin_eof(self):
         prompt = "\n# Input\n\nHello.\n"
         self.drain(
-            api.start("codex", "headless", prompt, dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", prompt, dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], self.expected_args(prompt))
@@ -252,14 +253,16 @@ class HeadlessIntegrationTest(Case):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         self.drain(
-            api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         self.drain(
-            api.start(
+            self.driver.start(
                 "codex",
                 "headless",
                 "again",
@@ -327,11 +330,11 @@ class HeadlessIntegrationTest(Case):
         native_tmp = self.root / "native-tmp"
         native_tmp.mkdir()
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(native_tmp)
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         for resume in (False, True):
             with self.subTest(resume=resume):
                 found = self.drain(
-                    api.start(
+                    self.driver.start(
                         "codex",
                         "headless",
                         "hello",
@@ -349,12 +352,12 @@ class HeadlessIntegrationTest(Case):
         for index, root in enumerate((self.home, self.home / ".agent-pm", store, alias)):
             with self.subTest(root=root):
                 self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)
-                Session.configure(**self.config)
+                self.driver = Driver(**self.config)
                 with mock.patch(
                     "subprocess.Popen", side_effect=AssertionError("spawned before TMPDIR guard")
                 ) as spawn:
                     with self.assertRaisesRegex(ConfigError, "writable"):
-                        api.start(
+                        self.driver.start(
                             "codex",
                             "headless",
                             "hello",
@@ -366,20 +369,24 @@ class HeadlessIntegrationTest(Case):
 
     def test_resume_ignores_changed_config_environment(self):
         self.drain(
-            api.start("codex", "headless", "first", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "first", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         saved = self.common.load(str(self.work), self.sid).snapshot
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(self.home)
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         changed = dataclasses.replace(self.spec, env={"NEW_POLICY_KEY": "fresh"})
-        self.drain(api.start("codex", "headless", "again", changed, resume=self.sid))
+        self.drain(self.driver.start("codex", "headless", "again", changed, resume=self.sid))
         self.assertEqual(self.common.load(str(self.work), self.sid).snapshot, saved)
         self.assertEqual(len(self.logged()), 2)
         self.assertIsNone(self.logged()[-1]["env"]["NEW_POLICY_KEY"])
 
     def test_resume_same_native_and_saved_settings(self):
         self.drain(
-            api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         alternate = self.root / "changed"
         alternate.mkdir()
@@ -389,12 +396,12 @@ class HeadlessIntegrationTest(Case):
             efforts={"low": "high"},
         )
         cfg["env"]["CODEX_HOME"] = str(alternate)
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         access = Access(
             cwd=str(alternate), dirs=(str(alternate),), commands=("changed command",), project=False
         )
         spec = dataclasses.replace(self.spec, tier=4, effort="max", access=access)
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "again", dataclasses.replace(spec, sid=self.sid), resume=self.sid
         )
         self.assertTrue(handle.info().project)
@@ -433,7 +440,7 @@ class HeadlessIntegrationTest(Case):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        Session.configure(**self.config)
+        self.driver = Driver(**self.config)
         prompt = f"Read `{self.tasks}`."
         for resume in (False, True):
             with self.subTest(resume=resume):
@@ -445,7 +452,7 @@ class HeadlessIntegrationTest(Case):
                     )
                 )
                 self.drain(
-                    api.start(
+                    self.driver.start(
                         "codex",
                         "headless",
                         prompt,
@@ -475,7 +482,7 @@ class HeadlessIntegrationTest(Case):
         self.scene(
             [*(fake_codex.message(text) for text in texts), {"out": {"type": "turn.completed"}}]
         )
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
         )
         self.assertEqual(
@@ -495,7 +502,7 @@ class HeadlessIntegrationTest(Case):
             "[agent-pm-progress:review] recovered",
         )
         self.scene([fake_codex.message(before), {"sleep": 60}])
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "first", dataclasses.replace(self.spec, sid=self.sid)
         )
         found = self.drain(
@@ -509,7 +516,7 @@ class HeadlessIntegrationTest(Case):
         self.assertEqual(list(handle.events()), [])
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
         self.scene([fake_codex.message(after), {"out": {"type": "turn.completed"}}])
-        resumed = api.start(
+        resumed = self.driver.start(
             "codex",
             "headless",
             "recover",
@@ -533,7 +540,7 @@ class HeadlessIntegrationTest(Case):
         for resume, said in ((False, "first"), (True, "again")):
             with self.subTest(resume=resume):
                 found = self.drain(
-                    api.start(
+                    self.driver.start(
                         "codex",
                         "headless",
                         "hello",
@@ -545,10 +552,12 @@ class HeadlessIntegrationTest(Case):
 
     def test_different_native_id_on_resume_is_not_published_or_saved(self):
         self.drain(
-            api.start("codex", "headless", "first", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "first", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         self.scene(thread_id=CHANGED)
-        handle = api.start(
+        handle = self.driver.start(
             "codex",
             "headless",
             "again",
@@ -567,7 +576,7 @@ class HeadlessIntegrationTest(Case):
 
     def test_missing_mapping_does_not_spawn(self):
         with self.assertRaisesRegex(ConfigError, "missing Codex recovery state"):
-            api.start(
+            self.driver.start(
                 "codex",
                 "headless",
                 "again",
@@ -579,7 +588,9 @@ class HeadlessIntegrationTest(Case):
 
     def test_missing_binding_record_and_fifo_do_not_spawn(self):
         self.drain(
-            api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         path = self.record()
         original = path.read_text()
@@ -596,7 +607,7 @@ class HeadlessIntegrationTest(Case):
                     path.write_text("bad json" if mode == "malformed" else json.dumps(value))
                     path.chmod(0o600)
                 with self.assertRaises(ConfigError):
-                    api.start(
+                    self.driver.start(
                         "codex",
                         "headless",
                         "again",
@@ -607,11 +618,13 @@ class HeadlessIntegrationTest(Case):
 
     def test_missing_session_does_not_spawn(self):
         self.drain(
-            api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         fake_codex.session_path(NATIVE).unlink()
         with self.assertRaisesRegex(ConfigError, "missing.*file"):
-            api.start(
+            self.driver.start(
                 "codex",
                 "headless",
                 "again",
@@ -622,7 +635,9 @@ class HeadlessIntegrationTest(Case):
 
     def test_fifo_and_malformed_native_files_do_not_spawn(self):
         self.drain(
-            api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         path = fake_codex.session_path(NATIVE)
         for mode in ("fifo", "malformed", "mismatched"):
@@ -639,7 +654,7 @@ class HeadlessIntegrationTest(Case):
                         "bad json\n" if mode == "malformed" else json.dumps(metadata) + "\n"
                     )
                 with self.assertRaises(ConfigError):
-                    api.start(
+                    self.driver.start(
                         "codex",
                         "headless",
                         "again",
@@ -654,7 +669,7 @@ class HeadlessIntegrationTest(Case):
             self.spec, access=dataclasses.replace(self.spec.access, project=False)
         )
         with self.assertRaisesRegex(ConfigError, "project Codex settings"):
-            api.start("codex", "headless", "hello", dataclasses.replace(spec, sid=self.sid))
+            self.driver.start("codex", "headless", "hello", dataclasses.replace(spec, sid=self.sid))
         self.assertEqual(self.logged(), [])
 
     def test_stderr_is_an_event_and_run_record(self):
@@ -666,7 +681,9 @@ class HeadlessIntegrationTest(Case):
             ]
         )
         found = self.drain(
-            api.start("codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid))
+            self.driver.start(
+                "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
+            )
         )
         self.assertEqual(
             [event for event in found if isinstance(event, Stderr)],
@@ -680,7 +697,7 @@ class HeadlessIntegrationTest(Case):
 
     def test_tui_factory_is_supported_without_starting_a_process(self):
         with mock.patch("subprocess.Popen") as spawn:
-            self.assertIsNotNone(registry.adapter("codex").tui())
+            self.assertIsNotNone(self.driver.registry.adapter("codex").tui())
         spawn.assert_not_called()
         self.assertEqual(self.logged(), [])
         self.assertFalse((self.work / "run.jsonl").exists())
@@ -691,7 +708,7 @@ class HeadlessIntegrationTest(Case):
             for resume in (False, True):
                 with self.subTest(resume=resume):
                     self.drain(
-                        api.start(
+                        self.driver.start(
                             "codex",
                             "headless",
                             "hello",
@@ -711,7 +728,7 @@ class HeadlessIntegrationTest(Case):
     def test_nonzero_exit_preserves_raw_reply_and_final_turn(self):
         text = json.dumps(DONE)
         self.scene([fake_codex.message(text), {"out": {"type": "turn.completed"}}, {"exit": 7}])
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
         )
         self.assertEqual(
@@ -724,7 +741,7 @@ class HeadlessIntegrationTest(Case):
         self.scene([fake_codex.message("Thinking."), {"exit": 7}])
         self.assertEqual(
             self.drain(
-                api.start(
+                self.driver.start(
                     "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
                 )
             ),
@@ -742,7 +759,9 @@ class HeadlessIntegrationTest(Case):
         )
         self.assertEqual(
             self.drain(
-                api.start("codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid))
+                self.driver.start(
+                    "codex", "headless", "one", dataclasses.replace(self.spec, sid=self.sid)
+                )
             ),
             [
                 SessionBound(NATIVE),
@@ -756,7 +775,7 @@ class HeadlessIntegrationTest(Case):
 
     def test_caller_sid_and_handle_info_inspect_native_binding(self):
         spec = dataclasses.replace(self.spec, sid=None)
-        handle = api.start(
+        handle = self.driver.start(
             "codex", "headless", "hello", dataclasses.replace(spec, sid="caller-owned")
         )
         self.drain(handle)
@@ -785,13 +804,15 @@ class HeadlessIntegrationTest(Case):
         self.assertEqual(
             records.session_record(str(self.work), handle.sid)["transcript"], info.transcript
         )
-        status = api.session_status("codex", handle.sid, str(self.cwd))
+        status = self.driver.session_status("codex", handle.sid, str(self.cwd))
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)
         self.assertIn(NATIVE, status.resume_command)
         fake_codex.session_path(NATIVE).unlink()
-        self.assertEqual(api.session_status("codex", handle.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(
+            self.driver.session_status("codex", handle.sid, str(self.cwd)).resumable, "no"
+        )
         self.record().write_text("bad json")
         self.assertEqual(
-            api.session_status("codex", handle.sid, str(self.cwd)).resumable, "unknown"
+            self.driver.session_status("codex", handle.sid, str(self.cwd)).resumable, "unknown"
         )

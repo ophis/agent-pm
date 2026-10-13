@@ -8,32 +8,14 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-import agent_pm.utils.repos
 from agent_pm import delegate
-from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine import config, target
 from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.utils.shell import SHORT
+from agent_pm.utils import GUARD, SHORT, checkout
 
 from ..case import Case
 
-
-def ok(stdout="", code=0, stderr=""):
-    return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
-
-
-class FakeRun:
-    def __init__(self, table):
-        self.table, self.calls = table, []
-
-    def __call__(self, argv, timeout):
-        self.calls.append((tuple(argv), timeout))
-        for prefix, res in self.table:
-            if tuple(argv[: len(prefix)]) == prefix:
-                if isinstance(res, BaseException):
-                    raise res
-                return res
-        raise AssertionError(f"unexpected {argv}")
+from .target_support import ok, FakeRun, api
 
 
 PROJ = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
@@ -44,7 +26,9 @@ LOCAL = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", 
 def roles():
     """Each role's tasks: the committed core config's index (no local file)."""
     return {
-        r: SimpleNamespace(tasks=tuple(composer.index(r, config=delegate.CONFIG, local=os.devnull)))
+        r: SimpleNamespace(
+            tasks=tuple(delegate.task_index(r, config=delegate.CONFIG, local=os.devnull))
+        )
         for r in config.TASKS
     }
 
@@ -61,14 +45,6 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
         notes=(),
         links=(),
         linked=(),
-    )
-
-
-def api(full_name="ophis/agent-pm", default="main", push=True):
-    return ok(
-        json.dumps(
-            {"full_name": full_name, "default_branch": default, "permissions": {"push": push}}
-        )
     )
 
 
@@ -539,7 +515,9 @@ class Check(Case):
 
 
 def git(*args):
-    subprocess.run(["git", *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+    subprocess.run(
+        ["git", *GUARD, *args], check=True, capture_output=True, stdin=subprocess.DEVNULL
+    )
 
 
 class WithClone(Case):
@@ -585,9 +563,7 @@ class WithClone(Case):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
     def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = agent_pm.utils.repos.checkout(
-            os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26"
-        )
+        want = checkout(os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26")
         self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)
         self.assertEqual(want, self.checkout)
 

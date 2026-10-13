@@ -22,7 +22,7 @@ from agent_pm.delegate.composer.run import (
 from agent_pm.delegate.composer.teams import role_tables, team
 from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.engine.config import PYTHONPATH
-from agent_pm.utils import config_file
+from agent_pm.utils import LOCAL, read_project
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.teams import EDITOR, FILES, POET, RUN_CONFIG, VERSE
@@ -391,9 +391,16 @@ class Runtime(Fake):
         )
 
     def test_a_read_config_given_is_used_reading_no_file(self):
-        cfg = config_file.read_project("delegate")
+        cfg = read_project("delegate")
         want = (resolve("pm"), trusted_dirs(), composer.index("pm"))
-        with mock.patch.object(config_file, "open", create=True, side_effect=OSError("read")):
+        original = open
+
+        def opened(path, *args, **kwargs):
+            if str(path).endswith(".toml"):
+                raise OSError("read")
+            return original(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=opened):
             got = (resolve("pm", cfg=cfg), trusted_dirs(cfg=cfg), composer.index("pm", cfg=cfg))
         self.assertEqual(got, want)
 
@@ -501,7 +508,7 @@ class ExplicitPaths(Fake):
 
     def setUp(self):
         super().setUp()
-        with open(os.path.expanduser(config_file.LOCAL), "w") as f:
+        with open(os.path.expanduser(LOCAL), "w") as f:
             f.write("malformed = [\n")
 
     def test_resolve(self):

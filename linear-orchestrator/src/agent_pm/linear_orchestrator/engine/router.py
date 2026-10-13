@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import PYTHONPATH
@@ -48,9 +49,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     team,
 )
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, attach_command, detach
-from agent_pm.session import sessions as tui_sessions
-from agent_pm.session import usage as runtime_usage
+from agent_pm.session import DriverError
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -96,9 +95,9 @@ def attempt_count(entries, issue, since=None):
     return sum(1 for e in entries if e.issue == issue and (since is None or e.ts > since))
 
 
-def live_sessions(roles):
+def live_sessions(roles, *, driver):
     try:
-        names = [row.name for row in tui_sessions(re.escape(SESSIONS) + ".*")]
+        names = [row.name for row in driver.sessions(re.escape(SESSIONS) + ".*")]
     except DriverError:
         return None
     live = {}
@@ -129,15 +128,16 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(runtime):
+def read_usage(runtime, *, driver):
     try:
-        return runtime_usage(runtime)
+        return driver.usage(runtime)
     except Exception:
         return None
 
 
 class Gate:
-    def __init__(self, runs, now, dry, say=None):
+    def __init__(self, runs, now, dry, say=None, *, driver):
+        self.driver = driver
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
         self.say = say or functools.partial(log, "router", dry=dry)
 
@@ -154,7 +154,7 @@ class Gate:
             shown = {"until": at.isoformat()}
             reason, fields = "limit", shown
         else:
-            usage = read_usage(runtime)
+            usage = read_usage(runtime, driver=self.driver)
             shown = {"usage": summary(usage)}
             reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
             fields = shown if reason == "usage" else {}
@@ -301,7 +301,12 @@ class Board:
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
-                st = sessions.status(self.cfg.run_dir(ident), runtime_of(self.entries, sid), sid)
+                st = sessions.status(
+                    self.cfg.run_dir(ident),
+                    runtime_of(self.entries, sid),
+                    sid,
+                    driver=self.cfg.driver,
+                )
                 self.statuses[sid] = None if st.resumable == "unknown" else st
             except Exception:
                 self.statuses[sid] = None
@@ -471,6 +476,7 @@ def fail(ident, kind, reason, rc):
 
 
 def outer(a, cfg, *, gql, run, keychain):
+    """Launch with canonical import roots followed by caller-provided Python paths."""
     os.environ["PATH"] = config.path()
     if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
         print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
@@ -486,7 +492,7 @@ def outer(a, cfg, *, gql, run, keychain):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid)
+            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
             why = None if st.resumable == "yes" else st.resumable
         except Exception as e:
             why = one_line(e)
@@ -543,7 +549,7 @@ def outer(a, cfg, *, gql, run, keychain):
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     try:
-        detach(
+        cfg.driver.detach(
             config.session(role, a.issue),
             [
                 sys.executable,
@@ -555,7 +561,19 @@ def outer(a, cfg, *, gql, run, keychain):
                 f"--input={text}",
             ],
             cwd=rd,
-            env={**os.environ, "PYTHONPATH": PYTHONPATH},
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    dict.fromkeys(
+                        os.path.abspath(path)
+                        for path in (
+                            *PYTHONPATH.split(os.pathsep),
+                            *os.environ.get("PYTHONPATH", "").split(os.pathsep),
+                        )
+                        if path
+                    )
+                ),
+            },
         )
     except (SessionConfigError, DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -640,7 +658,7 @@ def tick(opts, cfg, gql, now, hour, start):
         if not free:
             say("skip", reason=BUSY)
             return 0
-        live = live_sessions(cfg.roles)
+        live = live_sessions(cfg.roles, driver=cfg.driver)
         if live is None:
             say("skip", reason="agent runs unknown")
             return 0
@@ -658,7 +676,7 @@ def tick(opts, cfg, gql, now, hour, start):
             except Exception as e:
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
-            gate = Gate(runs, now, dry, walk)
+            gate = Gate(runs, now, dry, walk, driver=cfg.driver)
             board = Board(gql, parse_log(runs), now, dry, cfg, gate, walk)
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
@@ -682,12 +700,12 @@ def run_issue(opts, cfg, gql, now, start):
             log("router", "skip", ident, reason=BUSY)
             print(f"router.py: {BUSY}; try again", file=sys.stderr)
             return stop
-        live = live_sessions(cfg.roles)
+        live = live_sessions(cfg.roles, driver=cfg.driver)
         if live is None:
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            attach = attach_command(config.session(role, ident))
+            attach = cfg.driver.attach_command(config.session(role, ident))
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
@@ -709,7 +727,7 @@ def run_issue(opts, cfg, gql, now, start):
 
 
 def brake(role, cfg):
-    usage = read_usage(cfg.roles[role].run.runtime)
+    usage = read_usage(cfg.roles[role].run.runtime, driver=cfg.driver)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 
@@ -743,6 +761,7 @@ def main(
     run=config.sh_run,
     keychain=linear.has_key,
     start=None,
+    driver=None,
 ):
     opts = options(argv)
     if opts is None:
@@ -760,6 +779,7 @@ def main(
             return 1
         linear.use_logs(e.logs_dir)
         return config_error("router", e, opts["dry"])
+    cfg = replace(cfg, driver=driver) if driver is not None else cfg
     linear.use_logs(cfg.logs_dir)
     if opts["brake"] is not None:
         if opts["brake"] not in cfg.roles:

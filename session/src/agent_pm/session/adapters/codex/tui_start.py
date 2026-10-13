@@ -90,7 +90,9 @@ def hook_trust(
     *,
     root=None,
     termination=None,
+    listing=None,
 ) -> str:
+    listing = hooks_list if listing is None else listing
     root = sessions.store_directory(create=False, root=root)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
@@ -124,12 +126,12 @@ def hook_trust(
                     ) from None
                 time.sleep(POLL)
         try:
-            result = hooks_list(exe, args, cwd, env, termination=termination)
+            result = listing(exe, args, cwd, env, termination=termination)
         except app_server.Exited:
             time.sleep(RETRY)
             if termination is not None:
                 termination.check()
-            result = hooks_list(exe, args, cwd, env, termination=termination)
+            result = listing(exe, args, cwd, env, termination=termination)
     except app_server.Exited as e:
         raise StartError(f"codex hooks/list: app-server exited {e} before answering") from None
     finally:
@@ -221,12 +223,12 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
     )
 
 
-def main(argv):
+def main(argv, *, trust=hook_trust):
     with _Termination() as termination:
-        return _start(argv, termination)
+        return _start(argv, termination, trust)
 
 
-def _start(argv, termination):
+def _start(argv, termination, trust):
     if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
         raise StartError("Codex tui launch: expected bounded launch data")
     try:
@@ -288,7 +290,7 @@ def _start(argv, termination):
     )
     cwd = state.snapshot["cwd"]
     termination.check()
-    trusted_state = hook_trust(
+    trusted_state = trust(
         data["argv"][0],
         data["hook_flags"],
         cwd,

@@ -11,6 +11,7 @@ from agent_pm.session import (
     Blocked,
     ConfigError,
     Displayable,
+    Driver,
     DriverError,
     Exited,
     Handle,
@@ -52,6 +53,7 @@ NAMES = (
 )
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, SessionBound, Stderr, TurnEnd}
 ALLOWED_CONCRETE = {
+    Driver,
     Handle,
     SessionStatusLog,
     Usage,
@@ -137,7 +139,7 @@ class Abstract(Case):
 class SessionClassMethods(Case):
     def test_configure_is_concrete_and_refuses_bad_input(self):
         with self.assertRaisesRegex(ConfigError, r"\Ahosts: want a mapping"):
-            Session.configure(adapters={}, hosts=1, default_host="fake")
+            self.driver = Driver(adapters={}, hosts=1, default_host="fake")
 
     def test_each_but_configure_raises_on_the_bare_abc_naming_task_365(self):
         spec = Spec(workdir=self.home)

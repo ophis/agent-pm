@@ -46,26 +46,16 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.utils.paths import STATE, printable_abs
+from agent_pm.utils import STATE, printable_abs
 
 __all__ = [
+    "Driver",
     "Handle",
     "MODES",
     "SIGNALS",
-    "attach",
-    "attach_command",
-    "close",
-    "detach",
     "holds",
-    "layout",
     "note",
     "session_record",
-    "session_status",
-    "sessions",
-    "show",
-    "start",
-    "usage",
-    "writable_dirs",
 ]
 
 MODES = ("headless", "tui", "in_process")
@@ -113,11 +103,15 @@ class Handle:
         reply: str | None = None,
         blocked: bool = False,
         adapter: Adapter | None = None,
+        driver: "Driver | None" = None,
+        clock=None,
     ):
         """spec: its sid, name (a tui session's) and workdir."""
         self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
         self._host, self._info, self._idle = host, info, idle_timeout
         self._adapter = adapter
+        self._driver = driver
+        self.clock = time.monotonic if clock is None else clock
         self._channel = records.path(spec.workdir)
         self._reply = reply
         self._queue: deque = deque()
@@ -126,13 +120,13 @@ class Handle:
         self._blocked = blocked
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
-        last = time.monotonic()
+        last = self.clock()
         try:
             while not self._ended:
                 if self._queue:
                     event = self._queue.popleft()
                     self._record(event)
-                    last = time.monotonic()
+                    last = self.clock()
                     self._blocked = (
                         isinstance(event, Blocked) or self._blocked and isinstance(event, Stderr)
                     )
@@ -140,7 +134,7 @@ class Handle:
                     continue
                 wait = POLL
                 if self._idle is not None and not self._blocked:
-                    wait = min(POLL, last + self._idle - time.monotonic())
+                    wait = min(POLL, last + self._idle - self.clock())
                 if self._closed:
                     code = self._host.returncode(max(wait, 0))
                     if code is not None:
@@ -152,7 +146,7 @@ class Handle:
                     self._queue.extend(e for e in found if not isinstance(e, Exited))
                     continue
                 if wait <= 0:
-                    last = time.monotonic()
+                    last = self.clock()
                     yield IdleTimeout(self._idle)
         except GeneratorExit:  # the caller closed this iterator; the session goes on
             raise
@@ -219,7 +213,7 @@ class Handle:
         return self._reply
 
     def usage(self) -> Usage | None:
-        return usage(self.runtime)
+        return self._driver.usage(self.runtime) if self._driver is not None else None
 
 
 def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
@@ -227,7 +221,7 @@ def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str
     return {**env, **launch.env, "PWD": cwd}
 
 
-def _identity_drop() -> frozenset[str]:
+def _identity_drop(registry: registry.Registry) -> frozenset[str]:
     """Each Adapter's identity_env, and its child_defaults at their value inside it."""
     adapters = [registry.adapter(name) for name in registry.configured()]
     drop = {key for a in adapters for key in a.identity_env}
@@ -235,60 +229,6 @@ def _identity_drop() -> frozenset[str]:
         if a.session_env and a.session_env in os.environ:
             drop.update(k for k, v in a.child_defaults.items() if os.environ.get(k) == v)
     return frozenset(drop)
-
-
-def start(
-    runtime: str,
-    mode: str,
-    prompt: str,
-    spec: Spec,
-    resume: str | None = None,
-    idle_timeout: float | None = None,
-    events: str | None = None,
-) -> Handle:
-    """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name, else
-    <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead lines; spec.protect gains the
-    hook paths."""
-    if mode not in MODES:
-        raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
-    _idle(idle_timeout)
-    if resume is not None and not (isinstance(resume, str) and resume):
-        raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
-    if spec.sid is not None and resume is not None and spec.sid != resume:
-        raise ConfigError(f"sid {spec.sid!r:.80} differs from resume {resume!r:.80}")
-    adapter = registry.adapter(runtime)
-    kind = _STEPS[mode]
-    run = kind.run_of(adapter)
-    if run is None:
-        raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
-    spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
-    steps = kind(run, runtime, spec, events)
-    check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
-    spec = steps.specced(spec)
-    if spec.access.commands and adapter.runtime_note:
-        prompt = prompt + "\n\n" + adapter.runtime_note
-    info = steps.info(prompt, spec, resume is not None)
-    with steps.prepared(info, spec.workdir) as host:
-        os.makedirs(spec.workdir, exist_ok=True)
-        records.note(
-            records.path(spec.workdir),
-            "session",
-            sid=spec.sid,
-            cwd=info.cwd,
-            project=info.project,
-            transcript=info.transcript,
-            resume=info.resume,
-        )
-        steps.begin(host)
-    return Handle(
-        runtime,
-        mode,
-        replace(spec, name=steps.name),
-        host=host,
-        idle_timeout=idle_timeout,
-        info=info,
-        adapter=adapter,
-    )
 
 
 def _no_tui_keys(name, events) -> None:
@@ -325,14 +265,24 @@ class _HeadlessSteps(_LaunchSteps):
     name = None
 
     def specced(self, spec: Spec) -> Spec:
-        self.drop = _identity_drop()
+        self.drop = _identity_drop(self.registry)
         return _no_tui_fields(spec)
 
     @staticmethod
     def run_of(adapter: Adapter) -> Headless | None:
         return adapter.headless()
 
-    def __init__(self, run: Headless, runtime: str, spec: Spec, events):
+    def __init__(
+        self,
+        run: Headless,
+        runtime: str,
+        spec: Spec,
+        events,
+        *,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        self.registry = registry
         _no_tui_keys(spec.name, events)
         self.run, self.runtime = run, runtime
 
@@ -357,16 +307,27 @@ class _TuiSteps(_LaunchSteps):
     def run_of(adapter: Adapter) -> Tui | None:
         return adapter.tui()
 
-    def __init__(self, run: Tui, runtime: str, spec: Spec, events):
+    def __init__(
+        self,
+        run: Tui,
+        runtime: str,
+        spec: Spec,
+        events,
+        *,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        self.registry = registry
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
+        self.host = host
         self.name = _name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
-        self.events = _events(events)
-        self.tmux = tmux_host.tmux_path()
+        self.events = _events(events, host=self.host)
+        self.tmux = self.host.tmux_path()
         if self.tmux is None:
             raise DriverError("tmux not found")
 
     def specced(self, spec: Spec) -> Spec:
-        self.drop = _identity_drop()
+        self.drop = _identity_drop(self.registry)
         hooks = (
             self.tmux,
             *([self.events] if self.events else []),
@@ -388,6 +349,7 @@ class _TuiSteps(_LaunchSteps):
                 runtime=self.runtime,
                 workdir=workdir,
                 tmux=self.tmux,
+                host=self.host,
             )
 
     def begin(self, host: tui.TuiMode) -> None:
@@ -408,7 +370,17 @@ class _InProcessSteps:
     def run_of(adapter: Adapter) -> InProcess | None:
         return adapter.in_process()
 
-    def __init__(self, run: InProcess, runtime: str, spec: Spec, events):
+    def __init__(
+        self,
+        run: InProcess,
+        runtime: str,
+        spec: Spec,
+        events,
+        *,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        self.registry = registry
         _no_tui_keys(spec.name, events)
         self.run = run
 
@@ -448,69 +420,15 @@ def _name(name) -> str:
     return name
 
 
-def _events(events) -> str | None:
+def _events(events, *, host=tmux_host) -> str | None:
     if events is None:
         return None
     if not isinstance(events, str) or not events.isprintable():
         raise ConfigError(f"events must be a printable path, got {events!r:.80}")
     try:
-        return tmux_host.events_file(events)
+        return host.events_file(events)
     except tmux_host.TuiError as e:
         raise ConfigError(str(e)) from None
-
-
-def attach(name: str, idle_timeout: float | None = None) -> Handle:
-    """Tui session `name`'s Handle from any process: its reply the last turn's, its events from the next hook record."""
-    _name(name)
-    _idle(idle_timeout)
-    state = tui.read_state(name)
-    try:
-        adapter = registry.adapter(state["runtime"])
-        run = adapter.tui()
-    except ConfigError as e:
-        raise DriverError(f"no tui session {name}: {e}") from None
-    if run is None:
-        raise DriverError(f"no tui session {name}: runtime {state['runtime']!r} has no tui mode")
-    host = tui.TuiMode.attach(name, state, run)
-    info = SessionInfo(
-        state["sid"],
-        host.bound,
-        state["cwd"],
-        state["project"],
-        state["transcript"],
-        state["resume"],
-    )
-    handle = Handle(
-        state["runtime"],
-        "tui",
-        Spec(workdir=state["workdir"], sid=state["sid"], name=name),
-        host=host,
-        info=info,
-        idle_timeout=idle_timeout,
-        reply=host.reply,
-        blocked=host.blocked,
-        adapter=adapter,
-    )
-    handle.info()
-    return handle
-
-
-def sessions(match: str | None = None) -> list[SessionRow]:
-    """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is unknown."""
-    if match is not None and not isinstance(match, str):
-        raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
-    try:
-        pattern = None if match is None else re.compile(match)
-    except re.error as e:
-        raise ConfigError(f"match {match!r:.80}: {e}") from None
-    found = tmux_host.listing(pattern)
-    if found is None:
-        raise DriverError("tmux sessions unknown: tmux failed")
-    try:
-        own = tmux_host.own_session() if found else None
-    except tmux_host.TuiError as e:
-        raise DriverError(f"tmux sessions unknown: {e}") from None
-    return [_row(f, own) for f in found]
 
 
 def _row(found: Mapping, own: str | None) -> SessionRow:
@@ -528,11 +446,6 @@ def _row(found: Mapping, own: str | None) -> SessionRow:
     )
 
 
-def close(name: str) -> None:
-    """Kills tui session `name` (absent is fine), then removes its session dir."""
-    tui.close(_name(name))
-
-
 def _placement(split, split_from, opener=None) -> None:
     if split is not None and split not in tmux_host.SPLITS:
         raise ConfigError(f"split must be right or below, got {split!r:.80}")
@@ -546,71 +459,6 @@ def _placement(split, split_from, opener=None) -> None:
         )
 
 
-def show(
-    name: str, split: str | None = None, split_from: str | None = None, opener: str | None = None
-) -> str | None:
-    """Opens a pane on session `name` per the tui settings; None, else logs the reason and returns
-    attach_command(name)."""
-    _name(name)
-    _placement(split, split_from, opener)
-    settings = registry.tui()
-    if tmux_host.status(name) is None:
-        raise DriverError(f"no tmux session {name}")
-    why = tmux_host.open_pane(
-        name,
-        split=split,
-        split_from=split_from,
-        opener=opener,
-        per_column=settings.per_column,
-        retile=settings.retile,
-    )
-    if why is None:
-        return None
-    LOG.warning("show %s: %s", name, why)
-    return tmux_host.attach_command(name)
-
-
-def layout(split: str | None = None, split_from: str | None = None) -> str | None:
-    """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found; None only with
-    split_from."""
-    _placement(split, split_from)
-    if split_from is not None and tmux_host.status(split_from) is None:
-        raise ConfigError(f"no tmux session {split_from}")
-    try:
-        tmux_host.anchor(split_from)
-        try:
-            return tmux_host.opener()
-        except tmux_host.TuiError:
-            if split_from is None:
-                raise
-            return None
-    except tmux_host.TuiError as e:
-        hint = "" if split_from else ": run from tmux or iTerm2, or pass split_from"
-        raise DriverError(f"no pane to show the TUI beside ({e}){hint}") from None
-
-
-def attach_command(name: str) -> str:
-    return tmux_host.attach_command(_name(name))
-
-
-def detach(
-    name: str, argv: Sequence[str], cwd: str, env: Mapping[str, str], *, opener: str | None = None
-) -> None:
-    """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd."""
-    _name(name)
-    if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
-        raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
-    if not printable_abs(cwd):
-        raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
-    if not os.path.isdir(cwd):
-        raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
-    _placement(None, None, opener)
-    try:
-        tmux_host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
-    except tmux_host.TuiError as e:
-        raise DriverError(f"detach {name}: {e}") from e
-
-
 def _probe_dir() -> str | None:
     path = os.path.expanduser(PROBE_DIR)
     try:
@@ -620,51 +468,267 @@ def _probe_dir() -> str | None:
         return None
 
 
-def usage(runtime: str) -> Usage | None:
-    """None only when the probe fails: no probe, a failed start or timeout, or no reading in its output."""
-    adapter = registry.adapter(runtime)
-    launch = adapter.usage_probe()
-    if launch is None or not launch.argv:
-        return None
-    cwd = launch.cwd or _probe_dir()
-    if cwd is None:
-        return None
-    output = headless.probe(
-        launch.argv, cwd=cwd, env=_child_env(launch, cwd), timeout=PROBE_TIMEOUT
-    )
-    if output is None:
-        return None
-    try:
-        return adapter.usage(output)
-    except Exception:
-        return None
-
-
 def note(workdir: str, kind: str, **fields) -> None:
     """Appends a `kind` record to <workdir>/run.jsonl."""
     records.note(records.path(workdir), kind, **fields)
 
 
-def session_status(runtime: str, sid: str, cwd: str) -> SessionStatus:
-    if error := sid_error(sid):
-        raise ConfigError(error)
-    if not printable_abs(cwd):
-        raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
-    adapter = registry.adapter(runtime)
-    try:
-        return adapter.session_status(sid, cwd)
-    except OSError:
-        return SessionStatus("unknown", None, "")
+class Driver:
+    """A caller owns the configuration for every session it starts or attaches."""
 
+    def __init__(
+        self,
+        *,
+        adapters: Mapping,
+        hosts: Mapping,
+        default_host: str,
+        host=tmux_host,
+        probe=headless.probe,
+        clock=None,
+    ):
+        self.host, self.probe, self.clock = host, probe, clock
+        self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
 
-def writable_dirs(runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
-    """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails closed."""
-    if spec.sid is not None:
-        raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
-    if resume is not None and (error := sid_error(resume)):
-        raise ConfigError(error)
-    adapter = registry.adapter(runtime)
-    try:
-        return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
-    except OSError as e:
-        raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
+    @classmethod
+    def from_config(cls, config: Mapping, **dependencies):
+        try:
+            return cls(**registry.settings(config), **dependencies)
+        except ValueError as error:
+            raise ConfigError(str(error)) from error
+
+    def start(
+        self,
+        runtime: str,
+        mode: str,
+        prompt: str,
+        spec: Spec,
+        resume: str | None = None,
+        idle_timeout: float | None = None,
+        events: str | None = None,
+    ) -> Handle:
+        """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name, else
+        <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead lines; spec.protect gains the
+        hook paths."""
+        if mode not in MODES:
+            raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
+        _idle(idle_timeout)
+        if resume is not None and not (isinstance(resume, str) and resume):
+            raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
+        if spec.sid is not None and resume is not None and spec.sid != resume:
+            raise ConfigError(f"sid {spec.sid!r:.80} differs from resume {resume!r:.80}")
+        adapter = self.registry.adapter(runtime)
+        kind = _STEPS[mode]
+        run = kind.run_of(adapter)
+        if run is None:
+            raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
+        spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
+        steps = kind(run, runtime, spec, events, registry=self.registry, host=self.host)
+        check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
+        spec = steps.specced(spec)
+        if spec.access.commands and adapter.runtime_note:
+            prompt = prompt + "\n\n" + adapter.runtime_note
+        info = steps.info(prompt, spec, resume is not None)
+        with steps.prepared(info, spec.workdir) as host:
+            os.makedirs(spec.workdir, exist_ok=True)
+            records.note(
+                records.path(spec.workdir),
+                "session",
+                sid=spec.sid,
+                cwd=info.cwd,
+                project=info.project,
+                transcript=info.transcript,
+                resume=info.resume,
+            )
+            steps.begin(host)
+        return Handle(
+            runtime,
+            mode,
+            replace(spec, name=steps.name),
+            host=host,
+            idle_timeout=idle_timeout,
+            info=info,
+            adapter=adapter,
+            driver=self,
+            clock=self.clock,
+        )
+
+    def attach(self, name: str, idle_timeout: float | None = None) -> Handle:
+        """Tui session `name`'s Handle from any process: its reply the last turn's, its events from the next hook record."""
+        _name(name)
+        _idle(idle_timeout)
+        state = tui.read_state(name)
+        try:
+            adapter = self.registry.adapter(state["runtime"])
+            run = adapter.tui()
+        except ConfigError as e:
+            raise DriverError(f"no tui session {name}: {e}") from None
+        if run is None:
+            raise DriverError(
+                f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
+            )
+        host = tui.TuiMode.attach(name, state, run, host=self.host)
+        info = SessionInfo(
+            state["sid"],
+            host.bound,
+            state["cwd"],
+            state["project"],
+            state["transcript"],
+            state["resume"],
+        )
+        handle = Handle(
+            state["runtime"],
+            "tui",
+            Spec(workdir=state["workdir"], sid=state["sid"], name=name),
+            host=host,
+            info=info,
+            idle_timeout=idle_timeout,
+            reply=host.reply,
+            blocked=host.blocked,
+            adapter=adapter,
+            driver=self,
+            clock=self.clock,
+        )
+        handle.info()
+        return handle
+
+    def show(
+        self,
+        name: str,
+        split: str | None = None,
+        split_from: str | None = None,
+        opener: str | None = None,
+    ) -> str | None:
+        """Opens a pane on session `name` per the tui settings; None, else logs the reason and returns
+        attach_command(name)."""
+        _name(name)
+        _placement(split, split_from, opener)
+        settings = self.registry.tui()
+        if self.host.status(name) is None:
+            raise DriverError(f"no tmux session {name}")
+        why = self.host.open_pane(
+            name,
+            split=split,
+            split_from=split_from,
+            opener=opener,
+            per_column=settings.per_column,
+            retile=settings.retile,
+        )
+        if why is None:
+            return None
+        LOG.warning("show %s: %s", name, why)
+        return self.host.attach_command(name)
+
+    def usage(self, runtime: str) -> Usage | None:
+        """None only when the probe fails: no probe, a failed start or timeout, or no reading in its output."""
+        adapter = self.registry.adapter(runtime)
+        launch = adapter.usage_probe()
+        if launch is None or not launch.argv:
+            return None
+        cwd = launch.cwd or _probe_dir()
+        if cwd is None:
+            return None
+        output = self.probe(
+            launch.argv, cwd=cwd, env=_child_env(launch, cwd), timeout=PROBE_TIMEOUT
+        )
+        if output is None:
+            return None
+        try:
+            return adapter.usage(output)
+        except Exception:
+            return None
+
+    @staticmethod
+    def session_record(workdir: str, sid: str) -> dict | None:
+        return records.session_record(workdir, sid)
+
+    def session_status(self, runtime: str, sid: str, cwd: str) -> SessionStatus:
+        if error := sid_error(sid):
+            raise ConfigError(error)
+        if not printable_abs(cwd):
+            raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+        adapter = self.registry.adapter(runtime)
+        try:
+            return adapter.session_status(sid, cwd)
+        except OSError:
+            return SessionStatus("unknown", None, "")
+
+    def writable_dirs(self, runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
+        """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails closed."""
+        if spec.sid is not None:
+            raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
+        if resume is not None and (error := sid_error(resume)):
+            raise ConfigError(error)
+        adapter = self.registry.adapter(runtime)
+        try:
+            return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
+        except OSError as e:
+            raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
+
+    def sessions(self, match: str | None = None) -> list[SessionRow]:
+        """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is unknown."""
+        if match is not None and not isinstance(match, str):
+            raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
+        try:
+            pattern = None if match is None else re.compile(match)
+        except re.error as e:
+            raise ConfigError(f"match {match!r:.80}: {e}") from None
+        found = self.host.listing(pattern)
+        if found is None:
+            raise DriverError("tmux sessions unknown: tmux failed")
+        try:
+            own = self.host.own_session() if found else None
+        except tmux_host.TuiError as e:
+            raise DriverError(f"tmux sessions unknown: {e}") from None
+        return [_row(f, own) for f in found]
+
+    def close(self, name: str) -> None:
+        """Kills tui session `name` (absent is fine), then removes its session dir."""
+        tui.close(_name(name), host=self.host)
+
+    def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
+        """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found; None only with
+        split_from."""
+        _placement(split, split_from)
+        if split_from is not None and self.host.status(split_from) is None:
+            raise ConfigError(f"no tmux session {split_from}")
+        try:
+            self.host.anchor(split_from)
+            try:
+                return self.host.opener()
+            except tmux_host.TuiError:
+                if split_from is None:
+                    raise
+                return None
+        except tmux_host.TuiError as e:
+            hint = "" if split_from else ": run from tmux or iTerm2, or pass split_from"
+            raise DriverError(f"no pane to show the TUI beside ({e}){hint}") from None
+
+    def attach_command(self, name: str) -> str:
+        return self.host.attach_command(_name(name))
+
+    def detach(
+        self,
+        name: str,
+        argv: Sequence[str],
+        cwd: str,
+        env: Mapping[str, str],
+        *,
+        opener: str | None = None,
+    ) -> None:
+        """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd."""
+        _name(name)
+        if (
+            not isinstance(argv, (list, tuple))
+            or not argv
+            or not all(isinstance(a, str) for a in argv)
+        ):
+            raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
+        if not printable_abs(cwd):
+            raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+        if not os.path.isdir(cwd):
+            raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
+        _placement(None, None, opener)
+        try:
+            self.host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
+        except tmux_host.TuiError as e:
+            raise DriverError(f"detach {name}: {e}") from e

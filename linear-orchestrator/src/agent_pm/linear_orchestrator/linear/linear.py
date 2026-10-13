@@ -1,6 +1,7 @@
 """Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log (log, into LOGS_DIR
 once an entry's main sets it), comments by client id and the checks of the config's Linear ids."""
 
+import datetime as dt
 import hashlib
 import http.client
 import json
@@ -17,10 +18,9 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import Unavailable
-from agent_pm.utils.files import append_line
-from agent_pm.utils.text import printable
+from agent_pm.utils import append_line
+from agent_pm.utils import printable
 
-SEAM = "AGENT_PM_LINEAR"
 URL = "https://api.linear.app/graphql"
 SECURITY = "/usr/bin/security"  # absolute: no PATH entry stands in for the Keychain
 LOGS_DIR = None
@@ -32,7 +32,7 @@ def use_logs(path):
 
 
 def stamp():
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def operation(query):
@@ -41,21 +41,14 @@ def operation(query):
 
 
 def linear_gql(query, *, service, timeout=30, **variables):
-    # the seam is read once, so its url and key pair
-    seam = _seam()
-    auth = _secret(service, timeout, seam)
+    auth = key(service, timeout)
     req = urllib.request.Request(
-        seam[0] if seam else URL,
+        URL,
         data=json.dumps({"query": query, "variables": variables}).encode(),
         headers={"Content-Type": "application/json", "Authorization": auth},
     )
-    send = (
-        urllib.request.build_opener(urllib.request.ProxyHandler({})).open
-        if seam
-        else urllib.request.urlopen
-    )
     try:
-        with send(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as e:  # a URLError: before it
         if e.code >= 500:
@@ -89,33 +82,19 @@ def _rate_limited(e):
 
 
 def key(service, timeout):
-    return _secret(service, timeout, _seam())
-
-
-def _secret(service, timeout, seam):
-    # a bad key fails naming only service: urllib's header error would echo it
-    if seam is None:
-        found = subprocess.run(
-            [SECURITY, "find-generic-password", "-s", service, "-w"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout,
-        ).stdout.strip()
-    elif service in seam[1]:
-        found = seam[1][service]
-    else:
-        raise SystemExit(f"{SEAM}: no key for {service}")
+    found = subprocess.run(
+        [SECURITY, "find-generic-password", "-s", service, "-w"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout,
+    ).stdout.strip()
     if not _clean(found):
         raise SystemExit(f"Linear key of {service}: empty, not printable or holds whitespace")
     return found
 
 
 def has_key(service):
-    # no -w: its secret is never read
-    seam = _seam()
-    if seam is not None:
-        return service in seam[1]
     return (
         subprocess.run(
             [SECURITY, "find-generic-password", "-s", service],
@@ -123,48 +102,6 @@ def has_key(service):
             stderr=subprocess.DEVNULL,
         ).returncode
         == 0
-    )
-
-
-def _seam():
-    path = os.environ.get(SEAM)
-    if not path:
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            seam = json.load(f)
-    except (OSError, ValueError):
-        raise SystemExit(f"{SEAM} {path}: unreadable or not JSON") from None
-    url, keys = (seam.get("url"), seam.get("keys")) if isinstance(seam, dict) else (None, None)
-    if (
-        not isinstance(url, str)
-        or not isinstance(keys, dict)
-        or not all(isinstance(k, str) for k in keys.values())
-    ):
-        raise SystemExit(
-            f"{SEAM} {path}: not an object with a url string and a keys object of strings"
-        )
-    if not _local(url):
-        raise SystemExit(
-            f"{SEAM} {path}: url not http://127.0.0.1:<port>/... or http://[::1]:<port>/..."
-        )
-    return url, keys
-
-
-def _local(url):
-    # parsed, never a prefix test
-    try:
-        u = urllib.parse.urlsplit(url)
-        port = u.port
-    except ValueError:
-        return False
-    return (
-        _clean(url)
-        and u.scheme == "http"
-        and u.hostname in ("127.0.0.1", "::1")
-        and port is not None
-        and u.username is None
-        and u.password is None
     )
 
 
@@ -176,7 +113,6 @@ ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
 CONFIG_ERRORS = (SystemExit, ValueError, OSError)
-_recent = {}
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
@@ -194,8 +130,6 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
         if not dry and path:
             os.makedirs(logs, exist_ok=True)
             append_line(path, text + "\n")
-            if path in _recent:
-                _recent[path].add(key)
     except OSError:
         pass
     try:
@@ -237,21 +171,19 @@ def _key(line):
 
 
 def _recent_keys(path):
-    if path not in _recent:
-        cutoff, keys = datetime.now(UTC) - WINDOW, set()
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                for raw in f:
-                    try:
-                        line = json.loads(raw)
-                        if datetime.fromisoformat(line["ts"]) >= cutoff:
-                            keys.add(_key(line))
-                    except (ValueError, TypeError, KeyError):
-                        pass
-        except OSError:
-            pass
-        _recent[path] = keys
-    return _recent[path]
+    cutoff, keys = dt.datetime.now(UTC) - WINDOW, set()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                try:
+                    line = json.loads(raw)
+                    if datetime.fromisoformat(line["ts"]) >= cutoff:
+                        keys.add(_key(line))
+                except (ValueError, TypeError, KeyError):
+                    pass
+    except OSError:
+        pass
+    return keys
 
 
 def one_line(x):

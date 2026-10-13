@@ -18,8 +18,7 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.session import NotDisplayable, SessionStatus
-from agent_pm.utils import files
-from agent_pm.utils.record import Record, Status
+from agent_pm.utils import Record, Status, files
 
 FILE = "delegate.json"
 

@@ -1,21 +1,10 @@
-"""A fake Driver for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) in the orchestrator's modules."""
+"""A caller-owned fake Driver for orchestrator unit tests."""
 
 import re
 
 from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window
 
-from session.tests.patch import Patched
 
-NAMES = (
-    "sessions",
-    "close",
-    "show",
-    "session_status",
-    "session_record",
-    "usage",
-    "detach",
-    "attach_command",
-)
 LOW = Usage(Window(10.0, None), Window(10.0, None))
 
 
@@ -78,6 +67,3 @@ class FakeApi:
 
     def attach_command(self, name):
         return f"attach {name}"
-
-    def patch(self):
-        return Patched("agent_pm.linear_orchestrator", **{n: getattr(self, n) for n in NAMES})

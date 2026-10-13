@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host
 from agent_pm.session.engine.types import Key, Paste
-from agent_pm.utils.record import Record
+from agent_pm.utils import Record
 
 from session.tests.case import PY, REPO, child_env
 
@@ -37,9 +37,9 @@ SPAWN = (
 )
 CHILD = """import json, sys
 from agent_pm.session import Host
-from agent_pm.utils import registry
+from agent_pm.utils import load_class
 path, host, settings, name, argv, cwd, env = sys.argv[1:]
-registry.load(path, Host)(host, json.loads(settings)).terminal(
+load_class(path, Host)(host, json.loads(settings)).terminal(
     name, json.loads(argv), cwd, json.loads(env)
 )
 """

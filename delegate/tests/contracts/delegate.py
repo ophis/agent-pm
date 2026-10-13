@@ -9,7 +9,7 @@ import uuid
 
 from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
 from agent_pm.session import NotDisplayable, Usage
-from agent_pm.utils.record import Record, Status
+from agent_pm.utils import Record, Status
 
 NO_ROLE = "no-such-role"
 OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r1")}

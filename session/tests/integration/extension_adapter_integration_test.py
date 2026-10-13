@@ -20,12 +20,12 @@ PROJECTS = ("session", "utils")
 # The child: configures the session from the copy's session config, starts runtime argv[2] headless in workdir argv[1]
 # and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Session, ConfigError, Spec, start
+from agent_pm.session import Driver, ConfigError, Spec
 from agent_pm.session.engine import api
-from agent_pm.utils.config_file import read_project
+from agent_pm.utils import read_project
 try:
-    Session.configure_from(read_project("session"))
-    handle = start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
+    driver = Driver.from_config(read_project("session"))
+    handle = driver.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
 except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]

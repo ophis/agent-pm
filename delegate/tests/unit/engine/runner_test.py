@@ -43,11 +43,8 @@ from agent_pm.session import (
     Exited,
     IdleTimeout,
     LimitHit,
-    Session,
 )
-from agent_pm.session.adapters import registry
-from agent_pm.utils import text as text_utils
-from agent_pm.utils.files import save
+from agent_pm.utils import printable
 
 from delegate.tests.case import Case
 from delegate.tests.replies import bare, block, running
@@ -133,7 +130,12 @@ class Base(Case):
         }
         try:
             with redirect_stderr(err):
-                return run(config, Spec(kw.pop("input"), self.work, task="echo", **kw), on_event=on)
+                return run(
+                    config,
+                    Spec(kw.pop("input"), self.work, task="echo", **kw),
+                    on_event=on,
+                    driver=self.driver,
+                )
         finally:
             self.err = err.getvalue()
 
@@ -164,21 +166,19 @@ class Base(Case):
         shutil.rmtree(self.work, ignore_errors=True)
 
     def spy_save(self):
-        patch = mock.patch.object(runner, "save", wraps=save)
+        patch = mock.patch("os.replace", wraps=os.replace)
         self.addCleanup(patch.stop)
         return patch.start()
 
 
 class Configures(Base):
-    def test_run_never_configures_the_session_the_callers_settings_reach_it(self):
-        with mock.patch.object(Session, "configure") as configure:
-            r = self.go(said(START, block(DONE)))
-        configure.assert_not_called()
+    def test_the_callers_settings_reach_the_run(self):
+        r = self.go(said(START, block(DONE)))
         self.assertEqual((r.outcome.status, len(self.launches())), ("done", 1))
 
-    def test_unconfigured_it_starts_nothing(self):
-        registry.reset()
-        with self.assertRaisesRegex(ConfigError, "not configured"):
+    def test_a_fresh_driver_without_the_runtime_starts_nothing(self):
+        self.configure_session({})
+        with self.assertRaisesRegex(ConfigError, r"\[adapters.fake\]"):
             self.go(said(START, block(DONE)))
         self.assertFalse(os.path.exists(self.log))
 
@@ -289,7 +289,12 @@ class Fix(Base):
 class Idle(Base):
     def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
         self.assertEqual(IDLE_TIMEOUT, 2 * 60 * 60)
-        with mock.patch.object(runner, "IDLE_TIMEOUT", 0.3):
+        start = self.driver.start
+        with mock.patch.object(
+            self.driver,
+            "start",
+            side_effect=lambda *a, **kw: start(*a, **(kw | {"idle_timeout": 0.3})),
+        ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
         idle = [e for e in self.records() if e["kind"] == "idle"]
@@ -731,7 +736,12 @@ class InProcess(Base):
         )
 
     def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
-        with mock.patch.object(runner, "IDLE_TIMEOUT", 0.3):
+        start = self.driver.start
+        with mock.patch.object(
+            self.driver,
+            "start",
+            side_effect=lambda *a, **kw: start(*a, **(kw | {"idle_timeout": 0.3})),
+        ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
         idle = [e for e in self.records() if e["kind"] == "idle"]
@@ -757,7 +767,7 @@ class Terminal(Base):
     """Main's Sinks case: what reaches the terminal is printable."""
 
     def test_printable_is_the_utils_one(self):
-        self.assertIs(runner.printable, text_utils.printable)
+        self.assertIs(runner.printable, printable)
 
     def test_replies_progress_and_stderr_lines_are_printed_printable(self):
         self.go(
@@ -797,7 +807,7 @@ class TuiPolicy(Base):
 
     def faked(self, *events, fail=None, stop_fail=None, mode="tui", **kw) -> Result:
         self.handle = FakeHandle(events, fail, stop_fail)
-        with mock.patch.object(runner, "start", side_effect=self.handle.start) as self.started:
+        with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
     def test_the_policys_values(self):
@@ -944,7 +954,7 @@ class TuiPolicy(Base):
         )
         with (
             mock.patch("time.monotonic", lambda: now[0]),
-            mock.patch.object(runner, "start", side_effect=handle.start),
+            mock.patch.object(self.driver, "start", side_effect=handle.start),
         ):
             r = self.go(mode="tui")
         self.assertEqual((r.outcome.status, handle.calls, now[0]), ("done", [], 15 * 60 * 60))
@@ -1028,7 +1038,7 @@ class TuiPolicy(Base):
 
     def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
         os.makedirs(self.work)
-        with mock.patch.object(runner, "start", side_effect=DriverError("no tmux")):
+        with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
         with self.assertRaises(ConfigError) as cm:

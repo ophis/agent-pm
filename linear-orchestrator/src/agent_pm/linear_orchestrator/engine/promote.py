@@ -273,12 +273,12 @@ class Promoter:
         return left is None
 
 
-def run_prune(gql, now, dry, team, roles, work, pruner=None):
+def run_prune(gql, now, dry, team, roles, work, pruner=None, *, driver=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
-        pruner(gql, now, dry, work=work, team=team, roles=roles).run()
+        pruner(gql, now, dry, work=work, team=team, roles=roles, driver=driver).run()
     except Unavailable as e:
         linear_error("prune", e, dry)
     except (Exception, SystemExit) as e:
@@ -307,7 +307,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
         promoter.run()
     except Unavailable as e:
         return linear_error("promote", e, dry)
-    run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner)
+    run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner, driver=cfg.driver)
     return 0
 
 

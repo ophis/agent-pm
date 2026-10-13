@@ -1,5 +1,4 @@
-"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over HTTP for the AGENT_PM_LINEAR
-seam: each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its answer
+"""Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback HTTP: each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its answer
 projected to the query's selection."""
 
 import functools
@@ -324,7 +323,7 @@ class FakeLinear:
         service = service or self.harness
         keys = self.keys()
         if service not in keys:
-            raise SystemExit(f"{linear.SEAM}: no key for {service}")
+            raise SystemExit(f"fake transport: no key for {service}")
         status, body, delay = self.answer(query, variables, keys[service])
         if delay:
             time.sleep(min(delay, timeout))

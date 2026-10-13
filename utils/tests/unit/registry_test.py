@@ -49,13 +49,14 @@ class TempFinder:
 
 class Load(Case):
     def setUp(self):
+        for name in ("regpkg", "regpkg.impl", "regbroken"):
+            self.addCleanup(sys.modules.pop, name, None)
         self.folder = os.path.join(self.home, "modules")
         os.makedirs(os.path.join(self.folder, "regpkg"))
         self.write("regpkg/__init__.py", "")
         self.write("regpkg/impl.py", MODULE)
         self.write("regbroken.py", "def broken(:\n")
         for patch in (
-            mock.patch.dict(sys.modules),
             mock.patch.dict(sys.path_importer_cache),
             mock.patch.object(sys, "meta_path", [TempFinder(self.folder), *sys.meta_path]),
         ):

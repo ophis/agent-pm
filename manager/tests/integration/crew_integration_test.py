@@ -19,7 +19,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.manager import crew, roster
-from agent_pm.utils.config_file import LOCAL
+from agent_pm.utils import LOCAL
 
 from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
 from session.tests import live_tmux

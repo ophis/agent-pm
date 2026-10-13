@@ -26,8 +26,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui_hook
-from agent_pm.utils.files import read_regular
-from agent_pm.utils.paths import STATE
+from agent_pm.utils import STATE, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
@@ -50,17 +49,17 @@ def read_state(name: str) -> dict:
         raise DriverError(f"no tui session {name}: {e}") from None
 
 
-def close(name: str) -> None:
+def close(name: str, *, host=tmux_host) -> None:
     """Kills the session (absent is fine), then removes its dir if a real directory; under the name's lock."""
     with lock(name):
-        _close(name)
+        _close(name, host=host)
 
 
-def _close(name: str, pane: str | None = None) -> None:
+def _close(name: str, pane: str | None = None, *, host=tmux_host) -> None:
     try:
-        tmux_host.kill(pane or name)
+        host.kill(pane or name)
     except tmux_host.TuiError as e:
-        if tmux_host.status(pane or name) is not None:
+        if host.status(pane or name) is not None:
             raise DriverError(f"cannot close tui session {name}: {e}") from None
     _drop(name)
 
@@ -133,7 +132,10 @@ def _exit(status) -> int | None:
 class TuiMode:
     """One tui session, api.py's Mode, acting on its session's pane by id."""
 
-    def __init__(self, name: str, run: Tui, sid: str, events: str | None, runtime: str):
+    def __init__(
+        self, name: str, run: Tui, sid: str, events: str | None, runtime: str, *, host=tmux_host
+    ):
+        self.host = host
         self.name, self.run, self.sid, self.events, self.runtime = name, run, sid, events, runtime
         self.dir = session_dir(name)
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
@@ -152,6 +154,7 @@ class TuiMode:
         runtime: str,
         workdir: str,
         tmux: str,
+        host=tmux_host,
     ) -> "TuiMode":
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
@@ -165,17 +168,18 @@ class TuiMode:
             "events": events,
             "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
             "tmux_path": tmux,
+            **run.hook_state(),
         }
         for field, check in tui_hook.SESSION_STATE.items():
             if not check(state[field]):
                 raise DriverError(f"tui session {name}: bad {field} {state[field]!r:.80}")
-        status = tmux_host.status(name)
+        status = host.status(name)
         if status == tmux_host.RUNNING:
-            raise DriverError(f"tui session {name} is running; {tmux_host.attach_command(name)}")
+            raise DriverError(f"tui session {name} is running; {host.attach_command(name)}")
         if status == tmux_host.UNKNOWN:
             raise DriverError(f"tui session {name}: its tmux state is unknown")
         _tui_dir()
-        mode = cls(name, run, info.sid, events, runtime)
+        mode = cls(name, run, info.sid, events, runtime, host=host)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
@@ -203,7 +207,7 @@ class TuiMode:
         """Starts argv tagged with the sid and runtime, then takes its pane; failing, ends it and removes the dir prepare
         made."""
         try:
-            tmux_host.start(
+            self.host.start(
                 self.name,
                 list(argv),
                 cwd=cwd,
@@ -216,9 +220,9 @@ class TuiMode:
             self._unmake()
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         try:
-            self._pane = tmux_host.pane(self.name)
+            self._pane = self.host.pane(self.name)
         except tmux_host.TuiError as e:
-            _close(self.name)  # start() holds the name's lock
+            _close(self.name, host=self.host)  # start() holds the name's lock
             raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         self._live = True
 
@@ -227,17 +231,17 @@ class TuiMode:
             _remove(self.dir, self._made)
 
     @classmethod
-    def attach(cls, name: str, state: dict, run: Tui) -> "TuiMode":
+    def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> "TuiMode":
         """read_state's session, bound to the name's pane if tagged with its sid; reply: last TURN_END's; blocked: last
         kind BLOCKED or @state blocked; events from its next record."""
         try:
-            pane = tmux_host.pane(name)
-            tagged = None if pane is None else tmux_host.option(pane, "@sid")
+            pane = host.pane(name)
+            tagged = None if pane is None else host.option(pane, "@sid")
         except tmux_host.TuiError:
             tagged = pane = None
         if tagged != state["sid"]:
             raise DriverError(f"no tui session {name}")
-        mode = cls(name, run, state["sid"], state["events"], state["runtime"])
+        mode = cls(name, run, state["sid"], state["events"], state["runtime"], host=host)
         mode._pane = pane
         data = read_regular(mode.hooks) or b""
         mode._offset = data.rfind(b"\n") + 1
@@ -252,7 +256,7 @@ class TuiMode:
         mode.blocked = last == BLOCKED
         if not mode.blocked:
             with contextlib.suppress(tmux_host.TuiError):
-                mode.blocked = tmux_host.option(pane, "@state") == "blocked"
+                mode.blocked = host.option(pane, "@state") == "blocked"
         mode._live = True
         return mode
 
@@ -261,10 +265,10 @@ class TuiMode:
         pane holds the name."""
         found = self._read()
         if not found and not self._gone:
-            status = tmux_host.status(self.name)
+            status = self.host.status(self.name)
             try:
                 screen = (
-                    tmux_host.read(self._pane)
+                    self.host.read(self._pane)
                     if status == tmux_host.RUNNING and self._pane
                     else None
                 )
@@ -284,7 +288,7 @@ class TuiMode:
     def _holder(self) -> str | None:
         """The pane under the name (None: absent, UNKNOWN: tmux failed)."""
         try:
-            holder = tmux_host.pane(self.name)
+            holder = self.host.pane(self.name)
         except tmux_host.TuiError:
             return tmux_host.UNKNOWN
         if holder not in (self._pane, None):
@@ -342,14 +346,14 @@ class TuiMode:
 
     def _mark_blocked(self) -> None:
         with contextlib.suppress(tmux_host.TuiError):
-            if tmux_host.option(self._pane, "@state") != "blocked":
-                tmux_host.mark("blocked", self.events, pane=self._pane)
+            if self.host.option(self._pane, "@state") != "blocked":
+                self.host.mark("blocked", self.events, pane=self._pane)
 
     def returncode(self, timeout: float) -> int | None:
         """The dead pane's status, -SIGHUP once gone; None while it runs after up to `timeout` s."""
         deadline = time.monotonic() + timeout
         while self._code is None:
-            self._code = _exit(self._own(tmux_host.status(self.name)))
+            self._code = _exit(self._own(self.host.status(self.name)))
             if self._code is None:
                 if (left := deadline - time.monotonic()) <= 0:
                     return None
@@ -357,7 +361,7 @@ class TuiMode:
         return self._code
 
     def state(self) -> str:
-        status = self._own(tmux_host.status(self.name))
+        status = self._own(self.host.status(self.name))
         return "absent" if status is None else "unknown" if status == tmux_host.UNKNOWN else "live"
 
     def send(self, text: str) -> None:
@@ -366,11 +370,11 @@ class TuiMode:
         try:
             for item in self.run.submit(text):
                 if isinstance(item, Paste):
-                    tmux_host.paste(self._pane, item.text)
+                    self.host.paste(self._pane, item.text)
                 else:
                     if isinstance(last, Paste):
                         time.sleep(tmux_host.PAUSE)
-                    tmux_host.keys(self._pane, item.name)
+                    self.host.keys(self._pane, item.name)
                 last = item
         except tmux_host.TuiError as e:
             raise DriverError(f"send to tui session {self.name}: {e}") from e
@@ -378,12 +382,12 @@ class TuiMode:
     def screen(self, lines: int | None = None) -> str:
         self._running()
         try:
-            return tmux_host.read(self._pane, lines)
+            return self.host.read(self._pane, lines)
         except tmux_host.TuiError as e:
             raise DriverError(f"screen of tui session {self.name}: {e}") from e
 
     def _running(self) -> None:
-        if self._own(tmux_host.status(self.name)) != tmux_host.RUNNING:
+        if self._own(self.host.status(self.name)) != tmux_host.RUNNING:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
@@ -395,8 +399,8 @@ class TuiMode:
                 if holder is None:
                     _drop(self.name)
                 elif holder == tmux_host.UNKNOWN:
-                    _close(self.name)
+                    _close(self.name, host=self.host)
                 elif holder == self._pane:
-                    _close(self.name, self._pane)
+                    _close(self.name, self._pane, host=self.host)
         self._live = False
         self._end()

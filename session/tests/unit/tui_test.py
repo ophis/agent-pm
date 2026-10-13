@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import sys
@@ -111,7 +112,6 @@ class Base(Case):
         self.log = []
         self.clock = Clock(self.log)
         for patch in (
-            mock.patch.object(tui, "tmux_host", self.host),
             mock.patch("time.monotonic", lambda: self.clock.now),
             mock.patch("time.sleep", self.clock.sleep),
         ):
@@ -130,6 +130,7 @@ class Base(Case):
             runtime="fake",
             workdir=workdir or self.tmp,
             tmux=tmux,
+            host=self.host,
         )
 
     def started(self) -> tui.TuiMode:
@@ -881,19 +882,19 @@ class CloseStopTest(Base):
     def test_close_kills_the_session_and_removes_its_dir(self):
         self.started()
         self.append(record("tool"))
-        tui.close(NAME)
+        tui.close(NAME, host=self.host)
         self.assertEqual(self.host.mock_calls, [mock.call.kill(NAME)])
         self.assertNoSessionDir()
         self.assertTrue(os.path.isdir(self.root))
 
     def test_close_kills_and_removes_under_the_names_lock(self):
         self.started()
-        held, remove = [], tui._remove
+        held, remove = [], shutil.rmtree
         self.host.kill.side_effect = lambda name: held.append(self.locked())
         with mock.patch.object(
-            tui, "_remove", lambda path: (held.append(self.locked()), remove(path))
+            shutil, "rmtree", lambda path: (held.append(self.locked()), remove(path))
         ):
-            tui.close(NAME)
+            tui.close(NAME, host=self.host)
         self.assertEqual((held, self.locked()), ([True, True], False))
         self.assertNoSessionDir()
 
@@ -901,9 +902,9 @@ class CloseStopTest(Base):
         self.started()
         self.host.kill.side_effect = tmux_host.TuiError("tmux: can't find session: w1")
         self.host.status.return_value = None
-        tui.close(NAME)
+        tui.close(NAME, host=self.host)
         self.assertNoSessionDir()
-        tui.close(NAME)
+        tui.close(NAME, host=self.host)
 
     def test_a_kill_that_fails_on_a_live_or_unknown_session_is_a_driver_error(self):
         self.started()
@@ -912,7 +913,7 @@ class CloseStopTest(Base):
             with self.subTest(status=status):
                 self.host.status.return_value = status
                 with self.assertRaises(DriverError) as caught:
-                    tui.close(NAME)
+                    tui.close(NAME, host=self.host)
                 self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")
                 self.assertTrue(os.path.isdir(self.dir))
 
@@ -923,7 +924,7 @@ class CloseStopTest(Base):
         open(os.path.join(target, "keep"), "w").close()
         for make in (lambda: os.symlink(target, self.dir), lambda: open(self.dir, "w").close()):
             make()
-            tui.close(NAME)
+            tui.close(NAME, host=self.host)
             self.assertTrue(os.path.lexists(self.dir))
             os.unlink(self.dir)
         self.assertEqual(os.listdir(target), ["keep"])
@@ -1143,7 +1144,7 @@ class AttachTest(Base):
         self.prepare()
         self.append(*lines)
         self.host.reset_mock()
-        return tui.TuiMode.attach(NAME, tui.read_state(NAME), self.run)
+        return tui.TuiMode.attach(NAME, tui.read_state(NAME), self.run, host=self.host)
 
     def test_reply_bound_and_the_next_record_from_the_files_end(self):
         partial = (json.dumps(record("tool", tool="next")) + "\n").encode()

@@ -3,6 +3,7 @@ start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, opti
 file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
 import ast
+import contextlib
 import errno
 import fcntl
 import io
@@ -2819,11 +2820,7 @@ class GridOpen(Case):
                 ["tile", window, per_column]
             )
         )
-        for p in (
-            unittest.mock.patch.object(tmux_host, "tile", self.tile),
-            unittest.mock.patch.object(sys, "executable", PY),
-            unittest.mock.patch.object(tmux_host, "__file__", SCRIPT),
-        ):
+        for p in (unittest.mock.patch.object(sys, "executable", PY),):
             p.start()
             self.addCleanup(p.stop)
 
@@ -2854,7 +2851,14 @@ class GridOpen(Case):
         """show s; retile all unless given, the mode whose hooks opened() asserts by default."""
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tmux_host.show("s", proc=fake, retile=retile, **kw)
+            return tmux_host.show(
+                "s",
+                proc=fake,
+                retile=retile,
+                tile_window=self.tile,
+                script=kw.pop("script", SCRIPT),
+                **kw,
+            )
 
     def split(self, flag, pane, window="@1"):
         """A grid split: the window's hooks muted first, so a previous mode's hook starts no tile; grid_set unmutes."""
@@ -3111,12 +3115,19 @@ class GridOpen(Case):
             (sys, "executable", "/a/pythön"),
             (sys, "executable", ""),
             (sys, "executable", None),
-            (tmux_host, "__file__", "/a'b/tmux_host.py"),
-            (tmux_host, "__file__", "/a$(x)/tmux_host.py"),
+            (None, "script", "/a'b/tmux_host.py"),
+            (None, "script", "/a$(x)/tmux_host.py"),
         ):
-            with self.subTest(name=name, bad=bad), unittest.mock.patch.object(target, name, bad):
+            with (
+                self.subTest(name=name, bad=bad),
+                (
+                    unittest.mock.patch.object(target, name, bad)
+                    if target is not None
+                    else contextlib.nullcontext()
+                ),
+            ):
                 fake = self.fake({"%3": self.NEW})
-                self.assertIsNone(self.show(fake))
+                self.assertIsNone(self.show(fake, **({"script": bad} if target is None else {})))
                 self.assertEqual(
                     fake.calls[-4:],
                     [*record("mgr", "%20"), grid_set("@1", "%3", hooks=False), ["tile", "@1", 3]],
@@ -4096,9 +4107,8 @@ class Tile(Case):
         fake = self.fake(*self.WIDE)
         with (
             unittest.mock.patch.object(sys, "executable", PY),
-            unittest.mock.patch.object(tmux_host, "__file__", SCRIPT),
         ):
-            self.assertRegex(tmux_host._grid_up("@3", "%0", 3, "all", fake), want)
+            self.assertRegex(tmux_host._grid_up("@3", "%0", 3, "all", fake, script=SCRIPT), want)
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
         self.assertFalse(os.path.lexists(self.sock + "-target"))
 
@@ -4188,10 +4198,11 @@ class Tile(Case):
         del fake.calls[:]
         with (
             unittest.mock.patch.object(sys, "executable", PY),
-            unittest.mock.patch.object(tmux_host, "__file__", SCRIPT),
-            unittest.mock.patch.object(tmux_host, "tile") as tile,
+            contextlib.nullcontext(unittest.mock.Mock()) as tile,
         ):
-            self.assertIsNone(tmux_host._grid_up("@3", "%0", 3, "off", fake))
+            self.assertIsNone(
+                tmux_host._grid_up("@3", "%0", 3, "off", fake, script=SCRIPT, tile_window=tile)
+            )
         self.assertEqual(fake.calls, [grid_set("@3", "%0", retile="off")])
         tile.assert_not_called()
 
@@ -4594,15 +4605,16 @@ class Cli(Case):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                rc = tmux_host.main(list(argv))
+                rc = tmux_host.main(list(argv), operations=getattr(self, "actions", {}))
             except SystemExit as e:
                 rc = e.code
         return rc, out.getvalue(), err.getvalue()
 
     def patch(self, name, **kw):
-        p = unittest.mock.patch.object(tmux_host, name, **kw)
-        self.addCleanup(p.stop)
-        return p.start()
+        if not hasattr(self, "actions"):
+            self.actions = {}
+        self.actions[name] = unittest.mock.Mock(**kw)
+        return self.actions[name]
 
     def test_start_forms(self):
         # the command verbatim; start shows nothing, so it takes no show option

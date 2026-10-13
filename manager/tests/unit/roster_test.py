@@ -19,10 +19,9 @@ import unittest.mock
 
 from agent_pm.manager import roster
 from agent_pm.session import DriverError, SessionRow
-from agent_pm.utils.config_file import LOCAL, read_project
+from agent_pm.utils import LOCAL, read_project
 
 from manager.tests.case import PY, REPO, SRC, Case, child_env
-from session.tests.patch import Patched
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
@@ -81,9 +80,7 @@ class Base(Case):
         self.managers = os.path.join(self.agent_pm, "managers")
         self.dir = os.path.join(self.managers, "m1")
         self.tmux = Tmux()
-        self.enterContext(
-            Patched("agent_pm.manager", sessions=self.tmux.sessions, close=self.tmux.close)
-        )
+        self.driver = self.tmux
 
     def umask(self, mask):
         self.addCleanup(os.umask, os.umask(mask))
@@ -109,20 +106,20 @@ class ManagerTest(Base):
         for label, name, own, want, calls in cases:
             with self.subTest(label):
                 self.tmux.alive, self.tmux.own, self.tmux.calls = {"other"}, own, []
-                self.assertEqual(roster.directory(name), want)
+                self.assertEqual(roster.directory(name, driver=self.driver), want)
                 self.assertEqual(self.tmux.calls, calls)
                 self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_relative_home_gives_an_absolute_path(self):
         os.environ["HOME"] = "rel/home"
         want = os.path.join(os.path.abspath("rel/home"), ".agent-pm", "managers", "m1")
-        self.assertEqual(roster.directory("m1"), want)
+        self.assertEqual(roster.directory("m1", driver=self.driver), want)
 
     def test_bad_manager_names(self):
         for name in ("a/b", "..", "", "a b", "a;", "a\n"):
             for call, resolve in (
-                ("directory", roster.directory),
-                ("home", lambda n: roster.home(n, None)),
+                ("directory", lambda *a: roster.directory(*a, driver=self.driver)),
+                ("home", lambda n: roster.home(n, None, driver=self.driver)),
             ):
                 with (
                     self.subTest(name=name, call=call),
@@ -135,8 +132,8 @@ class ManagerTest(Base):
     def test_unknown_sessions_name_the_manager_option(self):
         self.tmux.error = DriverError("tmux sessions unknown: bad $TMUX_PANE '%3;'")
         for call, resolve in (
-            ("directory", roster.directory),
-            ("home", lambda: roster.home(None, None)),
+            ("directory", lambda *a: roster.directory(*a, driver=self.driver)),
+            ("home", lambda: roster.home(None, None, driver=self.driver)),
         ):
             with self.subTest(call), self.assertRaises(roster.RosterError) as cm:
                 resolve()
@@ -155,7 +152,9 @@ class ManagerTest(Base):
             with self.subTest(label):
                 roster.ensure(d)
                 self.tmux.calls = []
-                self.assertEqual(roster.home(name, os.path.join(d, "events")), d)
+                self.assertEqual(
+                    roster.home(name, os.path.join(d, "events"), driver=self.driver), d
+                )
                 self.assertEqual(len(self.tmux.calls), calls)
                 self.assertEqual(os.listdir(d), [])
 
@@ -171,7 +170,7 @@ class ManagerTest(Base):
         }
         for why, (name, given) in cases.items():
             with self.subTest(why):
-                self.assertIsNone(roster.home(name, given))
+                self.assertIsNone(roster.home(name, given, driver=self.driver))
         self.assertEqual(os.listdir(self.managers), ["m1"])
         self.assertEqual(os.listdir(self.dir), [])
 
@@ -179,11 +178,13 @@ class ManagerTest(Base):
         roster.ensure(self.dir)
         base = os.path.dirname(self.agent_pm)
         os.symlink(self.dir, os.path.join(base, "link"))
-        self.assertEqual(roster.home("m1", os.path.join(base, "link", "events")), self.dir)
+        self.assertEqual(
+            roster.home("m1", os.path.join(base, "link", "events"), driver=self.driver), self.dir
+        )
         os.symlink(base, os.path.join(base, "alias"))
         os.environ["HOME"] = os.path.join(base, "alias")
         self.assertEqual(
-            roster.home("m1", os.path.join(self.dir, "events")),
+            roster.home("m1", os.path.join(self.dir, "events"), driver=self.driver),
             os.path.join(base, "alias", ".agent-pm", "managers", "m1"),
         )
 
@@ -322,15 +323,15 @@ for i in range(15):
 
 LEASE_CHILD = """
 import sys
-from unittest import mock
+from types import SimpleNamespace
 from agent_pm.manager import roster
 from agent_pm.session import SessionRow
 d, own = sys.argv[1], sys.argv[2]
 live = [SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()
 try:
-    with mock.patch.object(roster, "sessions", return_value=live), roster.locked(d) as r:
-        roster.take(r, d, own)
+    with roster.locked(d) as r:
+        roster.take(r, d, own, driver=SimpleNamespace(sessions=lambda match: live))
 except roster.Held as e:
     print(e)
     sys.exit(3)
@@ -1313,9 +1314,9 @@ class LeaseTest(Base):
                     self.tmux.error = DriverError("tmux sessions unknown") if live is None else None
                     r, start = self.doc(holder), datetime.datetime.now(datetime.UTC)
                     run = (
-                        (lambda: roster.take(r, self.dir, own))
+                        (lambda: roster.take(r, self.dir, own, driver=self.driver))
                         if call == "take"
-                        else (lambda: roster.check(r, self.dir, own))
+                        else (lambda: roster.check(r, self.dir, own, driver=self.driver))
                     )
                     if isinstance(want, tuple):
                         self.refused(run, r, want[1], want[0])
@@ -1333,7 +1334,7 @@ class LeaseTest(Base):
 
     def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
         with roster.locked(self.dir) as r:
-            roster.take(r, self.dir, "me")
+            roster.take(r, self.dir, "me", driver=self.driver)
         with open(self.path, "rb") as f:
             raw = f.read()
         holder = json.loads(raw)["holder"]
@@ -1341,15 +1342,15 @@ class LeaseTest(Base):
         self.assertIsNotNone(datetime.datetime.fromisoformat(holder["since"]).utcoffset())
         self.tmux.alive = {"me"}
         with self.assertRaises(roster.Held), roster.locked(self.dir) as r:
-            roster.take(r, self.dir, "you")
+            roster.take(r, self.dir, "you", driver=self.driver)
         with open(self.path, "rb") as f:
             self.assertEqual(f.read(), raw)
 
     def test_check_in_a_read_only_block_creates_no_roster_json(self):
         with roster.locked(self.dir, write=False) as r:
-            roster.check(r, self.dir, None)
+            roster.check(r, self.dir, None, driver=self.driver)
             with self.assertRaises(roster.RosterError):
-                roster.check(r, self.dir, "me")
+                roster.check(r, self.dir, "me", driver=self.driver)
         self.assertFalse(os.path.exists(self.path))
 
     def test_two_processes_take_concurrently_and_exactly_one_holds(self):
@@ -1404,7 +1405,7 @@ class StopTest(Base):
         with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
         with roster.locked(self.dir) as r:
-            key = roster.stop(r, name)
+            key = roster.stop(r, name, driver=self.driver)
         with roster.locked(self.dir, write=False) as r:
             return key, r["entries"]
 
@@ -1412,7 +1413,7 @@ class StopTest(Base):
         with roster.locked(self.dir) as r:
             r["entries"] = dict(self.entries)
         with self.assertRaises(roster.RosterError) as cm, roster.locked(self.dir) as r:
-            roster.stop(r, name)
+            roster.stop(r, name, driver=self.driver)
         self.assertEqual(str(cm.exception), message)
         with roster.locked(self.dir, write=False) as r:
             self.assertEqual(r["entries"], self.entries)

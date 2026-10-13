@@ -15,13 +15,13 @@ from unittest import mock
 
 from agent_pm.delegate import Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.session import Session
-from agent_pm.utils.config_file import read_project
+from agent_pm.session import Driver
+from agent_pm.utils import read_project
 
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, prompt
 from delegate.tests.unit.runs import GAVE_UP
-from session.tests.integration import tui_integration_test as tui_live
+from session.tests import tui_support as tui_live
 from session.tests.integration.adapters.claude import fake_claude
 
 NAME = f"claude-{SID[:8]}"
@@ -69,7 +69,7 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        Session.configure_from(read_project("session"))
+        self.driver = Driver.from_config(read_project("session"))
 
     def go(self, on_event=None, **scenario):
         """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each callback, self.err the
@@ -100,6 +100,7 @@ class TuiRun(tui_live.Live):
                             cwd=self.workdir,
                         ),
                         on_event=on,
+                        driver=self.driver,
                     )
                 )
             except BaseException as e:
@@ -188,7 +189,7 @@ class TurnEnds(TuiRun):
 class Idle(TuiRun):
     def test_no_event_for_the_idle_timeout_gives_up_the_session_left_open(self):
         clock = Ahead()
-        self.enterContext(mock.patch("agent_pm.session.engine.api.time", clock))
+        self.driver = Driver.from_config(read_project("session"), clock=clock.monotonic)
 
         def later(event):
             if isinstance(event, Progress):  # read at turn 1's end, the last event

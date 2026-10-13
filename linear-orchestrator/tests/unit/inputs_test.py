@@ -7,10 +7,10 @@ import re
 import unittest
 from types import SimpleNamespace
 
-from agent_pm.delegate import composer
+from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.utils.shell import SHORT
+from agent_pm.utils import SHORT
 
 from ..case import Case
 
@@ -1040,9 +1040,11 @@ class Checkout(Case):
         )
         for task in ("build", "light-build"):
             with self.subTest(task=task):
-                run = composer.resolve("engineer", task)
-                params = composer.RunParams(input=text, out="/w/out.md", workdir="/w")
-                prompt = composer.render(run, params)
+                run = delegate.resolve_run("engineer", task)
+                spec = delegate.Spec(
+                    text, self.home, task=task, out=os.path.join(self.home, "out.md")
+                )
+                prompt = delegate.plan(run, spec).prompt
                 self.assertIn(f"\nCheckout: {name}\n", prompt)
                 self.assertIn(
                     "`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "

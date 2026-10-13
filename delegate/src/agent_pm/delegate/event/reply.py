@@ -2,7 +2,7 @@
 
 import re
 
-from agent_pm.utils.markdown import fenced, unfenced
+from agent_pm.utils import fenced, unfenced
 
 PROGRESS = "agent-pm-progress"
 OUTCOME = "agent-pm-outcome"

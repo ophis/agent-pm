@@ -15,10 +15,10 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, promote, prune
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError, DriverError
-from agent_pm.utils import paths, shell
+from agent_pm.utils import GUARD, sh, temp_dirs
 
 from ..case import Case
-from . import promote_test as tp
+from . import promote_support as tp
 from .board_ids import STATES as IDS_BY_KEY
 from .board_ids import TEAM, team_node
 from .fake_api import FakeApi
@@ -105,11 +105,13 @@ class Git:
         self.calls.append(argv)
         if not self.real:
             raise AssertionError(f"git ran: {argv}")
-        return shell.sh(argv, timeout)
+        return sh(argv, timeout)
 
 
 def git(*argv):
-    return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", *GUARD, *argv], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 class PruneTest(Case):
@@ -123,9 +125,7 @@ class PruneTest(Case):
         write(os.path.join(self.outside, "keep"), "x")
         self.logs = os.path.join(self.root, "logs")
         self.api = FakeApi()
-        for p in (mock.patch.object(linear, "LOGS_DIR", self.logs), self.api.patch()):
-            p.start()
-            self.addCleanup(p.stop)
+        linear.use_logs(self.logs)
 
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
@@ -152,6 +152,7 @@ class PruneTest(Case):
                 NOW,
                 dry,
                 work=self.work,
+                driver=self.api,
                 team=TEAM_OBJ,
                 roles=ROLES,
                 run=git or Git(),
@@ -345,7 +346,7 @@ class PruneTest(Case):
     def test_clone_deletion_failure_logs_the_error_and_exit_3(self):
         src, publish = self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")
         with mock.patch.object(
-            prune.shutil, "rmtree", side_effect=[PermissionError("denied\nby os"), None]
+            shutil, "rmtree", side_effect=[PermissionError("denied\nby os"), None]
         ) as rmtree:
             code, out = self.prune(gql_for({"TASK-49": ("Done", [(30, "Done")])}))
         self.assertEqual(code, 3)
@@ -588,8 +589,10 @@ class PruneTest(Case):
                     self.assertFalse(os.path.lexists(wt))
 
     def test_writable_dirs_default_to_work_and_the_temp_dirs(self):
-        pruner = prune.Pruner(None, NOW, False, work=self.work, team=TEAM_OBJ, roles=ROLES)
-        self.assertEqual(pruner.writable, (self.work, *paths.temp_dirs()))
+        pruner = prune.Pruner(
+            None, NOW, False, work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES
+        )
+        self.assertEqual(pruner.writable, (self.work, *temp_dirs()))
 
     def test_a_git_failure_in_the_clone_is_an_error(self):
         with self.git_env():
@@ -789,7 +792,7 @@ class PruneTest(Case):
         seen, close = [], self.api.close
         gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
         with mock.patch.object(
-            prune, "close", lambda name: (seen.append(os.path.isdir(clone)), close(name))
+            self.api, "close", lambda name: (seen.append(os.path.isdir(clone)), close(name))
         ):
             code, out = self.prune(gql)
         self.assertEqual(code, 0)

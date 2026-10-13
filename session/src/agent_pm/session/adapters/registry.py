@@ -1,12 +1,11 @@
-"""The adapter registry: Session.configure's settings (the [adapters.<name>] tables, the hosts' tables, the default
-host), checked and stored by configure() until the next configure() or reset(). adapter(name) builds the class
+"""The adapter registry: caller-owned settings (the [adapters.<name>] tables, the hosts' tables, the default
+host), owned by a Registry instance. adapter(name) builds the class
 [adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or any failure:
-ConfigError. settings(config): configure's keyword arguments from a read session config
+ConfigError. settings(config): Driver's keyword arguments from a read session config
 ([hosts] through tables.parse); else ValueError."""
 
 import copy
 import re
-import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -15,12 +14,11 @@ from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.utils.registry import load
+from agent_pm.utils import load_class as load
 
 PACKAGE = __package__.rpartition(".")[0]
 IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[^:]+):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
 TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
-_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -39,9 +37,6 @@ class Settings:
     default_host: str
 
 
-_settings: Settings | None = None
-
-
 def settings(config: Mapping) -> dict:
     if not isinstance(config, Mapping):
         raise ValueError("session config: want a table")
@@ -53,71 +48,56 @@ def settings(config: Mapping) -> dict:
     }
 
 
-def configure(*, adapters: Mapping, hosts: Mapping, default_host: str) -> None:
-    global _settings
-    if not isinstance(adapters, Mapping) or not all(
-        isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
-    ):
-        raise ConfigError("adapters: want a mapping of [adapters.<name>] tables")
-    if not isinstance(hosts, Mapping) or "default" in hosts:
-        raise ConfigError("hosts: want a mapping of [hosts.<name>] tables")
-    try:
-        found = tables.parse({**hosts, "default": default_host})
-    except ValueError as e:
-        raise ConfigError(str(e)) from None
-    settings = Settings(
-        copy.deepcopy({k: dict(t) for k, t in adapters.items()}), found.tables, found.default
-    )
-    with _lock:
-        _settings = settings
+class Registry:
+    """Caller-owned adapter and host configuration."""
 
-
-def reset() -> None:
-    global _settings
-    with _lock:
-        _settings = None
-
-
-def _config() -> Settings:
-    with _lock:
-        if _settings is None:
-            raise ConfigError("the session is not configured: call Session.configure first")
-        return _settings
-
-
-def configured() -> list[str]:
-    return sorted(_config().adapters)
-
-
-def tui() -> TuiSettings:
-    table = _config().hosts.get(tmux_host.HOST, {})
-    line, per, retile = (table.get(k) for k in TUI_KEYS)
-    if line is not None and not isinstance(line, bool):
-        raise ConfigError("status_line: want true or false")
-    if per is not None and (
-        isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999
-    ):
-        raise ConfigError("workers_per_column: want an integer from 1 to 9999")
-    if retile is not None and (not isinstance(retile, str) or retile not in tmux_host.RETILES):
-        raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.RETILES)}")
-    return TuiSettings(bool(line), per, retile)
-
-
-def adapter(name: str) -> Adapter:
-    if not isinstance(name, str) or not NAME.match(name):
-        raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
-    table = _config().adapters.get(name)
-    if table is None:
-        raise ConfigError(f"no [adapters.{name}] table in the configured adapters")
-    config = dict(table)
-    implementation = config.pop("implementation", None)
-    found = IMPLEMENTATION.match(implementation) if isinstance(implementation, str) else None
-    if not found or found["name"] != name:
-        raise ConfigError(
-            f'[adapters.{name}].implementation must be "adapters.{name}:<Class>Adapter"'
+    def __init__(self, *, adapters: Mapping, hosts: Mapping, default_host: str) -> None:
+        if not isinstance(adapters, Mapping) or not all(
+            isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
+        ):
+            raise ConfigError("adapters: want a mapping of [adapters.<name>] tables")
+        if not isinstance(hosts, Mapping) or "default" in hosts:
+            raise ConfigError("hosts: want a mapping of [hosts.<name>] tables")
+        try:
+            found = tables.parse({**hosts, "default": default_host})
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        settings = Settings(
+            copy.deepcopy({k: dict(t) for k, t in adapters.items()}), found.tables, found.default
         )
-    try:
-        cls = load(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
-    except ValueError as e:
-        raise ConfigError(f"adapter {name!r}: {e}") from e
-    return cls(config)
+        self.settings = settings
+
+    def configured(self) -> list[str]:
+        return sorted(self.settings.adapters)
+
+    def tui(self) -> TuiSettings:
+        table = self.settings.hosts.get(tmux_host.HOST, {})
+        line, per, retile = (table.get(k) for k in TUI_KEYS)
+        if line is not None and not isinstance(line, bool):
+            raise ConfigError("status_line: want true or false")
+        if per is not None and (
+            isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999
+        ):
+            raise ConfigError("workers_per_column: want an integer from 1 to 9999")
+        if retile is not None and (not isinstance(retile, str) or retile not in tmux_host.RETILES):
+            raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.RETILES)}")
+        return TuiSettings(bool(line), per, retile)
+
+    def adapter(self, name: str) -> Adapter:
+        if not isinstance(name, str) or not NAME.match(name):
+            raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
+        table = self.settings.adapters.get(name)
+        if table is None:
+            raise ConfigError(f"no [adapters.{name}] table in the configured adapters")
+        config = dict(table)
+        implementation = config.pop("implementation", None)
+        found = IMPLEMENTATION.match(implementation) if isinstance(implementation, str) else None
+        if not found or found["name"] != name:
+            raise ConfigError(
+                f'[adapters.{name}].implementation must be "adapters.{name}:<Class>Adapter"'
+            )
+        try:
+            cls = load(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
+        except ValueError as e:
+            raise ConfigError(f"adapter {name!r}: {e}") from e
+        return cls(config)

@@ -8,7 +8,7 @@ import unittest
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-import agent_pm.utils.files
+from agent_pm.utils import save
 from agent_pm.linear_orchestrator.engine import runs
 
 from .. import case
@@ -202,7 +202,7 @@ class Trim(Case):
             json.dumps({**json.loads(keep[0]), "kind": "end"}),
         ]
         self.write([junk[0], keep[0], *junk[1:4], keep[1], *junk[4:], keep[2]])
-        with mock.patch.object(agent_pm.utils.files.os, "replace", wraps=os.replace) as rep:
+        with mock.patch.object(os, "replace", wraps=os.replace) as rep:
             runs.trim(self.log, NOW)
         [(src, dst), _] = rep.call_args
         self.assertEqual((os.path.dirname(src), str(dst)), (self.tmp, self.log))
@@ -230,9 +230,7 @@ class Trim(Case):
 
     def test_no_temp_left_when_the_rewrite_fails(self):
         self.write([row("start", "TASK-1", "a", days=8), row("start", "TASK-1", "b", hours=1)])
-        with mock.patch.object(
-            agent_pm.utils.files.os, "replace", side_effect=OSError("disk full")
-        ):
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 runs.trim(self.log, NOW)
         self.assertEqual(os.listdir(self.tmp), ["runs.jsonl"])
@@ -246,16 +244,14 @@ class Trim(Case):
         ]
         self.write(lines)
         with (
-            mock.patch.object(agent_pm.utils.files.os, "replace") as rep,
-            mock.patch.object(runs, "save") as save,
+            mock.patch.object(os, "replace") as rep,
         ):
             runs.trim(self.log, NOW)
         rep.assert_not_called()
-        save.assert_not_called()
         self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
     def test_rewrites_through_the_atomic_save(self):
-        self.assertIs(runs.save, agent_pm.utils.files.save)
+        self.assertIs(runs.save, save)
 
     def test_missing_log_is_noop(self):
         runs.trim(self.log, NOW)
@@ -285,10 +281,10 @@ class NoteLimit(Case):
     def test_writes_the_limit_row_durably_and_limits_reads_it(self):
         at = stamp(NOW + timedelta(hours=1), EAST)
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
-        with mock.patch.object(runs, "append_line", wraps=runs.append_line) as spy:
+        with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
             runs.note_limit(path, issue="TASK-1", sid="s", runtime="a", resets_at=at)
             runs.note_limit(path, issue="TASK-2", sid="t", runtime="b", resets_at=None)
-        self.assertEqual([c.kwargs for c in spy.call_args_list], [{"durable": True}] * 2)
+        self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f]
         self.assertEqual(

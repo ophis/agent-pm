@@ -13,7 +13,7 @@ import tempfile
 import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.integration.cli import CLI, NATIVE, CodexIntegration, Integration, codex_said
@@ -36,7 +36,7 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from agent_pm.utils.config_file import read_project
+CATALOG = """from agent_pm.utils import read_project
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
 composer.check_all(team, read_project("delegate"))

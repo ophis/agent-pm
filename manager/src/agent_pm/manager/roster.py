@@ -10,6 +10,7 @@ crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an en
 script, or the module agent_pm.crew, to that form."""
 
 import contextlib
+import datetime
 import errno
 import fcntl
 import json
@@ -21,12 +22,10 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
-from datetime import UTC, datetime
 
 from agent_pm.manager.engine.types import RosterError, Stale
-from agent_pm.session import DriverError, close, sessions
-from agent_pm.utils.config_file import LOCAL, read_project
-from agent_pm.utils.paths import STATE
+from agent_pm.session import Driver, DriverError
+from agent_pm.utils import LOCAL, STATE, read_project
 
 ROOT = f"{STATE}/managers"
 WORKERS = f"{STATE}/workers"
@@ -74,10 +73,11 @@ class Held(RosterError):
     pass
 
 
-def directory(manager: str | None = None) -> str | None:
+def directory(manager: str | None = None, *, driver=None) -> str | None:
+    driver = _configure() if driver is None else driver
     if manager is None:
         try:
-            manager = next((row.name for row in sessions() if row.own), None)
+            manager = next((row.name for row in driver.sessions() if row.own), None)
         except DriverError as e:
             raise RosterError(f"{e}; give --manager <name>") from e
         if manager is None:
@@ -155,8 +155,8 @@ def events(directory: str, *, create: bool = True) -> str:
     return path
 
 
-def home(name: str | None, events: str | None) -> str | None:
-    d = directory(name)
+def home(name: str | None, events: str | None, *, driver=None) -> str | None:
+    d = directory(name, driver=driver)
     if d is None or not os.path.isdir(d) or events is None:
         return None
     return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
@@ -168,7 +168,7 @@ def printable(text: str) -> bool:
 
 
 def now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
 
 
 def _or(words) -> str:
@@ -196,7 +196,7 @@ def _time(value) -> bool:
     if not _text(value):
         return False
     try:
-        return datetime.fromisoformat(value).utcoffset() is not None
+        return datetime.datetime.fromisoformat(value).utcoffset() is not None
     except ValueError:
         return False
 
@@ -417,20 +417,21 @@ def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
                 _write(directory, path, text)
 
 
-def _live(session: str) -> bool:
+def _live(session: str, *, driver=None) -> bool:
+    driver = _configure() if driver is None else driver
     try:
-        return bool(sessions(re.escape(session)))
+        return bool(driver.sessions(re.escape(session)))
     except DriverError:
         return False
 
 
-def _holds(r: dict, directory: str, own: str | None) -> bool:
+def _holds(r: dict, directory: str, own: str | None, *, driver=None) -> bool:
     holder = r["holder"]
     if holder is None:
         return False
     if holder["session"] == own:
         return True
-    if _live(holder["session"]):
+    if _live(holder["session"], driver=driver):
         raise Held(
             f"manager directory {directory}: held by tmux session {holder['session']} since {holder['since']}; "
             "ask that manager to run crew.py release, or end that session"
@@ -438,14 +439,14 @@ def _holds(r: dict, directory: str, own: str | None) -> bool:
     return False
 
 
-def take(r: dict, directory: str, own: str | None) -> None:
-    if not _holds(r, directory, own) and own is not None:
+def take(r: dict, directory: str, own: str | None, *, driver=None) -> None:
+    if not _holds(r, directory, own, driver=driver) and own is not None:
         r["holder"] = {"session": own, "since": now()}
 
 
-def check(r: dict, directory: str, own: str | None) -> None:
+def check(r: dict, directory: str, own: str | None, *, driver=None) -> None:
     # the lease holds only for this block: a take-over can follow, so a later write must not assume it
-    if not _holds(r, directory, own) and own is not None:
+    if not _holds(r, directory, own, driver=driver) and own is not None:
         raise _not_attached(directory)
 
 
@@ -517,7 +518,8 @@ def remove(r: dict, name: str) -> dict:
         raise RosterError(f"{name} not in roster") from None
 
 
-def stop(r: dict, name: str) -> str:
+def stop(r: dict, name: str, *, driver=None) -> str:
+    driver = _configure() if driver is None else driver
     entries = r["entries"]
     key = (
         name
@@ -530,8 +532,8 @@ def stop(r: dict, name: str) -> str:
         if session is None:
             continue
         with contextlib.suppress(DriverError):
-            close(session)
-        if _live(session):
+            driver.close(session)
+        if _live(session, driver=driver):
             raise RosterError(f"{key}: session {session} still live after tmux kill-session")
     remove(r, key)
     return key
@@ -679,3 +681,7 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         print(f"manager: rotate: {e}: lines after {cursor} of {old} not copied", file=sys.stderr)
     r["cursor"], r["gen"] = 0, r["gen"] + 1
     return True
+
+
+def _configure():
+    return Driver.from_config(read_project("session"))

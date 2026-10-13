@@ -11,9 +11,8 @@ from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text
 from agent_pm.delegate.composer.types import ConfigError, Team
 from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils.config_file import LOCAL, load, read_project
-from agent_pm.utils.markdown import unfenced
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils import LOCAL, read_project, temp_dirs, under, unfenced
+from agent_pm.utils import load_config as load
 
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
 KINDS = ("roles", "tasks", "templates")

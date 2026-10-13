@@ -7,7 +7,7 @@ import sys
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit
-from agent_pm.utils.paths import import_roots
+from agent_pm.utils import import_roots
 
 from . import sessions
 from .common import LIMIT_PREFIXES, added_dirs, flags, native_id, passed, refuse, reset_at
@@ -32,6 +32,7 @@ class CodexTui(Tui):
         self.state = None
         self.last_reply = ""
         self.native = ""
+        self.store = ""
 
     def launch(self, prompt, spec, resume, hook):
         common = self.adapter.common
@@ -44,7 +45,7 @@ class CodexTui(Tui):
         unset = common.UNSET
         effective_env = {key: value for key, value in os.environ.items() if key not in unset}
         effective_env.update(env)
-        store = sessions.store_root()
+        store = self.store = sessions.store_root()
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
             raise ConfigError("codex not found on PATH")
@@ -69,21 +70,7 @@ class CodexTui(Tui):
             raise ConfigError(str(exc)) from exc
         if not resume:
             self.state = common.save(self.state)
-        commands = {
-            event: shlex.join(
-                (
-                    os.path.realpath(sys.executable),
-                    "-I",
-                    os.path.join(DIRECTORY, "tui_hook.py"),
-                    self.state.workdir,
-                    self.state.sid,
-                    store,
-                    json.dumps(list(hook), ensure_ascii=False),
-                    event,
-                )
-            )
-            for event in self.hooks
-        }
+        commands = {event: shlex.join((*hook, event)) for event in self.hooks}
         hook_flags = [
             word
             for event, command in commands.items()
@@ -135,6 +122,12 @@ class CodexTui(Tui):
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
+
+    def hook_state(self) -> dict:
+        return {
+            "adapter_hook": os.path.join(DIRECTORY, "tui_hook.py"),
+            "adapter_state": {"store": self.store},
+        }
 
     def session_id(self, payload):
         native, cwd = payload.get("session_id"), payload.get("cwd")

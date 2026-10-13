@@ -4,7 +4,7 @@ loses a line; a Host's hook command builds its clock from CLOCK."""
 
 import time
 
-from agent_pm.utils.files import append_line
+from agent_pm.utils import append_line
 
 
 def _text(label: str, value, *, one_word: bool = False) -> str:

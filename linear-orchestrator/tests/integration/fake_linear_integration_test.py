@@ -1,5 +1,5 @@
 """fake_linear.py, the orchestrator's Linear fake: its op table and seeding, then its answers over HTTP through
-linear_gql (the AGENT_PM_LINEAR seam): projection, isMe, failures, the router's board reads, the promote, prune and
+linear_gql through a test-only transport: projection, isMe, failures, the router's board reads, the promote, prune and
 write-back ops, comments by client id (FR-54, FR-55)."""
 
 import functools
@@ -28,6 +28,9 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 PR = "https://github.com/acme/widgets/pull/1"
 VIEWER = "query { viewer { id } }"
 LINEAR_TIME = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"
+
+
+from .transport.fake_transport import install
 
 
 class Table(Case):
@@ -140,9 +143,13 @@ class Served(Case):
             project=PROJECT,
         )
         self.url = fake_linear.serve(self, fake)
-        env = mock.patch.dict(os.environ, {linear.SEAM: fake_linear.seam(self, fake, self.url)})
+        env = mock.patch.dict(
+            os.environ, {"FAKE_LINEAR_TRANSPORT": fake_linear.seam(self, fake, self.url)}
+        )
         env.start()
         self.addCleanup(env.stop)
+        transport = install(os.environ["FAKE_LINEAR_TRANSPORT"])
+        self.addCleanup(transport.close)
         self.gql = functools.partial(linear.linear_gql, service=HARNESS)
         self.eng = functools.partial(linear.linear_gql, service=ENGINEER)
 
@@ -343,7 +350,9 @@ class Served(Case):
         stranger = fake_linear.FakeLinear()
         stranger.user("stranger@x.com", "Stranger", "stranger")
         with (
-            mock.patch.dict(os.environ, {linear.SEAM: fake_linear.seam(self, stranger, self.url)}),
+            mock.patch.dict(
+                os.environ, {"FAKE_LINEAR_TRANSPORT": fake_linear.seam(self, stranger, self.url)}
+            ),
             self.assertRaises(urllib.error.HTTPError) as cm,
         ):
             linear.linear_gql(linear.Q_USER, service="stranger", e="me@x.com")

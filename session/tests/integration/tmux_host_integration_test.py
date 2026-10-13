@@ -16,12 +16,12 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.engine import api
 from agent_pm.session.engine.types import DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import live_tmux
 from session.tests.case import Case
+from session.tests.processes import reject_command
 
 MANAGER = "mgr"
 TIMEOUT = 60
@@ -41,9 +41,7 @@ class Live(Case):
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()
         self.addCleanup(patch.stop)
-        patch = mock.patch.object(
-            tmux_host, "_iterm", side_effect=AssertionError("the iTerm2 path")
-        )
+        patch = reject_command("osascript")
         patch.start()
         self.addCleanup(patch.stop)
         tmp = tempfile.TemporaryDirectory()
@@ -73,7 +71,7 @@ class Live(Case):
         """show(name, **kwargs) from inside `inside`, a pane then showing it; its stderr."""
         err = io.StringIO()
         with self.inside(inside), contextlib.redirect_stderr(err):
-            self.assertIsNone(api.show(name, **kwargs))
+            self.assertIsNone(self.driver.show(name, **kwargs))
         return err.getvalue()
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
@@ -157,7 +155,7 @@ class GridTest(Live):
         self.grid([["w1", "w2"]], width)
         self.started("w3")
         self.grid([["w1", "w2"], ["w3"]], width)
-        api.close("w2")
+        self.driver.close("w2")
         self.grid([["w1", "w3"]], width)
 
     def test_name_order(self):
@@ -182,12 +180,12 @@ class GridTest(Live):
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
         self.grid([["m1", ("m2", ["z1", "z2"]), "m3"]])
-        api.close("z1")
-        api.close("z2")
+        self.driver.close("z1")
+        self.driver.close("z2")
         self.grid([["m1", "m2", "m3"]])
         self.started("z3", inside="m2")
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
-        api.close("m2")
+        self.driver.close("m2")
         self.grid([["m1", ["z3"], "m3"]])
 
     def test_an_unshown_session_reopens_in_the_grid(self):
@@ -437,10 +435,10 @@ class RetileTest(Live):
         # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the window's pane-exited
         # hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
-        api.close("w2")
+        self.driver.close("w2")
         self.grid([["w1", "w3"]], width)
         self.open_close_hooks(MANAGER)
-        api.close("w3")
+        self.driver.close("w3")
         self.grid([["w1"]], width)
         live_tmux.wait(
             lambda: self.window_option(MANAGER, tmux_host.GRID_PANES_SET) == self.pane_set(MANAGER),
@@ -492,10 +490,10 @@ class SplitsTest(Live):
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
         with self.inside(MANAGER):
-            self.assertEqual(api.layout(), MANAGER)
-        self.assertIsNone(api.layout("below", MANAGER))
+            self.assertEqual(self.driver.layout(), MANAGER)
+        self.assertIsNone(self.driver.layout("below", MANAGER))
         with self.assertRaises(DriverError) as caught:
-            api.layout("below")
+            self.driver.layout("below")
         self.assertTrue(
             str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),
             caught.exception,

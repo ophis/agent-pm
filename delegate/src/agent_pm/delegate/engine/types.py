@@ -1,9 +1,10 @@
 """The Delegate's shared types."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.outcome import Outcome
+from agent_pm.session import Driver
 from agent_pm.session import Spec as SessionSpec
 
 __all__ = [
@@ -48,6 +49,7 @@ class Plan:
     prompt: str
     run: RunConfig
     params: RunParams
+    driver: Driver = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)

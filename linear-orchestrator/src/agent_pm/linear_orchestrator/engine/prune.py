@@ -30,10 +30,10 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     one_line,
 )
-from agent_pm.session import ConfigError, DriverError, close, sessions
-from agent_pm.utils.git import GUARD, common_dir, git
-from agent_pm.utils.paths import under
-from agent_pm.utils.shell import SHORT
+from agent_pm.session import ConfigError, DriverError
+from agent_pm.utils import GUARD, common_dir, run_git as git
+from agent_pm.utils import under
+from agent_pm.utils import SHORT
 
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
@@ -59,7 +59,10 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, work, team, roles, run=config.sh_run, writable=None):
+    def __init__(
+        self, gql, now, dry, *, work, team, roles, run=config.sh_run, writable=None, driver=None
+    ):
+        self.driver = driver
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles, self.run_git = team, roles, run
         self.writable = config.writable(work) if writable is None else writable
@@ -203,7 +206,7 @@ class Pruner:
 
     def live_tuis(self):
         try:
-            names = [row.name for row in sessions()]
+            names = [row.name for row in self.driver.sessions()]
         except DriverError:
             return None
         roles, found = set(self.roles.values()), {}
@@ -218,7 +221,7 @@ class Pruner:
                 self.say("prune-plan", ident, session=name, what="close the tui session")
                 continue
             try:
-                close(name)
+                self.driver.close(name)
             except (ConfigError, DriverError) as e:
                 self.error(ident, session=name, error=one_line(e))
             else:

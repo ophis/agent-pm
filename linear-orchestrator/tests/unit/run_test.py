@@ -16,10 +16,9 @@ from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result,
 from agent_pm.linear_orchestrator.engine import config, run
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import SIGNALS, DriverError
-from agent_pm.session.adapters import registry
 
 from .board_ids import STATES
-from .config_test import GATE
+from .config_support import GATE
 from .fake_api import FakeApi
 from .run_fixtures import (
     ENGINEER,
@@ -81,7 +80,8 @@ class FakeRun:
         self.order, self.result, self.steps, self.error = order, result, steps, error
         self.begun, self.calls, self.dirs = begun, [], []
 
-    def __call__(self, run, spec, *, on_event):
+    def __call__(self, run, spec, *, driver, on_event):
+        self.driver = driver
         self.order.append("run")
         self.calls.append((run, spec))
         self.dirs.append(os.path.isdir(spec.workdir))
@@ -107,8 +107,6 @@ class Case(Base):
         self.api = FakeApi(self.order, lambda: self.gql)
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
-            mock.patch.object(sessions, "now", return_value=NOW),
-            self.api.patch(),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -141,7 +139,13 @@ class Case(Base):
     def main(self, *extra, **kw):
         err = io.StringIO()
         with redirect_stderr(err):
-            rc = run.main(self.argv(*extra, **kw), gql=self.gql, run=self.delegate)
+            rc = run.main(
+                self.argv(*extra, **kw),
+                gql=self.gql,
+                run=self.delegate,
+                driver=self.api,
+                now=lambda: NOW,
+            )
         self.err = err.getvalue()
         return rc
 
@@ -212,12 +216,10 @@ class Inner(Case):
         self.assertEqual(os.environ["PATH"], config.path())
         self.assertEqual([o for o in self.order if o[0] == "show"], [])
 
-    def test_main_configures_the_session_before_the_run(self):
-        registry.reset()
-        seen = []
-        self.done(lambda: seen.append(registry.configured()))
+    def test_main_passes_the_caller_owned_driver_to_delegate(self):
+        self.done()
         self.assertEqual(self.main(), 0)
-        self.assertIn("claude", seen[0])
+        self.assertIs(self.delegate.driver, self.api)
 
     def test_no_outcome_leaves_the_issue(self):
         self.assertEqual(self.main(), 0)
@@ -557,22 +559,20 @@ class Limits(Case):
 
     def test_any_runs_note_exception_is_a_run_error_and_the_session_comment_still_ends(self):
         self.done(result=Result(-9, None, "usage limit", Limit(T)))
-        with mock.patch.object(run.runs, "note", side_effect=ValueError("bad line")):
+        with mock.patch.object(os, "fsync", side_effect=OSError("disk")):
             self.assertEqual(self.main(), 0)
-        self.assertEqual(self.said()[-1], "run run-error TASK-7 error=ValueError: bad line")
+        self.assertEqual(self.said()[-1], "run run-error TASK-7 error=OSError: disk")
         self.assertEqual(self.gql.calls[-2:], [*updated(ended("limit", -9)), REPAIR])
 
 
 class Cli(Case):
-    def test_tui_is_off_by_default_and_main_hands_inner_the_config_and_its_fakes(self):
-        seen = []
-        with mock.patch.object(
-            run, "inner", side_effect=lambda a, cfg, **kw: seen.append((a, cfg, kw)) or 0
-        ):
-            self.assertEqual(self.main(), 0)
-        ((a, cfg, kw),) = seen
-        self.assertEqual((a.tui, a.runtime, cfg.harness_key), (False, RUNTIME, HARNESS))
-        self.assertEqual(kw, {"gql": self.gql, "run": self.delegate})
+    def test_tui_is_off_by_default_and_main_hands_delegate_the_config_and_driver(self):
+        self.done()
+        self.assertEqual(self.main(), 0)
+        role, spec = self.call()
+        self.assertEqual((spec.mode, spec.runtime), ("headless", RUNTIME))
+        self.assertEqual(role, config.load().roles["engineer"].run)
+        self.assertIs(self.delegate.driver, self.api)
         self.assertEqual(linear.LOGS_DIR, self.logs)
         self.assertEqual(self.err, "")
 
@@ -607,7 +607,7 @@ class Cli(Case):
                 self.assertRaises(SystemExit) as cm,
                 redirect_stderr(io.StringIO()),
             ):
-                run.main(bad, gql=self.gql, run=self.delegate)
+                run.main(bad, gql=self.gql, run=self.delegate, driver=self.api, now=lambda: NOW)
             self.assertEqual(cm.exception.code, 2)
         self.nothing_ran()
 
@@ -618,7 +618,12 @@ class Cli(Case):
                 bad = [f"{flag}={value}" if x.startswith(flag + "=") else x for x in argv]
                 err = io.StringIO()
                 with redirect_stderr(err):
-                    self.assertEqual(run.main(bad, gql=self.gql, run=self.delegate), 2)
+                    self.assertEqual(
+                        run.main(
+                            bad, gql=self.gql, run=self.delegate, driver=self.api, now=lambda: NOW
+                        ),
+                        2,
+                    )
                 issue, sid = (value, SID) if flag == "--issue" else (ID, value)
                 self.assertEqual(
                     err.getvalue(), f"run.py: bad issue or session id: {issue} {sid}\n"

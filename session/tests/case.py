@@ -8,9 +8,8 @@ import unittest
 from unittest import mock
 
 import agent_pm
-from agent_pm.session import Session
-from agent_pm.session.adapters import registry
-from agent_pm.utils.paths import import_roots
+from agent_pm.session import Driver
+from agent_pm.utils import import_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOTS = import_roots(REPO)
@@ -22,14 +21,14 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
 def settings(adapters, tmux=None) -> dict:
-    """Session.configure's arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default tmux."""
+    """Driver's configuration arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default tmux."""
     hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
     return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
 
 
 class Case(unittest.TestCase):
     """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
+    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session settings."""
 
     def run(self, result=None):
         if foreign := _foreign():
@@ -47,14 +46,11 @@ class Case(unittest.TestCase):
         ):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
-            registry.reset()
-            try:
-                return super().run(result)
-            finally:
-                registry.reset()
+            self.configure_session({})
+            return super().run(result)
 
     def configure_session(self, adapters, tmux=None) -> None:
-        Session.configure(**settings(adapters, tmux))
+        self.driver = Driver(**settings(adapters, tmux), **getattr(self, "driver_dependencies", {}))
 
 
 def _foreign() -> str | None:

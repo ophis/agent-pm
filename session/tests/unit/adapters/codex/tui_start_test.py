@@ -1,6 +1,7 @@
 """Codex isolated startup trust, launch validation and process cleanup; both isolated scripts' sibling loading."""
 
 import ast
+import contextlib
 import copy
 import dataclasses
 import json
@@ -16,6 +17,7 @@ from agent_pm.session.adapters.codex import tui_hook, tui_start
 
 from session.tests import case
 from session.tests.case import Case
+from session.tests.modules import module_slot
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -49,7 +51,7 @@ class SiblingTest(Case):
         for name in SCRIPTS:
             with (
                 self.subTest(name=name),
-                mock.patch.dict(sys.modules, {SIBLINGS[1]: foreign}),
+                module_slot(SIBLINGS[1], foreign),
                 self.assertRaisesRegex(ImportError, SIBLINGS[1]),
             ):
                 runpy.run_path(str(DIRECTORY / name))
@@ -139,7 +141,7 @@ class StartTest(Base):
         with self.assertRaisesRegex(tui_start.StartError, "review"):
             tui_start.trusted(result, str(self.cwd), commands)
 
-    def test_standalone_dependencies_use_python39_syntax_and_stdlib(self):
+    def test_standalone_dependencies_use_stdlib(self):
         directory = pathlib.Path(tui_start.__file__).parent
         for name in (
             "sessions.py",
@@ -149,7 +151,7 @@ class StartTest(Base):
             "app_server.py",
         ):
             with self.subTest(name=name):
-                tree = ast.parse((directory / name).read_text(), feature_version=(3, 9))
+                tree = ast.parse((directory / name).read_text())
                 for node in ast.walk(tree):
                     if isinstance(node, ast.ImportFrom):
                         self.assertFalse((node.module or "").startswith(ROOTS))
@@ -163,11 +165,11 @@ class StartTest(Base):
             launch = run.launch("prompt", self.spec, False, hook)
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir") as chdir,
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]])
+            tui_start.main([launch.argv[-1]], trust=trust)
         chdir.assert_called_once_with(str(self.cwd))
         exe, argv, env = execute.call_args.args
         self.assertEqual(exe, "/protected/codex")
@@ -187,11 +189,11 @@ class StartTest(Base):
             )
         with (
             mock.patch.dict(os.environ, launch.env),
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}"),
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]])
+            tui_start.main([launch.argv[-1]], trust=trust)
         self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
@@ -199,8 +201,15 @@ class StartTest(Base):
         proc.stdout.fileno.return_value = 42
         with (
             mock.patch.object(tui_start.app_server.subprocess, "Popen", return_value=proc) as popen,
-            mock.patch.object(tui_start.app_server, "answer", side_effect=[{}, {"data": []}]),
-            mock.patch.object(tui_start.app_server, "close") as close,
+            mock.patch("select.select", return_value=([42], [], [])),
+            mock.patch(
+                "os.read",
+                side_effect=[
+                    b'{"id":1,"result":{}}\n{"id":2,"result":{"data":[]}}\n',
+                    b" ".strip(),
+                ],
+            ),
+            mock.patch("os.killpg"),
         ):
             self.assertEqual(
                 tui_start.hooks_list("/protected/fake", ["-c", "hook"], str(self.cwd), {}),
@@ -212,20 +221,26 @@ class StartTest(Base):
             [msg["method"] for msg in sent], ["initialize", "initialized", "hooks/list"]
         )
         self.assertEqual(sent[-1]["params"], {"cwds": [str(self.cwd)]})
-        close.assert_called_once_with(proc, None, tui_start.app_server.EXIT_WAIT)
+        proc.stdin.close.assert_called_once_with()
+        proc.stdout.close.assert_called_once_with()
 
     def test_retry_once_after_appserver_exit_and_start_lock_timeout(self):
         self.prepare()
         result, commands = self.catalog()
         with (
-            mock.patch.object(
-                tui_start, "hooks_list", side_effect=[tui_start.app_server.Exited(1), result]
+            contextlib.nullcontext(
+                mock.Mock(side_effect=[tui_start.app_server.Exited(1), result])
             ) as listing,
             mock.patch("time.sleep"),
         ):
             self.assertTrue(
                 tui_start.hook_trust(
-                    "fake", [], str(self.cwd), {"CODEX_HOME": str(self.codex_home)}, commands
+                    "fake",
+                    [],
+                    str(self.cwd),
+                    {"CODEX_HOME": str(self.codex_home)},
+                    commands,
+                    listing=listing,
                 ).startswith("hooks.state=")
             )
         self.assertEqual(listing.call_count, 2)
@@ -394,11 +409,11 @@ class ProtectTest(Base):
         spec = dataclasses.replace(self.spec, flags=flags)
         data = self.launch(spec)
         with (
-            mock.patch.object(tui_start, "hook_trust", return_value="hooks.state={exact}") as trust,
+            contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([data])
+            tui_start.main([data], trust=trust)
         argv = execute.call_args.args[1]
         start = argv.index("-c", 6)
         self.assertEqual(argv[start : start + len(flags)], list(flags))

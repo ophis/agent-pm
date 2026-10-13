@@ -27,7 +27,7 @@ from agent_pm.delegate.composer.teams import (
     team_paths,
     used,
 )
-from agent_pm.utils import config_file
+from agent_pm.utils import read_project
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, STEPS, VERSE, WRITER
@@ -88,7 +88,7 @@ class Fake(Case):
             f.write(text)
 
     def cfg(self):
-        return config_file.read_project("delegate", path=self.config, local=self.local_file)
+        return read_project("delegate", path=self.config, local=self.local_file)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""

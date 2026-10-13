@@ -1,5 +1,5 @@
 """The orchestrator's integration flows: the test's HOME with both local files ([task_labels] included), FakeLinear
-over HTTP (the AGENT_PM_LINEAR seam) with the harness, role and human accounts and the task label group, fake_claude
+over HTTP through test-only transport with the harness, role and human accounts and the task label group, fake_claude
 as `claude`, run, promote and router as `python3 -P -m` subprocesses, and readers of Linear, the logs and a run's
 files. TmuxFlow adds a private tmux server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo."""
 
@@ -12,7 +12,6 @@ import tempfile
 import tomllib
 from urllib.parse import quote
 
-from agent_pm.linear_orchestrator.linear import linear
 
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
@@ -112,11 +111,11 @@ class Flow(Case):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}),
+            **child_env({}, os.path.join(os.path.dirname(__file__), "transport")),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
-            linear.SEAM: self.seam,
+            "FAKE_LINEAR_TRANSPORT": self.seam,
             fake_claude.ENV: self.claude_scenario,
         }
 

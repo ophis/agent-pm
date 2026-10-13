@@ -1,5 +1,5 @@
 """Hosts a command (e.g. an agent runtime's interactive CLI) in a detached tmux session an agent or a person can watch
-and drive; agent-pm's only tmux caller. One file, tmux 3.3+ and the stdlib (3.9+), importing no agent_pm module: copy
+and drive; agent-pm's only tmux caller. One file, tmux 3.3+ and the stdlib, importing no agent_pm module: copy
 it anywhere. start never opens a pane; show does. Errors raise TuiError.
 """
 
@@ -698,6 +698,8 @@ def show(
     per_column: int | None = None,
     retile: str | None = None,
     proc=subprocess.run,
+    tile_window=None,
+    script=None,
 ) -> str | None:
     """Prints how to attach, then runs template, else open_pane; "" runs nothing. A failure is returned, never raised,
     but open_pane's TuiError for a bad argument."""
@@ -711,6 +713,8 @@ def show(
             per_column=per_column,
             retile=retile,
             proc=proc,
+            tile_window=tile_window,
+            script=script,
         )
     else:
         why = _run(session, template, proc) if template else None
@@ -728,6 +732,8 @@ def open_pane(
     per_column: int | None = None,
     retile: str | None = None,
     proc=subprocess.run,
+    tile_window=None,
+    script=None,
 ) -> str | None:
     """Opens a pane on the session, recording @opener and @pane. Grid mode (_grid): splits the pane _grid picks and
     tiles the window per retile and per_column, ignoring split and split_from. Else below the newest open @pane of the
@@ -784,6 +790,8 @@ def open_pane(
         PER_COLUMN if per_column is None else per_column,
         RETILE if retile is None else retile,
         proc,
+        tile_window=tile_window,
+        script=script,
     )
 
 
@@ -848,7 +856,9 @@ def _window(
     return window, stored if stored in areas else manager, areas, rows[0][6]
 
 
-def _grid_up(window: str, manager: str, per_column: int, retile: str, proc) -> str | None:
+def _grid_up(
+    window: str, manager: str, per_column: int, retile: str, proc, *, tile_window=None, script=None
+) -> str | None:
     """Sets the grid options and retile's hooks (none when tmux would misread a path), then tiles unless off. None or
     the failure."""
     args = [
@@ -874,7 +884,7 @@ def _grid_up(window: str, manager: str, per_column: int, retile: str, proc) -> s
         GRID_BUSY,
     ]
     mode = RETILE_HOOKS[retile]
-    paths = (sys.executable or "", os.path.abspath(__file__))
+    paths = (sys.executable or "", os.path.abspath(__file__ if script is None else script))
     bad = [p for p in paths if not HOOK_PATH.fullmatch(p)] if mode else []
     if bad:
         print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
@@ -891,7 +901,7 @@ def _grid_up(window: str, manager: str, per_column: int, retile: str, proc) -> s
     try:
         _tmux_ok(args, proc)
         if mode:
-            tile(window, per_column=per_column, proc=proc)
+            (tile if tile_window is None else tile_window)(window, per_column=per_column, proc=proc)
     except TuiError as e:
         return str(e)
     return None
@@ -1441,7 +1451,16 @@ def _swaps(have: list[str], want: list[str]) -> list[tuple[str, str]]:
     return swaps
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, operations=None) -> int:
+    actions = {
+        "start": start,
+        "send": send,
+        "read": read,
+        "tile": tile,
+        "status": status,
+        "show": show,
+        **(operations or {}),
+    }
     ap = argparse.ArgumentParser(
         prog="tmux_host.py",
         description="Host a command, e.g. an agent's TUI, in a "
@@ -1499,19 +1518,21 @@ def main(argv: list[str] | None = None) -> int:
         start_p.error("a command must follow --")
     try:
         if a.cmd == "start":
-            start(a.session, command, cwd=os.getcwd(), env=dict(os.environ), events=a.events)
+            actions["start"](
+                a.session, command, cwd=os.getcwd(), env=dict(os.environ), events=a.events
+            )
         elif a.cmd == "send":
-            send(a.session, a.text)
+            actions["send"](a.session, a.text)
         elif a.cmd == "read":
-            print(read(a.session, a.lines))
+            print(actions["read"](a.session, a.lines))
         elif a.cmd == "tile":
-            tile(a.window, wait=not a.no_wait, if_panes_changed=a.if_panes_changed)
+            actions["tile"](a.window, wait=not a.no_wait, if_panes_changed=a.if_panes_changed)
         else:
-            if status(a.session) is None:
+            if actions["status"](a.session) is None:
                 raise TuiError(f"no session {a.session}")
             return (
                 1
-                if show(
+                if actions["show"](
                     a.session,
                     a.show,
                     split=a.split,

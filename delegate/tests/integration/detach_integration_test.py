@@ -17,8 +17,6 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.session.engine import records
-
 from delegate.tests.case import PYTHONPATH, Case
 from delegate.tests.integration.cli import ASKING, CLI, DONE, SID
 from delegate.tests.replies import block, mark, running
@@ -116,11 +114,18 @@ class Detach(Case):
         self.until(lambda: not self.live(DRIVER), f"{DRIVER} gone")
         return shape(live_tmux.events(self.events))
 
+    def records(self):
+        try:
+            with open(os.path.join(self.work, "run.jsonl")) as stream:
+                return [json.loads(line) for line in stream]
+        except FileNotFoundError:
+            return []
+
     def kinds(self) -> list[str]:
-        return [e["kind"] for e in records.read(records.path(self.work))]
+        return [e["kind"] for e in self.records()]
 
     def last(self, kind: str) -> dict:
-        return [e for e in records.read(records.path(self.work)) if e["kind"] == kind][-1]
+        return [e for e in self.records() if e["kind"] == kind][-1]
 
     def read(self, path: str) -> str:
         with open(path) as f:

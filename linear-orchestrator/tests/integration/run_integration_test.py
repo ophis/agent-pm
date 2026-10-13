@@ -14,7 +14,7 @@ from delegate.tests.replies import block, mark, option
 
 from ..unit.board_ids import STATES
 from ..unit.run_fixtures import ID, SESSION, SID, UUID
-from ..unit.writeback_test import APPROVE_MAPPED, DOC, PR, PRD
+from ..unit.writeback_support import APPROVE_MAPPED, DOC, PR, PRD
 from .flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,

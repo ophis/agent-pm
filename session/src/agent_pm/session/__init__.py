@@ -4,21 +4,11 @@
 from agent_pm.session.engine.api import (
     MODES,
     SIGNALS,
+    Driver,
     Handle,
-    attach,
-    attach_command,
-    close,
-    detach,
     holds,
-    layout,
     note,
     session_record,
-    session_status,
-    sessions,
-    show,
-    start,
-    usage,
-    writable_dirs,
 )
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.status_log import SessionStatusLog
@@ -44,23 +34,13 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, NotDisplayable, Terminal
 
 __all__ = [
+    "Driver",
     "Handle",
     "MODES",
     "SIGNALS",
-    "attach",
-    "attach_command",
-    "close",
-    "detach",
     "holds",
-    "layout",
     "note",
     "session_record",
-    "session_status",
-    "sessions",
-    "show",
-    "start",
-    "usage",
-    "writable_dirs",
     "Session",
     "Spec",
     "Access",
