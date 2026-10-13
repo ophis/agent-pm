@@ -6,9 +6,24 @@ import contextlib
 import os
 import subprocess
 import tempfile
+from types import ModuleType
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 STATE = "~/.agent-pm"
+
+
+def module_roots(*packages: ModuleType) -> tuple[str, ...]:
+    """Source roots of already-imported packages, retaining their order."""
+    roots = []
+    for package in packages:
+        path = package.__file__
+        if path is None:
+            raise ValueError(f"{package.__name__}: package has no source file")
+        root = os.path.dirname(os.path.abspath(path))
+        for _part in package.__name__.split("."):
+            root = os.path.dirname(root)
+        roots.append(root)
+    return tuple(dict.fromkeys(roots))
 
 
 def real_dirs(paths, label: str) -> frozenset[str]:

@@ -7,9 +7,17 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
-from agent_pm.utils.paths import import_roots, printable_abs, real_dirs, temp_dirs, under
+from agent_pm.utils.paths import (
+    import_roots,
+    module_roots,
+    printable_abs,
+    real_dirs,
+    temp_dirs,
+    under,
+)
 
 from utils.tests.case import REPO, Case
 
@@ -136,3 +144,25 @@ class ImportRootsTest(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModuleRootsTest(Case):
+    def test_separate_package_roots_follow_module_files_in_order(self):
+        session = ModuleType("agent_pm.session")
+        session.__file__ = "/installation-one/agent_pm/session/__init__.py"
+        utils = ModuleType("agent_pm.utils")
+        utils.__file__ = "/installation-two/agent_pm/utils/__init__.py"
+        self.assertEqual(module_roots(session, utils), ("/installation-one", "/installation-two"))
+
+    def test_a_shared_installation_root_is_supplied_once(self):
+        session = ModuleType("agent_pm.session")
+        session.__file__ = "/installation/agent_pm/session/__init__.py"
+        utils = ModuleType("agent_pm.utils")
+        utils.__file__ = "/installation/agent_pm/utils/__init__.py"
+        self.assertEqual(module_roots(session, utils), ("/installation",))
+
+    def test_a_package_without_a_file_is_rejected(self):
+        package = ModuleType("namespace")
+        package.__file__ = None
+        with self.assertRaisesRegex(ValueError, "package has no source file"):
+            module_roots(package)

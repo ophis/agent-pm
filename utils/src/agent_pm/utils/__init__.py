@@ -29,6 +29,7 @@ from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
     import_roots,
+    module_roots,
     printable_abs,
     real_dirs,
     temp_dirs,
@@ -73,6 +74,7 @@ __all__ = [
     "json_records",
     "load_class",
     "number",
+    "module_roots",
     "origin",
     "printable",
     "printable_abs",
