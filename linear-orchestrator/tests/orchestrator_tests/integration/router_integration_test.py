@@ -5,6 +5,7 @@ usage gate; a long description reaches the run; a SIGTERM'd run.py ends its run;
 gate runs on a session's PYTHONPATH.
 """
 
+import contextlib
 import os
 import shlex
 import signal
