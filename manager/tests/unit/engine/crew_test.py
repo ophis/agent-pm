@@ -11,10 +11,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from unittest import mock
 
-from agent_pm.manager.engine.crew import BIN, HERE, Crew
-from agent_pm.manager.engine.roster import Roster
+from agent_pm.manager.engine.crew import BIN, HERE, RECOVERY_AGE, TIMEOUT, Crew
+from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
 
@@ -48,13 +49,12 @@ class CrewTest(Case):
     def calls(self, verb):
         return [call for call in ctl.calls(self.ctl_dir) if call["argv"][0] == verb]
 
-    def age(self, name, seconds=31):
+    def age(self, name, seconds=RECOVERY_AGE + 1, *, instant=None):
         path = os.path.join(self.directory, "roster.json")
         with open(path, encoding="utf-8") as stream:
             value = json.load(stream)
-        value["entries"][name]["started"] = (
-            datetime.now(UTC) - timedelta(seconds=seconds)
-        ).isoformat()
+        now = datetime.now(UTC) if instant is None else instant
+        value["entries"][name]["started"] = (now - timedelta(seconds=seconds)).isoformat()
         with open(path, "w", encoding="utf-8") as stream:
             json.dump(value, stream)
 
@@ -349,6 +349,88 @@ class CrewTest(Case):
             table = self.crew.attach()
         self.assertNotIn("stop", self.roster.entries())
         self.assertNotIn("stop\t", table)
+
+    def test_attach_recovery_age_below_at_and_above_boundary_for_both_pending_states(self):
+        instant = datetime(2026, 10, 13, 12, tzinfo=UTC)
+        for state in (State.STARTING, State.RESUMING):
+            for offset in (-1, 0, 1):
+                name = f"{state}-{offset}"
+                with self.subTest(state=state, offset=offset):
+                    if state == State.STARTING:
+                        self.roster.begin(
+                            Spec(name, (self.command, "start", name)), sid=str(uuid.uuid4())
+                        )
+                    else:
+                        self.gone(name)
+                        self.roster.claim_resume(name)
+                    self.age(name, RECOVERY_AGE + offset, instant=instant)
+                    with self.listed(), mock.patch("datetime.datetime", wraps=datetime) as clock:
+                        clock.now.return_value = instant
+                        self.crew.attach()
+                    expired = State.LOST if state == State.STARTING else State.GONE
+                    self.assertEqual(
+                        self.roster.entries()[name].state, expired if offset > 0 else state
+                    )
+
+    def test_attach_preserves_commit_during_legitimate_delayed_launch_and_resume(self):
+        origin = datetime(2026, 10, 13, 12, microsecond=999999, tzinfo=UTC)
+        duration = TIMEOUT + 4 * LOCK_TIMEOUT
+        for state in (State.STARTING, State.RESUMING):
+            name = f"delayed-{state}"
+            original = None if state == State.STARTING else self.gone(name)
+            entered, proceed = Event(), Event()
+            with self.listed():
+                native_run = subprocess.run
+                with mock.patch("datetime.datetime", wraps=datetime) as clock:
+                    clock.now.return_value = origin
+
+                    def run(
+                        argv,
+                        *,
+                        name=name,
+                        entered=entered,
+                        proceed=proceed,
+                        native_run=native_run,
+                        **options,
+                    ):
+                        if tuple(argv) in {
+                            (self.command, "start", name),
+                            (self.command, "resume", name),
+                        }:
+                            clock.now.return_value = origin + timedelta(seconds=duration)
+                            entered.set()
+                            if not proceed.wait(5):
+                                raise AssertionError("pending launch was not released")
+                        return native_run(argv, **options)
+
+                    with (
+                        mock.patch("subprocess.run", side_effect=run),
+                        ThreadPoolExecutor(max_workers=1) as pool,
+                    ):
+                        crew = Crew(Roster(self.directory))
+                        future = (
+                            pool.submit(crew.run, Spec(name, (self.command, "start", name)))
+                            if state == State.STARTING
+                            else pool.submit(crew.resume, name)
+                        )
+                        try:
+                            self.assertTrue(entered.wait(5), "launch did not reach its starter")
+                            observed = Roster(self.directory).entries()[name]
+                            age = (
+                                clock.now.return_value - datetime.fromisoformat(observed.started)
+                            ).total_seconds()
+                            self.assertGreater(age, duration)
+                            self.assertLess(age, RECOVERY_AGE)
+                            Crew(Roster(self.directory)).attach()
+                            self.assertEqual(Roster(self.directory).entries()[name].state, state)
+                        finally:
+                            proceed.set()
+                        record = future.result(5)
+            entry = self.roster.entries()[name]
+            self.assertEqual((entry.state, entry.record), (State.LIVE, record))
+            self.assertIsNone(entry.receipt)
+            if original is not None:
+                self.assertEqual(record, original)
 
     def test_attach_times_out_old_starting_and_resuming_entries_but_leaves_young_ones(self):
         self.roster.begin(Spec("old", (self.command, "start", "old")), sid=str(uuid.uuid4()))

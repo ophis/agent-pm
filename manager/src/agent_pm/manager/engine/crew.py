@@ -1,5 +1,6 @@
 """Execute opaque starter, control and resume commands while Roster owns their bookkeeping."""
 
+import datetime
 import os
 import re
 import shlex
@@ -9,14 +10,15 @@ import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_pm.manager.engine.roster import Roster
+from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
+# Events, receipt open/read and commit each wait for the lock; intent timestamps lose sub-seconds.
+RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + 1
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
@@ -187,10 +189,10 @@ class Crew:
             here = None
         if gen is not None:
             self.roster.advance(after, gen)
-        instant = datetime.now(UTC)
+        instant = datetime.datetime.now(datetime.UTC)
         for name, entry in self.roster.entries().items():
-            age = (instant - datetime.fromisoformat(entry.started)).total_seconds()
-            if age <= TIMEOUT:
+            age = (instant - datetime.datetime.fromisoformat(entry.started)).total_seconds()
+            if age <= RECOVERY_AGE:
                 continue
             if entry.state == State.STARTING:
                 self.roster.mark_if(name, entry, State.LOST)

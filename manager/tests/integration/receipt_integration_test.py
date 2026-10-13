@@ -8,7 +8,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent_pm.manager.engine.crew import Crew
+from agent_pm.manager.engine.crew import RECOVERY_AGE, Crew
 from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import State
 
@@ -69,7 +69,7 @@ class Receipt(Case):
             child.communicate(timeout=5)
             data = json.loads(Path(roster.path).read_text())
             data["entries"]["alias"]["started"] = (
-                datetime.now(UTC) - timedelta(seconds=31)
+                datetime.now(UTC) - timedelta(seconds=RECOVERY_AGE + 1)
             ).isoformat()
             Path(roster.path).write_text(json.dumps(data))
             with self.listed([record]):
