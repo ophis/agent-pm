@@ -91,7 +91,7 @@ class Stopped(BaseException):
         self.signum = signum
 
 
-class _Termination:
+class _Termination(app_server.Termination):
     def __init__(self):
         self.signum = 0
         self.previous = {}

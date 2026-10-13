@@ -2,9 +2,39 @@
 
 from unittest import mock
 
-from agent_pm.session.adapters.codex import app_server
+from agent_pm.session.adapters.codex import app_server, tui_start
 
 from session.tests.case import Case
+
+
+class FakeTermination(app_server.Termination):
+    def __init__(self, signum):
+        self.signum = signum
+        self.checks = mock.Mock()
+
+    def check(self) -> None:
+        self.checks()
+
+
+class TerminationTest(Case):
+    def test_incomplete_implementation_cannot_be_instantiated(self):
+        class Incomplete(app_server.Termination):
+            signum = 0
+
+        with self.assertRaisesRegex(TypeError, "abstract.*check"):
+            Incomplete()
+
+    def test_startup_implementation_preserves_the_first_received_signal(self):
+        termination = tui_start._Termination()
+        self.assertIsInstance(termination, app_server.Termination)
+        self.assertEqual(termination.signum, 0)
+        self.assertIsNone(termination.check())
+        termination.receive(tui_start.signal.SIGTERM, None)
+        termination.receive(tui_start.signal.SIGHUP, None)
+        with self.assertRaises(tui_start.Stopped) as stopped:
+            termination.check()
+        self.assertEqual(termination.signum, tui_start.signal.SIGTERM)
+        self.assertEqual(stopped.exception.signum, tui_start.signal.SIGTERM)
 
 
 class ClientTest(Case):
@@ -45,8 +75,8 @@ class ClientTest(Case):
             app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
 
     def test_termination_before_spawn_still_checks_on_exit(self):
-        termination = mock.Mock(signum=15)
-        termination.check.side_effect = RuntimeError("terminated")
+        termination = FakeTermination(15)
+        termination.checks.side_effect = RuntimeError("terminated")
         with (
             mock.patch("subprocess.Popen") as popen,
             mock.patch("os.killpg") as kill,
@@ -57,23 +87,23 @@ class ClientTest(Case):
             )
         popen.assert_not_called()
         kill.assert_not_called()
-        self.assertEqual(termination.check.call_count, 2)
+        self.assertEqual(termination.checks.call_count, 2)
 
     def test_termination_after_spawn_closes_before_final_check(self):
         proc = mock.Mock(pid=123)
         proc.stdout.fileno.return_value = 42
-        termination = mock.Mock(signum=15)
+        termination = FakeTermination(15)
 
         def check():
-            if termination.check.call_count == 1:
+            if termination.checks.call_count == 1:
                 return
-            if termination.check.call_count == 3:
+            if termination.checks.call_count == 3:
                 proc.wait.assert_called_once_with()
                 proc.stdin.close.assert_called_once_with()
                 proc.stdout.close.assert_called_once_with()
             raise RuntimeError("terminated")
 
-        termination.check.side_effect = check
+        termination.checks.side_effect = check
         with (
             mock.patch("subprocess.Popen", return_value=proc),
             mock.patch("os.killpg") as kill,
@@ -84,10 +114,10 @@ class ClientTest(Case):
             )
         kill.assert_called_once_with(123, app_server.signal.SIGKILL)
         proc.stdin.write.assert_not_called()
-        self.assertEqual(termination.check.call_count, 3)
+        self.assertEqual(termination.checks.call_count, 3)
 
     def test_spawn_failure_still_checks_termination_without_cleanup(self):
-        termination = mock.Mock(signum=0)
+        termination = FakeTermination(0)
         with (
             mock.patch("subprocess.Popen", side_effect=FileNotFoundError(2, "not found")),
             mock.patch("os.killpg") as kill,
@@ -97,7 +127,7 @@ class ClientTest(Case):
                 "fake", [], "hooks/list", env={}, wait=1, limit=1024, termination=termination
             )
         kill.assert_not_called()
-        self.assertEqual(termination.check.call_count, 2)
+        self.assertEqual(termination.checks.call_count, 2)
 
     def test_broken_pipe_reports_returncode_after_process_cleanup(self):
         proc = mock.Mock(pid=123, returncode=None)
