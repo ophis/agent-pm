@@ -397,9 +397,9 @@ class ConfigErrors(Integration):
                 [*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
                 "--input, --out and --workdir are required",
             ),
-            "a runtime without tui": (
-                self.argv("--runtime", "print_prompt", "--mode", "tui"),
-                "runtime 'print_prompt' does not support tui mode",
+            "a runtime without in_process": (
+                self.argv("--runtime", "codex", "--mode", "in_process"),
+                "runtime 'codex' does not support in_process mode",
             ),
         }
         for name, (argv, said) in cases.items():
