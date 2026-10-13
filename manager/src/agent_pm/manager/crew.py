@@ -7,8 +7,9 @@ error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONP
 -P -m agent_pm.manager.crew …`, the form of each crew command it prints. main first sets PYTHONPATH to U, the caller's minus
 each entry resolving to one (unset when empty): what workers and recovered role or pipeline entries get; then
 configures the session from the session config before a subcommand of STARTS (those that start, show or attach a
-session). The import roots (delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it
-prints (U as at print time) and a recovered worker entry."""
+session); next-event configures just before it attaches, a config error becoming its content text. The import roots
+(delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it prints (U as at
+print time) and a recovered worker entry."""
 
 import argparse
 import contextlib
@@ -405,6 +406,7 @@ def content(event: str) -> str:
     if kind not in ("done", "blocked", "dead"):
         return ""
     if kind == "done":
+        _configure()
         try:
             text = api.attach(name).reply
         except (api.ConfigError, api.DriverError):
@@ -416,6 +418,7 @@ def content(event: str) -> str:
         raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
+    _configure()
     with _driver():
         return api.attach(name).screen(PANE_LINES)
 

@@ -1011,19 +1011,25 @@ class MainTest(WorkerCase):
         self.assertEqual(self.api.calls, [])
 
     def test_the_other_commands_work_with_a_bad_config(self):
-        self.started(note="keep")
         for text in ("x = \n", "bogus = 1\n"):
+            self.local('runtime = "rt0"\n')
+            self.started("w1", note="keep")
+            self.started("w2")
+            self.api.rows.pop("w2")
             self.local(text)
-            for argv in (
-                ["note", "w1", "new", "--manager", "m1"],
-                ["stop-all", "--dry-run"],
-                ["stop", "w1", "--manager", "m1"],
-                ["forget", "w1", "--manager", "m1"],
-                ["release", "--manager", "m1"],
+            workers = self.api
+            for fake, argv in (
+                (workers, ["note", "w1", "new", "--manager", "m1"]),
+                (Api(), ["stop-all", "--dry-run"]),
+                (workers, ["stop", "w1", "--manager", "m1"]),
+                (workers, ["forget", "w2", "--manager", "m1"]),
+                (workers, ["release", "--manager", "m1"]),
             ):
                 with self.subTest(text=text, cmd=argv[0]):
-                    rc, out, err = self.run_main(*argv)
+                    rc, out, err = self.main_with(fake, *argv)
+                    self.assertEqual(rc, 0, err)
                     self.assertNotIn("config", err)
+            self.api = workers
 
     def test_reply(self):
         for reply, want in (("done", (0, "done\n", "")), ("", (0, "", "")), (None, (0, "", ""))):
@@ -1393,6 +1399,21 @@ class NextEventContentTest(CrewCase):
         got = self.run_event("10:00:01 w1 done", self.live(""))
         self.assertEqual(got, (0, nl("1 10:00:01 w1 done"), ""))
         self.assertEqual(self.api.ran("screen"), [])
+
+    def test_a_done_events_reply_is_read_only_after_configure(self):
+        registry.reset()
+        seen, attach = [], self.api.attach
+        self.api.attach = lambda name: seen.append(registry.configured()) or attach(name)
+        got = self.run_event("10:00:01 w1 done", self.live("r"))
+        self.assertEqual(got, (0, nl("1 10:00:01 w1 done", "r"), ""))
+        self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
+
+    def test_a_bad_config_is_a_done_events_content(self):
+        self.local("bogus = 1\n")
+        rc, out, err = self.run_event("10:00:01 w1 done", self.live("r"))
+        self.assertEqual((rc, out.split("\n")[0], err), (0, "1 10:00:01 w1 done", ""))
+        self.assertTrue(out.split("\n")[1].startswith("workers: config: "), out)
+        self.assertEqual(self.api.ran("attach"), [])
 
     def test_a_content_failure_is_printed_on_stdout_exit_0(self):
         cases = (
