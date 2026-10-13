@@ -13,13 +13,14 @@ flowchart LR
 
 ### Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each layer calls only the next lower one, through its public package; temporary TASK-371/372 exceptions: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Import rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
   subgraph EN[entry points]
     LD[launchd]
     HU[the user]
+    CC[Record commands]
   end
   subgraph MG[agent_pm.manager]
     W["engine/crew.py"] --> RS["engine/roster.py"]
@@ -61,7 +62,7 @@ flowchart TB
   RU -->|agent_pm.delegate| D
   LC -->|agent_pm.delegate| C
   LO -->|"agent_pm.session, until TASK-372"| DR
-  MG -->|"agent_pm.session, until TASK-371"| DR
+  W -.-> CC
   D --> C
   D -->|agent_pm.session| SE
   C -->|reads| T
@@ -172,7 +173,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
 session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
-manager/              engine/crew.py and engine/roster.py: a manager's workers and roster
+manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
 tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers

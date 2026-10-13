@@ -572,19 +572,58 @@ def manager_exports(repo: str) -> list[str]:
     )
     if exports is None:
         return [f"{base}: missing __all__"]
+    try:
+        names = ast.literal_eval(exports)
+    except (ValueError, TypeError):
+        return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
+    if not isinstance(names, list | tuple) or not all(isinstance(name, str) for name in names):
+        return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
     modules = _source_modules(repo, ("manager", "utils"))
-    functions = {
-        f"{rel.removesuffix('.py').replace('/', '.').removesuffix('.__init__')}.{n.name}"
-        for project in ("manager", "utils")
-        for rel, text in _files(os.path.join(repo, project, "src"), ".py")
-        for n in ast.parse(text).body
-        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
-    }
-    return sorted(
-        f"{base}:{exports.lineno}: exports function {name}"
-        for name in ast.literal_eval(exports)
-        if _resolve_boundary(f"agent_pm.manager.{name}", modules) in functions
-    )
+    definitions = {}
+    for project in ("manager", "utils"):
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            for node in ast.parse(text).body:
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    definitions[f"{module}.{node.name}"] = "function"
+                elif isinstance(node, ast.ClassDef):
+                    definitions[f"{module}.{node.name}"] = "class"
+                elif isinstance(node, ast.Assign | ast.AnnAssign):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if isinstance(node.value, ast.Lambda):
+                        kind = "function"
+                    else:
+                        try:
+                            ast.literal_eval(node.value)
+                        except (ValueError, TypeError):
+                            continue
+                        kind = "constant"
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            definitions[f"{module}.{target.id}"] = kind
+    found = []
+    for name in names:
+        original = f"agent_pm.manager.{name}"
+        resolved = _resolve_boundary(original, modules)
+        kind = definitions.get(original) or definitions.get(resolved)
+        if kind is None and "." not in resolved:
+            kind = definitions.get(f"agent_pm.manager.{resolved}")
+        if kind is None:
+            module, _, member = resolved.rpartition(".")
+            if module.split(".")[0] in sys.stdlib_module_names:
+                value = getattr(importlib.import_module(module), member, None)
+                kind = (
+                    "class" if isinstance(value, type) else "function" if callable(value) else None
+                )
+        if kind == "function":
+            found.append(f"{base}:{exports.lineno}: exports function {name}")
+        elif (
+            kind != "class"
+            and kind != "constant"
+            and (not name.isupper() or resolved in modules or resolved in sys.stdlib_module_names)
+        ):
+            found.append(f"{base}:{exports.lineno}: exports nonconstant {name}")
+    return sorted(found)
 
 
 def literal_imports(repo: str) -> list[str]:

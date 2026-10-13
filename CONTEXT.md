@@ -97,10 +97,10 @@ The core run keys the Linear orchestrator adds to its own agent runs, in `linear
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.
 
 **Crew**:
-A manager's workers and the commands that start, show, follow and stop them. In code: `manager/src/agent_pm/manager/engine/crew.py`.
+A manager's command executor. It owns a Roster, starts opaque argv and uses each Record's control and resume commands. In code: `manager/src/agent_pm/manager/engine/crew.py`; command entry: `manager/src/agent_pm/manager/cli.py`.
 
 **Roster**:
-A manager's list of what it started (workers, role runs, pipelines), with its events cursor: `~/.agent-pm/managers/<name>/roster.json`. In code: `manager/src/agent_pm/manager/engine/roster.py`.
+A manager's ledger of launch intents and Records, entry states, holder lease and events cursor: `~/.agent-pm/managers/<name>/roster.json`. It alone writes the ledger and manages event rotation. In code: `manager/src/agent_pm/manager/engine/roster.py` and `events.py`.
 
 **Worker**:
 A plain tui session a manager starts through its crew, in its own `~/.agent-pm/workers/<sid>/`; no role, no task.

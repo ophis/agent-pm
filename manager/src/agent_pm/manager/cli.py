@@ -1,0 +1,178 @@
+"""agent-pm-crew: command-based launches and a manager's persistent roster."""
+
+import argparse
+import os
+import re
+import shlex
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from agent_pm.manager import Crew, Roster, RosterError, Spec, State
+from agent_pm.utils import STATE
+
+
+def _number(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("want a non-negative integer") from error
+    if number < 0:
+        raise argparse.ArgumentTypeError("want a non-negative integer")
+    return number
+
+
+def _after(value: str) -> int | None:
+    return None if value == "end" else _number(value)
+
+
+def _crew(args) -> Crew:
+    manager = args.manager or os.environ.get("AGENT_PM_MANAGER")
+    if not manager or not re.fullmatch(r"[A-Za-z0-9_-]+", manager):
+        raise ValueError("give --manager NAME or set AGENT_PM_MANAGER to a manager name")
+    owner = args.owner or os.environ.get("AGENT_PM_MANAGER")
+    directory = Path(os.path.expanduser(STATE)) / "managers" / manager
+    return Crew(Roster(str(directory)), owner=owner)
+
+
+def _run(args) -> int:
+    print(_crew(args).run(Spec(args.name, args.command, args.note)).to_line())
+    return 0
+
+
+def _attach(args) -> int:
+    crew = _crew(args)
+    print(crew.attach(after=args.after, gen=args.gen), end="")
+    for name, entry in crew.roster.entries().items():
+        if entry.state == State.GONE:
+            command = (
+                "agent-pm-crew",
+                "resume",
+                "--manager",
+                args.manager or os.environ["AGENT_PM_MANAGER"],
+                name,
+            )
+            print(f"resume: {shlex.join(command)}")
+    return 0
+
+
+def _status(args) -> int:
+    for status in _crew(args).status(args.names):
+        print(status.to_line())
+    return 0
+
+
+def _resume(args) -> int:
+    crew = _crew(args)
+    failed = False
+    for name in args.names:
+        try:
+            record = crew.resume(name)
+            if record is not None:
+                print(record.to_line())
+        except (RosterError, RuntimeError, ValueError) as error:
+            print(f"crew: {error}", file=sys.stderr)
+            failed = True
+    return int(failed)
+
+
+def _stop(args) -> int:
+    _crew(args).stop(args.name)
+    return 0
+
+
+def _stop_all(args) -> int:
+    for name in _crew(args).stop_all(dry_run=args.dry_run):
+        print(name)
+    return 0
+
+
+def _forget(args) -> int:
+    _crew(args).forget(args.name)
+    return 0
+
+
+def _note(args) -> int:
+    _crew(args).note(args.name, args.text)
+    return 0
+
+
+def _release(args) -> int:
+    _crew(args).release()
+    return 0
+
+
+def _next_event(args) -> int:
+    line, event = _crew(args).next_event(after=args.after, gen=args.gen)
+    print(f"{line} {event}")
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="agent-pm-crew")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--manager", help="roster name; default: AGENT_PM_MANAGER")
+    common.add_argument("--owner", help="lease holder identity; default: AGENT_PM_MANAGER")
+    subs = parser.add_subparsers(required=True)
+    run = subs.add_parser("run", parents=[common])
+    run.add_argument("name")
+    run.add_argument("--note")
+    run.set_defaults(func=_run)
+    attach = subs.add_parser("attach", parents=[common])
+    attach.add_argument("--after", type=_number)
+    attach.add_argument("--gen", type=_number)
+    attach.set_defaults(func=_attach)
+    status = subs.add_parser("status", parents=[common])
+    status.add_argument("names", nargs="*")
+    status.set_defaults(func=_status)
+    resume = subs.add_parser("resume", parents=[common])
+    resume.add_argument("names", nargs="+")
+    resume.set_defaults(func=_resume)
+    for name, handler in (("stop", _stop), ("forget", _forget)):
+        command = subs.add_parser(name, parents=[common])
+        command.add_argument("name")
+        command.set_defaults(func=handler)
+    stop_all = subs.add_parser("stop-all", parents=[common])
+    stop_all.add_argument("--dry-run", action="store_true")
+    stop_all.set_defaults(func=_stop_all)
+    note = subs.add_parser("note", parents=[common])
+    note.add_argument("name")
+    note.add_argument("text", help="empty text clears the note")
+    note.set_defaults(func=_note)
+    subs.add_parser("release", parents=[common]).set_defaults(func=_release)
+    next_event = subs.add_parser("next-event", parents=[common])
+    next_event.add_argument("--after", type=_after, required=True)
+    next_event.add_argument("--gen", type=_number, required=True)
+    next_event.set_defaults(func=_next_event)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    command = ()
+    if "--" in arguments:
+        delimiter = arguments.index("--")
+        command = tuple(arguments[delimiter + 1 :])
+        arguments = arguments[:delimiter]
+    parser = _parser()
+    args = parser.parse_args(arguments)
+    if args.func is _run:
+        if not command:
+            parser.error("run requires -- followed by a command")
+        args.command = command
+    elif command:
+        parser.error("only run accepts a command after --")
+    if args.func is _attach and (args.after is None) != (args.gen is None):
+        parser.error("--after and --gen go together")
+    try:
+        return args.func(args)
+    except ValueError as error:
+        print(f"crew: {error}", file=sys.stderr)
+        return 2
+    except (OSError, RosterError, RuntimeError) as error:
+        print(f"crew: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1740,3 +1740,32 @@ class ManagerBoundaries(Sample):
             }
         )
         self.assertEqual(guards.manager_exports(clean), [])
+
+    def test_function_aliases_lambdas_stdlib_and_modules_are_not_exports(self):
+        base = "manager/src/agent_pm/manager/__init__.py"
+        root = self.tree(
+            {
+                base: 'from os import getcwd as CWD\nimport os as OS\ndef f(): pass\ng = f\nLAMBDA = lambda: 0\n__all__ = ["CWD", "OS", "g", "LAMBDA"]\n'
+            }
+        )
+        self.assertEqual(
+            guards.manager_exports(root),
+            [
+                f"{base}:6: exports function CWD",
+                f"{base}:6: exports function LAMBDA",
+                f"{base}:6: exports function g",
+                f"{base}:6: exports nonconstant OS",
+            ],
+        )
+        clean = self.tree(
+            {base: 'from pathlib import Path\nVALUE = "one"\n__all__ = ["Path", "VALUE"]\n'}
+        )
+        self.assertEqual(guards.manager_exports(clean), [])
+
+    def test_exports_require_a_literal_sequence_of_names(self):
+        base = "manager/src/agent_pm/manager/__init__.py"
+        for source in ("__all__ = discover()\n", "__all__ = [1]\n"):
+            self.assertEqual(
+                guards.manager_exports(self.tree({base: source})),
+                [f"{base}:1: __all__ must be a literal sequence of names"],
+            )
