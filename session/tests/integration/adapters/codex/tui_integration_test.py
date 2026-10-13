@@ -170,9 +170,10 @@ class Live(Case):
             "codex",
             "tui",
             prompt,
-            kwargs.pop("spec", self.spec),
-            name=name,
-            **{"sid": self.sid, "events": str(self.events), **kwargs},
+            dataclasses.replace(
+                kwargs.pop("spec", self.spec), name=name, sid=kwargs.pop("sid", self.sid)
+            ),
+            **{"events": str(self.events), **kwargs},
         )
         self.addCleanup(handle.stop)
         return handle
@@ -224,8 +225,7 @@ class Live(Case):
             "codex",
             "headless",
             "headless",
-            self.spec,
-            sid=self.sid,
+            dataclasses.replace(self.spec, sid=self.sid),
             resume=self.sid if resume else None,
         )
         self.addCleanup(handle.stop)

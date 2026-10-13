@@ -4,7 +4,7 @@ from unittest import mock
 
 from agent_pm.delegate.engine.plan import policy
 from agent_pm.delegate.engine.types import ConfigError
-from agent_pm.session.adapters.base import Access, Spec
+from agent_pm.session import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 

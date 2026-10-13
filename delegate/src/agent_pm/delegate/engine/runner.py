@@ -53,16 +53,15 @@ class Headless:
     def __init__(self, note: Callable[..., None]):
         self.note = note
 
-    def start(self, p: Plan, **tui) -> api.Handle:
+    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> api.Handle:
         return api.start(
             p.runtime,
             p.mode,
             p.prompt,
-            p.spec,
+            replace(p.spec, sid=p.sid, name=name),
             resume=p.sid if p.resume else None,
-            sid=None if p.resume else p.sid,
             idle_timeout=IDLE_TIMEOUT,
-            **tui,
+            events=events,
         )
 
     def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
@@ -87,7 +86,7 @@ class Tui(Headless):
         self.nudged, self.count = False, 0
 
     def start(self, p: Plan) -> api.Handle:
-        handle = super().start(p, name=p.name, events=p.events)
+        handle = super().start(p, p.name, p.events)
         _say(f"delegate: tui session {handle.name}: {api.attach_command(handle.name)}")
         return handle
 

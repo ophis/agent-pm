@@ -131,23 +131,22 @@ class Mode(Protocol):
 class Handle:
     def __init__(
         self,
-        sid: str,
         runtime: str,
         mode: str,
+        spec: Spec,
         *,
         host: Mode,
-        workdir: str,
         info: SessionInfo,
         idle_timeout: float | None,
-        name: str | None = None,
         reply: str | None = None,
         blocked: bool = False,
         adapter: Adapter | None = None,
     ):
-        self.sid, self.runtime, self.mode, self.name = sid, runtime, mode, name
+        """spec: its sid, name (a tui session's) and workdir."""
+        self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
         self._host, self._info, self._idle = host, info, idle_timeout
         self._adapter = adapter
-        self._channel = records.path(workdir)
+        self._channel = records.path(spec.workdir)
         self._reply = reply
         self._queue: deque = deque()
         self._closed = False
@@ -273,32 +272,25 @@ def start(
     spec: Spec,
     resume: str | None = None,
     idle_timeout: float | None = None,
-    name: str | None = None,
-    sid: str | None = None,
     events: str | None = None,
 ) -> Handle:
-    """tui: tmux session `name` (spec.name), else <runtime>-<sid[:8]>, refused when running; `events` gets its done,
-    blocked and dead lines; spec.protect gains the hook paths."""
+    """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name, else
+    <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead lines; spec.protect gains the
+    hook paths."""
     if mode not in MODES:
         raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
     _idle(idle_timeout)
     if resume is not None and not (isinstance(resume, str) and resume):
         raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
-    if sid is not None and (error := sid_error(sid)):
-        raise ConfigError(error)
-    if sid is not None and resume is not None and sid != resume:
-        raise ConfigError(f"sid {sid!r:.80} differs from resume {resume!r:.80}")
-    if spec.sid is not None:
-        raise ConfigError("spec.sid is set by start(): pass sid= or resume=")
-    if spec.name is not None:
-        raise ConfigError("spec.name is set by start()")
+    if spec.sid is not None and resume is not None and spec.sid != resume:
+        raise ConfigError(f"sid {spec.sid!r:.80} differs from resume {resume!r:.80}")
     adapter = registry.adapter(runtime)
     kind = _STEPS[mode]
     run = kind.run_of(adapter)
     if run is None:
         raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
-    sid = resume or sid or str(uuid.uuid4())
-    steps = kind(run, runtime, sid, name, events)
+    sid = resume or spec.sid or str(uuid.uuid4())
+    steps = kind(run, runtime, sid, spec.name, events)
     check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
     spec = steps.specced(replace(spec, sid=sid))
     if spec.access.commands and adapter.runtime_note:
@@ -317,14 +309,12 @@ def start(
         )
         steps.begin(host)
     return Handle(
-        sid,
         runtime,
         mode,
+        replace(spec, name=steps.name),
         host=host,
-        workdir=spec.workdir,
         idle_timeout=idle_timeout,
         info=info,
-        name=steps.name,
         adapter=adapter,
     )
 
@@ -519,14 +509,12 @@ def attach(name: str, idle_timeout: float | None = None) -> Handle:
         state["resume"],
     )
     handle = Handle(
-        state["sid"],
         state["runtime"],
         "tui",
+        Spec(workdir=state["workdir"], sid=state["sid"], name=name),
         host=host,
-        workdir=state["workdir"],
         info=info,
         idle_timeout=idle_timeout,
-        name=name,
         reply=host.reply,
         blocked=host.blocked,
         adapter=adapter,

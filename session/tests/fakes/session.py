@@ -106,9 +106,7 @@ class FakeSession(Session):
         prompt,
         spec,
         *,
-        sid=None,
         resume=None,
-        name=None,
         events=None,
         idle_timeout=None,
         display=None,
@@ -120,17 +118,15 @@ class FakeSession(Session):
                 "mode": mode,
                 "prompt": prompt,
                 "spec": spec,
-                "sid": sid,
                 "resume": resume,
-                "name": name,
                 "events": events,
                 "idle_timeout": idle_timeout,
                 "display": display,
                 "host": host,
             }
         )
-        sid = resume or sid or str(uuid.uuid4())
-        name = name or f"{runtime}-{sid[:8]}"
+        sid = resume or spec.sid or str(uuid.uuid4())
+        name = spec.name or f"{runtime}-{sid[:8]}"
         if name in cls.live:
             raise DriverError(f"session {name} is live")
         cls.live[name] = cls(runtime, mode, spec, sid, name, display)

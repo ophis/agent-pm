@@ -6,6 +6,7 @@ import unittest
 
 from agent_pm import session
 from agent_pm.session import (
+    Access,
     ConfigError,
     Displayable,
     DriverError,
@@ -14,6 +15,7 @@ from agent_pm.session import (
     NotDisplayable,
     Session,
     SessionStatusLog,
+    Spec,
     Terminal,
     Usage,
     api,
@@ -32,8 +34,10 @@ NAMES = (
     "Usage",
     "DriverError",
     "ConfigError",
+    "Spec",
+    "Access",
 )
-ALLOWED_CONCRETE = {SessionStatusLog, Usage}
+ALLOWED_CONCRETE = {SessionStatusLog, Usage, Spec, Access}
 PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 ABSTRACT = {
     Session: {
@@ -73,7 +77,7 @@ class Exports(Case):
         self.assertEqual([n for n in session.__all__ if not hasattr(session, n)], [])
 
     def test_usage_and_the_errors_are_the_drivers(self):
-        for name in ("Usage", "DriverError", "ConfigError"):
+        for name in ("Usage", "DriverError", "ConfigError", "Spec", "Access"):
             with self.subTest(name=name):
                 self.assertIs(getattr(session, name), getattr(api, name))
 
@@ -113,7 +117,7 @@ class SessionClassMethods(Case):
     def test_each_but_configure_raises_on_the_bare_abc_naming_task_365(self):
         spec = api.Spec(workdir=self.home)
         calls = {
-            "start": (("fake", "headless", "hi", spec), {"sid": None, "display": None}),
+            "start": (("fake", "headless", "hi", spec), {"resume": None, "display": None}),
             "attach": (("w1",), {"idle_timeout": None}),
             "list": ((), {"display": None}),
             "usage": (("fake",), {}),

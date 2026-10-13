@@ -137,6 +137,7 @@ class Api:
         ]
 
     def start(self, runtime, mode, prompt, spec, resume=None, **kw):
+        kw = {"name": spec.name, "sid": spec.sid, **kw}
         self.calls.append(("start", kw["name"]))
         self.starts.append(
             dict(runtime=runtime, mode=mode, prompt=prompt, spec=spec, resume=resume, **kw)
@@ -304,6 +305,8 @@ class StartTest(WorkerCase):
         self.assertEqual(str(uuid.UUID(sid)), sid)
         spec = api.Spec(
             workdir=os.path.join(self.agent_pm, "workers", sid),
+            sid=sid,
+            name="w1",
             access=api.Access(cwd=self.dir, project=True),
             flags=("--model", "m"),
             env={},
@@ -328,10 +331,10 @@ class StartTest(WorkerCase):
         self.assertEqual(spec.protect[:2], tuple(map(os.path.realpath, spec.protect[:2])))
         self.assertTrue(os.path.isfile(spec.protect[2]))
 
-    def test_resume_passes_resume_not_a_new_sid(self):
+    def test_resume_passes_its_sid_as_resume(self):
         self.assertEqual(self.started(resume=SID, prompt=None), SID)
         (started,) = self.api.starts
-        self.assertEqual((started["resume"], started["sid"], started["prompt"]), (SID, None, ""))
+        self.assertEqual((started["resume"], started["sid"], started["prompt"]), (SID, SID, ""))
         self.assertEqual(started["spec"].workdir, os.path.join(self.agent_pm, "workers", SID))
 
     def test_relative_cwd_made_absolute(self):
@@ -571,7 +574,7 @@ class RestartTest(WorkerCase):
         self.api.calls.clear()
         self.assertIsNone(crew.restart("w1", own=None))
         first, second = self.api.starts
-        self.assertEqual(second, {**first, "prompt": "", "resume": sid, "sid": None})
+        self.assertEqual(second, {**first, "prompt": "", "resume": sid})
         self.assertEqual(second["runtime"], "rt1")
         self.assertEqual(
             [c for c in self.api.calls if c[0] in ("close", "start", "show")],

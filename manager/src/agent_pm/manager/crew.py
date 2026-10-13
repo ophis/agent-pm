@@ -151,6 +151,8 @@ def _spec(record: dict, workdir: str) -> api.Spec:
     with _driver():
         return api.Spec(
             workdir=workdir,
+            sid=record["sid"],
+            name=record["name"],
             access=api.Access(cwd=record["cwd"], project=True),
             flags=tuple(record["flags"]),
             env=record["env"],
@@ -235,8 +237,6 @@ def _launch(
             spec,
             resume=resume,
             idle_timeout=EARLY,
-            name=name,
-            sid=None if resume else record["sid"],
             events=record["events"],
         )
     path = os.path.join(spec.workdir, RECORD)

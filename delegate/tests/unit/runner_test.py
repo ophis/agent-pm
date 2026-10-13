@@ -118,7 +118,7 @@ class FakeHandle:
 
     def start(self, runtime, mode, prompt, spec, **kw):
         os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = kw.get("name") or NAME, kw["resume"] or kw["sid"]
+        self.name, self.sid = spec.name or NAME, kw["resume"] or spec.sid
         return self
 
     def events(self):
@@ -870,10 +870,10 @@ class TuiPolicy(Base):
     def test_start_hands_the_plan_to_the_driver_and_prints_the_attach_command(self):
         events = os.path.join(self.tmp, "events.log")
         for kw, want, name in (
-            ({}, {"resume": None, "name": None, "events": None}, NAME),
+            ({}, ({"resume": None, "events": None}, None), NAME),
             (
                 {"resume": SID, "name": "mine", "events": events},
-                {"resume": SID, "sid": None, "name": "mine", "events": events},
+                ({"resume": SID, "events": events}, "mine"),
                 "mine",
             ),
         ):
@@ -883,7 +883,8 @@ class TuiPolicy(Base):
                 args, given = self.started.call_args
                 self.assertEqual((args[:2], r.outcome.status), (("fake", "tui"), "done"))
                 self.assertEqual(
-                    given, {"sid": self.events[0].sid, "idle_timeout": IDLE_TIMEOUT, **want}
+                    (given, args[3].sid, args[3].name),
+                    ({"idle_timeout": IDLE_TIMEOUT, **want[0]}, self.events[0].sid, want[1]),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
 
@@ -1105,9 +1106,10 @@ class TuiPolicy(Base):
         )
         self.assertEqual((r.outcome.status, self.handle.calls), ("done", []))
         self.assertEqual(self.kinds(), ["input", "idle", "progress", "result", "end"])
+        args, given = self.started.call_args
         self.assertEqual(
-            self.started.call_args.kwargs,
-            {"resume": None, "sid": self.events[0].sid, "idle_timeout": IDLE_TIMEOUT},
+            (given, args[3].sid),
+            ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
         )
 
 

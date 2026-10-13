@@ -24,7 +24,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.session import api
-from agent_pm.session.adapters import base, registry
+from agent_pm.session.adapters import registry
 
 from delegate.tests.case import PY, Case, child_env, committed
 from delegate.tests.unit.runner_test import (
@@ -74,7 +74,7 @@ class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
 
 class RefusingRun(fake_adapter.FakeInProcess):
     def check(self, prompt, spec, resume):
-        raise base.ConfigError("refused by check")
+        raise api.ConfigError("refused by check")
 
 
 class Base(Case):
@@ -619,7 +619,7 @@ class Tui(Base):
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 kw = start.call_args.kwargs
                 self.assertEqual(
-                    (start.call_args.args[:2], kw["name"], kw["events"]),
+                    (start.call_args.args[:2], start.call_args.args[3].name, kw["events"]),
                     (("fake", "tui"), None, None),
                 )
 
@@ -871,8 +871,8 @@ class DriverForm(Base):
             (code, out, err.splitlines()[-1]),
             (1, "", "delegate: the agent run returned no outcome"),
         )
-        kw = start.call_args.kwargs
-        self.assertEqual((kw["name"], kw["events"], kw["sid"]), (TUI, self.events, SID))
+        spec, kw = start.call_args.args[3], start.call_args.kwargs
+        self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
         self.assertIn(f"delegate: tui session {TUI}: {api.attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")

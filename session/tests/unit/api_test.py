@@ -230,7 +230,10 @@ class Base(Case):
     def start(
         self, runtime="fake", mode="headless", prompt="hello", spec=None, **kwargs
     ) -> api.Handle:
-        handle = api.start(runtime, mode, prompt, spec or self.spec(), **kwargs)
+        """`sid` and `name` go into the spec, as api.start takes them."""
+        given = {k: kwargs.pop(k) for k in ("sid", "name") if k in kwargs}
+        spec = dataclasses.replace(spec or self.spec(), **given)
+        handle = api.start(runtime, mode, prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
 
@@ -326,22 +329,17 @@ class ChecksTest(Base):
             lambda: self.start(sid="s1", resume="r1"),
         )
 
-    def test_refuses_a_caller_set_spec_sid(self):
-        for kwargs in ({}, {"sid": "s1"}, {"resume": "s1"}):
+    def test_the_spec_sid_is_the_sessions_and_may_be_resumes(self):
+        for kwargs in ({}, {"resume": "s1"}):
             with self.subTest(kwargs=kwargs):
-                self.refused(
-                    api.ConfigError,
-                    "spec.sid is set by start(): pass sid= or resume=",
-                    lambda: self.start(spec=self.spec(sid="s1"), **kwargs),
-                )
+                self.assertEqual(self.start(spec=self.spec(sid="s1"), **kwargs).sid, "s1")
 
-    def test_refuses_a_caller_set_spec_name_in_every_mode(self):
-        self.configure(tui=True)
-        for runtime, mode in (("fake", "headless"), ("fake", "tui"), ("checked", "in_process")):
+    def test_a_spec_name_is_tui_only(self):
+        for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
             with self.subTest(mode=mode):
                 self.refused(
                     api.ConfigError,
-                    "spec.name is set by start()",
+                    "name: tui mode only",
                     lambda: self.start(runtime, mode, spec=self.spec(name="w1")),
                 )
 
@@ -850,11 +848,10 @@ class HandleOverAModeTest(Case):
     def handle(self, *script, code=0, idle_timeout=None, **kwargs) -> api.Handle:
         self.mode = StubMode(self.clock, script, code)
         return api.Handle(
-            "s1",
             "fake",
             "tui",
+            api.Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
             host=self.mode,
-            workdir=self.dir,
             idle_timeout=idle_timeout,
             info=api.SessionInfo("s1", "", self.dir, False, "", ""),
             **kwargs,
@@ -1324,7 +1321,8 @@ class TuiStartTest(TuiBase):
         self.assertEqual(handle.name, f"fake-{handle.sid[:8]}")
 
     def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_tmux_or_a_path(self):
-        self.name_refused(lambda name: self.tui(name=name), BAD_NAMES)
+        self.name_refused(lambda name: self.tui(name=name), BAD_NAMES[:-1])
+        self.refused(api.ConfigError, "name must be None or a string", lambda: self.tui(name=5))
         with self.assertRaises(api.ConfigError) as caught:
             self.tui(sid="a b")
         self.assertEqual(str(caught.exception), "name must match [A-Za-z0-9_-]+, got 'fake-a b'")

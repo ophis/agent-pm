@@ -9,7 +9,6 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping
 
-from agent_pm.session.engine.types import Access as Access  # re-export until the Spec step
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,

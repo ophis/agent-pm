@@ -74,7 +74,9 @@ class Live(tui_live.Live):
     def configure(self, **table) -> None:
         self.configure_session({"claude": {**TABLE, **table}})
 
-    def start(self, name: str, prompt: str = "hello", *, scenario: dict, **kwargs) -> api.Handle:
+    def start(
+        self, name: str, prompt: str = "hello", *, scenario: dict, sid=None, **kwargs
+    ) -> api.Handle:
         """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file self.events."""
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **scenario}, f)
@@ -82,8 +84,7 @@ class Live(tui_live.Live):
             "claude",
             "tui",
             prompt,
-            api.Spec(workdir=self.workdir),
-            name=name,
+            api.Spec(workdir=self.workdir, name=name, sid=sid),
             events=self.events,
             **kwargs,
         )

@@ -115,10 +115,9 @@ class Base(Case):
         with open(self.file, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **fields}, f)
 
-    def start(self, prompt="hello", spec=None, **kwargs) -> api.Handle:
-        handle = api.start(
-            "claude", "headless", prompt, spec or api.Spec(workdir=self.workdir), **kwargs
-        )
+    def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> api.Handle:
+        spec = spec or api.Spec(workdir=self.workdir, sid=sid)
+        handle = api.start("claude", "headless", prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
 

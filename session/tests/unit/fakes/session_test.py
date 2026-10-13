@@ -11,8 +11,8 @@ from session.tests.fakes.session import FakeSession
 
 
 class Scripted(Case):
-    def start(self, cls, **kw):
-        return cls.start("fake", "headless", "the prompt", Spec(workdir=self.home), **kw)
+    def start(self, cls, name=None, **kw):
+        return cls.start("fake", "headless", "the prompt", Spec(workdir=self.home, name=name), **kw)
 
     def test_events_are_the_script_then_exited_0_and_reply_the_last_one(self):
         session = self.start(FakeSession.scripted(Reply("first"), TurnEnd("second"), TurnEnd()))
@@ -96,7 +96,7 @@ class Scripted(Case):
         self.assertEqual(list(session.events()), [Exited(0)])
         self.assertIs(FakeSession.attach("w1"), session)
         self.assertEqual([row.name for row in FakeSession.list()], ["w1"])
-        self.assertEqual([call["name"] for call in FakeSession.started], ["w1"])
+        self.assertEqual([call["spec"].name for call in FakeSession.started], ["w1"])
         cls = FakeSession.scripted()
         self.assertEqual((cls.started, cls.live, cls.configured), ([], {}, None))
         self.start(cls, name="w1")

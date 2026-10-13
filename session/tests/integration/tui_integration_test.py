@@ -133,7 +133,7 @@ class Live(Case):
         self.addCleanup(patch.stop)
         Session.configure(**self.config)
 
-    def start(self, name: str, *steps, **kwargs) -> api.Handle:
+    def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
@@ -141,8 +141,7 @@ class Live(Case):
             "fake",
             "tui",
             "hello",
-            api.Spec(workdir=self.workdir),
-            name=name,
+            api.Spec(workdir=self.workdir, name=name, sid=sid),
             **{"events": self.events, **kwargs},
         )
         self.addCleanup(handle.stop)
@@ -306,7 +305,7 @@ class SameNameTest(Live):
         def run():
             try:
                 results.append(
-                    api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir), name="w6")
+                    api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir, name="w6"))
                 )
             except Exception as e:
                 results.append(e)
