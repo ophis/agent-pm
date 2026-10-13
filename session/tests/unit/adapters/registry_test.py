@@ -22,7 +22,6 @@ from agent_pm.session import Driver, Host, Hosts, Spec
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.engine.types import ConfigError
 from agent_pm.utils import load_class, read_project
 
@@ -279,7 +278,7 @@ class SettingsTest(Base):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("[session.hosts.tmux]\nstatus_line = true\n")
         found = registry.settings(read_project("session"))
-        self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
+        self.assertEqual(sorted(found["adapters"]), ["claude", "codex"])
         self.assertEqual(found["hosts"].default, "tmux")
         self.driver = Driver(**found)
         self.assertEqual(
@@ -538,13 +537,20 @@ def committed() -> dict:
 
 
 class Committed(Case):
-    def test_the_committed_adapters_build_print_prompt(self):
+    def test_print_prompt_is_not_a_session_adapter(self):
+        self.assertNotIn("print_prompt", committed())
+        self.assertFalse(
+            os.path.exists(
+                os.path.join(os.path.dirname(agent_pm.session.__file__), "adapters", "print_prompt")
+            )
+        )
+
+    def test_the_committed_adapters_configure_agent_runtimes(self):
         self.driver = Driver(**settings(committed()))
-        self.assertEqual(self.driver.registry.configured(), ["claude", "codex", "print_prompt"])
+        self.assertEqual(self.driver.registry.configured(), ["claude", "codex"])
         for name, table in committed().items():
             with self.subTest(name=name):
                 self.assertEqual({"roles", "output"} & set(table), set())
-        self.assertIs(type(self.driver.registry.adapter("print_prompt")), PrintPromptAdapter)
 
     def test_the_claude_table_builds_a_claude_adapter(self):
         tmp = tempfile.TemporaryDirectory()

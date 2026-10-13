@@ -46,7 +46,6 @@ flowchart TB
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
-      PR[print_prompt]
     end
   end
   U[agent_pm.utils]
