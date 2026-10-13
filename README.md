@@ -174,7 +174,7 @@ session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
 manager/              engine/crew.py and engine/roster.py: a manager's workers and roster
 linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
-tests/                repo-wide checks: guards.py (the repo's rules)
+tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
@@ -200,6 +200,22 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
+Run Lint checks with the pinned tool versions in `.github/workflows/test.yml`:
+
+```bash
+python3 .github/comment_budget.py
+ruff check --no-cache
+ruff format --check --no-cache
+pyright
+lint-imports --no-cache
+pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+python3 -m tests.checks
+python3 .github/integration_jobs.py --check
+actionlint -shellcheck= -pyflakes=
+typos --config pyproject.toml
+```
+
+One project's unit tests: `python3 .github/run_tests.py "Session unit" session/tests/unit`.
 Run project and repository unit tests with `python3 .github/run_tests.py Unit --unit`; integration
 shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
 shards; its required `CI` job succeeds only when every dependency succeeds.
