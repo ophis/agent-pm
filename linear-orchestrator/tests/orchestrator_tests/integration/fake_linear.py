@@ -325,10 +325,10 @@ class Operations:
             }
         }
 
-    def handle_teams(self, _caller, v):
+    def handle_teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
-    def handle_label_group(self, _caller, v):
+    def handle_label_group(self, caller, v):
         if v["i"] not in self.labels:
             raise Problem.missing_entity("IssueLabel")
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
@@ -394,12 +394,12 @@ class Operations:
         self._move(self._get(v["i"]), v["s"], caller["id"], stamp())
         return {"issueUpdate": {"success": True}}
 
-    def handle_set_title(self, _caller, v):
+    def handle_set_title(self, caller, v):
         rec = self._get(v["i"])
         rec["title"], rec["updatedAt"] = v["t"], stamp()
         return {"issueUpdate": {"success": True}}
 
-    def handle_subscribe(self, _caller, v):
+    def handle_subscribe(self, caller, v):
         rec = self._get(v["i"])
         user = next((u for u in self.users.values() if u["email"].lower() == v["e"].lower()), None)
         if user is None:
@@ -408,17 +408,17 @@ class Operations:
             rec["subscribers"].append(user["email"])
         return {"issueSubscribe": {"success": True}}
 
-    def handle_attach(self, _caller, v):
+    def handle_attach(self, caller, v):
         rec = self._get(v["i"])
         if all(a["url"] != v["u"] for a in rec["attachments"]):
             rec["attachments"].append({"url": v["u"], "title": v.get("t")})
         return {"attachmentLinkURL": {"success": True}}
 
-    def handle_archive(self, _caller, v):
+    def handle_archive(self, caller, v):
         self._get(v["i"])["archived"] = True
         return {"issueArchive": {"success": True}}
 
-    def handle_unarchive(self, _caller, v):
+    def handle_unarchive(self, caller, v):
         self._get(v["i"])["archived"] = False
         return {"issueUnarchive": {"success": True}}
 
@@ -453,7 +453,7 @@ class Operations:
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
-    def handle_relate(self, _caller, v):
+    def handle_relate(self, caller, v):
         new = v["in"]
         self.relations.append(
             (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])

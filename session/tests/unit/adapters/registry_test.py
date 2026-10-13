@@ -64,10 +64,10 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def __init__(self, name, source):
         self.name, self.source = name, source
 
-    def find_spec(self, fullname, _path, _target=None):
+    def find_spec(self, fullname, path, target=None):
         return importlib.util.spec_from_loader(fullname, self) if fullname == self.name else None
 
-    def create_module(self, _spec):
+    def create_module(self, spec):
         return None
 
     def exec_module(self, module):

@@ -68,17 +68,17 @@ class Adapter(ABC):
     def usage_probe(self) -> Launch | None:
         return None
 
-    def usage(self, _output: str, /) -> Usage | None:
+    def usage(self, output: str) -> Usage | None:
         """None only when the probe failed."""
         return None
 
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         return info
 
-    def session_status(self, _sid: str, _cwd: str, /) -> SessionStatus:
+    def session_status(self, sid: str, cwd: str) -> SessionStatus:
         return SessionStatus("unknown", None, "")
 
-    def writable_dirs(self, _request: SessionRequest, /) -> tuple[str, ...]:
+    def writable_dirs(self, _request: SessionRequest) -> tuple[str, ...]:
         """Own write dirs (resume: request.spec.sid's)."""
         return ()
 
@@ -118,20 +118,20 @@ class Tui(ABC):
     @abstractmethod
     def reply(self, payload: dict) -> str: ...
 
-    def pending(self, _payload: dict, /) -> int:
+    def pending(self, payload: dict) -> int:
         return 0
 
-    def activity(self, _payload: dict, /) -> str:
+    def activity(self, payload: dict) -> str:
         return ""
 
-    def blocked_reason(self, _payload: dict, /) -> str:
+    def blocked_reason(self, payload: dict) -> str:
         return ""
 
     def session_id(self, payload: dict) -> str:
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
-    def limit(self, _screen: str, /) -> LimitHit | None:
+    def limit(self, screen: str) -> LimitHit | None:
         """The runtime's usage-limit message on the visible pane `screen`; None: none shown."""
         return None
 
@@ -161,5 +161,5 @@ class InProcess(ABC):
     def run(self, prompt: str, request: SessionRequest) -> Iterable[Event | Stderr]:
         """The session's events; request.resumed continues request.spec.sid."""
 
-    def check(self, _request: SessionRequest, /) -> None:
+    def check(self, _request: SessionRequest) -> None:
         return None

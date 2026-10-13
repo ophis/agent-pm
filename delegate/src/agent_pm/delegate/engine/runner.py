@@ -79,7 +79,7 @@ class Headless:
             events=events,
         )
 
-    def fix(self, _handle: Handle, p: Plan, text: str, /) -> Handle:
+    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
         return p.driver.start(
             p.runtime,
@@ -90,13 +90,13 @@ class Headless:
             idle_timeout=IDLE_TIMEOUT,
         )
 
-    def turn_end(self, _handle: Handle, _reply: str, _pending: int, /) -> str | GiveUp | None:
+    def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
         return None
 
     def progress(self) -> None:
         pass
 
-    def idle(self, _seconds: float, /) -> str | GiveUp | None:
+    def idle(self, seconds: float) -> str | GiveUp | None:
         return None
 
 
@@ -117,7 +117,7 @@ class Tui(Headless):
         say(f"delegate: tui session {name}: {p.driver.attach_command(name)}")
         return handle
 
-    def fix(self, handle: Handle, _plan: Plan, text: str, /) -> Handle:
+    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         handle.send(text)
         return handle
 

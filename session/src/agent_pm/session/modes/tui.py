@@ -372,7 +372,7 @@ class TuiMode:
         status = self._own(self.host.status(self.name))
         return "absent" if status is None else "unknown" if status == tmux_host.UNKNOWN else "live"
 
-    def send(self, text: str, /) -> None:
+    def send(self, text: str) -> None:
         self._running()
         last = None
         try:
@@ -387,7 +387,7 @@ class TuiMode:
         except TuiError as e:
             raise DriverError(f"send to tui session {self.name}: {e}") from e
 
-    def screen(self, lines: int | None = None, /) -> str:
+    def screen(self, lines: int | None = None) -> str:
         self._running()
         try:
             return self.host.read(self._pane, lines)

@@ -81,7 +81,7 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
 
 
 class ScriptRun(fake_adapter.FakeHeadless):
-    def launch(self, _prompt, _request: SessionRequest):
+    def launch(self, prompt, _request: SessionRequest):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 

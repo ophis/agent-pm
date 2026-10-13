@@ -63,7 +63,7 @@ class StubHeadless(Headless):
 
 
 class StubTui(Tui):
-    def launch(self, _prompt, _request: SessionRequest, hook):
+    def launch(self, prompt, _request: SessionRequest, hook):
         return Launch(("stub", *hook))
 
     def reply(self, payload):

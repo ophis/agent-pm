@@ -68,7 +68,7 @@ class BlankAdapter(fake_adapter.FakeAdapter):
 
 
 class BlankRun(fake_adapter.FakeHeadless):
-    def launch(self, _prompt, _request: SessionRequest):
+    def launch(self, prompt, _request: SessionRequest):
         return Launch(())
 
 
@@ -82,7 +82,7 @@ class FailingRun(fake_adapter.FakeHeadless):
         super().__init__(adapter)
         self.failure = LookupError("no binding")
 
-    def launch(self, _prompt, _request: SessionRequest):
+    def launch(self, prompt, _request: SessionRequest):
         raise self.failure
 
 
@@ -1450,7 +1450,7 @@ class TuiStartTest(TuiBase):
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
 
-        def status(_name):
+        def status(name):
             order.append(("status", os.path.exists(records.path(self.workdir))))
 
         self.host.status.side_effect = status
@@ -1512,7 +1512,7 @@ class TuiStartTest(TuiBase):
     def test_the_names_lock_is_held_from_prepare_to_begin(self):
         held = []
 
-        def locked(*_args, **_kwargs):
+        def locked(*args, **kwargs):
             fd = os.open(os.path.join(self.root, "w1.lock"), os.O_RDONLY)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1758,7 +1758,7 @@ class AttachTest(TuiBase):
         self.started(("tool", {"session_id": "n1"}))
         records.note(records.path(self.workdir), "result", outcome={"status": "done"})
 
-        def metadata(_adapter, info):
+        def metadata(adapter, info):
             self.assertEqual(info.native_id, "n1")
             return dataclasses.replace(info, transcript="/attached", resume="resume n1")
 

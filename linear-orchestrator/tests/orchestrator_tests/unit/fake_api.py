@@ -51,14 +51,14 @@ class FakeApi:
         self.info.append((runtime, sid, cwd))
         return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
 
-    def session_record(self, _workdir, sid):
+    def session_record(self, workdir, sid):
         return self.records.get(sid)
 
     def usage(self, runtime):
         self.usage_calls.append(runtime)
         return _answer(self.usages.get(runtime, LOW))
 
-    def detach(self, name, argv, cwd, env, *, _opener=None):
+    def detach(self, name, argv, cwd, env, *, opener=None):
         self.order.append(("detach", name))
         self.detached.append((name, list(argv), cwd, dict(env)))
         if self.detach_error is not None:

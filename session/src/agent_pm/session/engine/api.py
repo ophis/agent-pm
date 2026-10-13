@@ -129,7 +129,7 @@ class _HeadlessSteps(_LaunchSteps):
         return self.run.launch(prompt, request)
 
     def prepared(
-        self, _info: SessionInfo, _workdir: str, /
+        self, info: SessionInfo, workdir: str, /
     ) -> contextlib.AbstractContextManager[headless.HeadlessMode]:
         return contextlib.nullcontext(headless.HeadlessMode(self.run))
 
@@ -233,7 +233,7 @@ class _InProcessSteps:
         )
 
     def prepared(
-        self, _info: SessionInfo, _workdir: str, /
+        self, info: SessionInfo, workdir: str, /
     ) -> contextlib.AbstractContextManager[in_process.InProcessMode]:
         return contextlib.nullcontext(in_process.InProcessMode(self.run))
 
@@ -268,11 +268,11 @@ class Mode(Protocol):
         """One of live, absent or unknown."""
         ...
 
-    def send(self, text: str, /) -> None:
+    def send(self, text: str) -> None:
         """Submits `text` to the session."""
         ...
 
-    def screen(self, lines: int | None = None, /) -> str:
+    def screen(self, lines: int | None = None) -> str:
         """The session's visible text."""
         ...
 
