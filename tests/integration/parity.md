@@ -1,6 +1,6 @@
 # Integration parity with main
 
-Baseline: `origin/main` at `f1d0c595f03063034f77944332615dca2c082cfa`, `tests/integration/`: 214 test methods (core 101, orchestrator 76, tmux 37), one row each: `| Exact old identity | Exact new identity | Coverage and remaining assertions |`. TASK-357 built it from each old test's body (`git show origin/main:<path>`; old code never imported or run) and the new tests in `tests/integration/`, merging the Codex parity list (TASK-318, TASK-320), the crew parity list (TASK-321) and the parity lists in merged `re-architecture` PR bodies (#166, #167, #171, #172, #173, #181, #182, #186, #187, #188); every cited new identity exists by exact name.
+Baseline: `origin/main` at `f1d0c595f03063034f77944332615dca2c082cfa`, `tests/integration/`: 214 test methods (core 101, orchestrator 76, tmux 37), one row each: `| Exact old identity | Exact new identity | Coverage and remaining assertions |`. TASK-357 built it from each old test's body (`git show origin/main:<path>`; old code never imported or run) and the new tests in `<project>/tests/integration/`, merging the Codex parity list (TASK-318, TASK-320), the crew parity list (TASK-321) and the parity lists in merged `re-architecture` PR bodies (#166, #167, #171, #172, #173, #181, #182, #186, #187, #188); every cited new identity exists by exact name.
 
 The new identity is one of:
 
