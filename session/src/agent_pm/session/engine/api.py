@@ -52,6 +52,15 @@ from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils import STATE, load_class, printable_abs, sid_error
 
+__all__ = ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"]
+MODES = ("headless", "tui", "in_process")
+STATES = ("live", "absent", "unknown")
+POLL = 0.5
+PROBE_DIR = f"{STATE}/probe"
+PROBE_TIMEOUT = 120
+SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+LOG = logging.getLogger("driver")
+
 
 def _child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
@@ -249,13 +258,7 @@ class _InProcessSteps:
         host.begin(*self.args, resume=self.resume)
 
 
-__all__ = ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"]
-
-STATES = ("live", "absent", "unknown")
-
 _STEPS = {"headless": _HeadlessSteps, "tui": _TuiSteps, "in_process": _InProcessSteps}
-
-POLL = 0.5
 
 
 class Mode(Protocol):
@@ -462,17 +465,6 @@ def _placement(split, split_from, opener=None) -> None:
         raise ConfigError(
             f"opener must be a tmux session name or $ITERM_SESSION_ID's value, got {opener!r:.80}"
         )
-
-
-MODES = ("headless", "tui", "in_process")
-
-PROBE_DIR = f"{STATE}/probe"
-
-PROBE_TIMEOUT = 120
-
-SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
-
-LOG = logging.getLogger("driver")
 
 
 def _row(found: Mapping, own: str | None) -> SessionRow:
