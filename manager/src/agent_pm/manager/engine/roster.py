@@ -503,6 +503,16 @@ class Roster:
             finally:
                 os.close(fd)
 
+    def _control_available(self, data: dict, record: Record, name: str | None) -> None:
+        for owner, value in data["entries"].items():
+            if owner == name:
+                continue
+            owned = _entry(value).record
+            if owned is not None and (owned.ctl, owned.name) == (record.ctl, record.name):
+                raise RosterError(
+                    f"control {record.ctl!r} name {record.name!r}: already owned by {owner}"
+                )
+
     def _commit(self, data: dict, name: str, record: Record) -> None:
         entry = self._get(data, name)
         if record.sid is None or record.sid != entry.sid:
@@ -511,6 +521,7 @@ class Roster:
             other != name and value["sid"] == record.sid for other, value in data["entries"].items()
         ):
             raise RosterError(f"sid {record.sid}: already owned")
+        self._control_available(data, record, name)
         if entry.state == State.LIVE and entry.record == record:
             data["entries"][name] = asdict(replace(entry, receipt=None))
             return
@@ -606,6 +617,7 @@ class Roster:
             ]
             if len(matches) > 1:
                 raise RosterError(f"sid {record.sid}: more than one roster entry matches")
+            self._control_available(data, record, matches[0] if matches else None)
             if matches:
                 name = matches[0]
                 current = self._get(data, name)

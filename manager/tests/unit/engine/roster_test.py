@@ -1141,6 +1141,72 @@ print('done', flush=True)
         self.assertIsNone(self.roster.adopt(replace(self.record, sid=str(uuid4()))))
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
+    def test_adoption_refuses_another_sid_owning_the_same_control_name(self):
+        self.live("alias", "keep")
+        before = Path(self.roster.path).read_bytes()
+        entries = self.roster.entries()
+        with self.assertRaisesRegex(RosterError, "already owned by alias"):
+            self.roster.adopt(replace(self.record, sid=str(uuid4())))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(self.roster.entries(), entries)
+        self.assertEqual(self.roster.adopt(self.record), "alias")
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(list(self.roster.entries()), ["alias"])
+
+    def test_lost_adoption_refuses_another_alias_owning_the_control_name(self):
+        self.live("owner", "owner note")
+        sid = str(uuid4())
+        self.roster.begin(Spec("lost alias", ("fake-ctl", "start"), "lost note"), sid=sid)
+        self.roster.mark("lost alias", State.LOST)
+        before = Path(self.roster.path).read_bytes()
+        entries = self.roster.entries()
+        with self.assertRaisesRegex(RosterError, "already owned by owner"):
+            self.roster.adopt(replace(self.record, sid=sid))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(self.roster.entries(), entries)
+        self.assertIs(self.roster.entries()["lost alias"].state, State.LOST)
+        self.assertEqual(
+            [entry.record for entry in self.roster.entries().values() if entry.record is not None],
+            [self.record],
+        )
+
+    def test_commit_control_conflict_preserves_starting_intent_and_receipt(self):
+        self.live("owner", "owner note")
+        sid = str(uuid4())
+        intent = self.roster.begin(
+            Spec("starting alias", ("fake-ctl", "start"), "starting note"), sid=sid
+        )
+        if intent.receipt is None:
+            self.fail("starting intent has no receipt")
+        receipt = Path(self.directory, intent.receipt)
+        before = Path(self.roster.path).read_bytes()
+        entries = self.roster.entries()
+        with self.assertRaisesRegex(RosterError, "already owned by owner"):
+            self.roster.commit("starting alias", replace(self.record, sid=sid))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(self.roster.entries(), entries)
+        self.assertEqual(self.roster.entries()["starting alias"], intent)
+        self.assertTrue(receipt.exists())
+        self.assertEqual(receipt.read_bytes(), b"")
+        self.assertEqual(
+            [entry.record for entry in self.roster.entries().values() if entry.record is not None],
+            [self.record],
+        )
+
+    def test_control_names_are_scoped_to_the_exact_ctl_command(self):
+        self.live("owner")
+        sid = str(uuid4())
+        self.roster.begin(Spec("other ctl", ("another-ctl", "start")), sid=sid)
+        other = replace(self.record, sid=sid, ctl=("another-ctl",))
+        self.roster.commit("other ctl", other)
+        self.assertEqual(self.roster.adopt(other), "other ctl")
+        distinct_name = replace(self.record, sid=str(uuid4()), name="different")
+        self.assertEqual(self.roster.adopt(distinct_name), "different")
+        self.assertEqual(
+            {name: entry.record for name, entry in self.roster.entries().items()},
+            {"owner": self.record, "other ctl": other, "different": distinct_name},
+        )
+
     def test_ambiguous_or_already_owned_sid_is_refused_without_writes(self):
         self.begin("alias")
         self.roster.mark("alias", State.LOST)
