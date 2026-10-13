@@ -15,12 +15,10 @@ import json
 import logging
 import os
 import re
-import runpy
 import stat
 import sys
 from contextlib import suppress
 from datetime import datetime
-from types import SimpleNamespace
 
 
 class HookError(Exception):
@@ -218,7 +216,12 @@ def append(path: str, record: dict) -> None:
 
 def load_tmux_host():
     """Load the host by path, without changing the search path or caching the host module."""
-    return SimpleNamespace(**runpy.run_path(TMUX_HOST))
+    spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
+    if spec is None or spec.loader is None:
+        raise HookError(f"{TMUX_HOST}: cannot load Python module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def say(text: str) -> None:

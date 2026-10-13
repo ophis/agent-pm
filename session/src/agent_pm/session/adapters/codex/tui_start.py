@@ -2,21 +2,40 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
-import runpy
 import signal
 import sys
 import time
-from types import SimpleNamespace
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-sessions = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "sessions.py")))
-app_server = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "app_server.py")))
 
-HOOKS = runpy.run_path(os.path.join(DIRECTORY, "hook_schema.py"))["HOOKS"]
+def _sibling(name):
+    key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
+    if key in sys.modules:
+        found = getattr(sys.modules[key], "__file__", None)
+        if found != path:
+            raise ImportError(f"{key} is {found}, not {path}")
+        return sys.modules[key]
+    spec = importlib.util.spec_from_file_location(key, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{path}: cannot load Python module")
+    # Postponed dataclass annotations resolve through their registered module.
+    module = sys.modules[key] = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[key]
+        raise
+    return module
+
+
+sessions = _sibling("sessions")
+app_server = _sibling("app_server")
+HOOKS = _sibling("hook_schema").HOOKS
 
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")

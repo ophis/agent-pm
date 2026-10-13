@@ -8,14 +8,11 @@ import dataclasses
 import json
 import os
 import pathlib
-import runpy
 import subprocess
 import sys
-import types
 from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
-from agent_pm.session.engine.types import Spec
 
 from session.tests import case
 from session.tests.case import Case
@@ -43,16 +40,18 @@ class SiblingTest(Case):
                     text=True,
                     check=True,
                 )
-                self.assertEqual(json.loads(result.stdout), [[], True])
+                self.assertEqual(json.loads(result.stdout), [sorted(SIBLINGS), True])
 
-    def test_registered_private_names_do_not_override_path_dependencies(self):
-        code = """import json, runpy, sys, types
+    def test_registered_private_names_must_point_to_the_same_file(self):
+        code = """import runpy, sys, types
 name = "_agent_pm_codex_sessions"
 foreign = types.ModuleType(name)
 foreign.__file__ = "/foreign/sessions.py"
 sys.modules[name] = foreign
-loaded = runpy.run_path(sys.argv[1])
-print(json.dumps([loaded["sessions"].__file__, sys.modules[name] is foreign]))
+try:
+    runpy.run_path(sys.argv[1])
+except ImportError as error:
+    print(error)
 """
         for name in SCRIPTS:
             with self.subTest(name=name):
@@ -62,12 +61,12 @@ print(json.dumps([loaded["sessions"].__file__, sys.modules[name] is foreign]))
                     text=True,
                     check=True,
                 )
-                self.assertEqual(json.loads(result.stdout), [str(DIRECTORY / "sessions.py"), True])
+                self.assertIn("not " + str(DIRECTORY / "sessions.py"), result.stdout)
 
-    def test_scripts_load_dependencies_without_registration(self):
+    def test_scripts_reuse_the_same_registered_dependencies(self):
         for script in (tui_start, tui_hook):
             self.assertEqual(script.sessions.__file__, str(DIRECTORY / "sessions.py"))
-        self.assertNotIn(SIBLINGS[1], sys.modules)
+        self.assertIs(tui_start.sessions, tui_hook.sessions)
 
     def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(
