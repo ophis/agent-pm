@@ -78,7 +78,7 @@ def _entry(data: dict) -> Entry:
         raise ValueError("receipt: want an allocated receipt filename")
     if record is not None and record.sid != sid:
         raise ValueError("sid: differs from Record.sid")
-    if state in {State.STARTING, State.LOST, State.RESUMING} and not _uuid4(sid):
+    if not _uuid4(sid):
         raise ValueError("sid: want a canonical uuid4")
     return Entry(record, state, data["note"], data["started"], tuple(argv), sid, receipt)
 
@@ -521,6 +521,8 @@ class Roster:
 
     def adopt(self, record: Record) -> str | None:
         _name(record.name)
+        if not _uuid4(record.sid):
+            raise RosterError("sid: want a canonical uuid4")
         with self._locked() as data:
             self._lease(data)
             matches = [

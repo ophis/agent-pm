@@ -118,6 +118,56 @@ class RosterTest(Case):
         with self.assertRaises(RosterError):
             self.roster.mark("x", "unknown")
 
+    def test_adopt_rejects_noncanonical_sid_before_creating_files(self):
+        for sid in (
+            None,
+            "not-a-uuid",
+            "12345678-1234-1234-8234-123456789abc",
+            "12345678-1234-4234-8234-123456789ABC",
+            "{12345678-1234-4234-8234-123456789abc}",
+            "12345678123442348234123456789abc",
+        ):
+            with self.subTest(sid=sid), self.assertRaisesRegex(RosterError, "canonical uuid4"):
+                self.roster.adopt(replace(self.record, sid=sid))
+            self.assertFalse(Path(self.directory).exists())
+
+    def test_persisted_invalid_sid_is_refused_for_every_state(self):
+        self.roster.adopt(self.record)
+        valid = self.content()
+        for state in State:
+            for sid in (None, "not-a-uuid"):
+                with self.subTest(state=state, sid=sid):
+                    data = json.loads(json.dumps(valid))
+                    entry = data["entries"]["x"]
+                    entry["state"], entry["sid"] = state, sid
+                    if state in {State.STARTING, State.LOST}:
+                        entry["record"], entry["argv"] = None, ["fake-ctl", "start", "x"]
+                    else:
+                        entry["record"]["sid"] = sid
+                    Path(self.roster.path).write_text(json.dumps(data))
+                    before = Path(self.roster.path).read_bytes()
+                    with self.assertRaisesRegex(RosterError, "canonical uuid4"):
+                        self.roster.entries()
+                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                    self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
+
+    def test_resume_preflight_rejects_invalid_sid_without_receipt_or_write(self):
+        self.roster.adopt(self.record)
+        self.roster.mark("x", State.GONE)
+        data = self.content()
+        data["entries"]["x"]["sid"] = None
+        data["entries"]["x"]["record"]["sid"] = None
+        Path(self.roster.path).write_text(json.dumps(data))
+        before = Path(self.roster.path).read_bytes()
+        for operation in (
+            lambda: self.roster.claim_resume("x"),
+            lambda: self.roster.mark("x", State.RESUMING),
+        ):
+            with self.assertRaisesRegex(RosterError, "canonical uuid4"):
+                operation()
+            self.assertEqual(Path(self.roster.path).read_bytes(), before)
+            self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
+
     def test_lost_adoption_retains_note_and_started(self):
         self.begin(note="keep")
         self.roster.mark("x", State.LOST)
