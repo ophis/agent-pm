@@ -419,6 +419,152 @@ class StandaloneImports(Sample):
         self.assertEqual(guards.standalone_imports(self.tree(files)), [])
 
 
+class UnitTestModules(Sample):
+    def test_matching_modules_in_every_project_are_accepted(self):
+        files = {}
+        for project, layer in guards.PROJECTS.items():
+            files[f"{project}/tests/unit/engine/config_test.py"] = ""
+            files[f"{project}/src/agent_pm/{layer}/engine/config.py"] = ""
+        self.assertEqual(guards.unit_test_modules(self.tree(files)), [])
+
+    def test_missing_nested_module_reports_both_repository_paths(self):
+        test = "session/tests/unit/adapters/codex/removed_test.py"
+        source = "session/src/agent_pm/session/adapters/codex/removed.py"
+        self.assertEqual(
+            guards.unit_test_modules(self.tree({test: ""})),
+            [f"{test}: missing source module {source}"],
+        )
+
+    def test_wrapped_test_namespace_has_the_same_relative_mapping(self):
+        root = self.tree(
+            {
+                "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "",
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_package_test_is_named_after_its_source_package(self):
+        root = self.tree(
+            {
+                "delegate/tests/unit/composer_test.py": "",
+                "delegate/src/agent_pm/delegate/composer/__init__.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_markdown_directory_matches_a_unit_test(self):
+        root = self.tree(
+            {
+                "delegate/tests/unit/team/roles_test.py": "",
+                "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_empty_directory_does_not_match_a_unit_test(self):
+        test = "delegate/tests/unit/team_test.py"
+        source = "delegate/src/agent_pm/delegate/team.py"
+        root = self.tree({test: ""})
+        os.makedirs(os.path.join(root, "delegate/src/agent_pm/delegate/team"))
+        self.assertEqual(
+            guards.unit_test_modules(root), [f"{test}: missing source module {source}"]
+        )
+
+    def test_fake_suite_matches_a_helper_under_the_project_tests_root(self):
+        root = self.tree(
+            {
+                "session/tests/unit/fakes/host_test.py": "",
+                "session/tests/fakes/host.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_helper_suite_matches_a_sibling_helper(self):
+        root = self.tree(
+            {
+                "delegate/tests/unit/composer/support_test.py": "",
+                "delegate/tests/unit/composer/support.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_layer_package_suite_matches_its_public_init(self):
+        root = self.tree(
+            {
+                "session/tests/unit/session_test.py": "",
+                "session/src/agent_pm/session/__init__.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_source_directory_at_another_relative_path_does_not_match(self):
+        test = "delegate/tests/unit/composer/roles_test.py"
+        source = "delegate/src/agent_pm/delegate/composer/roles.py"
+        root = self.tree(
+            {test: "", "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter"}
+        )
+        self.assertEqual(
+            guards.unit_test_modules(root), [f"{test}: missing source module {source}"]
+        )
+
+    def test_helper_at_another_relative_path_does_not_match(self):
+        test = "session/tests/unit/host_test.py"
+        source = "session/src/agent_pm/session/host.py"
+        root = self.tree({test: "", "session/tests/fakes/host.py": ""})
+        self.assertEqual(
+            guards.unit_test_modules(root), [f"{test}: missing source module {source}"]
+        )
+
+    def test_source_package_init_suite_uses_the_package_name(self):
+        test = "delegate/tests/unit/composer/__init___test.py"
+        root = self.tree({test: "", "delegate/src/agent_pm/delegate/composer/__init__.py": ""})
+        self.assertEqual(len(guards.unit_test_modules(root)), 1)
+
+    def test_helpers_and_other_filename_extensions_are_not_checked(self):
+        root = self.tree(
+            {
+                "utils/tests/unit/case.py": "",
+                "utils/tests/unit/fakes/record.py": "",
+                "utils/tests/unit/live_tmux.py": "",
+                "utils/tests/unit/files_test.py.backup": "",
+                "utils/tests/unit/files_test.txt": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_integration_and_repository_checks_are_not_checked(self):
+        root = self.tree(
+            {
+                "session/tests/integration/unit/unmatched_test.py": "",
+                "session/tests/session_tests/integration/unmatched_test.py": "",
+                "tests/unit/unmatched_test.py": "",
+                ".github/unit/unmatched_test.py": "",
+            }
+        )
+        self.assertEqual(guards.unit_test_modules(root), [])
+
+    def test_a_module_in_another_project_does_not_match(self):
+        test = "manager/tests/unit/config_test.py"
+        source = "manager/src/agent_pm/manager/config.py"
+        root = self.tree({test: "", "utils/src/agent_pm/utils/config.py": ""})
+        self.assertEqual(
+            guards.unit_test_modules(root), [f"{test}: missing source module {source}"]
+        )
+
+    def test_missing_modules_are_reported_in_path_order(self):
+        root = self.tree(
+            {
+                "session/tests/unit/z_test.py": "",
+                "manager/tests/unit/a_test.py": "",
+                "session/tests/unit/a_test.py": "",
+            }
+        )
+        found = guards.unit_test_modules(root)
+        self.assertEqual(found, sorted(found))
+        self.assertEqual(len(found), 3)
+
+
 class SharedTypes(Sample):
     DATA = "from dataclasses import dataclass\n\n\n@dataclass\nclass A:\n    x: int\n"
     UTILS = f"utils/{PKG}/utils"
