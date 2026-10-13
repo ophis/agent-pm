@@ -1,9 +1,10 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`. Its
-Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and request into
+Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
 a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
 the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
 the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
-signals): it applies spec.access.cwd, not its env. Starts no process."""
+signals): it applies spec.access.cwd, not its env. Starts no process.
+"""
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -80,7 +81,7 @@ class Adapter(ABC):
         return SessionStatus("unknown", None, "")
 
     def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
-        """Own write dirs (resume: request.spec.sid's)."""
+        """Own write dirs (resume: spec.sid's)."""
         return ()
 
 

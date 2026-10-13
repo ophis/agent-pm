@@ -1,22 +1,23 @@
-"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes
-among the team's issues assigned to role accounts, then starts it through the outer (run.py in a
-detached Driver session).
+"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among
+the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
+Driver session).
 
 python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake
 ROLE
 
-(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config
-error or Linear unavailable (config-error, linear-error: once a day), else 0. --now       Skip the
-01:00-06:59 hours check. --issue ID    Start or resume only this issue, without the hours, max_runs
-and usage gates. Exits 1 a config error, Linear unavailable, agent runs unknown, a live agent run of
-the issue or nothing started, else the outer's code: 0 started or bounced, 1 the start failed, 2 a
-config error of the issue, 3 transient. --dry-run     With either: print the plan (a tick's with its
-usage checks); change nothing, start nothing; exit 0. --brake ROLE Print ROLE's runtime usage; exit
-0 if a deep-research round may start, 1 if not or unknown, 2 no such role. Bad arguments exit 2.
+(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
+              unavailable (config-error, linear-error: once a day), else 0.
+  --now       Skip the 01:00-06:59 hours check.
+--issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
+              Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
+              outer's code: 0 started or bounced, 1 the start failed, 2 a config error of the issue, 3 transient.
+--dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
+--brake ROLE  Print ROLE's runtime usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
+              role.
+Bad arguments exit 2.
 
-Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage- blocked
-one only its usage-skip lines.
-"""
+Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked
+one only its usage-skip lines."""
 
 import argparse
 import contextlib
@@ -544,7 +545,7 @@ def outer(a, cfg, *, gql, run, keychain):
         except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
         if isinstance(repo, Transient) or (isinstance(repo, Invalid) and a.mode == "resume"):
-            return fail(a.issue, "transient", repo.reason, 3)
+            return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo.reason)
@@ -577,6 +578,7 @@ def outer(a, cfg, *, gql, run, keychain):
             target=repo,
             docs=cfg.docs,
         ).replace("\x00", "")
+        # a lone surrogate would fail execve
         text = text.encode("utf-8", "replace").decode()
     except OSError as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")

@@ -1,7 +1,6 @@
-"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log
-(log, into LOGS_DIR once an entry's main sets it), comments by client id and the checks of the
-config's Linear ids.
-"""
+"""Linear's GraphQL API as a given Keychain service (linear_gql), the Linear orchestrator's log (log,
+into LOGS_DIR once an entry's main sets it), comments by client id and the checks of the config's
+Linear ids."""
 
 import hashlib
 import http.client
@@ -49,6 +48,7 @@ def operation(query):
 
 
 def linear_gql(query, *, service, timeout=30, **variables):
+    # naming only service: urllib's header error would echo it
     auth = key(service, timeout)
     req = urllib.request.Request(
         URL,
@@ -113,6 +113,7 @@ def key(service, timeout):
 
 
 def has_key(service):
+    # no -w: its secret is never read
     return (
         subprocess.run(
             [SECURITY, "find-generic-password", "-s", service],

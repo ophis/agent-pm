@@ -1,6 +1,6 @@
 """agent_pm.manager.engine.crew, the old core's crew_test ported onto a fake session.engine.api
-(Api): argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces
-the session options.
+(Api): argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces the
+session options.
 """
 
 import contextlib

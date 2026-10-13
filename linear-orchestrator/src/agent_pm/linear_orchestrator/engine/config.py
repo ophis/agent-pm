@@ -1,9 +1,8 @@
-"""The Linear orchestrator's config: load() reads its own keys once (linear-
-orchestrator/config.toml with the keys of ~/.agent-pm/config.local.toml it owns: TOP_KEYS, and
-ROLE_KEYS in a [roles.<role>], a table the delegate's config shares) and the delegate's, constructs
-a caller-owned Driver and returns a frozen Config with a resolved RunConfig per role, or raises
-ConfigError; plus TUI names and shared helpers.
-"""
+"""The Linear orchestrator's config: load() reads its own keys once (linear-orchestrator/config.toml
+with the keys of ~/.agent-pm/config.local.toml it owns: TOP_KEYS, and ROLE_KEYS in a [roles.<role>],
+a table the delegate's config shares) and the delegate's, configures the session from the session's
+(every entry's main calls load first) and returns a frozen Config with a resolved RunConfig per
+role, or raises ConfigError; plus TUI names and shared helpers."""
 
 import os
 import re

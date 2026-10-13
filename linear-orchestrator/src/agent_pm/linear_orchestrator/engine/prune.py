@@ -1,14 +1,18 @@
-"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either;
-unknown: skipped): - closes its live TUI sessions of a configured role (session.close) before its
-checkouts go, since a left-open agent may work in one; - deletes <work_dir>/work/<ID>/src/<owner>/*,
-publish and tmp, each a real directory inside its own folder, a src or publish entry only as a clone
-or worktree (.git a directory or a file), uncommitted work included; - in a deleted worktree's local
-clone, unless it lies in <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-*
-branch but the default that origin/<branch> or origin/<default> holds, else keeps and reports it
-(git reads refs only, so code an agent run planted, such as filters or hooks, never runs outside
-auto mode's review); - archives every finished issue of the team assigned to the pm or engineer role
-account. TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log,
-src prune); a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
+"""Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
+skipped):
+- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a
+  left-open agent may work in one;
+- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
+  folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
+  uncommitted work included;
+- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree
+  prune`, then deletes each <ID>-* branch but the default that origin/<branch> or origin/<default>
+  holds, else keeps and reports it (git reads refs only, so code an agent run planted, such as
+  filters or hooks, never runs outside auto mode's review);
+- archives every finished issue of the team assigned to the pm or engineer role account.
+
+TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune);
+a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
 """
 
 import contextlib

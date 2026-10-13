@@ -1,5 +1,10 @@
-"""Standalone runtime hook: bounded payload, binding, journal and marking; errors append their
-traceback to the session's hook.log when writable and report one stderr line.
+"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the
+payload JSON on stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then
+marks the pane with the label's word (tmux_host.mark) through session.json's tmux_path, never a tmux
+on PATH. Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and
+always exits 0 (a runtime may read both). stdlib only, standalone. An optional adapter_hook binds
+runtime-specific identity before journaling; failures append their full traceback to hook.log when
+writable and report one stderr line.
 """
 
 from __future__ import annotations
@@ -224,7 +229,7 @@ def say(text: str) -> None:
 
 class _HookLog(logging.FileHandler):
     def handleError(self, record) -> None:
-        """A failed file write must not add another stderr diagnostic."""
+        """Log write errors skip stderr."""
 
 
 def _error_logger(argv: list[str]) -> logging.Logger:

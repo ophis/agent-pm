@@ -1,4 +1,7 @@
-"""Standalone standard-library Codex app-server JSON-RPC client and account probe."""
+"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path,
+it is the account probe: prints the account/rateLimits/read result, or null on any failure
+(--timeout S, 0 < S <= 10).
+"""
 
 from __future__ import annotations
 

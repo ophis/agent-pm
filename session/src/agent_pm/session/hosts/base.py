@@ -1,4 +1,6 @@
-"""Hosts own processes, Records and Displays; Displayable Hosts show them."""
+"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows
+them.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from agent_pm.utils import Display, Record
 
 
 class NotDisplayable(DriverError):
-    """`host <name> cannot display`."""
+    """From a Host that is not Displayable: `host <name> cannot display`."""
 
 
 class HostProcess(ABC):

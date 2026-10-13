@@ -1,9 +1,8 @@
 """The test-only Adapter, runtime `fake`, importing only adapters.base; caller-owned loader tables
-supply it. Config keys: scenario, log, tui
-(true: a Tui). Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at}
-parses to LimitHit, an exit record to Exited(99), which the Driver drops. InProcessFakeAdapter,
-in_process only, logs {prompt, sid, resume, pid, thread} and runs out, err, sleep, exit and raise
-steps.
+supply it. Config keys: scenario, log, tui (true: a Tui). Its runtime is runtime.py (RUNTIME), run
+by this Python; a limit record {resets_at} parses to LimitHit, an exit record to Exited(99), which
+the Driver drops. InProcessFakeAdapter, in_process only, logs {prompt, sid, resume, pid, thread} and
+runs out, err, sleep, exit and raise steps.
 """
 
 import json

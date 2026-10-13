@@ -1,4 +1,12 @@
-"""Caller-owned Session Driver, launch strategies and live session handles."""
+"""The Driver's API. start() checks everything, writes a session's `session` record to
+<workdir>/run.jsonl, then starts it in its Mode (headless, tui or in_process) and returns its
+Handle. Handle.events() streams its events, Stderr and IdleTimeout (none while Blocked; it stops
+nothing) up to the Driver's own Exited, recording `client_session` and `stderr`. usage(),
+session_status() and session_record() give a runtime's Usage, a session's SessionStatus and its
+record; note() appends a record, holds() checks a file's text; writable_dirs() the dirs a runtime
+grants itself write to under a Spec. attach(), sessions(), show() and close() reach a tui session by
+name; detach() runs a command in a tmux session of its own. Each Driver owns its configuration.
+"""
 
 import contextlib
 import logging

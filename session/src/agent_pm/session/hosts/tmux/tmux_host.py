@@ -1,4 +1,8 @@
-"""Standalone tmux host operations and command-line entry point; standard library only."""
+"""Hosts a command (e.g. an agent runtime's interactive CLI) in a detached tmux session an agent or
+a person can watch and drive; agent-pm's only tmux caller. One file, tmux 3.3+ and the stdlib,
+importing no agent_pm module: copy it anywhere. start never opens a pane; show does. Errors raise
+TuiError.
+"""
 
 from __future__ import annotations
 
