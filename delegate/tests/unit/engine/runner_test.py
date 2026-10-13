@@ -24,16 +24,19 @@ from agent_pm.delegate import (
     Result,
     Spec,
     composer,
+    plan,
     run,
 )
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.engine.types import Stopped
+from agent_pm.delegate.event.reply import marks
 from agent_pm.session import MODES, Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit
 from agent_pm.utils import printable
 
 from delegate.tests.case import Case
 from delegate.tests.replies import bare, block, running
+from delegate.tests.unit.engine.print_prompt import ROLES, STARTED, PrintPromptCase
 from delegate.tests.unit.runs import (
     DONE,
     GAVE_UP,
@@ -1081,3 +1084,39 @@ class TuiPolicy(Base):
             (given, args[3].sid),
             ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
         )
+
+
+class PrintPromptRuns(PrintPromptCase):
+    def test_each_role_is_done_its_deliverable_the_planned_prompt_saved_to_out(self):
+        for role in ROLES:
+            with self.subTest(role=role):
+                args = self.given(role)
+                want, events = plan(*args, driver=self.driver).prompt, []
+                with no_child(), redirect_stderr(io.StringIO()):
+                    r = run(*args, on_event=events.append, driver=self.driver)
+                self.assertEqual(
+                    (r.returncode, r.outcome.status, r.outcome.deliverable), (0, "done", want)
+                )
+                with open(args[1].out) as f:
+                    self.assertEqual(f.read(), want)
+                self.assertEqual(marks(want), [("round", "a mark line in the input")])
+                self.assertEqual(events, [Begun(SID), STARTED, Finished(r)])
+
+    def test_headless_is_refused_and_nothing_starts(self):
+        args = self.given("dummy-tester", mode="headless")
+        with (
+            no_child(),
+            self.assertRaisesRegex(
+                ConfigError, "runtime 'print_prompt' does not support headless mode"
+            ),
+        ):
+            run(*args, driver=self.driver)
+        self.assertFalse(os.path.exists(args[1].workdir))
+
+    def test_a_resume_is_refused(self):
+        args = self.given("dummy-tester", resume=True)
+        with (
+            no_child(),
+            self.assertRaisesRegex(ConfigError, "print_prompt has no session to resume"),
+        ):
+            run(*args, driver=self.driver)

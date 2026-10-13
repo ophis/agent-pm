@@ -1,265 +1,37 @@
-import functools
-import glob
-import hashlib
 import os
 import re
-import tempfile
-import tomllib
-import types
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer.base import anchor, fill, outline
-from agent_pm.delegate.composer.prompt import RETURN, RULE, reference_errors
-from agent_pm.delegate.composer.run import check_old_keys
+from agent_pm.delegate.composer.base import outline
 from agent_pm.delegate.composer.teams import START
-from agent_pm.delegate.engine.config import CONFIG
-from agent_pm.delegate.event.outcome import SCHEMA
 from agent_pm.utils import unfenced
 
-from delegate.tests.case import REPO, ROOTS, Case
+from delegate.tests.case import Case
 from delegate.tests.unit.composer.prompts import (
-    RUN,
     composed,
-    heading_anchors,
     item,
     parameters,
-    role_sources,
     rule,
     section,
     task_text,
 )
+from delegate.tests.unit.composer.shipped import (
+    CHECKOUT_RULE,
+    PICK,
+    REPO_ARGS,
+    TASKS,
+    RealConfig,
+    catalog,
+    guide,
+    role_tasks,
+    roles,
+    runs,
+    team_texts,
+)
 from delegate.tests.unit.composer.teams import INTRO
-
-TASKS = os.path.join(composer.TEAM, "tasks")
-
-
-SCHEMA_SHA256 = "748847763f62d05e4412f1627a029ad88e42f004162361561d7556ec3877c366"
-
-
-RUNTIME = re.compile(r"claude|codex", re.I)
-
-
-FIXTURE = """\
-language = "Chinese"
-
-[roles.researcher.output]
-type = "github"
-repo = "ophis/private_docs"
-branch = "main"
-dir = "Research/"
-
-[roles.pm.output]
-type = "github"
-repo = "ophis/private_docs"
-branch = "main"
-dir = "Product Design/"
-"""
-
-
-API = [
-    "ConfigError",
-    "TEAM",
-    "DELIVERABLE",
-    "RunConfig",
-    "RunParams",
-    "Team",
-    "team",
-    "team_dirs",
-    "index",
-    "lookup",
-    "path_for",
-    "check_all",
-    "catalog",
-    "check_team_dirs",
-    "check_overlap",
-    "team_paths",
-    "resolve",
-    "trusted_dirs",
-    "access",
-    "render",
-]
-
-
-DROPPED = [
-    "SRC",
-    "SCHEMA",
-    "PROGRESS",
-    "OUTCOME",
-    "CONFIG",
-    "Intent",
-    "roles",
-    "tasks_path",
-    "reference_errors",
-    "bind",
-    "fill",
-    "outline",
-    "unfenced",
-    "anchor",
-]
-
-
-TICKET = re.compile(r"TASK-\d+")  # an internal ticket id
-
-
-TICKET_EXAMPLES = {"principles.md": ["(e.g. `TASK-142`)"]}
-
-
-WORDS = (
-    "router.py",
-    "research.py",
-    "usage.py",
-    "eng.py",
-    "Linear",
-    "In Review",
-    "Todo",
-    "Handoff",
-    "issue",
-)
-
-
-GENERIC_NAME = re.compile(r"(?<![/\w])(agent-pm|autopilot):[\w-]+|\bthe [\w-]+ skill\b")
-
-
-LANGUAGE_RULE = "headings and fixed labels included"
-
-
-REPO_ARGS = {
-    "worktree": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>",
-    "status": "--dir <Workdir>/src --branch <branch> [--name <checkout>] [--base <Base:>] <repo>",
-}
-
-
-CHECKOUT_RULE = (
-    "- **Checkout**: `[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
-    "`Checkout:`; no `Checkout:` → drop it."
-)
-
-
-PICK = (
-    "**Your task**: pick it from your charter's Tasks section as its opening sentence says; a task the input names "
-    "wins. Read that task's file (no other task's), `<tasks>/<task>.md`, and follow its steps in order; its links "
-    "(`#…`) point to sections of this prompt."
-)
-
-
-COMMANDS_RULE = (
-    "- **Commands**: run each command this prompt gives exactly, written as Parameters says, as its own "
-    "command (no `cd`, pipe, redirect or `&&`)."
-)
-
-
-@functools.cache
-def catalog() -> dict[str, dict[str, str]]:
-    """The built-in team's catalog with the shipped config alone."""
-    return composer.catalog(config=CONFIG, local=os.devnull)
-
-
-def roles() -> list[str]:
-    return list(catalog())
-
-
-def role_tasks() -> list[tuple[str, str]]:
-    return [(r, t) for r in roles() for t in catalog()[r]]
-
-
-def runs() -> list[tuple[str, str | None]]:
-    """Each role given no task, then each role and task."""
-    return [(r, None) for r in roles()] + role_tasks()
-
-
-def tickets(root):
-    """
-    {path relative to `root`: its ticket ids beyond TICKET_EXAMPLES} of each file under `root`.
-    """
-    found = {}
-    for top, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
-        for name in (n for n in files if not n.endswith(".pyc")):
-            rel = os.path.relpath(os.path.join(top, name), root)
-            with open(os.path.join(top, name), errors="replace") as f:
-                text = f.read()
-            for example in TICKET_EXAMPLES.get(rel, ()):
-                text = text.replace(example, "", 1)
-            if ids := TICKET.findall(text):
-                found[rel] = ids
-    return found
-
-
-def generic_names(text):
-    return [line for line in text.splitlines() if GENERIC_NAME.search(line)]
-
-
-def expanded(prompt):
-    """`prompt` with each # Parameters name written as its value, as the rule says a run writes a
-    command.
-    """
-    for name, value in parameters(prompt).items():
-        prompt = prompt.replace(name, value.strip("`"))
-    return prompt
-
-
-def words(prompt):
-    """
-    `prompt` with this checkout's path, the machine's and not the team's text, written as <root>.
-    """
-    return prompt.replace(REPO, "<root>")
-
-
-def guide(prompt):
-    return prompt.split("\n# Principles\n", 1)[0]
-
-
-def parameter_names(role, task=None, **changes):
-    return list(parameters(composed(role, task, **changes)[0]))
-
-
-def team_texts():
-    """{path relative to the team root: text} of each .md file of the real team root (its tools/ are
-    code).
-    """
-    out = {}
-    for path in glob.glob(os.path.join(composer.TEAM, "**", "*.md"), recursive=True):
-        with open(path) as f:
-            out[os.path.relpath(path, composer.TEAM)] = f.read()
-    return out
-
-
-class Package(Case):
-    def test_the_api_is_the_modules_names(self):
-        self.assertEqual(composer.__all__, API)
-        self.assertEqual([name for name in DROPPED if hasattr(composer, name)], [])
-        self.assertIs(composer.render, composer.prompt.render)
-        self.assertIs(composer.resolve, composer.run.resolve)
-        self.assertIsInstance(composer.teams, types.ModuleType)
-        self.assertIs(composer.team, composer.teams.team)
-        self.assertIs(composer.team_paths, composer.teams.team_paths)
-        self.assertEqual(CONFIG, os.path.join(REPO, "delegate", "config.toml"))
 
 
 class Acceptance(Case):
-    """The shipped config alone (no local file)."""
-
-    def test_every_role_and_task_composes_with_no_reference_error(self):
-        self.assertEqual(roles(), ["researcher", "pm", "engineer", "dummy-tester"])
-        for role, task in runs():
-            with self.subTest(role=role, task=task):
-                self.assertEqual(reference_errors(*role_sources(role, task)), [])
-
-    def test_each_prompt_returns_in_replies_with_neutral_return_and_parameters(self):
-        self.assertNotRegex(RETURN, RUNTIME)
-        for role, task in runs():
-            with self.subTest(role=role, task=task):
-                prompt = words(composed(role, task)[0])
-                self.assertIn("agent-pm-outcome", prompt)
-                self.assertNotIn("report.py", prompt)
-                # The report command was a code span opening with `report`; guide.md says how to
-                # report progress.
-                self.assertNotRegex(prompt, r"`report[` ]|(?<!how to )report progress")
-                self.assertIn(f"\n{RETURN}\n# Input\n", prompt)
-                block = re.search(r"^# Parameters\n(.*?)(?=^# )", prompt, re.M | re.S)[1]
-                self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
-                self.assertNotRegex(block, RUNTIME)
-
     def test_each_requested_command_runs_the_teams_repo_tool(self):
         self.assertTrue(os.path.isfile(os.path.join(composer.TEAM, "tools", "repo.py")))
         for role in roles():
@@ -300,113 +72,13 @@ class Acceptance(Case):
             self.assertEqual(len(START.findall(text)), 1, name)
             self.assertIn("## Resume", [line.rstrip() for _, line in unfenced(text)], name)
 
-    def test_the_outcome_schema_is_mains(self):
-        with open(SCHEMA, "rb") as f:
-            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), SCHEMA_SHA256)
-
-    def test_no_language_no_language_rule(self):
-        with open(CONFIG) as f:
-            cfg = f.read()
-        self.assertIn('\nlanguage = "English"\n', cfg)
-        with tempfile.TemporaryDirectory() as tmp:
-            config = os.path.join(tmp, "config.toml")
-            with open(config, "w") as f:
-                f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
-            for role in roles():
-                run = composer.resolve(role, config=config, local=os.devnull)
-                prompt = composer.render(run, RUN)
-                self.assertEqual(run.language, "", role)
-                self.assertNotIn(LANGUAGE_RULE, prompt, role)
-                self.assertNotIn("are in English", prompt, role)
-
 
 class Shipped(Case):
-    """The team's text, the core config's comments and the composer's strings."""
-
-    def test_tickets_finds_an_id_beyond_the_examples(self):
-        with tempfile.TemporaryDirectory() as root:
-            for rel, text in {
-                "roles/x.md": "when asked, e.g. a wording tweak like TASK-300; light.",
-                "principles.md": "the id (e.g. `TASK-142`); twice (e.g. `TASK-142`)",
-                "output/output.md": "the id (e.g. `TASK-142`)",
-            }.items():
-                os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
-                with open(os.path.join(root, rel), "w") as f:
-                    f.write(text)
-            self.assertEqual(
-                tickets(root),
-                {
-                    "roles/x.md": ["TASK-300"],
-                    "principles.md": ["TASK-142"],
-                    "output/output.md": ["TASK-142"],
-                },
-            )
-
-    def test_no_ticket_id_but_the_format_examples(self):
-        self.assertEqual(tickets(composer.TEAM), {})
-        for rel, examples in TICKET_EXAMPLES.items():
-            with open(os.path.join(composer.TEAM, rel)) as f:
-                text = f.read()
-            for example in examples:
-                self.assertEqual(text.count(example), 1, (rel, example))
-        with open(CONFIG) as f:
-            self.assertEqual(TICKET.findall(f.read()), [])
-        for role, task in runs():
-            prompt = words(composed(role, task)[0])
-            self.assertEqual(
-                TICKET.findall(prompt.replace("(e.g. `TASK-142`)", "", 1)), [], (role, task)
-            )
-
-    def test_no_orchestration_or_tracker_words(self):
-        texts = team_texts() | {
-            f"{role} {task}": words(composed(role, task)[0]) for role, task in runs()
-        }
-        composer_py = glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))
-        for path in [CONFIG, SCHEMA, *composer_py]:
-            with open(path) as f:
-                texts[path] = f.read()
-        for label, text in texts.items():
-            for word in WORDS:
-                self.assertNotIn(word, text, f"{label}: {word}")
-
-    def test_a_plugin_skill_without_its_slash_or_the_x_skill_is_caught_and_slash_commands_pass(
-        self,
-    ):
-        for text, want in (
-            (
-                "run autopilot:build\nthen `agent-pm:tmux`\nor x/agent-pm:act-as",
-                ["run autopilot:build", "then `agent-pm:tmux`"],
-            ),
-            (
-                "the act-as skill\nthe tmux skill's workers\nthe skill",
-                ["the act-as skill", "the tmux skill's workers"],
-            ),
-            ("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research", []),
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(generic_names(text), want)
-
-    def test_config_comments_name_skills_by_slash_command(self):
-        with open(CONFIG) as f:
-            self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
-
     def test_text_holds_only_the_placeholders_render_fills(self):
         inline = {"role", "role_anchor", "task", "language", "deliverable"}
         for rel, text in team_texts().items():
             if rel.endswith(".md"):
                 self.assertLessEqual(set(re.findall(r"\{\{(\w+)", text)), inline, rel)
-
-    def test_local_lines_uncommented_are_a_valid_local_file(self):
-        with open(CONFIG) as f:
-            local = tomllib.loads(
-                "".join(
-                    line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
-                )
-            )
-        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "team_dirs"}, set(local))
-        self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
-        for role, table in local["roles"].items():
-            check_old_keys(table, role)
 
     def test_each_charter_opens_with_its_index_naming_a_listed_default(self):
         defaults = {
@@ -521,24 +193,7 @@ class Shipped(Case):
         self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
 
 
-class RealCore(Case):
-    """The real core with FIXTURE as the local file."""
-
-    def setUp(self):
-        self.local(FIXTURE)
-
-    def local(self, text):
-        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(text)
-
-    def test_the_config_renders_the_language_and_progress_rules_once(self):
-        for role in roles():
-            prompt, run = composed(role)
-            self.assertEqual(run.language, "Chinese")
-            self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
-            self.assertIn("are in Chinese", prompt, role)
-            self.assertEqual(prompt.count("is a point to tell the user your progress"), 1, role)
-
+class Real(RealConfig):
     def test_fixed_labels_are_translated_and_template_headings_say_so(self):
         self.assertIn(
             (
@@ -627,53 +282,6 @@ class RealCore(Case):
                 composed(role)[0],
             )
 
-    def test_a_local_files_other_layers_keys_are_left_alone(self):
-        self.local(
-            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
-            'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
-        )
-        for role, task in role_tasks():
-            run = composer.resolve(role, task)
-            self.assertEqual((run.task, run.show), (task, "none"))
-
-    def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
-        for role, task in runs():
-            self.assertEqual(reference_errors(*role_sources(role, task)), [], (role, task))
-
-    def test_every_prompts_own_headings_have_unique_anchors(self):
-        for role, task in runs():
-            anchors = heading_anchors(composed(role, task)[0])
-            self.assertEqual(len(anchors), len(set(anchors)), (role, task))
-
-    def test_runs_fill_placeholders_and_list_parameters_before_input(
-        self,
-    ):
-        for role, task in runs():
-            with self.subTest(role=role, task=task):
-                prompt, run = composed(role, task)
-                self.assertNotIn("{{", prompt)
-                self.assertEqual(run.task, task or "")
-                g = guide(prompt)
-                self.assertTrue(g.startswith("# Guide\n"))
-                self.assertIn("`<tasks>/<task>.md`", g)
-                self.assertIn(
-                    f"[{run.role_title} rules](#{anchor(run.role_title)}) > your task file's rules",
-                    g,
-                )
-                self.assertEqual(prompt.count("On conflict:"), 1)
-                self.assertIn("On conflict:", g)
-                items = re.findall(r"^- \*\*.+$", g, re.M)
-                self.assertEqual(
-                    items[0],
-                    "- **Parameters**: the value of each name this prompt and your task's file "
-                    "use.",
-                )
-                self.assertEqual(
-                    items[-1],
-                    "- **Input**: the last section; everything after its heading is the input "
-                    "text, verbatim (it may contain `#` or `---`).",
-                )
-
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "light-research")[0])
         self.assertIn(
@@ -696,64 +304,6 @@ class RealCore(Case):
                     if len(step.strip()) >= 30 and not step.startswith("#"):
                         self.assertNotIn(step.strip(), prompt, (role, task, t))
 
-    def test_a_task_from_another_roles_index_is_an_error(self):
-        with self.assertRaisesRegex(
-            composer.ConfigError, "task 'deep-research' is not one of engineer's tasks"
-        ):
-            composer.resolve("engineer", "deep-research")
-
-    def test_pm_engineer_and_researcher_runs(self):
-        researcher = (
-            (
-                "[Researcher rules](#researcher) > your task file's rules",
-                "# Template: `templates/research-report.md`",
-                "`ophis/private_docs`",
-            ),
-            lambda run: (run.tier, run.effort, run.read),
-            (2, "high", ["{{team}}"]),
-        )
-        for role, task, literals, got, want in (
-            (
-                "pm",
-                None,
-                ("[PM rules](#pm) > your task file's rules", "# Template: `templates/prd.md`"),
-                lambda run: (run.output["dir"], run.read, run.write),
-                ("Product Design/", [], []),
-            ),
-            (
-                "engineer",
-                None,
-                ("[Engineer rules](#engineer) > your task file's rules", "gh pr create"),
-                lambda run: (run.effort, run.write, run.output),
-                ("xhigh", [], {"type": "pull-request"}),
-            ),
-            *(
-                ("researcher", task, *researcher)
-                for task in (None, "deep-research", "light-research")
-            ),
-        ):
-            with self.subTest(role=role, task=task):
-                prompt, run = composed(role, task)
-                for literal in literals:
-                    self.assertIn(literal, prompt)
-                self.assertEqual(got(run), want)
-
-    def test_each_roles_parameters_follow_what_its_texts_use(self):
-        base, out = (
-            ["<Workdir>", "<tasks>", "<team>"],
-            ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
-        )
-        want = {
-            "engineer": base,
-            "pm": [*base, *out],
-            "researcher": [*base, "<gate>", *out],
-        }
-        for role, task in [(r, None) for r in want] + [
-            (r, t) for r, t in role_tasks() if r in want
-        ]:
-            self.assertEqual(parameter_names(role, task), want[role], (role, task))
-        self.assertEqual(parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"])
-
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
         self.assertEqual(parameters(prompt)["<team>"], f"`{composer.TEAM}`")
@@ -770,24 +320,6 @@ class RealCore(Case):
             "No subagents with a round's tools → skip that round, under Gaps.",
         ):
             self.assertIn(phrase, task_text("deep-research"))
-
-    def test_names_written_as_their_values_each_requested_command_starts_a_command(self):
-        for role in roles():
-            prompt, run = composed(role)
-            prompt = expanded(prompt)
-            for cmd in run.commands:
-                cmd = fill(cmd, {"workdir": RUN.workdir, "team": composer.TEAM}, role)
-                cmd = cmd.removesuffix(" *")
-                self.assertIn(f"`{cmd}", prompt, role)
-
-    def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
-        for role, task in runs():
-            prompt, _ = composed(role, task)
-            for value in (RUN.workdir, RULE):
-                self.assertEqual(prompt.count(value), 1, (role, task, value))
-            for root in ROOTS:
-                self.assertNotIn(root, prompt.replace(composer.TEAM, "<team>"), (role, task))
-            self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
     def test_every_repo_command_takes_the_inputs_checkout(self):
         found = {}
@@ -917,32 +449,3 @@ class RealCore(Case):
         self.assertIn(
             "3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0]
         )
-
-    def test_a_run_reads_the_team_root_when_its_text_names_a_method(self):
-        named = []
-        for role in roles():
-            with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
-                text = f.read() + "".join(task_text(t) for t in catalog()[role])
-            if "<team>/methods/" in text:
-                named.append(role)
-                self.assertIn("{{team}}", composer.resolve(role).read, role)
-        self.assertEqual(named, ["researcher"])
-
-    def test_every_researcher_run_names_the_gate_default_none(self):
-        gate = "python3 /u/usage.py --below 80"
-        for task in (None, "deep-research", "light-research"):
-            prompt = composed("researcher", task)[0]
-            self.assertIn("the gate is `<gate>`", prompt, task)
-            self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
-            prompt = composed("researcher", task, overlays=[{"gate": gate}])[0]
-            self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`", task)
-
-    def test_github_host_defaults_and_overrides(self):
-        prompt, run = composed("researcher")
-        self.assertIn("gh repo clone <out-host>/<out-repo> <pub>", prompt)
-        self.assertIn(
-            "https://<out-host>/<out-repo>/blob/<out-branch>/<file>`, `<file>` URL-encoded", prompt
-        )
-        self.assertEqual(parameters(prompt)["<out-host>"], "`github.com`")
-        prompt = composed("researcher", output={**run.output, "host": "ghe.example.com"})[0]
-        self.assertEqual(parameters(prompt)["<out-host>"], "`ghe.example.com`")

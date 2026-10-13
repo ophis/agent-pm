@@ -3,6 +3,7 @@
 """
 
 import dataclasses
+import hashlib
 import json
 import os
 import shutil
@@ -22,6 +23,9 @@ from agent_pm.delegate.event.outcome import (
 )
 
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.shipped import (
+    SCHEMA_SHA256,
+)
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}
@@ -356,6 +360,12 @@ class ReadRace(Base):
 class SchemaFile(Case):
     def test_is_beside_outcome_py(self):
         self.assertEqual(os.path.dirname(SCHEMA), os.path.dirname(outcome.__file__))
+
+
+class Acceptance(Case):
+    def test_the_outcome_schema_is_mains(self):
+        with open(SCHEMA, "rb") as f:
+            self.assertEqual(hashlib.sha256(f.read()).hexdigest(), SCHEMA_SHA256)
 
 
 if __name__ == "__main__":

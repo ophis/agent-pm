@@ -20,6 +20,16 @@ from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import LOCAL, read_project
 
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.prompts import (
+    composed,
+    task_text,
+)
+from delegate.tests.unit.composer.shipped import (
+    RealConfig,
+    catalog,
+    role_tasks,
+    roles,
+)
 from delegate.tests.unit.composer.teams import EDITOR, FILES, POET, RUN_CONFIG, VERSE
 
 TIER = "tier must be an integer 1–4"
@@ -716,3 +726,66 @@ class TeamRoles(Fake):
         self.assertEqual(
             self.refused("ghost"), "roles.ghost: no charter roles/ghost.md in core or team_dirs"
         )
+
+
+class Real(RealConfig):
+    def test_a_local_files_other_layers_keys_are_left_alone(self):
+        self.local(
+            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
+            'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
+        )
+        for role, task in role_tasks():
+            run = composer.resolve(role, task)
+            self.assertEqual((run.task, run.show), (task, "none"))
+
+    def test_a_task_from_another_roles_index_is_an_error(self):
+        with self.assertRaisesRegex(
+            composer.ConfigError, "task 'deep-research' is not one of engineer's tasks"
+        ):
+            composer.resolve("engineer", "deep-research")
+
+    def test_pm_engineer_and_researcher_runs(self):
+        researcher = (
+            (
+                "[Researcher rules](#researcher) > your task file's rules",
+                "# Template: `templates/research-report.md`",
+                "`ophis/private_docs`",
+            ),
+            lambda run: (run.tier, run.effort, run.read),
+            (2, "high", ["{{team}}"]),
+        )
+        for role, task, literals, got, want in (
+            (
+                "pm",
+                None,
+                ("[PM rules](#pm) > your task file's rules", "# Template: `templates/prd.md`"),
+                lambda run: (run.output["dir"], run.read, run.write),
+                ("Product Design/", [], []),
+            ),
+            (
+                "engineer",
+                None,
+                ("[Engineer rules](#engineer) > your task file's rules", "gh pr create"),
+                lambda run: (run.effort, run.write, run.output),
+                ("xhigh", [], {"type": "pull-request"}),
+            ),
+            *(
+                ("researcher", task, *researcher)
+                for task in (None, "deep-research", "light-research")
+            ),
+        ):
+            with self.subTest(role=role, task=task):
+                prompt, run = composed(role, task)
+                for literal in literals:
+                    self.assertIn(literal, prompt)
+                self.assertEqual(got(run), want)
+
+    def test_a_run_reads_the_team_root_when_its_text_names_a_method(self):
+        named = []
+        for role in roles():
+            with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
+                text = f.read() + "".join(task_text(t) for t in catalog()[role])
+            if "<team>/methods/" in text:
+                named.append(role)
+                self.assertIn("{{team}}", composer.resolve(role).read, role)
+        self.assertEqual(named, ["researcher"])

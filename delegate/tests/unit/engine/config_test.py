@@ -5,11 +5,13 @@ trusted_dirs().
 """
 
 import os
+import re
 import tomllib
 import unittest
 from unittest import mock
 
 import agent_pm.delegate.engine.config
+from agent_pm.delegate.composer.run import check_old_keys
 from agent_pm.delegate.engine.config import (
     CONFIG,
     DELEGATE,
@@ -24,6 +26,9 @@ from agent_pm.utils import read_project
 
 from delegate.tests import case
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.shipped import (
+    generic_names,
+)
 
 TWO = """[hosts]
 default = "a"
@@ -119,6 +124,24 @@ class TrustedDirsTest(Case):
         with mock.patch.dict(os.environ, {"HOME": "/var/h"}):
             got = trusted_dirs({"trusted_dirs": ["~/c", "/x/../y"]})
         self.assertEqual(got, {os.path.realpath("/var/h/c"), os.path.realpath("/y")})
+
+
+class Shipped(Case):
+    def test_config_comments_name_skills_by_slash_command(self):
+        with open(CONFIG) as f:
+            self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
+
+    def test_local_lines_uncommented_are_a_valid_local_file(self):
+        with open(CONFIG) as f:
+            local = tomllib.loads(
+                "".join(
+                    line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
+                )
+            )
+        self.assertLessEqual({"show", "cwd", "users", "trusted_dirs", "team_dirs"}, set(local))
+        self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
+        for role, table in local["roles"].items():
+            check_old_keys(table, role)
 
 
 if __name__ == "__main__":

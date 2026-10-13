@@ -4,8 +4,9 @@ import re
 import tempfile
 from dataclasses import replace
 
+from agent_pm.delegate import composer
 from agent_pm.delegate.composer import ConfigError, RunParams
-from agent_pm.delegate.composer.base import TEAM
+from agent_pm.delegate.composer.base import TEAM, anchor, fill
 from agent_pm.delegate.composer.prompt import (
     OUTCOME,
     PARAMETERS,
@@ -17,9 +18,12 @@ from agent_pm.delegate.composer.prompt import (
 )
 from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
+from agent_pm.delegate.engine.config import CONFIG
 
-from delegate.tests.case import Case
+from delegate.tests.case import ROOTS, Case
 from delegate.tests.unit.composer.prompts import (
+    RUN,
+    composed,
     heading_anchors,
     method,
     own_text,
@@ -27,6 +31,19 @@ from delegate.tests.unit.composer.prompts import (
     role_sources,
     rule,
     task_text,
+)
+from delegate.tests.unit.composer.shipped import (
+    COMMANDS_RULE,
+    LANGUAGE_RULE,
+    RUNTIME,
+    RealConfig,
+    expanded,
+    guide,
+    parameter_names,
+    role_tasks,
+    roles,
+    runs,
+    words,
 )
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, RUN_CONFIG, VERSE, WRITER
 
@@ -840,3 +857,142 @@ class TeamDirs(Fake):
                     self.assertEqual(
                         self.compose(role, task, found=other)[0], self.compose(role, task)[0]
                     )
+
+
+class Acceptance(Case):
+    def test_every_role_and_task_composes_with_no_reference_error(self):
+        self.assertEqual(roles(), ["researcher", "pm", "engineer", "dummy-tester"])
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                self.assertEqual(reference_errors(*role_sources(role, task)), [])
+
+    def test_each_prompt_returns_in_replies_with_neutral_return_and_parameters(self):
+        self.assertNotRegex(RETURN, RUNTIME)
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                prompt = words(composed(role, task)[0])
+                self.assertIn("agent-pm-outcome", prompt)
+                self.assertNotIn("report.py", prompt)
+                # The report command was a code span opening with `report`; guide.md says how to
+                # report progress.
+                self.assertNotRegex(prompt, r"`report[` ]|(?<!how to )report progress")
+                self.assertIn(f"\n{RETURN}\n# Input\n", prompt)
+                block = re.search(r"^# Parameters\n(.*?)(?=^# )", prompt, re.M | re.S)[1]
+                self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
+                self.assertNotRegex(block, RUNTIME)
+
+    def test_no_language_no_language_rule(self):
+        with open(CONFIG) as f:
+            cfg = f.read()
+        self.assertIn('\nlanguage = "English"\n', cfg)
+        with tempfile.TemporaryDirectory() as tmp:
+            config = os.path.join(tmp, "config.toml")
+            with open(config, "w") as f:
+                f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
+            for role in roles():
+                run = composer.resolve(role, config=config, local=os.devnull)
+                prompt = composer.render(run, RUN)
+                self.assertEqual(run.language, "", role)
+                self.assertNotIn(LANGUAGE_RULE, prompt, role)
+                self.assertNotIn("are in English", prompt, role)
+
+
+class Real(RealConfig):
+    def test_the_config_renders_the_language_and_progress_rules_once(self):
+        for role in roles():
+            prompt, run = composed(role)
+            self.assertEqual(run.language, "Chinese")
+            self.assertEqual(prompt.count(LANGUAGE_RULE), 1, role)
+            self.assertIn("are in Chinese", prompt, role)
+            self.assertEqual(prompt.count("is a point to tell the user your progress"), 1, role)
+
+    def test_every_reference_is_a_link_to_a_path_of_the_prompt(self):
+        for role, task in runs():
+            self.assertEqual(reference_errors(*role_sources(role, task)), [], (role, task))
+
+    def test_every_prompts_own_headings_have_unique_anchors(self):
+        for role, task in runs():
+            anchors = heading_anchors(composed(role, task)[0])
+            self.assertEqual(len(anchors), len(set(anchors)), (role, task))
+
+    def test_runs_fill_placeholders_and_list_parameters_before_input(
+        self,
+    ):
+        for role, task in runs():
+            with self.subTest(role=role, task=task):
+                prompt, run = composed(role, task)
+                self.assertNotIn("{{", prompt)
+                self.assertEqual(run.task, task or "")
+                g = guide(prompt)
+                self.assertTrue(g.startswith("# Guide\n"))
+                self.assertIn("`<tasks>/<task>.md`", g)
+                self.assertIn(
+                    f"[{run.role_title} rules](#{anchor(run.role_title)}) > your task file's rules",
+                    g,
+                )
+                self.assertEqual(prompt.count("On conflict:"), 1)
+                self.assertIn("On conflict:", g)
+                items = re.findall(r"^- \*\*.+$", g, re.M)
+                self.assertEqual(
+                    items[0],
+                    "- **Parameters**: the value of each name this prompt and your task's file "
+                    "use.",
+                )
+                self.assertEqual(
+                    items[-1],
+                    "- **Input**: the last section; everything after its heading is the input "
+                    "text, verbatim (it may contain `#` or `---`).",
+                )
+
+    def test_each_roles_parameters_follow_what_its_texts_use(self):
+        base, out = (
+            ["<Workdir>", "<tasks>", "<team>"],
+            ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
+        )
+        want = {
+            "engineer": base,
+            "pm": [*base, *out],
+            "researcher": [*base, "<gate>", *out],
+        }
+        for role, task in [(r, None) for r in want] + [
+            (r, t) for r, t in role_tasks() if r in want
+        ]:
+            self.assertEqual(parameter_names(role, task), want[role], (role, task))
+        self.assertEqual(parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"])
+
+    def test_names_written_as_their_values_each_requested_command_starts_a_command(self):
+        for role in roles():
+            prompt, run = composed(role)
+            prompt = expanded(prompt)
+            for cmd in run.commands:
+                cmd = fill(cmd, {"workdir": RUN.workdir, "team": composer.TEAM}, role)
+                cmd = cmd.removesuffix(" *")
+                self.assertIn(f"`{cmd}", prompt, role)
+
+    def test_a_prompt_defines_each_run_value_once_under_the_rule(self):
+        for role, task in runs():
+            prompt, _ = composed(role, task)
+            for value in (RUN.workdir, RULE):
+                self.assertEqual(prompt.count(value), 1, (role, task, value))
+            for root in ROOTS:
+                self.assertNotIn(root, prompt.replace(composer.TEAM, "<team>"), (role, task))
+            self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
+
+    def test_every_researcher_run_names_the_gate_default_none(self):
+        gate = "python3 /u/usage.py --below 80"
+        for task in (None, "deep-research", "light-research"):
+            prompt = composed("researcher", task)[0]
+            self.assertIn("the gate is `<gate>`", prompt, task)
+            self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)
+            prompt = composed("researcher", task, overlays=[{"gate": gate}])[0]
+            self.assertEqual(parameters(prompt)["<gate>"], f"`{gate}`", task)
+
+    def test_github_host_defaults_and_overrides(self):
+        prompt, run = composed("researcher")
+        self.assertIn("gh repo clone <out-host>/<out-repo> <pub>", prompt)
+        self.assertIn(
+            "https://<out-host>/<out-repo>/blob/<out-branch>/<file>`, `<file>` URL-encoded", prompt
+        )
+        self.assertEqual(parameters(prompt)["<out-host>"], "`github.com`")
+        prompt = composed("researcher", output={**run.output, "host": "ghe.example.com"})[0]
+        self.assertEqual(parameters(prompt)["<out-host>"], "`ghe.example.com`")

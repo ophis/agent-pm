@@ -10,7 +10,7 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, composer
+from agent_pm.delegate import ConfigError, composer, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
@@ -22,6 +22,7 @@ from agent_pm.utils import temp_dirs, under
 from delegate.tests.case import REPO
 from delegate.tests.unit.composer.teams import POET, VERSE
 from delegate.tests.unit.engine.plans import SID, Base
+from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 
@@ -551,3 +552,22 @@ class Policy(Base):
                 self.local(text)
                 self.assertIn("policy", self.refused(runtime="claude"))
                 start.assert_not_called()
+
+
+class PrintPromptPlans(PrintPromptCase):
+    def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
+        for local in ("", GITHUB):
+            with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
+                f.write(local)
+            for role in ROLES:
+                with self.subTest(github=bool(local), role=role):
+                    first, *others = (
+                        plan(*args, driver=self.driver)
+                        for args in (
+                            self.given(role, runtime=runtime, mode=mode)
+                            for runtime, mode in RUNTIMES
+                        )
+                    )
+                    for p in others:
+                        self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
+        self.assertEqual(composer.resolve("researcher").output["type"], "github")
