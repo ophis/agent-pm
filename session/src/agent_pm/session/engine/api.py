@@ -281,12 +281,6 @@ class Mode(Protocol):
         ...
 
 
-def diagnostics() -> logging.Logger:
-    logger = logging.Logger("driver")
-    logger.parent = logging.getLogger()
-    return logger
-
-
 class Handle:
     def __init__(
         self,
@@ -302,7 +296,6 @@ class Handle:
         adapter: Adapter | None = None,
         usage: Callable[[], Usage | None] | None = None,
         clock: Callable[[], float] | None = None,
-        logger: logging.Logger | None = None,
     ):
         """spec: its sid, name (a tui session's) and workdir."""
         self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
@@ -313,7 +306,6 @@ class Handle:
         )
         self._adapter = adapter
         self._usage = usage
-        self._logger = diagnostics() if logger is None else logger
         self.clock = time.monotonic if clock is None else clock
         self._channel = records.path(spec.workdir)
         self._reply = reply
@@ -394,8 +386,7 @@ class Handle:
         try:
             resolved = self._adapter.session_metadata(self._info)
             info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
-        except Exception:
-            self._logger.debug("Session metadata resolution failed", exc_info=True)
+        except OSError:
             return
         if info != self._info:
             self._info = info
@@ -515,7 +506,6 @@ class Driver:
         clock: Callable[[], float] | None = None,
         class_loader=load_class,
     ):
-        self._logger = diagnostics()
         self.host, self.probe, self.clock = host, probe, clock
         self.registry = registry.Registry(
             adapters=adapters, hosts=hosts, default_host=default_host, class_loader=class_loader
@@ -600,7 +590,6 @@ class Driver:
             adapter=adapter,
             usage=lambda: self.usage(runtime),
             clock=self.clock,
-            logger=self._logger,
         )
 
     def attach(self, name: str, idle_timeout: float | None = None) -> Handle:
@@ -688,8 +677,7 @@ class Driver:
             return None
         try:
             return adapter.usage(output)
-        except Exception:
-            self._logger.debug("Usage parsing failed for %s", runtime, exc_info=True)
+        except ValueError:
             return None
 
     @staticmethod

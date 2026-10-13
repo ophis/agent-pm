@@ -1,7 +1,6 @@
 import importlib.util
 import io
 import json
-import logging
 import os
 import shutil
 import subprocess
@@ -687,26 +686,30 @@ class Local(Clone):
         self.advance()
         results = {}
 
-        logger = logging.Logger("delegate-checkout-test")
-
         def go(branch):
-            try:
-                results[branch] = repo.worktree(
-                    self.clone,
-                    branch,
-                    os.path.join(self.tmp, branch),
-                    run=Real([info()]),
-                    temp=(),
-                )
-            except Exception as e:
-                logger.exception("Checkout test worker failed")
-                results[branch] = e
+            results[branch] = repo.worktree(
+                self.clone,
+                branch,
+                os.path.join(self.tmp, branch),
+                run=Real([info()]),
+                temp=(),
+            )
 
-        threads = [threading.Thread(target=go, args=(b,)) for b in ("TASK-1-a", "TASK-2-b")]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        branches = ("TASK-1-a", "TASK-2-b")
+        threads = [threading.Thread(target=go, args=(b,)) for b in branches]
+        previous_hook = threading.excepthook
+
+        def capture(args):
+            if args.thread in threads:
+                results[branches[threads.index(args.thread)]] = args.exc_value
+            else:
+                previous_hook(args)
+
+        with unittest.mock.patch("threading.excepthook", new=capture):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
         for b, r in results.items():
             self.assertIsInstance(r, dict, r)
             self.assertEqual(git("-C", r["worktree"], "branch", "--show-current"), b)

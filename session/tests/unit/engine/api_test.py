@@ -49,6 +49,7 @@ from agent_pm.session.modes import headless, in_process, tui
 from session.tests import fake_adapter
 from session.tests.case import SPAWNS, Case
 from session.tests.modules import adapter_loader
+from session.tests.threads import capture_errors
 
 WAIT = 10
 
@@ -279,15 +280,12 @@ class Base(Case):
         found, errors = [], []
 
         def run():
-            try:
-                found.extend(handle.events())
-            except BaseException as e:
-                logging.exception("Driver test worker failed")
-                errors.append(e)
+            found.extend(handle.events())
 
         thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
+        with capture_errors(thread, errors.append):
+            thread.start()
+            thread.join(WAIT)
         if thread.is_alive():
             handle.stop()
             self.fail(f"events() did not end within {WAIT}s")
@@ -778,22 +776,6 @@ class HandleOverAModeTest(Case):
         previous = handle.info()
         resolver.side_effect = OSError("metadata unavailable")
         self.assertEqual(handle.info(), previous)
-
-    def test_metadata_failure_is_diagnostic_and_remains_best_effort_with_logging_disabled(self):
-        adapter = fake_adapter.FakeAdapter({})
-        adapter.session_metadata = mock.Mock(side_effect=RuntimeError("metadata unavailable"))
-        handle = self.handle(adapter=adapter, native_id="n1")
-        with self.assertLogs(level="DEBUG") as logs:
-            previous = handle.info()
-        self.assertEqual(len(logs.records), 1)
-        self.assertEqual(logs.records[0].name, "driver")
-        self.assertIsInstance(logs.records[0].exc_info[1], RuntimeError)
-        disabled = logging.root.manager.disable
-        try:
-            logging.disable(logging.CRITICAL)
-            self.assertEqual(handle.info(), previous)
-        finally:
-            logging.disable(disabled)
 
     def test_binding_record_failure_remains_fatal(self):
         adapter = fake_adapter.FakeAdapter({})

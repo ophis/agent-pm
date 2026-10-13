@@ -3,7 +3,6 @@
 import errno
 import io
 import json
-import logging
 import os
 import tempfile
 import threading
@@ -16,6 +15,7 @@ from agent_pm.session.engine import records
 from agent_pm.utils import append_line
 
 from session.tests.case import Case
+from session.tests.threads import capture_errors
 
 SID = "4f1c2b9e-0d6a-4c1e-9b7a-2e5f8a3d6c10"
 
@@ -43,15 +43,12 @@ class Base(Case):
         out = {}
 
         def run():
-            try:
-                out["value"] = call()
-            except BaseException as e:
-                logging.exception("Test worker failed")
-                out["error"] = e
+            out["value"] = call()
 
         thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(5)
+        with capture_errors(thread, lambda error: out.update(error=error)):
+            thread.start()
+            thread.join(5)
         if thread.is_alive():
             self.fail("blocked")
         if "error" in out:

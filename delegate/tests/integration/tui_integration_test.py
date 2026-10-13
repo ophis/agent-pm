@@ -8,7 +8,6 @@ tests/integration/core/drive_tui_integration_test.py, its tui run.
 
 import io
 import json
-import logging
 import os
 import threading
 import time
@@ -89,34 +88,36 @@ class TuiRun(tui_live.Live):
             if on_event:
                 on_event(event)
 
-        logger = logging.Logger("delegate-tui-test")
-
         def target():
-            try:
-                ended.append(
-                    run(
-                        config,
-                        Spec(
-                            "Hello.",
-                            self.workdir,
-                            task="echo",
-                            mode="tui",
-                            runtime="claude",
-                            sid=SID,
-                            events=self.events,
-                            out=self.out,
-                            cwd=self.workdir,
-                        ),
-                        on_event=on,
-                        driver=self.driver,
-                    )
+            ended.append(
+                run(
+                    config,
+                    Spec(
+                        "Hello.",
+                        self.workdir,
+                        task="echo",
+                        mode="tui",
+                        runtime="claude",
+                        sid=SID,
+                        events=self.events,
+                        out=self.out,
+                        cwd=self.workdir,
+                    ),
+                    on_event=on,
+                    driver=self.driver,
                 )
-            except BaseException as e:
-                logger.exception("Tui test worker failed")
-                ended.append(e)
+            )
+
+        previous_hook = threading.excepthook
+
+        def capture(args):
+            if args.thread is thread:
+                ended.append(args.exc_value)
+            else:
+                previous_hook(args)
 
         thread = threading.Thread(target=target, daemon=True)
-        with redirect_stderr(err):
+        with redirect_stderr(err), mock.patch("threading.excepthook", new=capture):
             thread.start()
             thread.join(WAIT)
         self.err = err.getvalue()

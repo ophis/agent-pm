@@ -111,8 +111,7 @@ class Live(tui_live.Live):
         """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a
         later test's server.
         """
-        stream = Stream(handle)
-        self.addCleanup(stream.thread.join, WAIT)
+        stream = Stream(self, handle)
         self.addCleanup(handle.stop)
         return stream
 

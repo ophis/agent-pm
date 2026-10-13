@@ -1,12 +1,11 @@
 """Shared test fixtures and support."""
 
 import json
-import logging
 import os
 import queue
 import tempfile
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import Driver
@@ -33,20 +32,28 @@ DIALOG = "Pick one: 1. this 2. that"
 
 
 class Stream:
-    """A Handle's events(), drained by `thread` into a queue."""
+    """A Handle's events drained by a managed worker; its Future carries failures."""
 
-    def __init__(self, handle: api.Handle):
+    def __init__(self, case, handle: api.Handle):
         self.queue = queue.Queue()
-        self.thread = threading.Thread(target=self._drain, args=(handle,), daemon=True)
-        self.thread.start()
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.result = self.executor.submit(self._drain, handle)
+        case.addCleanup(self.close, handle)
 
     def _drain(self, handle):
+        for event in handle.events():
+            self.queue.put(event)
+
+    def close(self, handle):
+        handle.stop()
         try:
-            for event in handle.events():
-                self.queue.put(event)
-        except BaseException as e:
-            logging.exception("Test worker failed")
-            self.queue.put(e)
+            self.result.result(timeout=WAIT)
+        except TimeoutError:
+            if self.result.done():
+                raise
+            raise AssertionError(f"events() did not finish within {WAIT}s") from None
+        finally:
+            self.executor.shutdown(wait=False, cancel_futures=True)
 
     def next(self, poke=None, *, idle=True):
         """The next event within WAIT s; idle=False skips IdleTimeout, poke runs between checks."""
@@ -55,6 +62,8 @@ class Stream:
             try:
                 item = self.queue.get(timeout=live_tmux.POLL)
             except queue.Empty:
+                if self.result.done():
+                    self.result.result()
                 if time.monotonic() > deadline:
                     raise AssertionError(f"no event within {WAIT} s") from None
                 if poke:

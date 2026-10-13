@@ -93,7 +93,7 @@ class TuiTest(Live):
             [("session", SID)],
         )
         self.assertEqual(tui.read_state("w1")["sid"], SID)
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         self.assertEqual(
             [stream.next() for _ in range(4)],
             [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)],
@@ -127,7 +127,7 @@ class TuiTest(Live):
 
     def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         self.assertEqual(stream.next(), TurnEnd("bye", 0))
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         self.lines("w2 done", "w2 dead")
@@ -142,7 +142,7 @@ class TuiTest(Live):
         if os.getuid() == 0:
             self.skipTest("root connects to a mode 000 socket")
         handle = self.start("w3", {"read": True})
-        stream = Stream(handle)
+        stream = Stream(self, handle)
         mode = os.stat(self.server.socket).st_mode
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
@@ -185,8 +185,7 @@ class SameNameTest(Live):
         self.assertEqual(next(events), Exited(-signal.SIGHUP))
         self.assertEqual((list(events), old.state()), ([], "absent"))
         old.stop()
-        stream = Stream(new)
-        self.addCleanup(stream.thread.join, WAIT)
+        stream = Stream(self, new)
         self.addCleanup(new.stop)
         self.assertEqual(stream.next(), Blocked(DIALOG))
         self.lines(f"{name} blocked", events=mine)

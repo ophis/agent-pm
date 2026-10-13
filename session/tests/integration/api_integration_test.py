@@ -6,7 +6,6 @@ import contextlib
 import dataclasses
 import io
 import json
-import logging
 import os
 import re
 import signal
@@ -38,6 +37,7 @@ from agent_pm.session.engine.types import (
 from session.tests import fake_adapter
 from session.tests.case import Case
 from session.tests.modules import adapter_loader
+from session.tests.threads import capture_errors
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds
@@ -160,17 +160,14 @@ class Base(Case):
         found, errors = [], []
 
         def run():
-            try:
-                for event in handle.events():
-                    found.append(event)
-                    on(event)
-            except BaseException as e:
-                logging.exception("Test worker failed")
-                errors.append(e)
+            for event in handle.events():
+                found.append(event)
+                on(event)
 
         thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
+        with capture_errors(thread, errors.append):
+            thread.start()
+            thread.join(WAIT)
         if thread.is_alive():
             handle.stop()
             self.fail(f"events() did not end within {WAIT}s, got {found}")
