@@ -9,7 +9,7 @@ import re
 import uuid
 
 from agent_pm.session import DriverError, NotDisplayable, Session
-from agent_pm.session.engine.api import (
+from agent_pm.session.engine.types import (
     Exited,
     Reply,
     SessionInfo,
@@ -75,7 +75,7 @@ class FakeSession(Session):
     def reply(self) -> str | None:
         return self._reply
 
-    def session_info(self) -> SessionStatus:
+    def session_status(self) -> SessionStatus:
         return SessionStatus("yes", None, "")
 
     def record(self) -> None:

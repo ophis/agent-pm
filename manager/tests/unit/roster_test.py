@@ -18,7 +18,7 @@ import unittest
 import unittest.mock
 
 from agent_pm.manager import roster
-from agent_pm.session import api
+from agent_pm.session import DriverError, SessionRow, api
 from agent_pm.utils.config_file import LOCAL, read_project
 
 from manager.tests.case import PY, REPO, SRC, Case, child_env
@@ -52,7 +52,7 @@ def within(seconds=10):
 
 
 def row(name, own=False):
-    return api.SessionRow(name, None, None, "working", None, None, None, None, own)
+    return SessionRow(name, None, None, "working", None, None, None, None, own)
 
 
 class Tmux:
@@ -71,7 +71,7 @@ class Tmux:
         if self.error:
             raise self.error
         if name in self.stuck:
-            raise api.DriverError(f"cannot close tui session {name}: tmux: busy")
+            raise DriverError(f"cannot close tui session {name}: tmux: busy")
         self.alive.discard(name)
 
 
@@ -131,7 +131,7 @@ class ManagerTest(Base):
         self.assertEqual(self.tmux.calls, [])
 
     def test_unknown_sessions_name_the_manager_option(self):
-        self.tmux.error = api.DriverError("tmux sessions unknown: bad $TMUX_PANE '%3;'")
+        self.tmux.error = DriverError("tmux sessions unknown: bad $TMUX_PANE '%3;'")
         for call, resolve in (
             ("directory", roster.directory),
             ("home", lambda: roster.home(None, None)),
@@ -322,9 +322,9 @@ LEASE_CHILD = """
 import sys
 from unittest import mock
 from agent_pm.manager import roster
-from agent_pm.session import api
+from agent_pm.session import SessionRow, api
 d, own = sys.argv[1], sys.argv[2]
-live = [api.SessionRow("held", None, None, "working", None, None, None, None, False)]
+live = [SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()
 try:
     with mock.patch.object(api, "sessions", return_value=live), roster.locked(d) as r:
@@ -1308,9 +1308,7 @@ class LeaseTest(Base):
             for call, want in (("take", take), ("check", check)):
                 with self.subTest(label, call=call):
                     self.tmux.alive, self.tmux.calls = set(live or ()), []
-                    self.tmux.error = (
-                        api.DriverError("tmux sessions unknown") if live is None else None
-                    )
+                    self.tmux.error = DriverError("tmux sessions unknown") if live is None else None
                     r, start = self.doc(holder), datetime.datetime.now(datetime.UTC)
                     run = (
                         (lambda: roster.take(r, self.dir, own))
@@ -1398,7 +1396,7 @@ class StopTest(Base):
 
     def live(self, *live, stuck=(), unknown=False):
         self.tmux.alive, self.tmux.stuck, self.tmux.calls = set(live), set(stuck), []
-        self.tmux.error = api.DriverError("tmux sessions unknown") if unknown else None
+        self.tmux.error = DriverError("tmux sessions unknown") if unknown else None
 
     def stop(self, name):
         with roster.locked(self.dir) as r:

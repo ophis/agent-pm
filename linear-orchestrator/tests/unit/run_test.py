@@ -15,7 +15,7 @@ from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
 from agent_pm.linear_orchestrator.engine import config, run
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
-from agent_pm.session import api
+from agent_pm.session import DriverError, api
 from agent_pm.session.adapters import registry
 
 from .board_ids import STATES
@@ -433,7 +433,7 @@ class Tui(Case):
 
     def test_a_close_error_is_logged_and_the_others_still_close(self):
         self.api.live = self.MINE
-        self.api.errors = {self.MINE[0]: api.DriverError("kill failed")}
+        self.api.errors = {self.MINE[0]: DriverError("kill failed")}
         self.assertEqual(self.main(), 0)
         self.assertEqual(
             self.said()[1:3],
@@ -460,7 +460,7 @@ class Tui(Case):
         self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
 
     def test_a_show_error_is_logged_never_raised(self):
-        self.api.shown = api.DriverError(f"no tmux session {TUI}")
+        self.api.shown = DriverError(f"no tmux session {TUI}")
         self.done()
         self.assertEqual(self.main("--tui"), 0)
         said = self.said()

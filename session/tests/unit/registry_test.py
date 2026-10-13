@@ -1,5 +1,5 @@
 """adapters/registry.py: what Session.configure stores (the [adapters.<name>] tables, the hosts' tables and the default
-host), settings() (Session.settings) from a read session config, the tui settings from [hosts.tmux] and Adapter
+host), settings() from a read session config, the tui settings from [hosts.tmux] and Adapter
 loading. Adapter packages are registered in sys.modules or the
 import system only for the test's span; the registry itself is never patched. Case resets it around each test."""
 
@@ -15,7 +15,7 @@ from unittest import mock
 
 import agent_pm.session
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Session, api
+from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import ConfigError
@@ -27,6 +27,10 @@ from session.tests.case import HOSTS, Case, settings
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 UNCONFIGURED = "the session is not configured: call Session.configure first"
+MISSING = (
+    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
+    "No module named 'agent_pm.session.adapters.{n}'"
+)
 
 
 class OddAdapter:
@@ -171,15 +175,12 @@ class SettingsTest(Base):
                 "default_host": "a",
             },
         )
-        self.assertEqual(Session.settings(config), found)
-        with self.assertRaisesRegex(api.ConfigError, r"\A\[hosts\]: missing\Z"):
-            Session.settings({})
 
     def test_configure_from_a_read_config(self):
         self.register(fake=fake_adapter)
         Session.configure_from(tomllib.loads(self.TWO + FAKE))
         self.assertEqual(registry.configured(), ["fake"])
-        with self.assertRaisesRegex(api.ConfigError, r"\A\[hosts\]: missing\Z"):
+        with self.assertRaisesRegex(ConfigError, r"\A\[hosts\]: missing\Z"):
             Session.configure_from({})
         self.assertEqual(registry.configured(), ["fake"])
         self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})
@@ -195,7 +196,7 @@ class SettingsTest(Base):
     def test_the_session_config_with_the_local_file_on_top(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("[hosts.tmux]\nstatus_line = true\n")
-        found = Session.settings(config_file.read_project("session"))
+        found = registry.settings(config_file.read_project("session"))
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
         self.assertEqual(found["default_host"], "tmux")
         Session.configure(**found)
@@ -296,17 +297,13 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_package(self):
         self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
-        self.refused(
-            "adapter 'nope' has no package adapters.nope", lambda: registry.adapter("nope")
-        )
+        self.refused(MISSING.format(n="nope", c="Nope"), lambda: registry.adapter("nope"))
 
     def test_refuses_a_missing_parent_package(self):
         self.configure(FAKE)
         with mock.patch.dict(sys.modules), mock.patch.object(agent_pm, "__path__", []):
             del sys.modules[Adapter.__module__.rpartition(".")[0]]
-            self.refused(
-                "adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake")
-            )
+            self.refused(MISSING.format(n="fake", c="Fake"), lambda: registry.adapter("fake"))
 
     def test_refuses_a_package_that_fails_to_import(self):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
@@ -328,14 +325,21 @@ class AdapterTest(Base):
                 with self.assertRaises(ConfigError) as caught:
                     registry.adapter("broken")
                 self.assertTrue(
-                    str(caught.exception).startswith(f"cannot import adapter 'broken': {shown}"),
+                    str(caught.exception).startswith(
+                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
+                        f"agent_pm.session.adapters.broken: {shown}"
+                    ),
                     caught.exception,
                 )
 
     def test_refuses_a_missing_class(self):
         self.register(empty=package("empty"))
         self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
-        self.refused("adapters.empty has no EmptyAdapter", lambda: registry.adapter("empty"))
+        self.refused(
+            "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
+            "no EmptyAdapter",
+            lambda: registry.adapter("empty"),
+        )
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
         for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadless):
@@ -343,7 +347,7 @@ class AdapterTest(Base):
                 self.register(odd=package("odd", OddAdapter=value))
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused(
-                    "adapters.odd:OddAdapter must be a concrete Adapter subclass",
+                    "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass",
                     lambda: registry.adapter("odd"),
                 )
 

@@ -23,10 +23,12 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     Exited,
+    IdleTimeout,
     Launch,
     LimitHit,
     Reply,
     SessionBound,
+    Spec,
     Stderr,
     TurnEnd,
 )
@@ -144,7 +146,7 @@ class Base(Case):
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
         handle = api.start(
-            runtime, "headless", "hello", spec or api.Spec(workdir=self.workdir), **kwargs
+            runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
         self.addCleanup(handle.stop)
         return handle
@@ -259,15 +261,15 @@ class IdleTest(Base):
 
         def on(event):
             marks.append((time.monotonic(), event))
-            if isinstance(event, api.IdleTimeout):
+            if isinstance(event, IdleTimeout):
                 alive.append(running(self.logged()[0]["pid"]))
 
         found = self.drain(handle, on)
         self.assertEqual((found[0], found[-1]), (Activity("Read"), Exited(0)))
-        idles = [(at, e) for at, e in marks if isinstance(e, api.IdleTimeout)]
+        idles = [(at, e) for at, e in marks if isinstance(e, IdleTimeout)]
         self.assertGreaterEqual(len(idles), 1)
         self.assertEqual(len(found), len(idles) + 2)
-        self.assertEqual({e for _, e in idles}, {api.IdleTimeout(IDLE)})
+        self.assertEqual({e for _, e in idles}, {IdleTimeout(IDLE)})
         self.assertEqual(alive, [True] * len(idles))
         times = [marks[0][0]] + [at for at, _ in idles]
         for before, after in zip(times, times[1:], strict=False):
@@ -377,9 +379,9 @@ class ProcessGroupTest(Base):
             idle_timeout=IDLE,
         )
         found = self.drain(
-            handle, lambda event: handle.stop() if isinstance(event, api.IdleTimeout) else None
+            handle, lambda event: handle.stop() if isinstance(event, IdleTimeout) else None
         )
-        self.assertEqual(found, [Activity("Read"), api.IdleTimeout(IDLE), Exited(-signal.SIGKILL)])
+        self.assertEqual(found, [Activity("Read"), IdleTimeout(IDLE), Exited(-signal.SIGKILL)])
 
 
 class FailureTest(Base):
@@ -445,7 +447,7 @@ class LaunchEnvironmentTest(Base):
             ):
                 self.forget()
                 self.configure(**extra)
-                handle = self.start(runtime, api.Spec(workdir=self.workdir, access=access))
+                handle = self.start(runtime, Spec(workdir=self.workdir, access=access))
                 self.assertEqual(self.drain(handle), [Exited(0)])
                 (entry,) = self.logged()
                 self.assertEqual((entry["cwd"], entry["env"]["PWD"]), (want, want))

@@ -3,7 +3,7 @@
 import unittest
 
 from agent_pm.session import Displayable, DriverError, NotDisplayable, Usage
-from agent_pm.session.engine.api import Exited, Reply, Spec, TurnEnd
+from agent_pm.session.engine.types import Exited, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost

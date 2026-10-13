@@ -37,8 +37,8 @@ def base(*, sid, workdir, runtime, started_at):
 
 def status(workdir, runtime, sid):
     # only cwd is read from the session entry: the agent run can write run.jsonl
-    entry = api.session(workdir, sid)
-    return api.session_info(runtime, sid, entry["cwd"] if entry else workdir)
+    entry = api.session_record(workdir, sid)
+    return api.session_status(runtime, sid, entry["cwd"] if entry else workdir)
 
 
 def command(rec):

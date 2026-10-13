@@ -42,13 +42,13 @@ WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 ATTACH = """import json, sys
 from agent_pm.session import api
-from agent_pm.session import Session
+from agent_pm.session import Session, TurnEnd
 Session.configure(**json.loads(sys.argv[1]))
 h = api.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply, h.info().native_id]
 if sys.argv[3]:
     h.send(sys.argv[3])
-    turn = next(e for e in h.events() if isinstance(e, api.TurnEnd))
+    turn = next(e for e in h.events() if isinstance(e, TurnEnd))
     print(json.dumps([before, [turn.reply, turn.pending], h.reply]))
 else:
     print(json.dumps(before))
@@ -502,7 +502,7 @@ class TuiIntegrationTest(Live):
         self.assertEqual(
             starts[0]["payload"]["transcript_path"], starts[1]["payload"]["transcript_path"]
         )
-        self.assertEqual(api.session_info("codex", self.sid, str(self.cwd)).resumable, "yes")
+        self.assertEqual(api.session_status("codex", self.sid, str(self.cwd)).resumable, "yes")
 
     def test_session_start_waits_for_first_submission_fresh_and_resumed(self):
         spec = dataclasses.replace(

@@ -14,7 +14,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, promote, prune
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import api
+from agent_pm.session import ConfigError, DriverError, api
 from agent_pm.utils import paths, shell
 
 from ..case import Case
@@ -847,7 +847,7 @@ class PruneTest(Case):
                 self.assertEqual(self.api.order, [("sessions", None)])
 
     def test_close_failure_counted(self):
-        for error in (api.DriverError("boom"), api.ConfigError("bad name")):
+        for error in (DriverError("boom"), ConfigError("bad name")):
             with self.subTest(error=type(error).__name__):
                 self.api.order.clear()
                 self.api.live, self.api.errors = [A, B], {B: error}
