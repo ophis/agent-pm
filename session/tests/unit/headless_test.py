@@ -136,19 +136,65 @@ class Base(Case):
         out = {}
 
         def run():
-            try:
-                out["value"] = call()
-            except BaseException as e:
-                out["error"] = e
+            out["value"] = call()
+
+        previous_hook = threading.excepthook
+
+        def capture(args):
+            if args.thread is thread:
+                out["error"] = args.exc_value
+            else:
+                previous_hook(args)
 
         thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        thread.join(WAIT)
+        with mock.patch("threading.excepthook", new=capture):
+            thread.start()
+            thread.join(WAIT)
         if thread.is_alive():
             self.fail("blocked")
         if "error" in out:
             raise out["error"]
         return out["value"]
+
+
+class Promptly(Base):
+    def test_preserves_original_errors_without_thread_stderr(self):
+        for error in (RuntimeError("failed"), KeyboardInterrupt("interrupted")):
+            with self.subTest(error=type(error).__name__):
+
+                def fail(*, exception=error):
+                    raise exception
+
+                with (
+                    mock.patch("sys.stderr", new=io.StringIO()) as console,
+                    self.assertRaises(type(error)) as caught,
+                ):
+                    self.promptly(fail)
+                self.assertIs(caught.exception, error)
+                self.assertEqual(console.getvalue(), "")
+
+    def test_returns_none_and_restores_the_thread_hook(self):
+        hook = threading.excepthook
+        self.assertIsNone(self.promptly(lambda: None))
+        self.assertIs(threading.excepthook, hook)
+
+    def test_delegates_other_threads_errors_to_the_previous_hook(self):
+        error = RuntimeError("other thread")
+
+        def fail():
+            raise error
+
+        def run_other():
+            other = threading.Thread(target=fail)
+            other.start()
+            other.join(WAIT)
+            self.assertFalse(other.is_alive())
+
+        with mock.patch("threading.excepthook") as previous:
+            self.assertIsNone(self.promptly(run_other))
+            previous.assert_called_once()
+            self.assertIs(previous.call_args.args[0].exc_value, error)
+            self.assertIs(threading.excepthook, previous)
 
 
 class Streams(Base):
