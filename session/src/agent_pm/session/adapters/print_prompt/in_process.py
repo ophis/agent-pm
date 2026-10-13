@@ -22,7 +22,8 @@ class PrintPromptInProcess(InProcess):
             raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
 
     def run(self, prompt, spec: Spec, *, resume: bool = False):
-        assert spec.reply_tags is not None
+        if spec.reply_tags is None:
+            raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
         progress, outcome = spec.reply_tags
         tmp = os.path.join(spec.workdir, "tmp")
         os.makedirs(tmp, exist_ok=True)

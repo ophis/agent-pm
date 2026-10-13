@@ -338,6 +338,7 @@ class Stop(Base):
     def test_is_a_no_op_before_begin_and_after_a_failed_begin(self):
         self.mode.stop()
         self.assertEqual(self.mode.state(), "absent")
+        self.assertIsNone(self.mode.returncode(0))
         with self.assertRaises(FileNotFoundError):
             self.mode.begin(
                 (sys.executable, "-c", ""),
@@ -346,6 +347,7 @@ class Stop(Base):
             )
         self.mode.stop()
         self.assertEqual(self.mode.state(), "absent")
+        self.assertIsNone(self.mode.returncode(0))
 
 
 class TuiOnly(Base):

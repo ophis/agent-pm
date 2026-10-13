@@ -61,8 +61,10 @@ class Plan:
 
     @property
     def sid(self) -> str:
-        assert self.spec.sid is not None
-        return self.spec.sid
+        sid = self.spec.sid
+        if sid is None:
+            raise ConfigError("plan has no session id")
+        return sid
 
 
 @dataclass(frozen=True)

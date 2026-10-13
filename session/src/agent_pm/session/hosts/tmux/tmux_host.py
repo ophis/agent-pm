@@ -792,10 +792,12 @@ def open_pane(
         elif split_from is not None:
             new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
-            assert opener is not None
+            if opener is None:
+                raise TuiError(NO_PANE.format("not in tmux"))
             new, why = _split(session, split, _opener_pane(opener, proc, own=own), tmux, proc)
         else:
-            assert opener is not None
+            if opener is None:
+                raise TuiError(NO_PANE.format("not in tmux"))
             new, why = _stack(session, opener, sessions, tmux, proc) or _split(
                 session, "right", _opener_pane(opener, proc, own=own), tmux, proc
             )
@@ -852,7 +854,8 @@ def _grid(
     if found is None:
         return None
     window, manager, areas, socket = found
-    assert manager is not None
+    if manager is None:
+        return None
     workers = [p for p in areas if p != manager]
     if not workers:
         return window, manager, Anchor(None, manager, socket), "right"
@@ -997,7 +1000,8 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
         except TuiError:
             if a.pane is None:
                 raise
-    assert a.pane is not None and a.socket is not None
+    if a.pane is None or a.socket is None:
+        raise TuiError(NO_PANE.format("no tmux pane"))
     command = [
         "env",
         "-u",
@@ -1182,7 +1186,12 @@ def _grid_pass(
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
     leaves = [] if current is None else _leaves(current)
-    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
+    layout_panes = []
+    for leaf in leaves:
+        if leaf.pane is None:
+            return None
+        layout_panes.append(leaf.pane)
+    if current is None or sorted(layout_panes) != sorted(panes):
         return None
     if manager not in panes or len(panes) == 1:
         _grid_down(window, proc)
@@ -1219,7 +1228,12 @@ def _grid_pass(
         )
         if want is None or _leaves(want) == _leaves(at):
             break
-        order, at = [c.pane for c in _leaves(want)], want
+        order = []
+        for cell in _leaves(want):
+            if cell.pane is None:
+                return None
+            order.append(cell.pane)
+        at = want
     if _leaves(at) == leaves:
         return None if recorded == pane_set else ([], None, tiles, pane_set)
     return _swaps(panes, order), at, tiles, pane_set
@@ -1595,11 +1609,10 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
     elif argv[:1] == ["start"] and not {"-h", "--help"} & set(argv):
         start_p.error("a command must follow --")
     a = ap.parse_args(argv)
-    if a.cmd == "start" and not command:
-        start_p.error("a command must follow --")
     try:
         if a.cmd == "start":
-            assert command is not None
+            if not command:
+                start_p.error("a command must follow --")
             actions["start"](
                 a.session, command, events=a.events, cwd=os.getcwd(), env=dict(os.environ)
             )

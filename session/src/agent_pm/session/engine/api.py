@@ -100,7 +100,8 @@ class _LaunchSteps(ABC):
     def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch: ...
 
     def info(self, prompt: str, spec: Spec, *, resume: bool = False) -> SessionInfo:
-        assert spec.sid is not None
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
         self.command = launch = self.launch(prompt, spec, resume=resume)
         if not launch.argv:
             raise ConfigError(f"runtime {self.runtime!r} gave no command")
@@ -174,7 +175,8 @@ class _TuiSteps(_LaunchSteps):
         self.registry = registry
         self.run, self.runtime, self.settings = run, runtime, registry.tui()
         self.host = host
-        assert spec.sid is not None
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
         self.name = _name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
         self.events = _events(events, host=self.host)
         self.tmux = self.host.tmux_path()
@@ -241,7 +243,8 @@ class _InProcessSteps:
         self.run = run
 
     def info(self, prompt: str, spec: Spec, *, resume: bool = False) -> SessionInfo:
-        assert spec.sid is not None
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
         self.run.check(prompt, spec, resume=resume)
         self.args = prompt, spec
         self.resume = resume

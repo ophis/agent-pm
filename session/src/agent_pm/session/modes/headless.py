@@ -109,7 +109,8 @@ class HeadlessMode:
         return [item], False
 
     def returncode(self, timeout: float) -> int | None:
-        assert self.proc is not None
+        if self.proc is None:
+            return None
         try:
             return self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:

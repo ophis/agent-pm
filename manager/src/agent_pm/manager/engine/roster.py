@@ -345,7 +345,8 @@ def _open(path: str, flags: int) -> int | None:
 @contextlib.contextmanager
 def _locked(path: str) -> Iterator[None]:
     fd = _open(path, os.O_RDWR | os.O_CREAT)
-    assert fd is not None
+    if fd is None:
+        raise RosterError(f"{path}: {os.strerror(errno.ENOENT)}")
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT
         while True:

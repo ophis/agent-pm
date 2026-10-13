@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from typing import Literal, overload
 
 
 class RecoveryError(Exception):
@@ -362,6 +363,14 @@ def store_root(root: str | None = None) -> str:
     )
 
 
+@overload
+def store_directory(*, create: Literal[True], root: str | None = None) -> str: ...
+
+
+@overload
+def store_directory(*, create: bool, root: str | None = None) -> str | None: ...
+
+
 def store_directory(*, create: bool, root: str | None = None) -> str | None:
     root = store_root(root)
     parent = os.path.dirname(root)
@@ -523,7 +532,6 @@ def save_session(state: SessionState, *, root: str | None = None) -> SessionStat
     recovery_snapshot(state, root=root)
     check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
     root = store_directory(create=True, root=root)
-    assert root is not None
     _write(_path(root, state.workdir, state.sid), state, exclusive=True)
     return state
 

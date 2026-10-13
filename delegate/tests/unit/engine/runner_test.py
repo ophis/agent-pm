@@ -830,6 +830,14 @@ class TuiPolicy(Base):
             "background work, wait for it first.",
         )
 
+    def test_a_tui_handle_without_a_name_reports_a_driver_error(self):
+        os.makedirs(self.work)
+        handle = FakeHandle([])
+        handle.name = None
+        with mock.patch.object(self.driver, "start", return_value=handle):
+            result = self.go(mode="tui")
+        self.assertEqual((result.returncode, result.error), (1, "tui: tui session has no name"))
+
     def test_start_hands_the_plan_to_the_driver_and_prints_the_attach_command(self):
         events = os.path.join(self.tmp, "events.log")
         for kw, want, name in (

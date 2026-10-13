@@ -113,7 +113,8 @@ class Tui(Headless):
     def start(self, p: Plan) -> Handle:
         handle = super().start(p, p.spec.name, p.spec.events)
         name = handle.name
-        assert name is not None
+        if name is None:
+            raise DriverError("tui session has no name")
         say(f"delegate: tui session {name}: {p.driver.attach_command(name)}")
         return handle
 
@@ -312,7 +313,8 @@ class _Attempts:
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
                 name = handle.name
-                assert name is not None
+                if name is None:
+                    raise DriverError("tui session has no name")
                 say(
                     f"delegate: {answer.reason}; session {name} left open: {self.plan.driver.attach_command(name)}"
                 )
