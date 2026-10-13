@@ -204,6 +204,24 @@ class SourceSuppressions(Sample):
                         [f"{path}:1: suppression needs explicit codes and a recorded reason"],
                     )
 
+    def test_e402_i001_and_isort_comments(self):
+        comments = (
+            "# noqa: E402",
+            "# noqa: F401,E402",
+            "# NOQA:I001",
+            "# isort: skip_file",
+            "# ruff: noqa: E402",
+        )
+        path = "tests/a.py"
+        source = "\n".join(f"import x  {comment}" for comment in comments) + "\n"
+        self.assertEqual(
+            self.found({path: source}),
+            [
+                f"{path}:{line}: suppression needs explicit codes and a recorded reason"
+                for line in range(1, 6)
+            ],
+        )
+
     def test_a_rule_in_the_wrong_file_is_rejected(self):
         path = "utils/src/agent_pm/utils/a.py"
         self.assertEqual(

@@ -711,6 +711,7 @@ def status_log_format(repo: str) -> list[str]:
 
 
 def private_imports(root: str) -> list[str]:
+    """Ruff 0.16.9 PLC2701 is preview; this guard supplies stable private-import checks."""
     found = set()
     for rel, text in _files(root, ".py"):
         tree = ast.parse(text, rel)
