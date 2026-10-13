@@ -1,10 +1,10 @@
 """Outcome data and validation failures shared by the delegate's callers."""
 
 from dataclasses import dataclass, field
-from typing import Literal, get_args
+from typing import Literal
 
 OutcomeStatus = Literal["done", "needs_input", "failed"]
-STATUSES = get_args(OutcomeStatus)
+STATUSES: tuple[OutcomeStatus, ...] = ("done", "needs_input", "failed")
 
 
 class InvalidOutcome(Exception):

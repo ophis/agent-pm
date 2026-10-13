@@ -5,8 +5,8 @@ session layer interprets it. json_records yields JSON objects from text or byte 
 
 import json
 from collections.abc import Iterable, Iterator
-from dataclasses import Field, asdict, dataclass, fields
-from typing import Any, ClassVar, Self
+from dataclasses import asdict, dataclass, fields
+from typing import Self
 
 Display = str | None
 
@@ -24,9 +24,8 @@ def _check(*, ok: bool, message: str) -> None:
         raise RecordError(message)
 
 
+@dataclass(frozen=True)
 class _Line:
-    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
-
     def to_line(self) -> str:
         return json.dumps(asdict(self), separators=(",", ":"))
 

@@ -9,10 +9,9 @@ import posixpath
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 from urllib.parse import unquote, urlsplit
 
-from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
 
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
@@ -63,7 +62,7 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     if status == "done" and output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
         raise InvalidOutcome(f"done with a {output['type']} destination must carry the deliverable")
     outcome = Outcome(
-        cast(OutcomeStatus, status),
+        status,
         title.strip(),
         summary,
         [str(q) for q in questions] if status == "needs_input" else [],
