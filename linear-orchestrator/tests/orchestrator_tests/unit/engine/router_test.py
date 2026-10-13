@@ -606,7 +606,17 @@ class Start:
 
 class TickBase(Base):
     def tick(
-        self, fake, *argv, hour=2, live=(), start=None, again=False, now=NOW, tty=False, outer=None
+        self,
+        fake,
+        *argv,
+        hour=2,
+        live=(),
+        start=None,
+        again=False,
+        now=NOW,
+        tty=False,
+        outer=None,
+        clock=None,
     ):
         # outer: main's run and keychain; main then starts through its own outer
         self.api.live = None if live is None else list(live)
@@ -621,7 +631,7 @@ class TickBase(Base):
         ):
             rc = router.main(
                 list(argv),
-                now=now,
+                now=clock or (lambda: now),
                 config_path=self.config_path,
                 hour=hour,
                 gql=fake,
@@ -3797,6 +3807,22 @@ class ScheduledRuns(TickScenario):
             sorted(os.listdir(os.path.dirname(self.runs))),
             ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
         )
+
+    def test_start_records_write_time_after_a_slow_tick(self):
+        written = NOW + timedelta(minutes=5)
+        times = iter((NOW, written))
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
+        self.assertEqual(self.tick(fake, clock=lambda: next(times)), 0)
+        self.assertEqual(runs.parse_log(self.runs)[-1].ts, written)
+
+    def test_resume_records_write_time_after_a_slow_issue_lookup(self):
+        written = NOW + timedelta(minutes=5)
+        times = iter((NOW, written))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
+        self.resumable("TASK-1", "a", 60)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", clock=lambda: next(times)), 0)
+        entry = runs.parse_log(self.runs)[-1]
+        self.assertEqual((entry.kind, entry.ts), ("resume", written))
 
     def test_an_idle_tick_writes_no_line(self):
         cases = [

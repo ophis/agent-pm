@@ -671,7 +671,7 @@ def choose(board, gate, live_ids, full, counts):
     return "new", issue, str(uuid.uuid4()), role, task, runtime
 
 
-def tick(opts, cfg, gql, *, start, now, hour):
+def tick(opts, cfg, gql, *, start, now, hour, clock=datetime.now):
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -714,13 +714,13 @@ def tick(opts, cfg, gql, *, start, now, hour):
                 role=role,
                 task=task,
                 runtime=runtime,
-                now=lambda: now,
+                now=clock,
             )
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
 
-def run_issue(opts, cfg, gql, now, start):
+def run_issue(opts, cfg, gql, now, start, *, clock=datetime.now):
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 1
     with lock(runs, dry) as free:
@@ -763,7 +763,7 @@ def run_issue(opts, cfg, gql, now, start):
                 role=role,
                 task=task,
                 runtime=runtime,
-                now=lambda: now,
+                now=clock,
             )
         )
 
@@ -796,7 +796,7 @@ def options(argv):
 def main(
     argv,
     *,
-    now=None,
+    now=datetime.now,
     config_path=config.CONFIG,
     hour=None,
     gql=None,
@@ -831,12 +831,18 @@ def main(
         return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     start = start or functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain)
-    now = now or datetime.now(UTC)
+    current = now().astimezone(UTC)
     try:
         if opts["issue"]:
-            return run_issue(opts, cfg, gql, now, start)
+            return run_issue(opts, cfg, gql, current, start, clock=now)
         return tick(
-            opts, cfg, gql, now=now, hour=datetime.now().hour if hour is None else hour, start=start
+            opts,
+            cfg,
+            gql,
+            now=current,
+            hour=current.astimezone().hour if hour is None else hour,
+            start=start,
+            clock=now,
         )
     except LinearError as e:
         return linear.config_error("router", e, dry=opts["dry"])
