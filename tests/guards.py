@@ -4,10 +4,12 @@ import ast
 import builtins
 import fnmatch
 import importlib
+import inspect
 import io
 import os
 import re
 import sys
+import sysconfig
 import tokenize
 import tomllib
 
@@ -1318,23 +1320,10 @@ def object_exports(repo: str) -> list[str]:
         for project in PROJECTS
         for rel, text in _files(os.path.join(repo, project, "src"), ".py")
     }
-    bindings = {
+    modules = {
         module: _export_bindings(module, tree, package=rel.endswith("/__init__.py"))
         for module, (rel, tree) in trees.items()
     }
-    functions = {
-        f"{module}.{name}"
-        for module, (_, tree) in trees.items()
-        for _, _, name in _suppression_functions(tree)
-    }
-    functions.update(
-        f"{module}.{target.id}"
-        for module, (_, tree) in trees.items()
-        for node in tree.body
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    )
     found = []
     for module, rel in packages.items():
         if module not in trees:
@@ -1360,16 +1349,73 @@ def object_exports(repo: str) -> list[str]:
             found.append(f"{rel}:{exports[0].lineno}: __all__ must be a literal list of names")
             continue
         for name in value.elts:
-            if _resolve_boundary(f"{module}.{name.value}", bindings) in functions:
+            kind, source = _export_kind(f"{module}.{name.value}", modules, set())
+            if kind == "function":
                 found.append(f"{rel}:{name.lineno}: exported function {name.value}")
+            elif kind not in {"class", "constant"}:
+                found.append(f"{rel}:{name.lineno}: unresolved export {name.value}: {source}")
     return sorted(found)
 
 
+def _export_kind(name, modules, seen):
+    if name in seen:
+        return "unknown", name
+    seen.add(name)
+    if name.startswith("builtins."):
+        member = name.removeprefix("builtins.")
+        if member in vars(builtins):
+            value = vars(builtins)[member]
+            kind = (
+                "class"
+                if isinstance(value, type)
+                else "function"
+                if inspect.isroutine(value)
+                else "constant"
+            )
+            return kind, name
+        return "unknown", name
+    parts = name.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        module, member = ".".join(parts[:index]), ".".join(parts[index:])
+        if module not in modules:
+            _stdlib_exports(module, modules)
+        if module not in modules:
+            continue
+        bindings, kinds = modules[module]
+        first, _, rest = member.partition(".")
+        if first in bindings:
+            target = ".".join([bindings[first], rest]).rstrip(".")
+            if target != name:
+                return _export_kind(target, modules, seen)
+        return kinds.get(member, "unknown"), name
+    return "unknown", name
+
+
+def _stdlib_exports(module, modules):
+    if module.split(".")[0] not in sys.stdlib_module_names:
+        return
+    base = os.path.join(sysconfig.get_path("stdlib"), *module.split("."))
+    for path, package in ((base + ".py", False), (os.path.join(base, "__init__.py"), True)):
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as source:
+                tree = ast.parse(source.read(), path)
+            modules[module] = _export_bindings(module, tree, package=package)
+            return
+
+
 def _export_bindings(module, tree, *, package):
-    bound = {node.name: f"{module}.{node.name}" for node in _module_nodes(tree)}
+    bound = {name: f"builtins.{name}" for name in vars(builtins)}
+    bound.update((node.name, f"{module}.{node.name}") for node in _module_nodes(tree))
+    kinds = {name: "function" for _, _, name in _suppression_functions(tree)}
+    kinds.update(
+        (node.name, "class") for node in _module_nodes(tree) if isinstance(node, ast.ClassDef)
+    )
     parent = (module if package else module.rpartition(".")[0]).split(".")
     for node in tree.body:
-        if isinstance(node, ast.Import):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            bound[node.name] = f"{module}.{node.name}"
+            kinds[node.name] = "class" if isinstance(node, ast.ClassDef) else "function"
+        elif isinstance(node, ast.Import):
             for name in node.names:
                 bound[name.asname or name.name.split(".")[0]] = (
                     name.name if name.asname else name.name.split(".")[0]
@@ -1380,14 +1426,27 @@ def _export_bindings(module, tree, *, package):
                 source = ".".join([*parent[: len(parent) - node.level + 1], source]).rstrip(".")
             for name in node.names:
                 bound[name.asname or name.name] = f"{source}.{name.name}"
-        elif isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(
-            node.value, ast.Name | ast.Attribute
-        ):
-            value = _dotted(node.value, bound)
+        elif isinstance(node, ast.Assign | ast.AnnAssign):
+            reference = (
+                _dotted(node.value, bound)
+                if isinstance(node.value, ast.Name | ast.Attribute)
+                else ""
+            )
+            local_kind = (
+                kinds.get(reference.removeprefix(f"{module}."))
+                if reference.startswith(f"{module}.")
+                else None
+            )
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
                 if isinstance(target, ast.Name):
-                    bound[target.id] = value
-    return bound
+                    if reference and local_kind is None:
+                        bound[target.id] = reference
+                    else:
+                        bound[target.id] = f"{module}.{target.id}"
+                        kinds[target.id] = local_kind or (
+                            "function" if isinstance(node.value, ast.Lambda) else "constant"
+                        )
+    return bound, kinds
 
 
 def _data_type(node, bound):

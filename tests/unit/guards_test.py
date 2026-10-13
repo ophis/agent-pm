@@ -1,6 +1,8 @@
 import ast
 import importlib
 import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -218,6 +220,8 @@ class ObjectExports(Sample):
             "def action(): pass\n",
             "async def action(): pass\n",
             "action = lambda: None\n",
+            "action = 'constant'\ndef action(): pass\n",
+            "action = ValueError\ndef action(): pass\n",
         ):
             with self.subTest(definition=definition):
                 root = self.tree(
@@ -225,7 +229,10 @@ class ObjectExports(Sample):
                 )
                 self.assertEqual(
                     guards.object_exports(root),
-                    [self.EVENT + "__init__.py:2: exported function action"],
+                    [
+                        self.EVENT
+                        + f"__init__.py:{len(definition.splitlines()) + 1}: exported function action"
+                    ],
                 )
 
     def test_import_and_assignment_aliases_cannot_hide_reexported_functions(self):
@@ -287,6 +294,90 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(guards.object_exports(root), [])
+
+    def test_standard_library_functions_and_uppercase_aliases_are_rejected(self):
+        for source in ("json.loads", "os.getcwd", "builtins.len"):
+            with self.subTest(source=source):
+                module, _, name = source.rpartition(".")
+                root = self.tree(
+                    {
+                        self.EVENT
+                        + "__init__.py": f"from {module} import {name} as ACTION\n__all__ = ['ACTION']\n"
+                    }
+                )
+                found = guards.object_exports(root)
+                self.assertEqual(len(found), 1)
+                self.assertIn("__init__.py:2:", found[0])
+                self.assertIn("ACTION", found[0])
+
+    def test_builtin_aliases_and_bare_builtin_functions_are_rejected(self):
+        for sample in ("ACTION = len\n__all__ = ['ACTION']\n", "__all__ = ['len']\n"):
+            with self.subTest(sample=sample):
+                found = guards.object_exports(self.tree({self.EVENT + "__init__.py": sample}))
+                self.assertEqual(len(found), 1)
+                self.assertIn("exported function", found[0])
+
+    def test_standard_library_and_builtin_classes_and_constants_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from pathlib import Path\nfrom builtins import ValueError, Ellipsis\n"
+                    "from string import ascii_letters as LETTERS\n"
+                    "__all__ = ['Path', 'ValueError', 'Ellipsis', 'LETTERS']\n"
+                )
+            }
+        )
+        self.assertEqual(guards.object_exports(root), [])
+
+    def test_constants_shadowing_builtin_names_are_allowed(self):
+        root = self.tree({self.EVENT + "__init__.py": "id = 'event'\n__all__ = ['id']\n"})
+        self.assertEqual(guards.object_exports(root), [])
+
+    def test_local_alias_keeps_a_class_after_its_original_name_is_redefined(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "class Item: pass\nAlias = Item\ndef Item(): pass\n__all__ = ['Alias']\n"
+                )
+            }
+        )
+        self.assertEqual(guards.object_exports(root), [])
+
+    def test_local_alias_keeps_a_function_after_its_original_name_is_reassigned(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "def action(): pass\nAlias = action\naction = 1\n__all__ = ['Alias']\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:4: exported function Alias"],
+        )
+
+    def test_standard_library_source_is_read_without_importing_it(self):
+        before = sys.modules.get("antigravity")
+        root = self.tree(
+            {self.EVENT + "__init__.py": "from antigravity import geohash\n__all__ = ['geohash']\n"}
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:2: exported function geohash"],
+        )
+        self.assertIs(sys.modules.get("antigravity"), before)
+
+    def test_unresolved_external_exports_are_rejected(self):
+        root = self.tree(
+            {
+                self.EVENT
+                + "__init__.py": "from unknown_package import ACTION\n__all__ = ['ACTION']\n"
+            }
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:2: unresolved export ACTION: unknown_package.ACTION"],
+        )
 
     def test_other_packages_remain_outside_this_ticket(self):
         files = {self.EVENT + "__init__.py": "__all__ = []\n"}
