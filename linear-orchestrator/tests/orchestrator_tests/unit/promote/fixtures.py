@@ -99,8 +99,16 @@ class FakeLinear:
     def __call__(self, query, *, service, **v):
         self.calls.append((query, v))
         self.services.append(service)
-        if error := self.fail.get(query) or self.fail.get((query, v.get("i"))):
+        if error := (self.fail.get(query) or self.fail.get((query, v.get("i")))):
             raise LinearError.api(error)
+        if (value := self._identity(query, v)) is not None:
+            return value
+        if (value := self._detail(query, v)) is not None:
+            return value
+        self.mutations.append((query, v))
+        return self._mutate(query, v)
+
+    def _identity(self, query, v):
         if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
         if query == linear.Q_USER:
@@ -120,13 +128,15 @@ class FakeLinear:
                         if i["state"] == "Handoff"
                         and i["project"]
                         and i["assignee"]
-                        and i["assignee"]["id"] in v["a"]
+                        and (i["assignee"]["id"] in v["a"])
                     ]
                 }
             }
+        return None
+
+    def _detail(self, query, v):
         if query == promote.Q_DETAIL:
             i = self.issues[v["i"]]
-            # the API returns newest first
             return {
                 "issue": {
                     "state": {"id": STATES[i["state"]]},
@@ -140,7 +150,9 @@ class FakeLinear:
             return {"issues": {"nodes": [self.children[v["c"]]] if v["c"] in self.children else []}}
         if query == linear.Q_ISSUE_STATE:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
-        self.mutations.append((query, v))
+        return None
+
+    def _mutate(self, query, v):
         if query == promote.M_CREATE:
             inp = v["in"]
             child = dict(inp, identifier=f"C-{len(self.children) + 1}")
@@ -161,7 +173,7 @@ class FakeLinear:
             self.issues[v["i"]].setdefault("subscribers", []).append(v["e"])
             return {"issueSubscribe": {"success": True}}
         if query == linear.M_STATE:
-            self.issues[v["i"]]["state"] = next(n for n, i in STATES.items() if i == v["s"])
+            self.issues[v["i"]]["state"] = next((n for n, i in STATES.items() if i == v["s"]))
             return {"issueUpdate": {"success": True}}
         raise AssertionError(query)
 

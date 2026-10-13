@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Begun, Finished, Progress, Result
+from agent_pm.delegate import Begun, Finished, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import issues, writeback
@@ -29,7 +29,6 @@ from orchestrator_tests.unit.writeback.data import (
     comment,
     issue,
     move,
-    outcome,
     post,
     reread,
     sha,
@@ -73,7 +72,9 @@ class ProgressReporting(Base):
         gql = Gql()
         ctx = self.ctx(gql=gql)
         writeback.progress(ctx, Begun(SID))
-        writeback.progress(ctx, Finished(Result(0, outcome("done", summary="x"))))
+        writeback.progress(
+            ctx, Finished(Result(0, Outcome(status="done", summary="x", title="Queue options")))
+        )
         self.assertEqual(gql.calls, [])
         self.assertEqual(self.lines(), [])
 
@@ -123,7 +124,11 @@ class ProgressReporting(Base):
 
 class CompletionFailures(Base):
     def test_unknown_role_logged(self):
-        self.assertFalse(writeback.finish(self.ctx("nope"), outcome("done", summary="x")))
+        self.assertFalse(
+            writeback.finish(
+                self.ctx("nope"), Outcome(status="done", summary="x", title="Queue options")
+            )
+        )
         self.assertEqual(self.lines(), [f"step-error {ID} step=finish error=KeyError: 'nope'"])
 
     def test_signal_exit_stops_the_steps(self):
@@ -132,7 +137,9 @@ class CompletionFailures(Base):
                 gql = Gql(fail=lambda n, _v, *, name=name: Stopped(143) if n == name else None)
                 ctx = self.ctx(gql=gql)
                 self.assertFalse(
-                    writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
+                    writeback.finish(
+                        ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
+                    )
                 )
                 self.assertEqual(gql.calls[-1][0], name)
                 self.assertEqual(

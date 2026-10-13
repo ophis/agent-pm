@@ -11,6 +11,7 @@ from orchestrator_tests.unit.inputs.data import (
     BUILD_PRECEDENCE,
     DOCS,
     HUMANS,
+    IssueFacts,
     endpoint,
     fenced,
     issue,
@@ -47,9 +48,7 @@ class BuildInputs(Case):
             lines(
                 "Build the registry.", "Only the API.", "", "## Comments", "- Ann, t:", "  > quoted"
             ),
-            ident="ENG-7",
-            title="ENG: Session Registry!",
-            notes=self.notes(),
+            facts=IssueFacts(ident="ENG-7", title="ENG: Session Registry!", notes=self.notes()),
         )
         src = inputs.Sources(
             (inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None
@@ -139,7 +138,7 @@ class BuildInputs(Case):
         ):
             with self.subTest(target=t):
                 got = inputs.render(
-                    issue(d, ident="ENG-7", title="ENG: Registry"),
+                    issue(d, facts=IssueFacts(ident="ENG-7", title="ENG: Registry")),
                     "engineer",
                     inputs.Sources((), None),
                     inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
@@ -171,7 +170,7 @@ class BuildInputs(Case):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")
         src = inputs.Sources((self.PRD,), None)
         got = inputs.render(
-            issue(d, ident="ENG-7"),
+            issue(d, facts=IssueFacts(ident="ENG-7")),
             "engineer",
             src,
             inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
@@ -197,7 +196,7 @@ class BuildInputs(Case):
         )
         report = inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r")
         got = inputs.render(
-            issue("D", ident="ENG-7"),
+            issue("D", facts=IssueFacts(ident="ENG-7")),
             "engineer",
             inputs.Sources((report, self.PRD, other), None),
             inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
@@ -211,7 +210,7 @@ class BuildInputs(Case):
         )
         self.assertNotIn("### `Product Design/2026-09-05-PM-9-q.md`", got)
         none = inputs.render(
-            issue("D", ident="ENG-7"),
+            issue("D", facts=IssueFacts(ident="ENG-7")),
             "engineer",
             inputs.Sources((report,), None),
             inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
@@ -222,7 +221,7 @@ class BuildInputs(Case):
     def test_missing_prd_text_names_the_branch(self):
         prd = inputs.Doc(self.PRD.url, self.PRD.path, None)
         got = inputs.render(
-            issue("D", ident="ENG-7"),
+            issue("D", facts=IssueFacts(ident="ENG-7")),
             "engineer",
             inputs.Sources((prd,), None),
             inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
@@ -236,7 +235,7 @@ class BuildInputs(Case):
         )
         ns = tuple(sorted(ns, key=lambda n: n.at))
         got = inputs.render(
-            issue("D", ident="ENG-7", notes=ns),
+            issue("D", facts=IssueFacts(ident="ENG-7", notes=ns)),
             "engineer",
             inputs.Sources((), None),
             inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
@@ -269,7 +268,7 @@ class HandoffComments(Case):
                 f"  > {BASE}Research/r.md",
             ]
         )
-        iss = issue(d, ident="ENG-7", title="ENG: Registry")
+        iss = issue(d, facts=IssueFacts(ident="ENG-7", title="ENG: Registry"))
         instructions = Handoff.parse(d).instructions
         self.assertTrue(instructions.endswith(f"\nRepo: ophis/agent-pm\nPRD: {prd}"))
         self.assertEqual(target.parse_repo(d), ("ophis", "agent-pm"))
@@ -292,7 +291,7 @@ class InputCheckout(Case):
     def test_a_build_prompts_repo_py_commands_take_the_inputs_checkout(self):
         t = target.Target("ophis", "agent-pm", "ENG-7-x")
         text = inputs.render(
-            issue("D", ident="ENG-7"),
+            issue("D", facts=IssueFacts(ident="ENG-7")),
             "engineer",
             inputs.Sources((), None),
             inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),

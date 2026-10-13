@@ -230,9 +230,11 @@ class Trim(Case):
 
     def test_no_temp_left_when_the_rewrite_fails(self):
         self.write([row("start", "TASK-1", "a", days=8), row("start", "TASK-1", "b", hours=1)])
-        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                runs.trim(self.log, NOW)
+        with (
+            mock.patch.object(os, "replace", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            runs.trim(self.log, NOW)
         self.assertEqual(os.listdir(self.tmp), ["runs.jsonl"])
         self.assertEqual(len(self.read().splitlines()), 2)
 

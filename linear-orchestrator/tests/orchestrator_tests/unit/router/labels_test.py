@@ -14,6 +14,7 @@ from orchestrator_tests.unit.router.data import (
     STATES,
     STRAY,
     TASK_LABELS,
+    IssueFacts,
     blocker,
     issue,
     label,
@@ -21,7 +22,12 @@ from orchestrator_tests.unit.router.data import (
     writes,
 )
 from orchestrator_tests.unit.router.fakes import FakeLinear
-from orchestrator_tests.unit.router.fixtures import TaskLabelsScenario, TickBase
+from orchestrator_tests.unit.router.fixtures import (
+    Attempt,
+    ClaimOptions,
+    TaskLabelsScenario,
+    TickBase,
+)
 
 
 class TaskSelection(TaskLabelsScenario):
@@ -85,10 +91,9 @@ class TaskSelection(TaskLabelsScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    priority=1,
-                    labels=[label("Orphan", ORPHAN_LABEL)],
+                    facts=IssueFacts(priority=1, labels=[label("Orphan", ORPHAN_LABEL)]),
                 ),
-                issue("TASK-2", "Todo", "researcher", priority=2),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -113,20 +118,19 @@ class TaskSelection(TaskLabelsScenario):
     def test_capped_and_bad_label_todo_skipped_for_the_next(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
                 issue(
                     "TASK-2",
                     "Todo",
                     "researcher",
-                    priority=2,
-                    labels=[label("Orphan", ORPHAN_LABEL)],
+                    facts=IssueFacts(priority=2, labels=[label("Orphan", ORPHAN_LABEL)]),
                 ),
-                issue("TASK-3", "Todo", "pm", priority=3, project=PD),
-                issue("TASK-4", "Todo", "engineer", priority=4, project=PD),
+                issue("TASK-3", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
+                issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=4, project=PD)),
             ]
         )
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(self.claim(fake), f"TASK-3 https://linear.app/x/TASK-3 {PD}")
         self.assertEqual(
             self.said(),
@@ -153,8 +157,9 @@ class TaskSelection(TaskLabelsScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    labels=[label("Orphan", ORPHAN_LABEL)],
-                    inverse=[blocker("TASK-7")],
+                    facts=IssueFacts(
+                        labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")]
+                    ),
                 )
             ]
         )
@@ -196,10 +201,17 @@ class TaskSelection(TaskLabelsScenario):
     def test_fr8_dry_run_resolves_nothing(self):
         for argv in (False, True):
             fake = FakeLinear(
-                [issue("TASK-1", "Todo", "researcher", labels=[label("Orphan", ORPHAN_LABEL)])]
+                [
+                    issue(
+                        "TASK-1",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(labels=[label("Orphan", ORPHAN_LABEL)]),
+                    )
+                ]
             )
             self.assertEqual(
-                self.claim(fake, dry=True, recover=argv),
+                self.claim(fake, options=ClaimOptions(dry=True, recover=argv)),
                 "TASK-1 https://linear.app/x/TASK-1 Deep Research",
                 argv,
             )
@@ -211,7 +223,14 @@ class TaskSelection(TaskLabelsScenario):
 
     def test_nfr1_claim_reads_one_query_per_issue(self):
         fake = FakeLinear(
-            [issue("TASK-1", "Todo", "researcher", labels=[label("Light Research", LIGHT)])]
+            [
+                issue(
+                    "TASK-1",
+                    "Todo",
+                    "researcher",
+                    facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                )
+            ]
         )
         self.claim(fake)
         self.assertEqual(
@@ -223,8 +242,8 @@ class TaskSelection(TaskLabelsScenario):
     def test_fr22_every_resumable_issue_is_checked(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "In Progress", "researcher", priority=1),
-                issue("TASK-2", "In Progress", "researcher", priority=2),
+                issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),
             ],
             self.hist,
         )
@@ -282,8 +301,9 @@ class ScheduledTaskSelection(TickBase):
                             "TASK-1",
                             "Todo",
                             "researcher",
-                            labels=[label("Orphan", ORPHAN_LABEL)],
-                            inverse=[blocker("TASK-7")],
+                            facts=IssueFacts(
+                                labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")]
+                            ),
                         )
                     ]
                 )
@@ -316,10 +336,15 @@ class ScheduledTaskSelection(TickBase):
 
     def test_fr20_resume_passes_no_task(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research", LIGHT)])
+            issue(
+                "TASK-1",
+                "In Progress",
+                "researcher",
+                facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+            )
         )
         self.moved("TASK-1", 61)
-        self.add("resume", "TASK-1", "a", 60)
+        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=60))
         self.touch("a", 40)
         self.tick(fake)
         (launch,) = self.start.launches
@@ -328,7 +353,7 @@ class ScheduledTaskSelection(TickBase):
         self.assertIn("plan TASK-1 mode=resume sid=a", self.said())
 
     def test_fr22_a_logged_role_not_the_assignees_goes_to_review(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "engineer", project=PD))
+        fake = self.fake(issue("TASK-1", "In Progress", "engineer", facts=IssueFacts(project=PD)))
         self.resumable("TASK-1", "a", 60)
         before = self.before()
         self.tick(fake)
@@ -368,10 +393,15 @@ class ScheduledTaskSelection(TickBase):
 
     def test_fr16_requeued_issue_resolved_again_at_claim(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", labels=[label("Light Research", LIGHT)])
+            issue(
+                "TASK-1",
+                "In Progress",
+                "researcher",
+                facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+            )
         )
         self.moved("TASK-1", 61)
-        self.add("start", "TASK-1", "a", 60)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=60))
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])
         self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())

@@ -4,6 +4,7 @@ import time
 from dataclasses import replace
 from unittest import mock
 
+from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import writeback
 from orchestrator_tests.unit.run.support import logged
@@ -16,9 +17,9 @@ from orchestrator_tests.unit.writeback.data import (
     TARGET,
     TREE,
     T,
+    WritebackEffects,
     expect,
     move,
-    outcome,
     plan_comment,
     post,
     reread,
@@ -149,8 +150,14 @@ class CompletionSteps(Base):
     def test_attach_skipped_when_already_attached(self):
         gql = Gql(attachments=[PR])
         ctx = self.ctx(gql=gql)
-        self.assertTrue(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
-        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
+        self.assertTrue(
+            writeback.finish(
+                ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
+            )
+        )
+        self.assertEqual(
+            gql.calls, expect(facts=WritebackEffects(body="Build ready: Ready.", state="in_review"))
+        )
         self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
@@ -164,7 +171,9 @@ class CompletionSteps(Base):
                 gql = Gql(fail=lambda name, _v, *, err=err: err if name == "attach" else None)
                 ctx = self.ctx(gql=gql)
                 self.assertTrue(
-                    writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
+                    writeback.finish(
+                        ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
+                    )
                 )
                 self.assertEqual(gql.calls[-1], move("in_review"))
                 self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
@@ -176,7 +185,11 @@ class CompletionSteps(Base):
             )
         )
         ctx = self.ctx(gql=gql)
-        self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
+        self.assertFalse(
+            writeback.finish(
+                ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
+            )
+        )
         self.assertEqual(gql.calls[-1][0], "attach")
         self.assertEqual(
             self.lines()[-1],
@@ -192,7 +205,10 @@ class CompletionSteps(Base):
                 gql = Gql(states=[STATES[state]])
                 ctx = self.ctx(gql=gql)
                 self.assertTrue(
-                    writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted"))
+                    writeback.finish(
+                        ctx,
+                        Outcome(status="failed", title="ENG-7: x", summary="push not permitted"),
+                    )
                 )
                 self.assertEqual(gql.calls[-1], reread())
                 self.assertEqual(
@@ -209,13 +225,17 @@ class CompletionSteps(Base):
 
         gql = Gql(fail=fail)
         ctx = self.ctx(gql=gql)
-        self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
+        self.assertTrue(
+            writeback.finish(
+                ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
+            )
+        )
         body = (
             "Build failed: push not permitted"
             "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
             "\n\nCould not subscribe bob@example.com: LinearError: linear api error: boom"
         )
-        self.assertEqual(gql.calls, expect(body=body, state="in_review"))
+        self.assertEqual(gql.calls, expect(facts=WritebackEffects(body=body, state="in_review")))
 
     def test_rejected_spec_post_noted(self):
         err = LinearError("linear api error: body too long")
@@ -227,7 +247,16 @@ class CompletionSteps(Base):
         ctx = self.ctx(gql=gql)
         spec, plan = self.files(ctx)
         self.assertTrue(
-            writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan]))
+            writeback.finish(
+                ctx,
+                Outcome(
+                    status="done",
+                    title="ENG-7: x",
+                    summary="Ready.",
+                    url=PR,
+                    files=list([spec, plan]),
+                ),
+            )
         )
         body = (
             "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: "
@@ -236,11 +265,13 @@ class CompletionSteps(Base):
         self.assertEqual(
             gql.calls,
             expect(
-                files=[spec_comment(), plan_comment()],
-                body=body,
-                state="in_review",
-                attach=PR,
-                attach_title="ENG-7: x",
+                facts=WritebackEffects(
+                    files=[spec_comment(), plan_comment()],
+                    body=body,
+                    state="in_review",
+                    attach=PR,
+                    attach_title="ENG-7: x",
+                )
             ),
         )
         self.assertIn(
@@ -256,7 +287,10 @@ class OutcomeFiles(Base):
     def finish_with(self, ctx, path):
         gql = Gql()
         writeback.finish(
-            replace(ctx, gql=gql), outcome("failed", "ENG-7: x", "push not permitted", files=[path])
+            replace(ctx, gql=gql),
+            Outcome(
+                status="failed", title="ENG-7: x", summary="push not permitted", files=list([path])
+            ),
         )
         posted = [c for c in gql.calls if c[0] == "comment"]
         return gql, posted[-1][1]["b"]
@@ -353,27 +387,33 @@ class EngineeringUrls(Base):
             (
                 "other repo dropped",
                 TARGET,
-                outcome("done", "ENG-7: x", "Ready.", url=evil),
-                expect(body="Build ready: Ready.", state="in_review"),
+                Outcome(status="done", title="ENG-7: x", summary="Ready.", url=evil),
+                expect(facts=WritebackEffects(body="Build ready: Ready.", state="in_review")),
                 f"skip {ID} reason=url not on ophis/agent-pm",
             ),
             (
                 "case-insensitive match",
                 ("Ophis", "Agent-PM"),
-                outcome("done", "ENG-7: x", "Ready.", url=PR),
+                Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR),
                 expect(
-                    body="Build ready: Ready.",
-                    state="in_review",
-                    attach=PR,
-                    attach_title="ENG-7: x",
+                    facts=WritebackEffects(
+                        body="Build ready: Ready.",
+                        state="in_review",
+                        attach=PR,
+                        attach_title="ENG-7: x",
+                    )
                 ),
                 None,
             ),
             (
                 "no target drops every url",
                 None,
-                outcome("failed", "ENG-7: x", "push not permitted", url=TREE),
-                expect(body="Build failed: push not permitted", state="in_review"),
+                Outcome(status="failed", title="ENG-7: x", summary="push not permitted", url=TREE),
+                expect(
+                    facts=WritebackEffects(
+                        body="Build failed: push not permitted", state="in_review"
+                    )
+                ),
                 f"skip {ID} reason=url not on a target repo",
             ),
         ):

@@ -17,6 +17,7 @@ from orchestrator_tests.unit.router.data import (
     SESSIONS,
     TASK_LABELS,
     USER,
+    IssueFacts,
     ago,
     issue,
     label,
@@ -28,7 +29,9 @@ from orchestrator_tests.unit.router.fakes import (
     two,
 )
 from orchestrator_tests.unit.router.fixtures import (
+    Attempt,
     Base,
+    ClaimOptions,
 )
 
 
@@ -45,7 +48,14 @@ class StaleRunRecovery(Base):
         ):
             with self.subTest(minutes=minutes):
                 self.lines, self.hist = [], {}
-                fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+                fake = self.fake(
+                    issue(
+                        "TASK-1",
+                        "In Progress",
+                        "researcher",
+                        facts=IssueFacts(updated=ago(hours=3)),
+                    )
+                )
                 self.resumable("TASK-1", "a", 60)
                 self.touch("a", minutes)
                 self.assertEqual(self.plan(fake), out)
@@ -57,7 +67,7 @@ class StaleRunRecovery(Base):
                 self.lines, self.hist = [], {}
                 fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
                 self.moved("TASK-1", minutes + 1)
-                self.add("start", "TASK-1", "a", minutes)
+                self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=minutes))
                 self.api.statuses[self.sid("a")] = SessionStatus("no", None, "")
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
@@ -79,7 +89,14 @@ class StaleRunRecovery(Base):
         for st in statuses:
             with self.subTest(st=st):
                 self.lines, self.hist = [], {}
-                fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+                fake = self.fake(
+                    issue(
+                        "TASK-1",
+                        "In Progress",
+                        "researcher",
+                        facts=IssueFacts(updated=ago(hours=3)),
+                    )
+                )
                 self.resumable("TASK-1", "a", 300)
                 self.api.statuses[self.sid("a")] = st
                 for again, said in (
@@ -95,7 +112,9 @@ class StaleRunRecovery(Base):
                     self.assertEqual(f.read(), "".join(f"{line}\n" for line in self.lines))
 
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        fake = self.fake(
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))
+        )
         self.resumable("TASK-1", "a", 300)
         self.api.statuses[self.sid("a")] = DriverError("boom")
 
@@ -127,8 +146,8 @@ class ClaimRechecks(Base):
             with self.subTest(assignee=assignee):
                 fake = Changed(
                     [
-                        issue("TASK-1", "Todo", "researcher", priority=1),
-                        issue("TASK-2", "Todo", "researcher", priority=2),
+                        issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                        issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
                     ],
                     {"TASK-1": {"assignee": assignee}},
                 )
@@ -149,7 +168,8 @@ class ClaimRechecks(Base):
     def test_reassigned_to_another_role_is_claimed_as_that_role(self):
         fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"assignee": who("pm")}})
         self.assertEqual(
-            self.claim(fake, gate=True), "TASK-1 https://linear.app/x/TASK-1 Deep Research"
+            self.claim(fake, options=ClaimOptions(gate=True)),
+            "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
         taken, task, role, runtime = self.taken
         self.assertEqual((taken["assignee"], task, role, runtime), (who("pm"), None, "pm", "b"))
@@ -161,7 +181,14 @@ class ClaimRechecks(Base):
     def test_the_task_label_is_checked_against_the_new_role(self):
         self.write_config(HUMANS + CONFIG + TASK_LABELS)
         fake = Changed(
-            [issue("TASK-1", "Todo", "researcher", labels=[label("Light Research", LIGHT)])],
+            [
+                issue(
+                    "TASK-1",
+                    "Todo",
+                    "researcher",
+                    facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                )
+            ],
             {"TASK-1": {"assignee": who("pm")}},
         )
         self.assertEqual(self.claim(fake), "")
@@ -179,7 +206,7 @@ class ClaimRechecks(Base):
 
     def test_a_full_new_role_is_skipped(self):
         fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"assignee": who("pm")}})
-        self.assertEqual(self.claim(fake, full={"pm"}), "")
+        self.assertEqual(self.claim(fake, options=ClaimOptions(full={"pm"})), "")
         self.assertEqual(
             self.said(),
             [
@@ -222,7 +249,10 @@ class LiveLimits(Base):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
         self.limit("a", at)
         fake = two()
-        self.assertEqual(self.claim(fake, gate=True), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
+        self.assertEqual(
+            self.claim(fake, options=ClaimOptions(gate=True)),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
         self.assertEqual(
             self.said(),
             [
@@ -249,13 +279,14 @@ class LiveLimits(Base):
                 self.limit("a", resets_at)
                 fake = two()
                 self.assertEqual(
-                    self.claim(fake, gate=True), "TASK-1 https://linear.app/x/TASK-1 Deep Research"
+                    self.claim(fake, options=ClaimOptions(gate=True)),
+                    "TASK-1 https://linear.app/x/TASK-1 Deep Research",
                 )
                 self.assertEqual(self.api.usage_calls, ["a"])
 
     def test_limit_rows_are_no_attempts(self):
         for sid in "abc":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         for _ in range(4):
             self.limit("b", (NOW + timedelta(hours=1)).isoformat(), ident="TASK-1")
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])

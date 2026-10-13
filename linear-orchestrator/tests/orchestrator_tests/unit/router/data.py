@@ -1,9 +1,9 @@
-import argparse
 import contextlib
 import fcntl
 import os
 import re
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 
 from agent_pm.linear_orchestrator.engine import inputs
@@ -114,18 +114,26 @@ def writes(fake):
     ]
 
 
-def issue(
-    ident,
-    state,
-    role=None,
-    updated=None,
-    priority=0,
-    created="2026-09-01T00:00:00Z",
-    project=DR,
-    inverse=(),
-    labels=(),
-):
-    # id == identifier so mutations and history can be keyed by either
+@dataclass(frozen=True, kw_only=True)
+class IssueFacts:
+    updated: str | None = None
+    priority: int = 0
+    created: str = "2026-09-01T00:00:00Z"
+    project: str | None = DR
+    inverse: tuple = ()
+    labels: tuple = ()
+
+
+def issue(ident, state, role=None, *, facts: IssueFacts | None = None):
+    facts = facts or IssueFacts()
+    updated, priority, created, project, inverse, labels = (
+        facts.updated,
+        facts.priority,
+        facts.created,
+        facts.project,
+        facts.inverse,
+        facts.labels,
+    )
     return {
         "id": ident,
         "identifier": ident,
@@ -147,18 +155,6 @@ def blocker(ident, state="started", kind="blocks"):
 
 def label(name, id, group=TASK_GROUP):
     return {"id": id, "name": name, "parent": group and {"id": group}}
-
-
-def outer_args(ident, project, assignee, sid, task, mode, runtime):
-    return argparse.Namespace(
-        issue=ident,
-        project=project,
-        assignee=assignee,
-        sid=sid,
-        task=task,
-        mode=mode,
-        runtime=runtime,
-    )
 
 
 @contextlib.contextmanager

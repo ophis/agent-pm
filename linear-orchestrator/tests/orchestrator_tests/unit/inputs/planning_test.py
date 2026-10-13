@@ -8,6 +8,7 @@ from orchestrator_tests.unit.inputs.data import (
     DOCS,
     HUMANS,
     RESEARCH_PRECEDENCE,
+    IssueFacts,
     fenced,
     issue,
     lines,
@@ -119,7 +120,7 @@ class ResearchInputs(Case):
             issues.Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
         )
         got = inputs.render(
-            issue("Q", notes=ns),
+            issue("Q", facts=IssueFacts(notes=ns)),
             "researcher",
             inputs.Sources((), None),
             inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
@@ -199,12 +200,14 @@ class DesignInputs(Case):
         )
         iss = issue(
             self.HANDOFF,
-            ident="PM-9",
-            title="PRD: Compare queues",
-            notes=ns,
-            linked=(
-                issues.Linked("RES-4", "Compare\nqueues  now", "Done"),
-                issues.Linked("ENG-1", "Other", "Todo"),
+            facts=IssueFacts(
+                ident="PM-9",
+                title="PRD: Compare queues",
+                notes=ns,
+                linked=(
+                    issues.Linked("RES-4", "Compare\nqueues  now", "Done"),
+                    issues.Linked("ENG-1", "Other", "Todo"),
+                ),
             ),
         )
         src = inputs.Sources(
@@ -279,7 +282,7 @@ class DesignInputs(Case):
         ):
             with self.subTest(target=t):
                 got = inputs.render(
-                    issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"),
+                    issue("Build a PRD for X.", facts=IssueFacts(ident="PM-9", title="Queues PRD")),
                     "pm",
                     inputs.Sources((), None),
                     inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
@@ -307,7 +310,7 @@ class DesignInputs(Case):
             (), inputs.Doc(BASE + "Product%20Design/p.md", "Product Design/p.md", None)
         )
         got = inputs.render(
-            issue("Desc", ident="PM-9", notes=ns),
+            issue("Desc", facts=IssueFacts(ident="PM-9", notes=ns)),
             "pm",
             src,
             inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
@@ -329,7 +332,7 @@ class DesignInputs(Case):
     def test_handoff_without_comments_has_no_source_comments_section(self):
         d = lines("Handoff from RES-4: u", "", "## Instructions", "Ann, t:", "Go.")
         got = inputs.render(
-            issue(d, ident="PM-9"),
+            issue(d, facts=IssueFacts(ident="PM-9")),
             "pm",
             inputs.Sources((), None),
             inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),

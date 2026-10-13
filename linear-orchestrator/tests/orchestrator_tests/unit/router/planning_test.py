@@ -10,52 +10,54 @@ from orchestrator_tests.unit.router.data import (
     PD,
     STATES,
     USER,
+    IssueFacts,
     ago,
     issue,
     who,
     writes,
 )
 from orchestrator_tests.unit.router.fakes import FakeLinear, Moved
-from orchestrator_tests.unit.router.fixtures import Base
+from orchestrator_tests.unit.router.fixtures import Attempt, Base, ClaimOptions
 from orchestrator_tests.unit.run.support import HARNESS
 
 
 class RunPlanning(Base):
     def walk_fixture(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=2),
-            issue("TASK-4", "In Progress", "researcher", priority=2),
-            issue("TASK-3", "In Progress", "researcher", priority=3),
-            issue("TASK-5", "In Progress", "researcher", priority=4),
-            issue("TASK-6", "In Progress", "researcher", priority=4),
-            issue("TASK-9", "Todo", "researcher", priority=1),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+            issue("TASK-4", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+            issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),
+            issue("TASK-5", "In Progress", "researcher", facts=IssueFacts(priority=4)),
+            issue("TASK-6", "In Progress", "researcher", facts=IssueFacts(priority=4)),
+            issue("TASK-9", "Todo", "researcher", facts=IssueFacts(priority=1)),
         )
         self.moved("TASK-1", 400)
-        self.add("start", "TASK-1", "a", 399)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=399))
         self.resumable("TASK-3", "c", 100)
         self.resumable("TASK-6", "f", 50)
         for ident, sid in (("TASK-4", "d"), ("TASK-5", "e")):
             for m in (390, 380, 370, 360):
-                self.add("start", ident, f"{sid}{m}", m)
+                self.add(Attempt(kind="start", ident=ident, sid=f"{sid}{m}", minutes_ago=m))
         return fake
 
     def reset_fixture(self):
         self.write_config(HUMANS + CONFIG)
         self.moved("TASK-1", 700)
-        self.add("start", "TASK-1", "old", 699)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=699))
         for m in (650, 600, 550):
-            self.add("resume", "TASK-1", "old", m)
+            self.add(Attempt(kind="resume", ident="TASK-1", sid="old", minutes_ago=m))
         self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
         self.resumable("TASK-1", "new", 100)
-        self.add("resume", "TASK-1", "new", 60)
+        self.add(Attempt(kind="resume", ident="TASK-1", sid="new", minutes_ago=60))
 
     def capped(self, hist):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
-            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))], {"TASK-1": hist}
+            [issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))],
+            {"TASK-1": hist},
         )
         for i, sid in enumerate("abcd"):
-            self.add("start", "TASK-1", sid, 400 - i * 50)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50))
         self.touch("d", 200)
         return fake, self.plan(fake)
 
@@ -66,8 +68,10 @@ class RunPlanning(Base):
             (
                 "other assignees not recovered",
                 [
-                    issue("TASK-1", "In Progress", "someone", updated=ago(hours=3)),
-                    issue("TASK-2", "In Progress", None, updated=ago(hours=3)),
+                    issue(
+                        "TASK-1", "In Progress", "someone", facts=IssueFacts(updated=ago(hours=3))
+                    ),
+                    issue("TASK-2", "In Progress", None, facts=IssueFacts(updated=ago(hours=3))),
                 ],
                 "",
             ),
@@ -80,10 +84,12 @@ class RunPlanning(Base):
                 self.assertEqual(set(fake.services), {HARNESS})
 
     def test_attempt_cap_beats_resume(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=5)))
+        fake = self.fake(
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=5)))
+        )
         self.resumable("TASK-1", "sid1", 300)
         for m in (200, 150, 100):
-            self.add("resume", "TASK-1", "sid1", m)
+            self.add(Attempt(kind="resume", ident="TASK-1", sid="sid1", minutes_ago=m))
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
@@ -93,12 +99,17 @@ class RunPlanning(Base):
         for others, out in (
             ((), ""),
             ((issue("TASK-2", "Todo", "researcher"),), "new"),
-            ((issue("TASK-3", "In Progress", "researcher", priority=3),), resume),
+            ((issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),), resume),
         ):
             with self.subTest(out=out):
                 self.lines, self.hist = [], {}
                 fake = self.fake(
-                    issue("TASK-1", "In Progress", "researcher", priority=1, updated=ago(hours=5)),
+                    issue(
+                        "TASK-1",
+                        "In Progress",
+                        "researcher",
+                        facts=IssueFacts(priority=1, updated=ago(hours=5)),
+                    ),
                     *others,
                 )
                 self.resumable("TASK-1", "a", 300)
@@ -110,13 +121,23 @@ class RunPlanning(Base):
 
     def test_live_session_issue_skipped_first_and_every_candidate_returned(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=1, updated=ago(hours=3)),
-            issue("TASK-2", "In Progress", "researcher", priority=2, updated=ago(hours=3)),
-            issue("TASK-3", "In Progress", "researcher", priority=3),
-            issue("TASK-4", "In Progress", "pm", priority=4, project=PD),
+            issue(
+                "TASK-1",
+                "In Progress",
+                "researcher",
+                facts=IssueFacts(priority=1, updated=ago(hours=3)),
+            ),
+            issue(
+                "TASK-2",
+                "In Progress",
+                "researcher",
+                facts=IssueFacts(priority=2, updated=ago(hours=3)),
+            ),
+            issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),
+            issue("TASK-4", "In Progress", "pm", facts=IssueFacts(priority=4, project=PD)),
         )
         for m in (390, 380, 370, 360):
-            self.add("start", "TASK-1", f"a{m}", m)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=f"a{m}", minutes_ago=m))
         self.resumable("TASK-3", "c", 100)
         self.resumable("TASK-4", "d", 200, "pm")
         cands = self.board(fake, lambda b: b.recover({"TASK-1"}))
@@ -153,7 +174,7 @@ class RunPlanning(Base):
                 self.lines, self.hist = [], {}
                 fake = self.fake(
                     *[
-                        issue(i, "In Progress", role, priority=p, project=proj)
+                        issue(i, "In Progress", role, facts=IssueFacts(priority=p, project=proj))
                         for i, p, _, role, proj in specs
                     ]
                 )
@@ -165,10 +186,10 @@ class RunPlanning(Base):
 
     def test_no_current_sid_never_outranks(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=1),
-            issue("TASK-2", "In Progress", "researcher", priority=4),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=4)),
         )
-        self.add("start", "TASK-1", "old", 400)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=400))
         self.touch("old", 300)
         self.moved("TASK-1", 60, actor=USER)
         self.resumable("TASK-2", "b", 100)
@@ -178,11 +199,11 @@ class RunPlanning(Base):
 
     def test_sid_without_start_sorts_by_first_line(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=2),
-            issue("TASK-2", "In Progress", "researcher", priority=2),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),
         )
-        self.add("resume", "TASK-1", "a", 300)
-        self.add("resume", "TASK-1", "a", 50)
+        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=300))
+        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=50))
         self.touch("a", 40)
         self.resumable("TASK-2", "b", 200)
         self.assertEqual(
@@ -200,7 +221,7 @@ class RunPlanning(Base):
                 self.lines, self.hist = [], {}
                 fake = self.walk_fixture()
                 self.assertEqual(
-                    self.claim(fake, recover=True)
+                    self.claim(fake, options=ClaimOptions(recover=True))
                     if mode == "pick"
                     else self.plan(fake, dry=mode == "dry plan"),
                     out,
@@ -228,12 +249,14 @@ class RunPlanning(Base):
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
-        self.add("start", "TASK-1", "a", 10)
+        fake = self.fake(
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))
+        )
+        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=10))
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.mutations, [])
         self.lines = []
-        self.add("start", "TASK-1", "a", 40)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=40))
         self.assertEqual(self.plan(fake), "new")
         self.assertEqual(
             (fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]),
@@ -244,8 +267,15 @@ class RunPlanning(Base):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
             [
-                issue("TASK-1", "In Progress", "engineer", updated=ago(hours=3), project=PD),
-                issue("TASK-2", "In Progress", "researcher", updated=ago(hours=1)),
+                issue(
+                    "TASK-1",
+                    "In Progress",
+                    "engineer",
+                    facts=IssueFacts(updated=ago(hours=3), project=PD),
+                ),
+                issue(
+                    "TASK-2", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=1))
+                ),
             ]
         )
         self.plan(fake)
@@ -259,8 +289,10 @@ class RunPlanning(Base):
         self.assertEqual(fake.issues["TASK-2"]["state"], "In Progress")
 
     def test_stale_sid_goes_to_two_hour_rule(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=220)))
-        self.add("start", "TASK-1", "old", 400)
+        fake = self.fake(
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(minutes=220)))
+        )
+        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=400))
         self.touch("old", 400)
         self.moved("TASK-1", 220, actor=USER)
         self.assertEqual(self.plan(fake), "new")
@@ -271,23 +303,25 @@ class RunPlanning(Base):
             self.lines, self.hist = [], {}
             fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
             self.moved("TASK-1", 100)
-            self.add("start", "TASK-1", "a", start)
+            self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=start))
             self.touch("a", 40)
             self.assertEqual(self.plan(fake).split(" ")[0], want)
 
     def test_no_move_in_history_is_current(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
-        self.add("start", "TASK-1", "a", 100)
+        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=100))
         self.touch("a", 40)
         self.assertEqual(
             self.plan(fake), "resume TASK-1 a https://linear.app/x/TASK-1 Deep Research"
         )
 
     def test_no_current_sid_never_capped(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=1)))
+        fake = self.fake(
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=1)))
+        )
         for m in (600, 550, 500, 450):
-            self.add("start", "TASK-1", f"s{m}", m)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m))
         self.moved("TASK-1", 60, actor=USER)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.mutations, [])
@@ -296,7 +330,7 @@ class RunPlanning(Base):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         for n in range(4):
             self.moved("TASK-1", 41)
-            self.add("start", "TASK-1", f"s{n}", 40)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{n}", minutes_ago=40))
             if n < 3:
                 self.assertEqual(self.plan(fake), "new")
                 self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -312,14 +346,17 @@ class RunPlanning(Base):
             ("resumes", (), "resume TASK-1 new https://linear.app/x/TASK-1 Deep Research"),
             (
                 "orders",
-                (issue("TASK-2", "In Progress", "researcher", priority=2),),
+                (issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),),
                 "resume TASK-2 b https://linear.app/x/TASK-2 Deep Research",
             ),
         )
         for name, others, out in rows:
             with self.subTest(name):
                 self.lines, self.hist = [], {}
-                fake = self.fake(issue("TASK-1", "In Progress", "researcher", priority=2), *others)
+                fake = self.fake(
+                    issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+                    *others,
+                )
                 self.reset_fixture()
                 if others:
                     self.resumable("TASK-2", "b", 200)
@@ -333,11 +370,20 @@ class RunPlanning(Base):
                     (f"human_members = {json.dumps(members)}\n" if members else "") + CONFIG
                 )
                 fake = FakeLinear(
-                    [issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=40))]
+                    [
+                        issue(
+                            "TASK-1",
+                            "In Progress",
+                            "researcher",
+                            facts=IssueFacts(updated=ago(minutes=40)),
+                        )
+                    ]
                 )
                 self.lines = []
                 for i, sid in enumerate("abcd"):
-                    self.add("start", "TASK-1", sid, 400 - i * 50)
+                    self.add(
+                        Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50)
+                    )
                 self.assertEqual(self.plan(fake), "")
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
@@ -390,7 +436,8 @@ class RunPlanning(Base):
 
     def test_skipped_move_posts_no_comment(self):
         fake = Moved(
-            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))], "In Review"
+            [issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))],
+            "In Review",
         )
         self.assertEqual(self.plan(fake), "")
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Review", []))
@@ -403,7 +450,7 @@ class HistoryReads(Base):
     def test_one_history_fetch_per_issue(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")])
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         queries = []
         self.plan(lambda q, **v: queries.append(q) or fake(q, **v))
         self.assertEqual(sum("history" in q for q in queries), 1)

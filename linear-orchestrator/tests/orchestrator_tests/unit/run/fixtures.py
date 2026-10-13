@@ -2,6 +2,7 @@ import io
 import os
 import signal
 from contextlib import redirect_stderr
+from dataclasses import dataclass
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import run
@@ -22,6 +23,16 @@ from orchestrator_tests.unit.run.support import (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class RunRequest:
+    assignee: str = ENGINEER
+    task: str | None = None
+    mode: str = "new"
+    target: str | None = "Ophis/Agent-PM"
+    uuid: str = UUID
+    runtime: str = RUNTIME
+
+
 class Case(Base):
     def setUp(self):
         super().setUp()
@@ -34,16 +45,16 @@ class Case(Base):
             p.start()
             self.addCleanup(p.stop)
 
-    def argv(
-        self,
-        *extra,
-        assignee=ENGINEER,
-        task=None,
-        mode="new",
-        target="Ophis/Agent-PM",
-        uuid=UUID,
-        runtime=RUNTIME,
-    ):
+    def argv(self, *extra, request: RunRequest | None = None):
+        request = request or RunRequest()
+        assignee, task, mode, target, uuid, runtime = (
+            request.assignee,
+            request.task,
+            request.mode,
+            request.target,
+            request.uuid,
+            request.runtime,
+        )
         return [
             "--uuid",
             uuid,
@@ -59,11 +70,11 @@ class Case(Base):
             "--input=Do it.\n",
         ]
 
-    def main(self, *extra, **kw):
+    def main(self, *extra, request: RunRequest | None = None):
         err = io.StringIO()
         with redirect_stderr(err):
             rc = run.main(
-                self.argv(*extra, **kw),
+                self.argv(*extra, request=request),
                 gql=self.gql,
                 run=self.delegate,
                 driver=self.api,

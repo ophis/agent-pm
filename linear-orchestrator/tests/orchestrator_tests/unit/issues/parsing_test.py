@@ -3,6 +3,7 @@ its comments.
 """
 
 import unittest
+from dataclasses import dataclass
 
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.linear_orchestrator.linear.types import Handoff
@@ -13,7 +14,17 @@ HUMANS = ("ann@example.com", "bob@example.com")
 URL = "https://linear.app/t/issue/ENG-7"
 
 
-def comment(body, at, email="ann@example.com", name="Ann", *, me=False, user=True):
+@dataclass(frozen=True, kw_only=True)
+class CommentAuthor:
+    email: str | None = "ann@example.com"
+    name: str | None = "Ann"
+    me: bool = False
+    user: bool = True
+
+
+def comment(body, at, *, facts: CommentAuthor | None = None):
+    facts = facts or CommentAuthor()
+    email, name, me, user = (facts.email, facts.name, facts.me, facts.user)
     return {
         "body": body,
         "createdAt": at,
@@ -127,9 +138,17 @@ class ReadIssue(Case):
         got = read(
             comments={
                 "nodes": [
-                    comment("late", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
+                    comment(
+                        "late",
+                        "2026-09-03T00:00:00.000Z",
+                        facts=CommentAuthor(email="bob@example.com", name="Bob"),
+                    ),
                     comment("early", "2026-09-01T12:00:00.000Z"),
-                    comment("mid", "2026-09-02T00:00:00.000Z", None, None, user=False),
+                    comment(
+                        "mid",
+                        "2026-09-02T00:00:00.000Z",
+                        facts=CommentAuthor(email=None, name=None, user=False),
+                    ),
                 ]
             }
         )
@@ -148,10 +167,12 @@ class ReadIssue(Case):
             comments={
                 "nodes": [
                     comment(
-                        session, "2026-09-02T00:00:00.000Z", "agent@example.com", "Agent", me=True
+                        session,
+                        "2026-09-02T00:00:00.000Z",
+                        facts=CommentAuthor(email="agent@example.com", name="Agent", me=True),
                     ),
                     comment(session, "2026-09-02T01:00:00.000Z"),
-                    comment("Run notes", "2026-09-02T02:00:00.000Z", me=True),
+                    comment("Run notes", "2026-09-02T02:00:00.000Z", facts=CommentAuthor(me=True)),
                 ]
             }
         )

@@ -1,3 +1,4 @@
+import argparse
 import functools
 import io
 import json
@@ -5,7 +6,7 @@ import os
 import tempfile
 import uuid
 from contextlib import redirect_stderr
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from unittest import mock
 
@@ -29,7 +30,6 @@ from orchestrator_tests.unit.router.data import (
     TASK_LABELS,
     WEST,
     ago,
-    outer_args,
 )
 from orchestrator_tests.unit.router.fakes import FakeLinear
 from orchestrator_tests.unit.run import support as run_fixtures
@@ -47,6 +47,46 @@ from orchestrator_tests.unit.run.support import (
 )
 from orchestrator_tests.unit.streams import Stderr
 from orchestrator_tests.unit.target.support import FakeRun
+
+
+@dataclass(frozen=True, kw_only=True)
+class Attempt:
+    kind: str
+    ident: str
+    sid: str
+    minutes_ago: int
+    role: str = "researcher"
+    runtime: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClaimOptions:
+    full: tuple = ()
+    dry: bool = False
+    recover: bool = False
+    gate: bool = False
+    again: bool = False
+
+
+@dataclass(frozen=True, kw_only=True)
+class TickOptions:
+    hour: int = 2
+    live: tuple | list | None = ()
+    start: object = None
+    again: bool = False
+    now: object = NOW
+    tty: bool = False
+    outer: dict | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class LaunchRequest:
+    assignee: str = ENGINEER
+    task: str | None = None
+    mode: str = "new"
+    ident: str = ID
+    sid: str = SID
+    runtime: str = "a"
 
 
 class Base(run_fixtures.Base):
@@ -85,7 +125,7 @@ class Base(run_fixtures.Base):
 
     def resumable(self, ident, sid, minutes_ago, role="researcher"):
         self.moved(ident, minutes_ago + 1)
-        self.add("start", ident, sid, minutes_ago, role)
+        self.add(Attempt(kind="start", ident=ident, sid=sid, minutes_ago=minutes_ago, role=role))
         self.touch(sid, 40)
 
     def row(self, kind, ident, sid, role="researcher", runtime=None, **ago):
@@ -100,8 +140,17 @@ class Base(run_fixtures.Base):
             }
         )
 
-    def add(self, kind, ident, sid, minutes_ago, role="researcher", runtime=None):
-        self.lines.append(self.row(kind, ident, sid, role, runtime, minutes=minutes_ago))
+    def add(self, attempt: Attempt):
+        self.lines.append(
+            self.row(
+                attempt.kind,
+                attempt.ident,
+                attempt.sid,
+                attempt.role,
+                attempt.runtime,
+                minutes=attempt.minutes_ago,
+            )
+        )
 
     def limit(self, runtime, resets_at, ident="TASK-9"):
         self.lines.append(
@@ -172,7 +221,16 @@ class Base(run_fixtures.Base):
             )
         return "new" if run else ""
 
-    def claim(self, fake, full=(), *, dry=False, recover=False, gate=False, again=False):
+    def claim(self, fake, options: ClaimOptions | None = None):
+        options = options or ClaimOptions()
+        full, dry, recover, gate, again = (
+            options.full,
+            options.dry,
+            options.recover,
+            options.gate,
+            options.again,
+        )
+
         def use(b):
             recover and b.recover()
             return b.take(full=full)
@@ -208,9 +266,17 @@ class Start:
 
 
 class TickBase(Base):
-    def tick(
-        self, fake, *argv, hour=2, live=(), start=None, again=False, now=NOW, tty=False, outer=None
-    ):
+    def tick(self, fake, *argv, options: TickOptions | None = None):
+        options = options or TickOptions()
+        hour, live, start, again, now, tty, outer = (
+            options.hour,
+            options.live,
+            options.start,
+            options.again,
+            options.now,
+            options.tty,
+            options.outer,
+        )
         # outer: main's run and keychain; main then starts through its own outer
         self.api.live = None if live is None else list(live)
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
@@ -265,8 +331,25 @@ class OuterBase(TickBase):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def outer(self, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
-        a = outer_args(ident, PROJECT, assignee, sid, task, mode, runtime)
+    def outer(self, request: LaunchRequest | None = None):
+        request = request or LaunchRequest()
+        assignee, task, mode, ident, sid, runtime = (
+            request.assignee,
+            request.task,
+            request.mode,
+            request.ident,
+            request.sid,
+            request.runtime,
+        )
+        a = argparse.Namespace(
+            issue=ident,
+            project=PROJECT,
+            assignee=assignee,
+            sid=sid,
+            task=task,
+            mode=mode,
+            runtime=runtime,
+        )
         cfg = replace(config.load(path=self.config_path), driver=self.api)
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=True):

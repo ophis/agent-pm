@@ -11,6 +11,7 @@ from orchestrator_tests.unit.router.data import (
     ROLE,
     STATES,
     USER,
+    IssueFacts,
     ago,
     issue,
     op,
@@ -33,6 +34,19 @@ class FakeLinear:
     def __call__(self, query, *, service, **v):
         self.queries.append((query, v))
         self.services.append(service)
+        if (value := self._identity(query, v)) is not None:
+            return value
+        if "history" in query:
+            return self._issue_read(query, v)
+        if "mutation" in query:
+            return self._mutate(query, v)
+        if "issues(filter" in query:
+            return self._queue(query, v)
+        if (value := self._issue_read(query, v)) is not None:
+            return value
+        raise AssertionError(query)
+
+    def _identity(self, query, v):
         if query == linear.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
         if query == linear.Q_TASK_GROUP:
@@ -46,45 +60,13 @@ class FakeLinear:
             return {
                 "users": {"nodes": [{"id": u} for e, u in users.items() if v["e"].lower() == e]}
             }
+        return None
+
+    def _issue_read(self, query, v):
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
-        if "mutation" in query:
-            self.mutations.append((query, v))
-            issue = self.issues[v["i"]]
-            if "issueSubscribe" in query:
-                issue.setdefault("subscribers", []).append(v["e"])
-            elif "commentCreate" in query:
-                issue.setdefault("comments", []).append(v["b"])
-            elif v["i"] in self.refuse:
-                return {"issueUpdate": {"success": False}}
-            else:
-                issue["state"] = NAMES[v["s"]]
-            return {op(query): {"success": True}}
         if query == linear.Q_ISSUE_STATE:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
-        if "issues(filter" in query:
-            f = v["f"]
-            if self.todo_error and "inverseRelations" in query:
-                raise LinearError.api([{"message": "Entity not found"}])
-            drop = (
-                {"state", "labels"}
-                if "inverseRelations" in query
-                else {"state", "labels", "inverseRelations"}
-            )
-            return {
-                "issues": {
-                    "nodes": [
-                        {k: x for k, x in i.items() if k not in drop}
-                        for i in self.issues.values()
-                        if f["team"]["id"]["eq"] == TEAM
-                        and f["project"] == {"null": False}
-                        and i["project"]
-                        and i["assignee"]
-                        and i["assignee"]["id"] in f["assignee"]["id"]["in"]
-                        and i["state"] == NAMES[f["state"]["id"]["eq"]]
-                    ]
-                }
-            }
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
                 raise LinearError.api([{"message": "Entity not found"}])
@@ -99,7 +81,44 @@ class FakeLinear:
                     "labels": {"nodes": i["labels"]},
                 }
             }
-        raise AssertionError(query)
+        return None
+
+    def _mutate(self, query, v):
+        self.mutations.append((query, v))
+        issue = self.issues[v["i"]]
+        if "issueSubscribe" in query:
+            issue.setdefault("subscribers", []).append(v["e"])
+        elif "commentCreate" in query:
+            issue.setdefault("comments", []).append(v["b"])
+        elif v["i"] in self.refuse:
+            return {"issueUpdate": {"success": False}}
+        else:
+            issue["state"] = NAMES[v["s"]]
+        return {op(query): {"success": True}}
+
+    def _queue(self, query, v):
+        f = v["f"]
+        if self.todo_error and "inverseRelations" in query:
+            raise LinearError.api([{"message": "Entity not found"}])
+        drop = (
+            {"state", "labels"}
+            if "inverseRelations" in query
+            else {"state", "labels", "inverseRelations"}
+        )
+        return {
+            "issues": {
+                "nodes": [
+                    {k: x for k, x in i.items() if k not in drop}
+                    for i in self.issues.values()
+                    if f["team"]["id"]["eq"] == TEAM
+                    and f["project"] == {"null": False}
+                    and i["project"]
+                    and i["assignee"]
+                    and (i["assignee"]["id"] in f["assignee"]["id"]["in"])
+                    and (i["state"] == NAMES[f["state"]["id"]["eq"]])
+                ]
+            }
+        }
 
     def reads(self, state="Todo"):
         return [
@@ -170,7 +189,7 @@ class ClaimLinear(FakeLinear):
 def two():
     return FakeLinear(
         [
-            issue("TASK-1", "Todo", "researcher", priority=1),
-            issue("TASK-2", "Todo", "pm", priority=2, project=PD),
+            issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
         ]
     )

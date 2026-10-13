@@ -1,7 +1,8 @@
 import hashlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from agent_pm.delegate import Outcome, Progress
+from agent_pm.delegate import Progress
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 from orchestrator_tests.unit import board_ids
@@ -116,17 +117,30 @@ def plan_comment(name="ENG-7-plan.md", text=PLAN_TEXT):
     return post(f"file:{name}:{sha(text)}", f"**Plan** `{name}`\n\n---\n\n{text}")
 
 
-def expect(
-    *,
-    body,
-    state,
-    files=(),
-    title=None,
-    subscribe=True,
-    attach=None,
-    attach_title=None,
-    resume=False,
-):
+@dataclass(frozen=True, kw_only=True)
+class WritebackEffects:
+    body: str
+    state: str
+    files: tuple = ()
+    title: str | None = None
+    subscribe: bool = True
+    attach: str | None = None
+    attach_title: str | None = None
+    resume: bool = False
+
+
+def expect(facts: WritebackEffects):
+    body, state, files, title, subscribe, attach, attach_title, resume = (
+        facts.body,
+        facts.state,
+        facts.files,
+        facts.title,
+        facts.subscribe,
+        facts.attach,
+        facts.attach_title,
+        facts.resume,
+    )
+
     def posted(call):
         return [("find", {"c": call[1]["c"]}), call] if resume else [call]
 
@@ -139,10 +153,6 @@ def expect(
     if attach:
         calls.append(("attach", {"i": UUID, "u": attach, "t": attach_title}))
     return calls + [reread(), move(state)]
-
-
-def outcome(status, title="Queue options", summary="", questions=(), url="", files=()):
-    return Outcome(status, title, summary, list(questions), url, list(files))
 
 
 HANDOFF = (

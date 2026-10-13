@@ -10,6 +10,7 @@ from orchestrator_tests.unit.router.data import (
     ROLE,
     STATES,
     USER,
+    IssueFacts,
     ago,
     blocker,
     issue,
@@ -17,7 +18,7 @@ from orchestrator_tests.unit.router.data import (
     writes,
 )
 from orchestrator_tests.unit.router.fakes import FakeLinear, Moved
-from orchestrator_tests.unit.router.fixtures import Base
+from orchestrator_tests.unit.router.fixtures import Attempt, Base, ClaimOptions
 
 
 class IssueClaims(Base):
@@ -26,13 +27,22 @@ class IssueClaims(Base):
             (
                 [
                     issue(
-                        "TASK-1", "Todo", "researcher", priority=0, created="2026-01-01T00:00:00Z"
+                        "TASK-1",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=0, created="2026-01-01T00:00:00Z"),
                     ),
                     issue(
-                        "TASK-2", "Todo", "researcher", priority=3, created="2026-02-01T00:00:00Z"
+                        "TASK-2",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=3, created="2026-02-01T00:00:00Z"),
                     ),
                     issue(
-                        "TASK-3", "Todo", "researcher", priority=3, created="2026-01-15T00:00:00Z"
+                        "TASK-3",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=3, created="2026-01-15T00:00:00Z"),
                     ),
                 ],
                 ["TASK-3", "TASK-2", "TASK-1"],
@@ -40,18 +50,22 @@ class IssueClaims(Base):
             (
                 [
                     issue(
-                        "TASK-1", "Todo", "researcher", priority=2, created="2026-09-01T00:00:00Z"
+                        "TASK-1",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=2, created="2026-09-01T00:00:00Z"),
                     ),
                     issue(
                         "TASK-2",
                         "Todo",
                         "pm",
-                        priority=2,
-                        created="2026-09-02T00:00:00Z",
-                        project=PD,
+                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z", project=PD),
                     ),
                     issue(
-                        "TASK-3", "Todo", "researcher", priority=1, created="2026-09-03T00:00:00Z"
+                        "TASK-3",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=1, created="2026-09-03T00:00:00Z"),
                     ),
                 ],
                 ["TASK-3", "TASK-2", "TASK-1"],
@@ -59,11 +73,29 @@ class IssueClaims(Base):
             (
                 [
                     issue(
-                        "TASK-1", "Todo", "researcher", priority=2, created="2026-09-01T00:00:00Z"
+                        "TASK-1",
+                        "Todo",
+                        "researcher",
+                        facts=IssueFacts(priority=2, created="2026-09-01T00:00:00Z"),
                     ),
-                    issue("TASK-2", "Todo", "engineer", priority=2, created="2026-09-03T00:00:00Z"),
-                    issue("TASK-3", "Todo", "pm", priority=2, created="2026-09-02T00:00:00Z"),
-                    issue("TASK-4", "Todo", "engineer", priority=2, created="2026-09-02T00:00:00Z"),
+                    issue(
+                        "TASK-2",
+                        "Todo",
+                        "engineer",
+                        facts=IssueFacts(priority=2, created="2026-09-03T00:00:00Z"),
+                    ),
+                    issue(
+                        "TASK-3",
+                        "Todo",
+                        "pm",
+                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z"),
+                    ),
+                    issue(
+                        "TASK-4",
+                        "Todo",
+                        "engineer",
+                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z"),
+                    ),
                 ],
                 ["TASK-4", "TASK-2", "TASK-3", "TASK-1"],
             ),
@@ -79,8 +111,8 @@ class IssueClaims(Base):
             [
                 issue("TASK-1", "Todo"),
                 issue("TASK-2", "Todo", "someone"),
-                issue("TASK-3", "Todo", "pm", project=None),
-                issue("TASK-4", "Todo", "engineer", project=PD, priority=3),
+                issue("TASK-3", "Todo", "pm", facts=IssueFacts(project=None)),
+                issue("TASK-4", "Todo", "engineer", facts=IssueFacts(project=PD, priority=3)),
             ]
         )
         self.assertEqual(self.claim(fake), f"TASK-4 https://linear.app/x/TASK-4 {PD}")
@@ -107,14 +139,15 @@ class IssueClaims(Base):
     def test_full_roles_not_picked(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "engineer", priority=1),
-                issue("TASK-2", "Todo", "researcher", priority=4),
+                issue("TASK-1", "Todo", "engineer", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=4)),
             ]
         )
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(
-            self.claim(fake, full={"engineer"}), "TASK-2 https://linear.app/x/TASK-2 Deep Research"
+            self.claim(fake, options=ClaimOptions(full={"engineer"})),
+            "TASK-2 https://linear.app/x/TASK-2 Deep Research",
         )
         self.assertEqual(
             self.said(), ["pick TASK-2 queue=1", "claim TASK-2 role=researcher runtime=a"]
@@ -129,12 +162,12 @@ class IssueClaims(Base):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-2", "Todo", "researcher", priority=2),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
             ]
         )
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
@@ -152,7 +185,7 @@ class IssueClaims(Base):
         }
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")], hist)
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
 
     def test_no_longer_todo_skipped_for_the_next(self):
@@ -165,8 +198,8 @@ class IssueClaims(Base):
 
         fake = Snatched(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-2", "Todo", "researcher", priority=2),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -185,7 +218,7 @@ class IssueClaims(Base):
         self.write_config(HUMANS + CONFIG)
         fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Progress")
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(self.claim(fake), "")
         t = fake.issues["TASK-1"]
         self.assertEqual((t["state"], t["subscribers"]), ("In Progress", ["me@x.com"]))
@@ -217,15 +250,17 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    priority=1,
-                    inverse=[
-                        blocker("TASK-7"),
-                        blocker("TASK-8", "completed"),
-                        blocker("TASK-9", "unstarted"),
-                    ],
+                    facts=IssueFacts(
+                        priority=1,
+                        inverse=[
+                            blocker("TASK-7"),
+                            blocker("TASK-8", "completed"),
+                            blocker("TASK-9", "unstarted"),
+                        ],
+                    ),
                 ),
-                issue("TASK-2", "Todo", "researcher", priority=2),
-                issue("TASK-3", "Todo", "researcher", priority=3),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=3)),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -252,7 +287,9 @@ class IssueBlockers(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        inverse=[blocker(f"TASK-{n}", s) for n, s in enumerate(states, 7)],
+                        facts=IssueFacts(
+                            inverse=[blocker(f"TASK-{n}", s) for n, s in enumerate(states, 7)]
+                        ),
                     )
                 ]
             )
@@ -268,9 +305,11 @@ class IssueBlockers(Base):
 
     def test_capped_blocked_stays_todo(self):
         self.write_config(HUMANS + CONFIG)
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])])
+        fake = FakeLinear(
+            [issue("TASK-1", "Todo", "researcher", facts=IssueFacts(inverse=[blocker("TASK-7")]))]
+        )
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.assertEqual(self.claim(fake), "")
         self.assertEqual(
             self.said(), ['blocked TASK-1 by=["TASK-7"]', "pick-none reason=queue empty"]
@@ -285,18 +324,19 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    priority=2,
-                    inverse=[
-                        blocker("TASK-5", kind="related"),
-                        blocker("TASK-6", kind="duplicate"),
-                    ],
+                    facts=IssueFacts(
+                        priority=2,
+                        inverse=[
+                            blocker("TASK-5", kind="related"),
+                            blocker("TASK-6", kind="duplicate"),
+                        ],
+                    ),
                 ),
                 issue(
                     "TASK-2",
                     "Todo",
                     "researcher",
-                    priority=1,
-                    inverse=[blocker("TASK-1", "unstarted")],
+                    facts=IssueFacts(priority=1, inverse=[blocker("TASK-1", "unstarted")]),
                 ),
             ]
         )
@@ -318,7 +358,7 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    inverse=[blocker(None), blocker("TASK-7", "completed")],
+                    facts=IssueFacts(inverse=[blocker(None), blocker("TASK-7", "completed")]),
                 )
             ]
         )
@@ -330,14 +370,18 @@ class IssueBlockers(Base):
     def test_blocker_query_error_reads_per_issue(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-2", "Todo", "researcher", priority=2, inverse=[blocker("TASK-7")]),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue(
+                    "TASK-2",
+                    "Todo",
+                    "researcher",
+                    facts=IssueFacts(priority=2, inverse=[blocker("TASK-7")]),
+                ),
                 issue(
                     "TASK-3",
                     "Todo",
                     "researcher",
-                    priority=3,
-                    inverse=[blocker("TASK-8", "canceled")],
+                    facts=IssueFacts(priority=3, inverse=[blocker("TASK-8", "canceled")]),
                 ),
             ]
         )
@@ -368,7 +412,9 @@ class IssueBlockers(Base):
                     issue("TASK-2", "Todo", "researcher"),
                 ]
             )
-            self.plan(fake) if argv == "plan" else self.claim(fake, recover=argv == "pick")
+            self.plan(fake) if argv == "plan" else self.claim(
+                fake, options=ClaimOptions(recover=argv == "pick")
+            )
             reads = {s: fake.reads(s) for s in ("Todo", "In Progress")}
             self.assertEqual(len(reads["Todo"]), 1, argv)
             self.assertIn(
@@ -396,13 +442,15 @@ class IssueBlockers(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")],
+                        facts=IssueFacts(inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")]),
                     ),
-                    issue("TASK-2", "Todo", "pm", project=PD),
+                    issue("TASK-2", "Todo", "pm", facts=IssueFacts(project=PD)),
                 ]
             )
             self.assertEqual(
-                self.plan(fake, dry=True) if argv == "plan" else self.claim(fake, dry=True),
+                self.plan(fake, dry=True)
+                if argv == "plan"
+                else self.claim(fake, options=ClaimOptions(dry=True)),
                 out,
                 argv,
             )

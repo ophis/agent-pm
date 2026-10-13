@@ -17,6 +17,7 @@ from orchestrator_tests.unit.router.data import (
     OVERLAY,
     PD,
     RECHECK,
+    IssueFacts,
     ago,
     issue,
     reading,
@@ -25,7 +26,9 @@ from orchestrator_tests.unit.router.data import (
 from orchestrator_tests.unit.router.fakes import Changed, FakeLinear, two
 from orchestrator_tests.unit.router.fixtures import (
     Base,
+    ClaimOptions,
     TickBase,
+    TickOptions,
 )
 
 
@@ -95,7 +98,8 @@ class ClaimUsageGates(Base):
                 self.api.usages, self.api.usage_calls = {"a": value, "b": reading(50)}, []
                 fake = two()
                 self.assertEqual(
-                    self.claim(fake, gate=True), f"TASK-2 https://linear.app/x/TASK-2 {PD}"
+                    self.claim(fake, options=ClaimOptions(gate=True)),
+                    f"TASK-2 https://linear.app/x/TASK-2 {PD}",
                 )
                 self.assertEqual(
                     self.said(),
@@ -112,19 +116,23 @@ class ClaimUsageGates(Base):
     def test_an_absent_window_never_blocks(self):
         self.api.usages = {"a": reading(None, 10)}
         self.assertEqual(
-            self.claim(two(), gate=True), "TASK-1 https://linear.app/x/TASK-1 Deep Research"
+            self.claim(two(), options=ClaimOptions(gate=True)),
+            "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
 
     def test_two_candidates_of_a_runtime_probe_it_once(self):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-3", "Todo", "researcher", priority=2),
-                issue("TASK-2", "Todo", "pm", priority=3, project=PD),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
             ]
         )
-        self.assertEqual(self.claim(fake, gate=True), f"TASK-2 https://linear.app/x/TASK-2 {PD}")
+        self.assertEqual(
+            self.claim(fake, options=ClaimOptions(gate=True)),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
+        )
         why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
         self.assertEqual(
             self.said(),
@@ -142,7 +150,7 @@ class ClaimUsageGates(Base):
     def test_all_blocked_claims_nothing(self):
         self.api.usages = {"a": reading(95), "b": None}
         fake = two()
-        self.assertEqual(self.claim(fake, gate=True), "")
+        self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True)), "")
         self.assertEqual(fake.mutations, [])
         self.assertEqual(self.said()[-1], "pick-none reason=nothing claimable")
 
@@ -158,7 +166,7 @@ class ClaimUsageGates(Base):
                 fake = Changed(
                     [issue("TASK-1", "Todo", listed)], {"TASK-1": {"assignee": who(now)}}
                 )
-                self.assertEqual(self.claim(fake, gate=True), out)
+                self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True)), out)
                 self.assertEqual(self.api.usage_calls, calls)
                 self.assertEqual(len(fake.mutations), int(bool(out)))
 
@@ -167,7 +175,7 @@ class ClaimUsageGates(Base):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         skip = "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [skip]), (True, [])):
-            self.assertEqual(self.claim(fake, gate=True, again=again), "")
+            self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True, again=again)), "")
             self.assertEqual(
                 self.said(), ["pick TASK-1 queue=1", *said, "pick-none reason=nothing claimable"]
             )
@@ -178,7 +186,8 @@ class ClaimUsageGates(Base):
         self.limit("a", at)
         fake = two()
         self.assertEqual(
-            self.claim(fake, dry=True, gate=True), f"TASK-2 https://linear.app/x/TASK-2 {PD}"
+            self.claim(fake, options=ClaimOptions(dry=True, gate=True)),
+            f"TASK-2 https://linear.app/x/TASK-2 {PD}",
         )
         self.assertEqual(
             self.said(),
@@ -279,8 +288,8 @@ class ScheduledUsageGates(TickBase):
     def test_a_blocked_resume_candidate_lets_a_claim_start(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=1),
-            issue("TASK-2", "Todo", "pm", priority=2, project=PD),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
         )
         self.resumable("TASK-1", "a", 60)
         self.assertEqual(self.tick(fake), 0)
@@ -303,9 +312,9 @@ class ScheduledUsageGates(TickBase):
     def test_all_blocked_starts_nothing_and_probes_a_runtime_once(self):
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", priority=1),
-            issue("TASK-3", "In Progress", "engineer", priority=2, project=PD),
-            issue("TASK-2", "Todo", "researcher", priority=2),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-3", "In Progress", "engineer", facts=IssueFacts(priority=2, project=PD)),
+            issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
         )
         self.resumable("TASK-1", "a", 60)
         self.resumable("TASK-3", "c", 50, "engineer")
@@ -313,7 +322,7 @@ class ScheduledUsageGates(TickBase):
         why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [f"usage-skip TASK-{n} {why}" for n in (1, 3, 2)]), (True, [])):
             with self.subTest(again=again):
-                self.assertEqual(self.tick(fake, again=again), 0)
+                self.assertEqual(self.tick(fake, options=TickOptions(again=again)), 0)
                 self.assertEqual(self.said(), said)
                 self.assertEqual(
                     (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
@@ -370,8 +379,8 @@ class ScheduledUsageGates(TickBase):
                 if limited:
                     self.limit("a", at)
                 fake = self.fake(
-                    issue("TASK-1", "In Progress", "researcher", priority=1),
-                    issue("TASK-2", "Todo", "pm", priority=2, project=PD),
+                    issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+                    issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
                 )
                 self.resumable("TASK-1", "a", 60)
                 before = self.before()

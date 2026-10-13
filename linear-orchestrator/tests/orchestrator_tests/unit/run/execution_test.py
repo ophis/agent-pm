@@ -25,7 +25,7 @@ from orchestrator_tests.unit.run.data import (
     updated,
 )
 from orchestrator_tests.unit.run.fakes import FakeRun
-from orchestrator_tests.unit.run.fixtures import Case
+from orchestrator_tests.unit.run.fixtures import Case, RunRequest
 from orchestrator_tests.unit.run.support import (
     HARNESS,
     ID,
@@ -158,18 +158,18 @@ class RunExecution(Case):
         )
 
     def test_a_task_reaches_the_delegate(self):
-        self.assertEqual(self.main(task="light-build"), 0)
+        self.assertEqual(self.main(request=RunRequest(task="light-build")), 0)
         self.assertEqual(self.call()[1].task, "light-build")
 
     def test_a_researcher_run_has_the_brake(self):
-        self.assertEqual(self.main(assignee=RESEARCHER, target=None), 0)
+        self.assertEqual(self.main(request=RunRequest(assignee=RESEARCHER, target=None)), 0)
         researcher, _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
         self.assertEqual(researcher.gate, GATE)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_resume(self):
-        self.assertEqual(self.main(mode="resume"), 0)
+        self.assertEqual(self.main(request=RunRequest(mode="resume")), 0)
         _, spec = self.call()
         self.assertEqual((spec.sid, spec.resume), (SID, True))
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=resume sid={SID}")
@@ -244,7 +244,7 @@ class RunExecution(Case):
                 if setup:
                     setup()
                 n = len(self.said())
-                self.assertEqual(self.main(**kw), 1)
+                self.assertEqual(self.main(request=RunRequest(**kw)), 1)
                 self.assertEqual(
                     self.said()[n:],
                     [
@@ -273,7 +273,7 @@ class RunExecution(Case):
     def test_bad_uuid_or_target(self):
         for kw in (dict(uuid="nope"), dict(target="a/b/c")):
             with self.subTest(kw=kw):
-                self.assertEqual(self.main(**kw), 2)
+                self.assertEqual(self.main(request=RunRequest(**kw)), 2)
                 self.assertTrue(self.err.startswith("run.py: bad issue uuid or target: "), self.err)
         self.nothing_ran()
 
@@ -366,7 +366,7 @@ class RunTui(Case):
 class RunIdentity(Case):
     def test_session_comments_go_as_the_harness_and_write_back_as_the_role(self):
         self.done(Progress("start", "x"))
-        self.assertEqual(self.main(mode="resume"), 0)
+        self.assertEqual(self.main(request=RunRequest(mode="resume")), 0)
         self.assertEqual(config.load().harness_key, HARNESS)
         by = {}
         for (_, service, v), timeout in zip(self.gql.calls, self.gql.timeouts, strict=True):

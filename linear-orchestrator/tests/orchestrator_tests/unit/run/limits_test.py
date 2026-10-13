@@ -19,7 +19,7 @@ from orchestrator_tests.unit.run.data import (
     ended,
     updated,
 )
-from orchestrator_tests.unit.run.fixtures import Case
+from orchestrator_tests.unit.run.fixtures import Case, RunRequest
 from orchestrator_tests.unit.run.support import (
     ID,
     KEY,
@@ -173,6 +173,6 @@ class RunArguments(Case):
     def test_bad_runtime(self):
         for runtime in ("", "cl\x07aude"):
             with self.subTest(runtime=runtime):
-                self.assertEqual(self.main(runtime=runtime), 2)
+                self.assertEqual(self.main(request=RunRequest(runtime=runtime)), 2)
                 self.assertEqual(self.err, f"run.py: bad runtime: {runtime!r}\n")
         self.nothing_ran()

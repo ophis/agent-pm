@@ -27,6 +27,7 @@ from orchestrator_tests.unit.router.data import (
 )
 from orchestrator_tests.unit.router.fixtures import (
     Base,
+    LaunchRequest,
     OuterBase,
 )
 from orchestrator_tests.unit.run.support import (
@@ -74,7 +75,7 @@ class RunLaunching(OuterBase):
         self.assertEqual((self.err, self.said()), ("", []))
 
     def test_a_given_task_reaches_run_py_whose_argv_parses_it(self):
-        self.assertEqual(self.outer(task="light-build"), 0)
+        self.assertEqual(self.outer(request=LaunchRequest(task="light-build")), 0)
         argv = self.detached()
         self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
         found = run_py.options(argv[4:])
@@ -128,7 +129,7 @@ class RunLaunching(OuterBase):
             with self.subTest(role=role):
                 self.gql.issue = node(title=title, description=description)
                 self.run_.table, self.run_.calls = [(listing, ok("[]"))], []
-                self.assertEqual(self.outer(who_), 0)
+                self.assertEqual(self.outer(request=LaunchRequest(assignee=who_)), 0)
                 self.assertEqual(
                     self.detached(role),
                     inner(
@@ -158,7 +159,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(who=who_):
                 self.run_.table = [(listing, ok("[]"))]
-                self.assertEqual(self.outer(who_), 0)
+                self.assertEqual(self.outer(request=LaunchRequest(assignee=who_)), 0)
                 argv = self.detached(role)
                 self.assertNotIn("--target", argv)
                 self.assertEqual(argv[-1].splitlines()[1], f"Repo: {clone}")
@@ -170,12 +171,12 @@ class RunLaunching(OuterBase):
             os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
         )
         self.run_.table = [(("git", *GUARD, "-C"), ok()), *ENG_RUN]
-        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.outer(request=LaunchRequest(mode="resume")), 0)
         self.assertEqual(self.input(), INPUT)
         self.assertEqual([argv[0] for argv, _ in self.run_.calls], ["gh", "git", "git"])
 
     def test_a_resume_reads_its_session_at_its_runtime_and_rebuilds_the_input(self):
-        self.assertEqual(self.outer(mode="resume", runtime="b"), 0)
+        self.assertEqual(self.outer(request=LaunchRequest(mode="resume", runtime="b")), 0)
         self.assertEqual(
             self.detached(),
             inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", runtime="b")),
@@ -190,7 +191,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
-                self.assertEqual(self.outer(mode="resume"), 3)
+                self.assertEqual(self.outer(request=LaunchRequest(mode="resume")), 3)
                 self.assertEqual(
                     (self.said(), self.err),
                     ([f"transient TASK-7 reason=session {SID} not resumable ({why})"], ""),
@@ -201,7 +202,7 @@ class RunLaunching(OuterBase):
     def test_bad_issue_or_session_id(self):
         for ident, sid in (("task-7", SID), (ID, "not-a-sid"), (ID, "z" * 36)):
             with self.subTest(ident=ident, sid=sid):
-                self.assertEqual(self.outer(ident=ident, sid=sid), 2)
+                self.assertEqual(self.outer(request=LaunchRequest(ident=ident, sid=sid)), 2)
                 self.assertEqual(self.err, f"router.py: bad issue or session id: {ident} {sid}\n")
         self.assertEqual((self.api.detached, self.gql.calls, self.keychain_calls), ([], [], []))
 
@@ -214,7 +215,7 @@ class RunLaunching(OuterBase):
             ),
         ):
             with self.subTest(reason=reason):
-                self.assertEqual(self.outer(mode="resume", **kw), 2)
+                self.assertEqual(self.outer(request=LaunchRequest(mode="resume", **kw)), 2)
                 self.assertEqual(
                     (self.said(), self.err), ([f"config-error TASK-7 reason={reason}"], "")
                 )
@@ -227,7 +228,7 @@ class RunLaunching(OuterBase):
         self.missing.add(KEY)
         for mode in ("new", "resume"):
             with self.subTest(mode=mode):
-                self.assertEqual(self.outer(mode=mode), 2)
+                self.assertEqual(self.outer(request=LaunchRequest(mode=mode)), 2)
                 self.assertEqual(
                     self.said(),
                     [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
@@ -254,7 +255,7 @@ class RunLaunching(OuterBase):
         for task in (None, "light-build"):
             with self.subTest(task=task):
                 self.gql = Gql(issue=node(comments=[USER_NOTE]))
-                self.assertEqual(self.outer(task=task), 0)
+                self.assertEqual(self.outer(request=LaunchRequest(task=task)), 0)
                 self.assertEqual(
                     self.gql.calls,
                     [
@@ -310,7 +311,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(reason=reason):
                 self.run_.table = [(("gh", "api"), r)]
-                self.assertEqual(self.outer(mode=mode), 3)
+                self.assertEqual(self.outer(request=LaunchRequest(mode=mode)), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason={reason}"])
         self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})] * 3)
         self.assertEqual(self.api.detached, [])
@@ -323,7 +324,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(reason=reason):
                 self.run_.table = [(LISTING, r)]
-                self.assertEqual(self.outer(RESEARCHER), 3)
+                self.assertEqual(self.outer(request=LaunchRequest(assignee=RESEARCHER)), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
         self.assertEqual(self.api.detached, [])
 

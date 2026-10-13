@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import config
@@ -40,16 +41,26 @@ def note(body, at, who=AGENT):
     return issues.Note(body, at, who[0] if who else None, who[1] if who else None)
 
 
-def issue(
-    description="",
-    *,
-    ident="RES-4",
-    title="Compare queues",
-    notes=(),
-    links=(),
-    linked=(),
-    project="p-1",
-):
+@dataclass(frozen=True, kw_only=True)
+class IssueFacts:
+    ident: str = "RES-4"
+    title: str = "Compare queues"
+    notes: tuple = ()
+    links: tuple = ()
+    linked: tuple = ()
+    project: str | None = "p-1"
+
+
+def issue(description="", *, facts: IssueFacts | None = None):
+    facts = facts or IssueFacts()
+    ident, title, notes, links, linked, project = (
+        facts.ident,
+        facts.title,
+        facts.notes,
+        facts.links,
+        facts.linked,
+        facts.project,
+    )
     return issues.Issue(
         "uuid-4",
         ident,
@@ -79,7 +90,7 @@ def research_issue():
         note("Focus on cost.", "2026-09-02T00:00:00.000Z", ANN),
         note("Deploy ok", "2026-09-01T11:00:00.000Z", (None, None)),
     )
-    return issue(desc, notes=sorted(ns, key=lambda n: n.at))
+    return issue(desc, facts=IssueFacts(notes=sorted(ns, key=lambda n: n.at)))
 
 
 RESEARCH_PRECEDENCE = (

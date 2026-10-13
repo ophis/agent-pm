@@ -10,6 +10,7 @@ from orchestrator_tests.unit.inputs.data import (
     HUMANS,
     NOT_FOUND,
     RAW,
+    IssueFacts,
     endpoint,
     fenced,
     issue,
@@ -154,7 +155,9 @@ class DocumentGathering(Case):
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abce"}
             | {endpoint("Research"): listing()}
         )
-        src = inputs.gather(issue(description, links=links), "researcher", DOCS, run=gh)
+        src = inputs.gather(
+            issue(description, facts=IssueFacts(links=links)), "researcher", DOCS, run=gh
+        )
         self.assertEqual(
             [d.path for d in src.docs],
             ["Research/a.md", "Research/b.md", "Research/c.md", "Research/e.md"],
@@ -176,7 +179,9 @@ class DocumentGathering(Case):
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abcd"}
             | {endpoint("Research"): listing()}
         )
-        src = inputs.gather(issue(description, links=links), "researcher", DOCS, run=gh)
+        src = inputs.gather(
+            issue(description, facts=IssueFacts(links=links)), "researcher", DOCS, run=gh
+        )
         self.assertEqual(
             [x.path for x in src.docs],
             ["Research/a.md", "Research/b.md", "Research/c.md", "Research/d.md"],
@@ -204,17 +209,20 @@ class DocumentGathering(Case):
                 endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1"),
             }
         )
-        src = inputs.gather(issue(url, ident="PM-9"), "pm", DOCS, run=gh)
+        src = inputs.gather(issue(url, facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh)
         self.assertEqual(
             (src.earlier.path, src.earlier.url, src.earlier.text),
             ("Product Design/2026-08-01-PM-1-x.md", url, "p1"),
         )
         gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
         src = inputs.gather(
-            issue("", links=(issues.Link(url),), ident="ENG-7"), "engineer", DOCS, run=gh
+            issue("", facts=IssueFacts(links=(issues.Link(url),), ident="ENG-7")),
+            "engineer",
+            DOCS,
+            run=gh,
         )
         got = inputs.render(
-            issue("D", ident="ENG-7"),
+            issue("D", facts=IssueFacts(ident="ENG-7")),
             "engineer",
             src,
             inputs.InputContext(
@@ -313,7 +321,9 @@ class DocumentGathering(Case):
                 endpoint("Research/2026-09-01-RES-4-r.md"): ok("r"),
             }
         )
-        src = inputs.gather(issue(f"{report} {prd1} {prd2}", ident="PM-9"), "pm", DOCS, run=gh)
+        src = inputs.gather(
+            issue(f"{report} {prd1} {prd2}", facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh
+        )
         self.assertEqual(src.earlier.path, "Product Design/2026-08-01-PM-1-x.md")
         self.assertEqual(src.earlier.url, prd1)
         self.assertEqual(
@@ -330,7 +340,7 @@ class DocumentGathering(Case):
                 endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1"),
             }
         )
-        src = inputs.gather(issue(prd, ident="PM-9"), "pm", DOCS, run=gh)
+        src = inputs.gather(issue(prd, facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh)
         self.assertEqual(src.earlier.path, "Product Design/2026-09-01-PM-9-mine.md")
         self.assertEqual(src.earlier.url, BASE + "Product%20Design/2026-09-01-PM-9-mine.md")
         self.assertEqual([d.path for d in src.docs], ["Product Design/2026-08-01-PM-1-x.md"])
@@ -342,7 +352,9 @@ class DocumentGathering(Case):
         ):
             with self.subTest(role=role):
                 gh = Gh({endpoint(listed): listing(), endpoint(link): ok("x")})
-                src = inputs.gather(issue(f"{BASE}{link}", ident=ident), role, DOCS, run=gh)
+                src = inputs.gather(
+                    issue(f"{BASE}{link}", facts=IssueFacts(ident=ident)), role, DOCS, run=gh
+                )
                 self.assertIsNone(src.earlier)
                 self.assertEqual([d.path for d in src.docs], [path])
 
@@ -355,7 +367,10 @@ class DocumentGathering(Case):
             }
         )
         src = inputs.gather(
-            issue(f"{prd} {BASE}Research/r.md", ident="ENG-7"), "engineer", DOCS, run=gh
+            issue(f"{prd} {BASE}Research/r.md", facts=IssueFacts(ident="ENG-7")),
+            "engineer",
+            DOCS,
+            run=gh,
         )
         self.assertIsNone(src.earlier)
         self.assertEqual(

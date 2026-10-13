@@ -1,3 +1,4 @@
+import argparse
 import os
 from datetime import timedelta
 from unittest import mock
@@ -17,21 +18,27 @@ from orchestrator_tests.unit.router.data import (
     RECHECK,
     ROLE,
     SESSIONS,
+    IssueFacts,
     ago,
     blocker,
     issue,
-    outer_args,
     reading,
 )
 from orchestrator_tests.unit.router.fakes import FakeLinear, two
-from orchestrator_tests.unit.router.fixtures import Start, TickBase, TickScenario
+from orchestrator_tests.unit.router.fixtures import (
+    Attempt,
+    Start,
+    TickBase,
+    TickOptions,
+    TickScenario,
+)
 
 
 class ExplicitIssueRuns(TickBase):
     def nothing_resumable(self):
         def capped():
             for m in (390, 380, 370, 360):
-                self.add("start", "TASK-1", f"s{m}", m)
+                self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m))
 
         return [
             (
@@ -59,14 +66,16 @@ class ExplicitIssueRuns(TickBase):
             (
                 "not resumable",
                 issue("TASK-1", "In Progress", "researcher"),
-                lambda: self.add("start", "TASK-1", "n", 5),
+                lambda: self.add(Attempt(kind="start", ident="TASK-1", sid="n", minutes_ago=5)),
                 "recover TASK-1 to=todo reason=not resumable sid=n",
                 "Todo",
                 routing.INTERRUPTED,
             ),
             (
                 "no sid",
-                issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=5)),
+                issue(
+                    "TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(minutes=5))
+                ),
                 lambda: None,
                 f"recover TASK-1 to=todo reason=no session updated={ago(minutes=5)}",
                 "Todo",
@@ -75,23 +84,34 @@ class ExplicitIssueRuns(TickBase):
         ]
 
     def test_todo_is_claimed_and_started_whatever_the_gates(self):
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
         self.limit("a", (NOW + timedelta(hours=1)).isoformat())
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)),
-            issue("TASK-2", "In Progress", "researcher", priority=1),
-            issue("TASK-3", "Todo", "researcher", priority=1),
-            issue("TASK-4", "Todo", "engineer", priority=3, project=PD),
+            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3))),
+            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=3, project=PD)),
         )
         self.resumable("TASK-2", "b", 60)
-        self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, live=FULL), 0)
+        self.assertEqual(
+            self.tick(fake, "--issue", "TASK-4", options=TickOptions(hour=12, live=FULL)), 0
+        )
         self.assertEqual(
             self.said(), ["pick TASK-4 queue=1", "claim TASK-4 role=engineer runtime=a"]
         )
         (launch,) = self.start.launches
         self.assertEqual(
-            launch, outer_args("TASK-4", IDS[PD], ROLE["engineer"], launch.sid, None, "new", "a")
+            launch,
+            argparse.Namespace(
+                issue="TASK-4",
+                project=IDS[PD],
+                assignee=ROLE["engineer"],
+                sid=launch.sid,
+                task=None,
+                mode="new",
+                runtime="a",
+            ),
         )
         self.assertRegex(launch.sid, config.UUID_RE)
         self.assertEqual(self.last_run(), ("start", "TASK-4", launch.sid, "engineer", "a"))
@@ -113,14 +133,18 @@ class ExplicitIssueRuns(TickBase):
             with self.subTest(rc=rc):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 start = Start(exits={"TASK-1": rc})
-                self.assertEqual(self.tick(fake, "--issue", "TASK-1", start=start), rc)
+                self.assertEqual(
+                    self.tick(fake, "--issue", "TASK-1", options=TickOptions(start=start)), rc
+                )
 
     def test_unknown_agent_runs_start_nothing(self):
         for dry in (False, True):
             with self.subTest(dry=dry):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
-                self.assertEqual(self.tick(fake, *argv, live=None), 0 if dry else 1)
+                self.assertEqual(
+                    self.tick(fake, *argv, options=TickOptions(live=None)), 0 if dry else 1
+                )
                 self.assertEqual(self.err, "router.py: agent runs unknown; try again\n")
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.state, self.said()), ([], [], "", [])
@@ -133,7 +157,10 @@ class ExplicitIssueRuns(TickBase):
                     fake = FakeLinear([issue("TASK-1", state, "engineer")])
                     argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
                     self.assertEqual(
-                        self.tick(fake, *argv, live=["agent-pm-engineer-TASK-1"]), 0 if dry else 1
+                        self.tick(
+                            fake, *argv, options=TickOptions(live=["agent-pm-engineer-TASK-1"])
+                        ),
+                        0 if dry else 1,
                     )
                     self.assertEqual(
                         self.err,
@@ -149,12 +176,20 @@ class ExplicitIssueRuns(TickBase):
         self.resumable("TASK-1", "a", 20)
         self.touch("a", 5)
         self.assertEqual(self.plan(fake), "")
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1", hour=12), 0)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", options=TickOptions(hour=12)), 0)
         self.assertEqual(self.said(), ["plan TASK-1 mode=resume sid=a"])
         (launch,) = self.start.launches
         self.assertEqual(
             launch,
-            outer_args("TASK-1", IDS[DR], ROLE["researcher"], self.sid("a"), None, "resume", "a"),
+            argparse.Namespace(
+                issue="TASK-1",
+                project=IDS[DR],
+                assignee=ROLE["researcher"],
+                sid=self.sid("a"),
+                task=None,
+                mode="resume",
+                runtime="a",
+            ),
         )
         self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher", "a"))
         self.assertEqual((fake.mutations, self.api.usage_calls), ([], []))
@@ -217,7 +252,7 @@ class ExplicitIssueRuns(TickBase):
             with self.subTest(argv=argv):
                 self.lines = []
                 for sid in "abcd":
-                    self.add("start", "TASK-1", sid, 300)
+                    self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
                 before = self.before()
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv), 0 if "--dry-run" in argv else 1)
@@ -239,8 +274,13 @@ class ExplicitIssueRuns(TickBase):
                 with self.subTest(dry=dry, resume=resume):
                     self.lines, self.hist = [], {}
                     listed = [
-                        issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")]),
-                        issue("TASK-4", "Todo", "pm", project=PD),
+                        issue(
+                            "TASK-1",
+                            "Todo",
+                            "researcher",
+                            facts=IssueFacts(inverse=[blocker("TASK-7")]),
+                        ),
+                        issue("TASK-4", "Todo", "pm", facts=IssueFacts(project=PD)),
                     ]
                     if resume:
                         listed.append(issue("TASK-2", "In Progress", "researcher"))
@@ -263,8 +303,8 @@ class ExplicitIssueRuns(TickBase):
                 issue("TASK-1", "In Review", "researcher"),
                 issue("TASK-2", "Todo", "someone"),
                 issue("TASK-3", "Todo"),
-                issue("TASK-4", "In Progress", "someone", updated=ago(hours=3)),
-                issue("TASK-5", "Todo", "researcher", project=None),
+                issue("TASK-4", "In Progress", "someone", facts=IssueFacts(updated=ago(hours=3))),
+                issue("TASK-5", "Todo", "researcher", facts=IssueFacts(project=None)),
             ]
         )
         for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-9"):
@@ -281,8 +321,8 @@ class TickRecords(TickScenario):
     def test_a_usage_blocked_tick_writes_only_its_usage_skips_once_a_day(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
             ]
         )
         for again, five, said in (
@@ -298,7 +338,7 @@ class TickRecords(TickScenario):
         ):
             with self.subTest(again=again):
                 self.api.usages = {"a": reading(five)}
-                self.assertEqual(self.tick(fake, again=again), 0)
+                self.assertEqual(self.tick(fake, options=TickOptions(again=again)), 0)
                 self.assertEqual(self.said(), said)
                 self.assertEqual((self.start.launches, fake.mutations, self.state), ([], [], ""))
 
@@ -321,12 +361,12 @@ class TickRecords(TickScenario):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", priority=1),
-                issue("TASK-2", "Todo", "researcher", priority=2),
+                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
             ]
         )
         for sid in "abcd":
-            self.add("start", "TASK-1", sid, 300)
+            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
         self.tick(fake)
         self.assertEqual(
             self.said(),
@@ -352,13 +392,13 @@ class TickRecords(TickScenario):
         self.assertEqual((gql.failed[0][0], fake.mutations), (RECHECK, []))
 
     def test_trim_runs_before_plan(self):
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
         self.tick(FakeLinear([]))
         self.assertNotIn("TASK-8", self.state)
 
     def test_trim_failure_continues(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
         with mock.patch.object(os, "replace", side_effect=OSError("disk")):
             self.tick(fake)
         self.assertIn("skip reason=prune failed error=OSError: disk", self.said())
@@ -379,7 +419,7 @@ class TickRecords(TickScenario):
         for start, end in cases:
             with self.subTest(end=end):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, start=start), 0)
+                self.assertEqual(self.tick(fake, options=TickOptions(start=start)), 0)
                 self.assertEqual(self.said()[-1], end)
                 (launch,) = self.start.launches
                 self.assertEqual(
@@ -398,5 +438,8 @@ class TickRecords(TickScenario):
         tui = config.tui_name("engineer", "TASK-1", self.sid("a"))
         for live, ran in (([tui, "agent-pm-engineer-TASK-9"], []), ([tui], [("TASK-1", "new")])):
             with self.subTest(live=live):
-                self.tick(FakeLinear([issue("TASK-1", "Todo", "engineer")]), live=live)
+                self.tick(
+                    FakeLinear([issue("TASK-1", "Todo", "engineer")]),
+                    options=TickOptions(live=live),
+                )
                 self.assertEqual(self.launched_runs(), ran)

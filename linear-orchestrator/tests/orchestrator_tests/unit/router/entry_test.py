@@ -29,7 +29,7 @@ from orchestrator_tests.unit.router.data import (
     other_router,
 )
 from orchestrator_tests.unit.router.fakes import ClaimLinear, FakeLinear, LostClaim
-from orchestrator_tests.unit.router.fixtures import Base, OuterBase, TickBase
+from orchestrator_tests.unit.router.fixtures import Attempt, Base, OuterBase, TickBase, TickOptions
 from orchestrator_tests.unit.run.support import HARNESS, ID, PROJECT, USER_NOTE, logged, node, show
 
 
@@ -44,7 +44,9 @@ class RouterEntry(OuterBase):
 
     def entry(self, *argv, live=(), tty=False):
         outer = {"run": self.run_, "keychain": self.keychain}
-        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer)
+        return self.tick(
+            self.fake, *argv, options=TickOptions(live=live, again=True, tty=tty, outer=outer)
+        )
 
     def test_claims_then_starts_run_py_after_its_start_line(self):
         for argv, said in (
@@ -264,7 +266,7 @@ class RouterArguments(Base):
 
 class RouterLocking(TickBase):
     def test_a_tick_skips_while_another_router_runs(self):
-        self.add("start", "TASK-8", "old", 60 * 24 * 8)
+        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
         before = self.before()
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         with other_router(self.runs):
@@ -274,7 +276,10 @@ class RouterLocking(TickBase):
                 (fake.queries, self.api.order, self.state, fake.issues["TASK-1"]["state"]),
                 ([], [], before, "Todo"),
             )
-            self.assertEqual((self.tick(fake, hour=12), self.said(), self.api.order), (0, [], []))
+            self.assertEqual(
+                (self.tick(fake, options=TickOptions(hour=12)), self.said(), self.api.order),
+                (0, [], []),
+            )
         self.assertEqual(self.tick(fake), 0)
         self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
@@ -315,7 +320,7 @@ class RouterOutages(TickBase):
                 with self.subTest(argv=argv, failure=name):
                     for again in (False, True):
                         gql = failing(error)
-                        self.assertEqual(self.tick(gql, *argv, again=again), 1)
+                        self.assertEqual(self.tick(gql, *argv, options=TickOptions(again=again)), 1)
                         self.assertEqual(
                             (self.said(), self.raw), ([] if again else [self.SAID[name]], "")
                         )
@@ -356,7 +361,12 @@ class RouterOutages(TickBase):
                     ("In Progress", [], ""),
                 )
                 self.assertEqual(
-                    self.tick(fake, "--now", now=NOW + routing.STALE + timedelta(minutes=1)), 0
+                    self.tick(
+                        fake,
+                        "--now",
+                        options=TickOptions(now=NOW + routing.STALE + timedelta(minutes=1)),
+                    ),
+                    0,
                 )
                 self.assertEqual(
                     self.said(),
