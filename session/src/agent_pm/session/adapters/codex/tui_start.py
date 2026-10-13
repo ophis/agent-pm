@@ -118,15 +118,17 @@ def hook_trust(
 
 def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, termination=None):
     try:
-        return app_server.AppServer(
+        return app_server.AppServer.call(
             exe,
             args,
+            "hooks/list",
+            {"cwds": [cwd]},
             env=env,
             wait=ANSWER_WAIT,
             limit=ANSWER_MAX,
             cwd=cwd,
             termination=termination,
-        ).call("hooks/list", {"cwds": [cwd]})
+        )
     except app_server.Error as e:
         raise StartError(f"codex hooks/list: {e}") from None
 

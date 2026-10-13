@@ -25,8 +25,10 @@ class ClientTest(Case):
             mock.patch("os.read", side_effect=[b"\n".join(replies) + b"\n", b""]),
             mock.patch("os.killpg"),
         ):
-            client = app_server.AppServer("fake", [], env={}, wait=1, limit=1024)
-            self.assertEqual(client.call("hooks/list"), {"data": []})
+            self.assertEqual(
+                app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024),
+                {"data": []},
+            )
         with (
             mock.patch("subprocess.Popen", return_value=proc),
             mock.patch("select.select", return_value=([42], [], [])),
@@ -40,7 +42,49 @@ class ClientTest(Case):
             mock.patch("os.killpg"),
             self.assertRaisesRegex(app_server.Error, "denied"),
         ):
-            app_server.AppServer("fake", [], env={}, wait=1, limit=1024).call("hooks/list")
+            app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
+
+    def test_termination_before_spawn_still_checks_on_exit(self):
+        termination = mock.Mock(signum=15)
+        termination.check.side_effect = RuntimeError("terminated")
+        with (
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("os.killpg") as kill,
+            self.assertRaisesRegex(RuntimeError, "terminated"),
+        ):
+            app_server.AppServer.call(
+                "fake", [], "hooks/list", env={}, wait=1, limit=1024, termination=termination
+            )
+        popen.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(termination.check.call_count, 2)
+
+    def test_termination_after_spawn_closes_before_final_check(self):
+        proc = mock.Mock(pid=123)
+        proc.stdout.fileno.return_value = 42
+        termination = mock.Mock(signum=15)
+
+        def check():
+            if termination.check.call_count == 1:
+                return
+            if termination.check.call_count == 3:
+                proc.wait.assert_called_once_with()
+                proc.stdin.close.assert_called_once_with()
+                proc.stdout.close.assert_called_once_with()
+            raise RuntimeError("terminated")
+
+        termination.check.side_effect = check
+        with (
+            mock.patch("subprocess.Popen", return_value=proc),
+            mock.patch("os.killpg") as kill,
+            self.assertRaisesRegex(RuntimeError, "terminated"),
+        ):
+            app_server.AppServer.call(
+                "fake", [], "hooks/list", env={}, wait=1, limit=1024, termination=termination
+            )
+        kill.assert_called_once_with(123, app_server.signal.SIGKILL)
+        proc.stdin.write.assert_not_called()
+        self.assertEqual(termination.check.call_count, 3)
 
     def test_line_bounds_and_timeout(self):
         with (
@@ -68,7 +112,7 @@ class ClientTest(Case):
             mock.patch("os.killpg") as kill,
             mock.patch("time.monotonic", side_effect=[0, 0, 0, 0, 0, 6]),
         ):
-            app_server.AppServer("fake", [], env={}, wait=1, limit=1024).call("hooks/list")
+            app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
         kill.assert_called_once_with(123, app_server.signal.SIGKILL)
         proc.stdout.close.assert_called_once()
 
@@ -82,6 +126,6 @@ class ClientTest(Case):
             mock.patch("os.read", return_value=b'{"id":1,"result":{}}\n{"id":2,"result":{}}\n'),
             mock.patch("os.killpg") as kill,
         ):
-            app_server.AppServer("fake", [], env={}, wait=1, limit=1024).call("hooks/list")
+            app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
         kill.assert_called_once_with(123, app_server.signal.SIGKILL)
         proc.wait.assert_called()

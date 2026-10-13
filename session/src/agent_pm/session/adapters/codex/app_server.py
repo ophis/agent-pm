@@ -44,8 +44,25 @@ class AppServer:
 
     def __init__(
         self,
+        proc: subprocess.Popen[bytes],
+        wait: float,
+        limit: int,
+        termination: Termination | None,
+        exit_wait: float,
+    ):
+        self._proc = proc
+        assert proc.stdin is not None and proc.stdout is not None
+        self._stdin, self._stdout = proc.stdin, proc.stdout
+        self.termination, self.exit_wait = termination, exit_wait
+        self._lines = Lines(self._stdout.fileno(), wait, limit, termination=termination)
+
+    @classmethod
+    def call(
+        cls,
         exe: str,
         args: list[str],
+        method: str,
+        params: dict | None = None,
         *,
         env: dict[str, str],
         wait: float,
@@ -54,62 +71,58 @@ class AppServer:
         termination: Termination | None = None,
         exit_wait: float = EXIT_WAIT,
     ):
-        self.exe, self.args, self.env, self.cwd = exe, args, env, cwd
-        self.wait, self.limit = wait, limit
-        self.termination, self.exit_wait = termination, exit_wait
-
-    def call(self, method: str, params: dict | None = None):
-        """Initialize and return `method` within the byte/time bounds, then reap the process."""
-        started = exited = False
+        """Own a single initialized request's process from spawning through cleanup."""
+        proc = client = None
+        exited = False
         try:
-            if self.termination is not None:
-                self.termination.check()
+            if termination is not None:
+                termination.check()
             try:
-                self._proc = subprocess.Popen(
-                    [self.exe, "app-server", *self.args],
-                    cwd=self.cwd,
-                    env=self.env,
+                proc = subprocess.Popen(
+                    [exe, "app-server", *args],
+                    cwd=cwd,
+                    env=env,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
                 )
             except OSError as e:
-                raise Error(f"{self.exe}: {e.strerror}") from e
-            started = True
-            assert self._proc.stdin is not None and self._proc.stdout is not None
-            self._stdin, self._stdout = self._proc.stdin, self._proc.stdout
-            if self.termination is not None:
-                self.termination.check()
-            self._lines = Lines(
-                self._stdout.fileno(), self.wait, self.limit, termination=self.termination
-            )
-            self._send(
-                {
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "clientInfo": {"name": "agent-pm", "version": "0"},
-                        "capabilities": {"experimentalApi": True},
-                    },
-                }
-            )
-            self._answer(1, "initialize")
-            self._send({"method": "initialized"})
-            self._send(
-                {"id": 2, "method": method, **({"params": params} if params is not None else {})}
-            )
-            return self._answer(2, method)
+                raise Error(f"{exe}: {e.strerror}") from e
+            if termination is not None:
+                termination.check()
+            client = cls(proc, wait, limit, termination, exit_wait)
+            return client._request(method, params)
         except Exited:
             exited = True
             raise
         finally:
-            if started:
-                self._close()
-            if self.termination is not None:
-                self.termination.check()
-            if exited and started:
-                raise Exited(self._proc.returncode)
+            if proc is not None:
+                if client is None:
+                    client = cls(proc, wait, limit, termination, exit_wait)
+                client._close()
+            if termination is not None:
+                termination.check()
+            if exited and proc is not None:
+                raise Exited(proc.returncode)
+
+    def _request(self, method: str, params: dict | None):
+        self._send(
+            {
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "agent-pm", "version": "0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            }
+        )
+        self._answer(1, "initialize")
+        self._send({"method": "initialized"})
+        self._send(
+            {"id": 2, "method": method, **({"params": params} if params is not None else {})}
+        )
+        return self._answer(2, method)
 
     def _send(self, message: dict) -> None:
         try:
@@ -200,14 +213,15 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
     if type(timeout) not in (int, float) or not 0 < timeout <= 10:
         return None
     try:
-        result = AppServer(
+        result = AppServer.call(
             "codex",
             [],
+            "account/rateLimits/read",
             env=env,
             wait=timeout,
             limit=PROBE_MAX,
             exit_wait=POLL,
-        ).call("account/rateLimits/read")
+        )
     except (Error, Exited, OSError, ValueError):
         return None
     return result if isinstance(result, dict) else None
