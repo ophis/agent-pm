@@ -618,6 +618,27 @@ class CrewTest(Case):
             stream.write("12:00:00 worker outcome done\n")
         self.assertEqual(self.crew.next_event(after=0, gen=0), (1, "12:00:00 worker outcome done"))
 
+    def test_next_event_saves_ack_before_wait_and_does_not_consume_returned_line(self):
+        path = self.roster.events
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write("12:00:00 worker done\ndiagnostic\n")
+        observed = []
+
+        def wait(delay):
+            self.assertEqual(delay, 0.5)
+            observed.append(Roster(self.directory).backlog())
+            with open(path, "a", encoding="utf-8") as stream:
+                stream.write("noise\n12:00:01 worker blocked\n")
+
+        with mock.patch("time.sleep", side_effect=wait):
+            result = self.crew.next_event(after=2, gen=0)
+        self.assertEqual(observed, [(2, 0, [])])
+        self.assertEqual(result, (4, "12:00:01 worker blocked"))
+        self.assertEqual(self.roster.backlog(), (2, 0, ["noise", "12:00:01 worker blocked"]))
+        successor = Crew(Roster(self.directory))
+        self.assertEqual(successor.next_event(after=2, gen=0), result)
+        self.assertEqual(self.roster.backlog()[0], 2)
+
     def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
         with open(self.roster.events, "a", encoding="utf-8") as stream:
             stream.write("diagnostic\n12:00:00 worker outcome done\ngarbage\n")
