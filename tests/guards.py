@@ -527,45 +527,45 @@ def layer_commands(repo: str) -> list[str]:
 
 
 def source_suppressions(repo: str) -> list[str]:
-    """Source suppressions have an explicit rule, recorded reason and exactly one use."""
+    """Suppressions in every code tree need an exact inventory entry, reason and one use."""
     found, seen = [], set()
-    for project in PROJECTS:
-        for rel, text in _files(os.path.join(repo, project, "src"), (".py",)):
-            path = f"{project}/src/{rel}"
-            functions = list(_suppression_functions(ast.parse(text)))
-            for token in tokenize.generate_tokens(io.StringIO(text).readline):
-                if token.type != tokenize.COMMENT or not re.search(
-                    r"#\s*(?:noqa\b|type\s*:\s*ignore\b)", token.string, re.I
-                ):
-                    continue
-                at = f"{path}:{token.start[0]}"
-                match = re.fullmatch(
-                    r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
-                    token.string,
-                    re.I,
-                )
-                if not match:
-                    found.append(f"{at}: suppression needs explicit codes and a recorded reason")
-                    continue
-                scope = next(
-                    (
-                        name
-                        for first, last, name in reversed(functions)
-                        if first <= token.start[0] <= last
-                    ),
-                    "<module>",
-                )
-                for code in re.split(r"\s*,\s*", match[1].upper()):
-                    key = (path, code, scope)
-                    detail = f"suppression {code} in {scope}"
-                    if key not in NOQA_ALLOWED:
-                        found.append(f"{at}: {detail} is not allowed")
-                    elif match[2] != NOQA_ALLOWED[key]:
-                        found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
-                    elif key in seen:
-                        found.append(f"{at}: duplicate {detail}")
-                    else:
-                        seen.add(key)
+    for path, text in _tree_files(repo, ".py"):
+        functions = list(_suppression_functions(ast.parse(text)))
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type != tokenize.COMMENT or not re.search(
+                r"#\s*(?:(?:ruff|flake8)\s*:\s*noqa\b|noqa\b|type\s*:\s*ignore\b|(?:pyright|pylint|isort)\s*:)",
+                token.string,
+                re.I,
+            ):
+                continue
+            at = f"{path}:{token.start[0]}"
+            match = re.fullmatch(
+                r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
+                token.string,
+                re.I,
+            )
+            if not match:
+                found.append(f"{at}: suppression needs explicit codes and a recorded reason")
+                continue
+            scope = next(
+                (
+                    name
+                    for first, last, name in reversed(functions)
+                    if first <= token.start[0] <= last
+                ),
+                "<module>",
+            )
+            for code in re.split(r"\s*,\s*", match[1].upper()):
+                key = (path, code, scope)
+                detail = f"suppression {code} in {scope}"
+                if key not in NOQA_ALLOWED:
+                    found.append(f"{at}: {detail} is not allowed")
+                elif match[2] != NOQA_ALLOWED[key]:
+                    found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
+                elif key in seen:
+                    found.append(f"{at}: duplicate {detail}")
+                else:
+                    seen.add(key)
     found.extend(
         f"{path}: suppression {code} in {scope} has no matching comment"
         for path, code, scope in sorted(NOQA_ALLOWED.keys() - seen)

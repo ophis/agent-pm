@@ -185,6 +185,31 @@ class SourceSuppressions(Sample):
                     [f"{path}:1: suppression needs explicit codes and a recorded reason"],
                 )
 
+    def test_every_tree_rejects_tool_pragmas(self):
+        comments = (
+            "# ruff: noqa",
+            "# ruff: noqa: E402",
+            "# flake8: noqa",
+            "# noqa: E402, I001",
+            "# type: ignore",
+            "# pyright: ignore",
+            "# pylint: disable=all",
+            "# isort: skip",
+        )
+        paths = (
+            "session/src/agent_pm/session/sample.py",
+            "session/tests/unit/sample_test.py",
+            "tests/unit/sample_test.py",
+            ".github/sample.py",
+        )
+        for path in paths:
+            for comment in comments:
+                with self.subTest(path=path, comment=comment):
+                    self.assertEqual(
+                        self.found({path: f"value = 1  {comment}\n"}),
+                        [f"{path}:1: suppression needs explicit codes and a recorded reason"],
+                    )
+
     def test_a_rule_in_the_wrong_file_is_rejected(self):
         path = "utils/src/agent_pm/utils/a.py"
         self.assertEqual(
