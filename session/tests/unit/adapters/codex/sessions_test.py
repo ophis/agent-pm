@@ -43,3 +43,15 @@ class SnapshotEnvTest(Base):
                 with self.assertRaises(RecoveryError) as caught:
                     validate_snapshot(self.snapshot(env=env))
                 self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")
+
+
+class StoreRootTest(Base):
+    def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
+        store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
+        target = self.root / "store-target"
+        store.parent.mkdir(parents=True, mode=0o700)
+        target.mkdir(mode=0o700)
+        store.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(ConfigError, "symlink"):
+            self.common.prepare(self.spec, persist=False)
+        self.assertEqual(list(target.iterdir()), [])

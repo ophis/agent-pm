@@ -373,11 +373,16 @@ class SessionStore:
 
     @property
     def root(self) -> str:
-        root = self._root
-        if root is None:
-            return os.path.join(
+        return (
+            self._root
+            if self._root is not None
+            else os.path.join(
                 os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
             )
+        )
+
+    def _resolve_root(self) -> str:
+        root = self.root
         canonical = absolute_path(root, "store")
         _check_ancestors(root)
         if canonical != root:
@@ -391,7 +396,9 @@ class SessionStore:
     def directory(self, *, create: bool) -> str | None: ...
 
     def directory(self, *, create: bool) -> str | None:
-        root = self.root
+        return self._directory(self._resolve_root(), create=create)
+
+    def _directory(self, root: str, *, create: bool) -> str | None:
         parent = os.path.dirname(root)
         base = os.path.dirname(parent)
         check_writable_roots(root, implicit_writable_roots())
@@ -401,11 +408,14 @@ class SessionStore:
             return None
         return root if _private_dir(root, create=create) else None
 
-    def _path(self, workdir: str, sid: str) -> str:
+    def _path(self, root: str, workdir: str, sid: str) -> str:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
-        return os.path.join(self.root, digest + ".json")
+        return os.path.join(root, digest + ".json")
 
     def snapshot(self, state: SessionState) -> dict:
+        return self._snapshot(self._resolve_root(), state)
+
+    def _snapshot(self, root: str, state: SessionState) -> dict:
         snapshot = validate_snapshot(state.snapshot)
         paths = [
             snapshot["cwd"],
@@ -416,7 +426,7 @@ class SessionStore:
                 for path in added_dirs(snapshot["flags"], snapshot["cwd"])
             ),
         ]
-        check_writable_roots(self.root, paths)
+        check_writable_roots(root, paths)
         for path in paths:
             if not any(inside(path, grant) for grant in state.writable_roots):
                 raise RecoveryError(
@@ -425,9 +435,8 @@ class SessionStore:
         return snapshot
 
     def _read(
-        self, path: str, workdir: str | None = None, sid: str | None = None
+        self, root: str, path: str, workdir: str | None = None, sid: str | None = None
     ) -> SessionState | None:
-        root = self.root
         _check_ancestors(path)
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -443,15 +452,15 @@ class SessionStore:
         if sid is None:
             raise RecoveryError("invalid recovery state identity")
         state = _state(data, workdir, sid)
-        if path != self._path(workdir, sid):
+        if path != self._path(root, workdir, sid):
             raise RecoveryError("invalid recovery state identity")
-        self.snapshot(state)
+        self._snapshot(root, state)
         check_writable_roots(root, state.writable_roots)
         return state
 
     @contextmanager
-    def _locked(self, timeout: float | None = None):
-        fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    def _locked(self, root: str, timeout: float | None = None):
+        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             deadline = None if timeout is None else time.monotonic() + timeout
             while True:
@@ -467,7 +476,7 @@ class SessionStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-    def _write(self, state: SessionState, *, exclusive: bool) -> None:
+    def _write(self, root: str, state: SessionState, *, exclusive: bool) -> None:
         payload = json.dumps(
             {
                 "version": _SESSION_VERSION,
@@ -481,8 +490,7 @@ class SessionStore:
         ).encode("utf-8")
         if len(payload) > _MAX_SESSION_BYTES:
             raise RecoveryError("recovery state is too large")
-        root = self.root
-        path = self._path(state.workdir, state.sid)
+        path = self._path(root, state.workdir, state.sid)
         fd, tmp = tempfile.mkstemp(prefix=".state-", dir=root)
         try:
             os.fchmod(fd, 0o600)
@@ -520,7 +528,7 @@ class SessionStore:
         *,
         persist: bool = True,
     ) -> SessionState:
-        root = self.root
+        root = self._resolve_root()
         workdir, sid = session_identity(workdir, sid)
         validate_snapshot(snapshot)
         state = _state(
@@ -537,24 +545,29 @@ class SessionStore:
             workdir,
             sid,
         )
-        self.snapshot(state)
+        self._snapshot(root, state)
         check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-        return self.save(state) if persist else state
+        return self._save(root, state) if persist else state
 
     def save(self, state: SessionState) -> SessionState:
-        root = self.root
-        self.snapshot(state)
+        return self._save(self._resolve_root(), state)
+
+    def _save(self, root: str, state: SessionState) -> SessionState:
+        self._snapshot(root, state)
         check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-        self.directory(create=True)
-        self._write(state, exclusive=True)
+        self._directory(root, create=True)
+        self._write(root, state, exclusive=True)
         return state
 
     def load(self, workdir: str, sid: object) -> SessionState | None:
+        return self._load(self._resolve_root(), workdir, sid)
+
+    def _load(self, root: str, workdir: str, sid: object) -> SessionState | None:
         workdir, sid = session_identity(workdir, sid)
-        root = self.directory(create=False)
-        if root is None:
+        directory = self._directory(root, create=False)
+        if directory is None:
             return None
-        state = self._read(self._path(workdir, sid), workdir, sid)
+        state = self._read(root, self._path(root, workdir, sid), workdir, sid)
         if state is not None:
             check_writable_roots(root, state.writable_roots)
         return state
@@ -566,14 +579,15 @@ class SessionStore:
         identifier: str,
         timeout: float | None = None,
     ) -> SessionState:
+        root = self._resolve_root()
         workdir, sid = session_identity(workdir, sid)
         if not native_id(identifier):
             raise RecoveryError("invalid Codex recovery native ID")
-        root = self.directory(create=False)
-        if root is None:
+        directory = self._directory(root, create=False)
+        if directory is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
-        with self._locked(timeout):
-            existing = self.load(workdir, sid)
+        with self._locked(root, timeout):
+            existing = self._load(root, workdir, sid)
             if existing is None:
                 raise RecoveryError(f"missing recovery state for run ID {sid!r}")
             validated = _state(
@@ -594,19 +608,20 @@ class SessionStore:
                         f"recovery run ID {sid!r} is already bound to a different native ID"
                     )
                 return existing
-            self._write(validated, exclusive=False)
+            self._write(root, validated, exclusive=False)
             return validated
 
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
+        root = self._resolve_root()
         cwd = absolute_path(cwd, "cwd")
-        root = self.directory(create=False)
-        if root is None:
+        directory = self._directory(root, create=False)
+        if directory is None:
             return None
         matches = []
         with os.scandir(root) as entries:
             for entry in entries:
                 if entry.name.endswith(".json"):
-                    state = self._read(entry.path)
+                    state = self._read(root, entry.path)
                     if state is not None and state.sid == sid and state.snapshot["cwd"] == cwd:
                         matches.append(state)
         if len(matches) > 1:
