@@ -777,6 +777,46 @@ def namespace_package(repo: str) -> list[str]:
     return sorted(found)
 
 
+def unit_test_modules(repo: str) -> list[str]:
+    """Unit <rel>/<name>_test.py matches a source module or nonempty directory at the same path, or
+    a helper module under the project's tests. Package tests use the package name, including the
+    layer package at unit root. Integration tests and non-_test.py helpers are outside this rule.
+    """
+    found = []
+    for project, layer in PROJECTS.items():
+        tests = os.path.join(repo, project, "tests")
+        for top, dirs, names in os.walk(tests):
+            parts = os.path.relpath(top, tests).split(os.sep)
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            if "unit" not in parts:
+                dirs[:] = [d for d in dirs if d != "integration"]
+                continue
+            unit = parts.index("unit")
+            relative = parts[unit + 1 :]
+            for name in sorted(n for n in names if n.endswith("_test.py")):
+                stem = name.removesuffix("_test.py")
+                source = os.path.join(project, "src", PKG, layer, *relative, stem)
+                home = os.path.join(repo, source)
+                helper = os.path.join(tests, *parts[:unit], *relative, stem + ".py")
+                matches = (
+                    os.path.isfile(home + ".py")
+                    or any(files for _, _, files in os.walk(home))
+                    or os.path.isfile(helper)
+                    or os.path.isfile(os.path.join(top, stem + ".py"))
+                    or (
+                        not relative
+                        and stem == layer
+                        and os.path.isfile(
+                            os.path.join(repo, project, "src", PKG, layer, "__init__.py")
+                        )
+                    )
+                )
+                if stem == "__init__" or not matches:
+                    test = os.path.relpath(os.path.join(top, name), repo)
+                    found.append(f"{test}: missing source module {source}.py")
+    return sorted(found)
+
+
 def shared_types(repo: str) -> list[str]:
     found = []
     for project in PROJECTS:
