@@ -14,6 +14,7 @@ import types
 import unittest
 import unittest.mock
 import uuid
+from contextlib import redirect_stderr
 
 from agent_pm.session.modes import tui_hook
 
@@ -317,12 +318,20 @@ class PayloadTest(HookBase):
             [r["payload"] for r in self.records()], [{"a": "x" * 4096, "length": (64 << 20) - 9}]
         )
 
-    def test_overflow_drains_stdin_and_writes_no_record(self):
+    def test_overflow_drains_stdin_and_still_journals_and_marks(self):
         stream = io.BytesIO(b"x" * (tui_hook.PAYLOAD_MAX + 1))
-        with self.assertRaisesRegex(tui_hook.HookError, "payload: over"):
+        with (
+            unittest.mock.patch.dict(os.environ, self.env),
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
             tui_hook.main([self.dir, "stop"], stream)
+        self.assertEqual(
+            stderr.getvalue(), f"tui_hook: payload: over {tui_hook.PAYLOAD_MAX} bytes\n"
+        )
         self.assertEqual(stream.read(), b"")
-        self.assertNothingWritten()
+        self.assertEqual(self.records()[0]["payload"], {})
+        self.assertNotEqual(self.calls(), [])
+        self.assertRegex(self.lines(), LINE % "done")
 
     def test_adapter_callback_receives_full_payload_before_truncation_and_can_skip(self):
         callback = os.path.join(self.root, "adapter.py")

@@ -90,8 +90,8 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
 
 
 def read_payload(stream) -> dict:
-    """stdin's JSON object, read to its end (the writer never stalls); {} when not one; overflow
-    raises HookError.
+    """stdin's JSON object, read to its end (the writer never stalls); {} when over PAYLOAD_MAX bytes
+    or not one.
     """
     chunks, size = [], 0
     while True:
@@ -102,7 +102,8 @@ def read_payload(stream) -> dict:
         if size <= PAYLOAD_MAX:
             chunks.append(chunk)
     if size > PAYLOAD_MAX:
-        raise HookError(f"payload: over {PAYLOAD_MAX} bytes")
+        say(f"payload: over {PAYLOAD_MAX} bytes")
+        return {}
     try:
         payload = json.loads(b"".join(chunks))
     except (ValueError, RecursionError):
