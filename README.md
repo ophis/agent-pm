@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-Five layers, one project each: session and utils < delegate < linear-orchestrator < manager. Cross-layer imports use lower layers' public packages; the rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Cross-layer imports use lower layers' public packages; the rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -22,7 +22,7 @@ flowchart TB
     HU[the user]
   end
   subgraph MG[agent_pm.manager]
-    W[crew.py] --> RS[roster.py]
+    W["engine/crew.py"] --> RS["engine/roster.py"]
   end
   subgraph LO[agent_pm.linear_orchestrator]
     R["engine/router.py<br>pick · usage gate"]
@@ -172,7 +172,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
 session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
-manager/              crew: a manager's workers and roster
+manager/              engine/crew.py and engine/roster.py: a manager's workers and roster
 linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
 tests/                repo-wide checks: guards.py (the repo's rules)
 .github/              CI workflows and their helpers

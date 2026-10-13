@@ -5,7 +5,7 @@ An unattended pipeline that runs role agents on tasks, in five layers (README â€
 ## Language
 
 **Layer**:
-One project of the stack and its package, `<project>/src/agent_pm/<package>/`; it calls only the next lower layer.
+One project of the stack and its package, `<project>/src/agent_pm/<package>/`; cross-layer imports use lower layers' public packages (AGENTS.md â€º Import rules).
 _Avoid_: level (a config override level)
 
 **Role**:
@@ -53,17 +53,17 @@ How the driver hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, en
 _Avoid_: runner
 
 **Session**:
-One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: `session/src/agent_pm/session/engine/base.py`.
+One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: `session/src/agent_pm/session/engine/api.py`.
 _Avoid_: agent run (a role's run, in a session)
 
 **Spec**:
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions), keeping each one's Record and display; only a Displayable Host can show them. In code: `session/src/agent_pm/session/hosts/base.py`.
+Where the session layer runs processes by name and displays them (e.g. in tmux sessions). In code: `session/src/agent_pm/session/hosts/`.
 
 **Record**:
-One JSON line naming a started thing (a worker, a role run, a pipeline) by its outermost starter: how to query it (its `ctl` command) and resume it (its `resume` command). In code: `utils/src/agent_pm/utils/record.py`.
+One roster entry naming what a manager started (a worker, a role run, a pipeline), its session identity, display state and resume command. In code: `manager/src/agent_pm/manager/engine/roster.py`.
 
 **Session status log**:
 The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`. In code: `session/src/agent_pm/session/engine/status_log.py`.
@@ -97,10 +97,10 @@ The core run keys the Linear orchestrator adds to its own agent runs, in `linear
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.
 
 **Crew**:
-A manager's workers and the commands that start, show, follow and stop them. In code: `manager/src/agent_pm/manager/crew.py`.
+A manager's workers and the commands that start, show, follow and stop them. In code: `manager/src/agent_pm/manager/engine/crew.py`.
 
 **Roster**:
-A manager's list of what it started (workers, role runs, pipelines), with its events cursor: `~/.agent-pm/managers/<name>/roster.json`. In code: `manager/src/agent_pm/manager/roster.py`.
+A manager's list of what it started (workers, role runs, pipelines), with its events cursor: `~/.agent-pm/managers/<name>/roster.json`. In code: `manager/src/agent_pm/manager/engine/roster.py`.
 
 **Worker**:
 A plain tui session a manager starts through its crew, in its own `~/.agent-pm/workers/<sid>/`; no role, no task.
