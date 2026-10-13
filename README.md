@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-The code, by package; modules in Layout, terms in `CONTEXT.md`.
+The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
@@ -75,7 +75,7 @@ flowchart TB
   class EV,U,CF shared
 ```
 
-Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.engine.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn (the orchestrator reaches `delegate/engine/config.py` only via `agent_pm.delegate`). The rules and their exceptions: Layout's import paragraph, checked by `tests/guards.py`.
+Solid arrow: an import, the only direction allowed, or a file read (`reads`); a label like `session.engine.api` names the only API it may import. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn. The rules and their exceptions: `CLAUDE.md` › Import rules.
 
 ## Install
 
@@ -84,7 +84,7 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); a 
 - `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
 - `/agent-pm:manage`: your guidelines for the commander session, the one you talk to; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (Layout) lists every role and task.
+- Your own roles, tasks and templates, outside the plugin: `delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
 ## Setup
 
@@ -142,7 +142,7 @@ flowchart LR
     L -->|every 5 min| P[promote.py] --> X[prune.py]
 ```
 
-The router's and promote's commands: Layout.
+The router's and promote's commands: `PYTHONPATH=<the five src dirs> python3 -P -m agent_pm.linear_orchestrator.engine.router|promote …`; the router's options: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py`'s docstring.
 
 ```bash
 tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
@@ -166,43 +166,21 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-The old router's `--tui` is gone; the new router (Layout) gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
+The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
 
 ## Layout
 
-Paths from the repo root, where commands run. Each module's docstring states its behaviour.
+```text
+delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
+session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
+utils/                shared utilities
+manager/              crew: a manager's workers and roster
+linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
+tests/                repo-wide checks: guards.py (the repo's rules)
+.github/              CI workflows and their helpers
+```
 
-| Path | What |
-|---|---|
-| `delegate/`, `session/`, `utils/`, `manager/`, `linear-orchestrator/` | the five projects, each `src/agent_pm/<its subpackage>/` (`delegate`, `session`, `utils`, `manager`, `linear_orchestrator`): `agent_pm` is one PEP 420 namespace package (no `__init__.py`) over the five `src/` import roots, imported by package path; set PYTHONPATH to this tree's five, never rely on an inherited one (each `tests/case.py` `Case` fails a test on another tree's `agent_pm`). An agent session with commands or a gate gets them as its PYTHONPATH, replacing the user's own (`agent_pm.delegate.composer.run`) |
-| `session/src/agent_pm/session/`, `delegate/src/agent_pm/delegate/` | a package per layer: `session/` (layers `engine/api.py`, `engine/types.py`, `engine/records.py`, `modes/`, `hosts/`, `adapters/`), `delegate/` (layers `delegate/`, `composer/`; shared `event/` and `engine/config.py`; the built-in team `team/`, its `tools/` outside the layers); `manager/` and `utils/` outside the layers |
-| `delegate/src/agent_pm/delegate/engine/config.py` | the only home of the delegate config's path (`CONFIG`) and of the import roots a child gets (`IMPORT_ROOTS`, `PYTHONPATH`; the rule: `utils/src/agent_pm/utils/paths.py` `import_roots`); `harness_host()`: its docstring |
-| `delegate/src/agent_pm/delegate/` | the Delegate: one role's run through the Composer and the Driver, read from its replies; `engine/` the Delegate class and how it runs (`base.py` its ABC `Delegate`, `types.py` its shared types, `plan.py`, `runner.py`, `detach.py`); `cli.py`, the layer's entry, its command line and the exit codes' home: `PYTHONPATH=<the five src dirs> python3 -m agent_pm.delegate.cli --role ROLE --input TEXT --out PATH\|- --workdir DIR`, `… --list`, `… --detach --events FILE` (the run in Driver session `<role>-<sid8>-drive`) |
-| `delegate/src/agent_pm/delegate/composer/` | the Composer: a role's run config, access and prompt from the team root and team dirs; their formats: its `__init__.py` docstring |
-| `delegate/src/agent_pm/delegate/team/` | the Composer's built-in team, the team root (`composer.TEAM`; `<team>` in team text, `{{team}}` in `delegate/config.toml`): main's root `core/team/` at a0bf18c (before the split), except that `output/output.md` and `output/destinations/{local,orchestrator}.md` name the outcome's `deliverable_file`, a method is `<team>/methods/<m>.md`, `outcome.schema.json` is in `event/` and `repo.py` in `tools/` |
-| `delegate/src/agent_pm/delegate/team/tools/repo.py` | an agent-run CLI (git/gh side effects), outside the layers, run by path as `python3 -P <team>/tools/repo.py worktree …` / `status …` (`delegate/config.toml` `commands`); it imports `agent_pm` from the session's PYTHONPATH (`team/` and `tools/` are no packages) |
-| `delegate/src/agent_pm/delegate/event/` | every message passed between layers, shared: agent to Delegate `reply.py` (the reply protocol's progress mark tag and outcome fence info; `marks`, `outcome_block`) and `outcome.py` (the outcome check, against `outcome.schema.json` beside it), Delegate to orchestration `delegate_event.py` (the callback line, `DelegateEvent`) |
-| `utils/src/agent_pm/utils/` | shared utilities; `config_file.py` loads and merges TOML files and reads a project's config (`read_project`: the levels, `~/.agent-pm/config.local.toml`, key ownership); `paths.py` normalizes paths and checks containment, temporary roots and printable absolute paths (`printable_abs`), and finds the projects' import roots (`import_roots`); `files.py` reads regular files (`read_regular`), writes one atomically (`save`) and appends a line (`append_line`); `text.py` drops control characters (`printable`); `markdown.py` finds Markdown code fences; `args.py` holds argparse helpers (`Once`); `record.py` the Record and Status lines (`Record`, `Status`, `Display`); `registry.py` loads a `module.path:Class` (`load`); `repos.py` parses repo specs and origin URLs and resolves clones and checkout paths (`resolve`, `checkout`); `shell.py` runs a command with a timeout, URL userinfo masked in its stderr (`sh`, `err_text`); `git.py` holds git options that keep a checkout's fsmonitor and hooks off (`GUARD`), finds a worktree's clone (`common_dir`) and runs git with lock retries (`git`) |
-| `session/src/agent_pm/session/` | `engine/` the Session ABC and how a session runs: `api.py`, `types.py`, `records.py`, and outside the layers `base.py` (ABC `Session`) and `status_log.py` (`SessionStatusLog`, the status log line's only home: `tests/guards.py` `status_log_format`); `hosts/base.py` (ABCs `Host`, `HostProcess`, `Terminal`, `Displayable`; `NotDisplayable`), outside the layers; `hosts/tables.py` the `[hosts]` parser (`parse`, public as `Session.parse_hosts`); `adapters/` one subpackage per runtime, `base.py` their interface, `registry.py` (what `Session.configure` stores: the session reads no config file), `selection.py` (session selection) |
-| `session/src/agent_pm/session/adapters/claude/` | Claude Code's Adapter, runtime `claude` |
-| `session/src/agent_pm/session/adapters/print_prompt/` | act-as's Adapter, runtime `print_prompt`: in_process only; hands the composed prompt back as the deliverable, no process |
-| `session/src/agent_pm/session/hosts/tmux/tmux_host.py` | hosts a command in a detached tmux session and shows it in a pane or grid; the only module calling tmux (`tests/guards.py` `tmux_calls`) |
-| `session/src/agent_pm/session/modes/` | the Driver's Modes: `headless.py` (a command on pipes), `tui.py` (a tmux session through `tmux_host.py`), `in_process.py` (an Adapter's run on a thread, no process); `tui_hook.py`, the command a tui session's hooks run |
-| `manager/src/agent_pm/manager/roster.py` | a manager's roster, outside the layers: `~/.agent-pm/managers/<name>/roster.json`, beside its `events` file |
-| `manager/src/agent_pm/manager/crew.py` | a manager's workers, each a tui session (`session/src/agent_pm/session/adapters/base.py`), and its roster, outside the layers: the old crew's CLI (`/agent-pm:tmux`: removed, rebuilt by TASK-356) as `env PYTHONPATH=<the import roots>[:<your PYTHONPATH>] python3 -P -m agent_pm.manager.crew …` (`env`: the act-as row; PYTHONPATH: its docstring) |
-| `session/config.toml` | the session's config: who reads it and how it reaches `Session.configure`, its header |
-| `delegate/config.toml` | the delegate's config, the core config: which layer reads which keys, its header |
-| `.claude-plugin/plugin.json` | the Claude Code plugin `agent-pm`, root the repo root (an installed copy holds every package), its skills `delegate/skills/` and `manager/skills/`; `.claude-plugin/marketplace.json` lists it (source `./`). This checkout's: `claude --plugin-dir .`; check: `claude plugin validate .` (its `CLAUDE.md` warning is expected) |
-| `linear-orchestrator/src/agent_pm/linear_orchestrator/` | the Linear orchestrator; `linear/` the Linear client (`linear.py`), issues, sessions and write-back; `engine/` the rest, its entries `router.py` (a tick or `--issue`: starts or resumes one agent run as `run.py` in a detached Driver session, its PYTHONPATH the five roots; `--brake ROLE`: ROLE's runtime usage check), `run.py` (one issue's agent run through `delegate.run`, its events written back to Linear) and `promote.py` (a Handoff becomes the next role's Todo issue; then `prune.py` closes finished issues' TUI sessions, deletes their checkouts and archives them): `PYTHONPATH=<the five src dirs> python3 -P -m agent_pm.linear_orchestrator.engine.router\|run\|promote …` |
-| `linear-orchestrator/config.toml` | Linear ids, `[roles.<role>]` (over the delegate's), `work_dir` and the `[core]` overlay on `delegate/config.toml`; `config.load` reads it once per entry's `main` |
-| `delegate/skills/act-as/SKILL.md` | `/agent-pm:act-as` on the new core: the Delegate CLI as `env PYTHONPATH=${CLAUDE_SKILL_DIR}/../../src:<session's, utils', manager's src as ${CLAUDE_SKILL_DIR}/../../../<project>/src> python3 -P -m agent_pm.delegate.cli …`, runtime `print_prompt`. `env`, not a leading `PYTHONPATH=`: Claude Code's allow rule must match the whole command, which such an assignment prevents |
-| `manager/skills/manage/SKILL.md` | `/agent-pm:manage` (Install), text only |
-| `<project>/tests/` | each project's tests: `unit/`, `integration/`, `case.py` (its `Case`) and the helpers its `__init__.py` docstring names (where a test goes and the import scheme: `CLAUDE.md` › Tests) |
-| `tests/` | repo-wide only: `case.py` (`Case`, the repo-wide checks' base), `guards.py`, their tests and the namespace and imports checks |
-| `~/.agent-pm/tui/<name>/` | tui session `<name>`'s dir: `session.json` (its state, which `session.engine.api.attach` reads), `hooks.jsonl` (its hook records); `session.engine.api.close` removes it. `~/.agent-pm/tui/<name>.lock` serializes a name's starts, closes and stops |
-| `~/.agent-pm/workers/<sid>/` | crew worker `<sid>`'s dir, its `Spec.workdir`: `worker.json` (0600), its record for `agent_pm.manager.crew restart`, keeps the worker's flags and env in plain text |
-
-Imports go one way: `delegate` → `delegate.composer`, `agent_pm.session` or `session.engine.api`; `session.engine.api` → `session.adapters`, `.modes`, `.hosts`, `.engine.types` or `.engine.records`; `session.modes` → `session.adapters`, `.hosts` or `.engine.types`; `session.adapters` → `session.engine.types`; `session/adapters/registry.py` → `session.hosts` (until TASK-368); `session/engine/base.py` → `session.adapters` (`Session.configure`) and `session.hosts` (`Session.parse_hosts`); a module outside the layers → `agent_pm.session`, `session.engine.api` or `session.engine.types`; a module is in its longest matching package (`delegate.engine.plan` in `delegate`, `delegate.composer.teams` in `delegate.composer`, `delegate.event.reply` in the shared `delegate.event`); `delegate/` imports from the session layer only the names in `session/__init__.py`'s `__all__` (its public API); a layer never imports a module outside the layers but the shared ones (`utils/`, `delegate/engine/config.py`, `delegate/event/`), and a session layer no `delegate` module (the Delegate passes its reply protocol in `Spec.reply_tags`); `agent_pm.linear_orchestrator` → `delegate`, `delegate.composer` (`engine/config.py` only), `agent_pm.session`'s `api` (and `Session`, `engine/config.py` only), the shared modules but `delegate/engine/config.py` (its names via `agent_pm.delegate`), and no other `agent_pm` module imports it, nor does any file under `delegate/`, `session/`, `utils/` or `manager/` (but their `tests/`) name it; besides the standard library, `session/` imports only `session/` and `utils/` and names no config reader (`config_file`, `tomllib`, `agent_pm.delegate.engine.config`), reply protocol tag (`agent-pm-progress`, `agent-pm-outcome`) or `team/`, `utils/` imports only `utils/`, `delegate/engine/config.py` only `utils/`, `delegate/event/` only the shared modules (`event/outcome.py` also `delegate.composer`), `delegate/team/tools/` only `utils/` and `delegate/engine/config.py`, and nothing imports it; `agent_pm.manager` sits on top, imported by nothing else: `manager/crew.py` imports only `utils/` and `manager/roster.py`, `roster.py` only `utils/`, besides the standard library, but for the named exceptions TASK-371 removes (both `agent_pm.delegate.engine.config` and `agent_pm.session`'s `api`, crew also `Session`). A layer reaches the next in-process: `session/`, `delegate/` (`team/tools/` included) and `agent_pm.linear_orchestrator` run no `agent-pm-*` command (`agent-pm-session` within `session/` excepted). `tests/guards.py` (`layer_imports`, `delegate_session`, `pure_utils`, `orchestrator_imports`, `layer_commands`, `standalone`, `session_only`, `manager_imports`) enforces it, with the other rules in its docstring.
+Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots), `tests/` and `config.toml`. Each module's docstring states its behaviour.
 
 ## Runtime policy
 

@@ -1,7 +1,7 @@
 """The repo's rules: each guard takes a root, returns its sorted violations; str constants include docstrings.
 Only a TREES walk enters a project's tests/.
 
-layer_imports(repo)   imports go one way (README.md › Layout), a layer imports no package module outside LAYERS, SESSION
+layer_imports(repo)   imports go one way (CLAUDE.md › Import rules), a layer imports no package module outside LAYERS, SESSION
                       and SHARED, a session layer no delegate module, none imports TOOLS, ORCH or a BARE
                       name, nested, relative or import_module'd
 delegate_session(repo) delegate/ imports SESSION only by an __all__ name
@@ -32,6 +32,7 @@ test_layers(repo)     a <project>/tests/ file imports no root `tests` and no pro
 config_levels(repo)   CONFIG_LEVELS' LEVELS, the config override order (TEST_ORDER flattens it), holds each project once
 explicit_keys(repo)   each `# local:` example key in a <project>/config.toml has a real line in one: the same dotted key,
                       the same table, depth and last key, a suffix of it, or a key of an empty real table
+
 """
 
 import ast

@@ -115,7 +115,7 @@ max_runs = 3
 #              status_line, workers_per_column, grid_retile and clients are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
-# the gate sets the import roots itself; why `env`: README.md › Layout (act-as row)
+# the gate sets the import roots itself; why `env`: delegate/skills/act-as/SKILL.md
 gate = "env PYTHONPATH={{pythonpath}} python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"

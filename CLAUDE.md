@@ -10,9 +10,22 @@
 - A project's `config.toml` holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guards.py` `explicit_keys`). Levels, merge and ownership: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear.move` does).
-- Tmux calls: `session/src/agent_pm/session/hosts/tmux/tmux_host.py` (README › Layout). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- Tmux calls: `session/src/agent_pm/session/hosts/tmux/tmux_host.py`. `/agent-pm:tmux`: removed, rebuilt by TASK-356.
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
+
+## Import rules
+
+Their only home; `tests/guards.py` (`layer_imports`, `delegate_session`, `pure_utils`, `orchestrator_imports`, `layer_commands`, `standalone`, `session_only`, `manager_imports`) enforces them.
+
+- One way: delegate → delegate.composer, agent_pm.session or session.engine.api; session.engine.api → session.adapters, .modes, .hosts, .engine.types or .engine.records; session.modes → session.adapters, .hosts or .engine.types; session.adapters → session.engine.types; session/adapters/registry.py → session.hosts (until TASK-368); session/engine/base.py → session.adapters (Session.configure) and session.hosts (Session.parse_hosts); a module outside the layers → agent_pm.session, session.engine.api or session.engine.types.
+- A module is in its longest matching package (delegate.engine.plan in delegate, delegate.composer.teams in delegate.composer, delegate.event.reply in the shared delegate.event).
+- delegate/ imports from the session layer only the names in session/__init__.py's __all__.
+- A layer imports no module outside the layers but the shared ones (utils/, delegate/engine/config.py, delegate/event/); a session layer no delegate module (the Delegate passes its reply protocol in Spec.reply_tags).
+- agent_pm.linear_orchestrator → delegate, delegate.composer (engine/config.py only), agent_pm.session's api (and Session, engine/config.py only) and the shared modules but delegate/engine/config.py (its names via agent_pm.delegate); no other agent_pm module imports it, nor does a file under delegate/, session/, utils/ or manager/ (but their tests/) name it.
+- Besides the standard library: session/ imports only session/ and utils/ and names no config reader (config_file, tomllib, agent_pm.delegate.engine.config), reply protocol tag (agent-pm-progress, agent-pm-outcome) or team/; utils/ only utils/; delegate/engine/config.py only utils/; delegate/event/ only the shared modules (event/outcome.py also delegate.composer); delegate/team/tools/ only utils/ and delegate/engine/config.py, and nothing imports it.
+- agent_pm.manager sits on top, imported by nothing else: manager/crew.py imports only utils/ and manager/roster.py, roster.py only utils/, but for the named exceptions TASK-371 removes (agent_pm.delegate.engine.config and agent_pm.session's api, crew also Session).
+- A layer reaches the next in-process: session/, delegate/ (team/tools/ included) and agent_pm.linear_orchestrator run no agent-pm-* command (agent-pm-session within session/ excepted).
 
 ## Tests
 
