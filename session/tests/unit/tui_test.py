@@ -14,7 +14,7 @@ import tempfile
 import threading
 from unittest import mock
 
-from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END
+from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END
 from agent_pm.session.engine.api import Mode
 from agent_pm.session.engine.types import (
     Activity,
@@ -28,7 +28,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.modes.tui import types as tui
+from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
 from session.tests.case import SRC, Case

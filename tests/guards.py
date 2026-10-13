@@ -1,9 +1,12 @@
 """Repository design checks: each public function takes a repository root and returns violations."""
 
 import ast
+import builtins
+import importlib
 import io
 import os
 import re
+import sys
 import tokenize
 import tomllib
 
@@ -87,7 +90,7 @@ SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 
 
-ADAPTERS_HOME = f"{SESSION_SRC}adapters/types.py"
+ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
 
 
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
@@ -649,6 +652,133 @@ def _data_type(node, bound):
         _dotted(base, bound) in {"typing.NamedTuple", "enum.Enum", "typing.TypedDict"}
         for base in node.bases
     )
+
+
+def types_only(repo: str) -> list[str]:
+    found = []
+    for project in PROJECTS:
+        src = os.path.join(repo, project, "src")
+        for rel, text in _files(src, ".py"):
+            if not (rel.endswith("/types.py") or "/types/" in rel):
+                continue
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            kinds = _type_kinds(tree, bound)
+            for node in _module_nodes(tree):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    found.append(
+                        f"{project}/src/{rel}:{node.lineno}: types module function {node.name}"
+                    )
+                elif isinstance(node, ast.ClassDef):
+                    kind = kinds.get(node.name)
+                    if kind is None:
+                        found.append(
+                            f"{project}/src/{rel}:{node.lineno}: {node.name}: not a type class"
+                        )
+                    else:
+                        found += _type_methods(project, rel, node, kind, bound)
+    return sorted(found)
+
+
+def _module_nodes(tree):
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            yield node
+        else:
+            yield from _module_nodes(node)
+
+
+def _type_kinds(tree, bound):
+    classes = [node for node in _module_nodes(tree) if isinstance(node, ast.ClassDef)]
+    kinds = {}
+    bases = {
+        "typing.NamedTuple": "data",
+        "typing.TypedDict": "data",
+        "enum.Enum": "data",
+        "typing.Protocol": "protocol",
+        "abc.ABC": "abstract",
+    }
+    for _ in classes:
+        for node in classes:
+            if any(
+                _dotted(d.func if isinstance(d, ast.Call) else d, bound) == "dataclasses.dataclass"
+                for d in node.decorator_list
+            ):
+                kinds[node.name] = "dataclass"
+            else:
+                for base in node.bases:
+                    name = _dotted(base, bound)
+                    kind = bases.get(name) or kinds.get(name)
+                    if _exception_type(name):
+                        kind = "exception"
+                    if kind:
+                        kinds[node.name] = kind
+                        break
+    return kinds
+
+
+def _exception_type(name):
+    module, _, attr = name.rpartition(".")
+    if not module or module == "builtins":
+        value = getattr(builtins, attr or name, None)
+    elif module.split(".")[0] in sys.stdlib_module_names:
+        value = getattr(importlib.import_module(module), attr, None)
+    else:
+        return False
+    return isinstance(value, type) and issubclass(value, BaseException)
+
+
+def _type_methods(project, rel, node, kind, bound):
+    found = []
+    fields = {
+        child.target.id
+        for child in node.body
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name)
+    }
+    methods = {
+        child.name
+        for child in node.body
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    for method in (
+        child for child in node.body if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef)
+    ):
+        decorators = {
+            _dotted(d.func if isinstance(d, ast.Call) else d, bound) for d in method.decorator_list
+        }
+        if (
+            method.name.startswith("__")
+            and method.name.endswith("__")
+            or decorators & {"property", "abc.abstractmethod"}
+        ):
+            continue
+        if kind == "protocol" and all(
+            isinstance(child, ast.Pass)
+            or isinstance(child, ast.Expr)
+            and isinstance(child.value, ast.Constant)
+            for child in method.body
+        ):
+            continue
+        args = [*method.args.posonlyargs, *method.args.args]
+        own = [
+            child.attr
+            for child in ast.walk(method)
+            if isinstance(child, ast.Attribute)
+            and isinstance(child.value, ast.Name)
+            and args
+            and child.value.id == args[0].arg
+        ]
+        if (
+            kind == "dataclass"
+            and own
+            and set(own) <= fields | methods
+            and not decorators & {"staticmethod", "classmethod"}
+        ):
+            continue
+        found.append(
+            f"{project}/src/{rel}:{method.lineno}: {node.name}.{method.name}: business method in types module"
+        )
+    return found
 
 
 def _type_uses(project, rel, module, tree, data):

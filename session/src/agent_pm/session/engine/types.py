@@ -8,7 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from agent_pm.session.adapters.errors.types import ConfigError
+from agent_pm.session.adapters.errors import ConfigError
+from agent_pm.session.engine.validation import clean_string, env_ok, sid_error, string_tuple
 from agent_pm.utils import printable_abs
 
 __all__ = [
@@ -40,27 +41,6 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TAG = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _strings(value) -> bool:
-    return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
-
-
-def _clean(value) -> bool:
-    return isinstance(value, str) and "\0" not in value
-
-
-def env_ok(env) -> bool:
-    return isinstance(env, Mapping) and all(
-        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean(v)
-        for k, v in env.items()
-    )
-
-
-def sid_error(sid) -> str | None:
-    if isinstance(sid, str) and sid and sid.isprintable() and "/" not in sid:
-        return None
-    return f'sid must be a non-empty printable string without "/", got {sid!r:.80}'
-
-
 @dataclass(frozen=True, kw_only=True)
 class Access:
     dirs: tuple[str, ...] = ()
@@ -72,7 +52,7 @@ class Access:
 
     def __post_init__(self):
         for name in ("dirs", "commands", "reads"):
-            if not _strings(getattr(self, name)):
+            if not string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
         if not env_ok(self.env):
             raise ConfigError(
@@ -113,7 +93,7 @@ class Spec:
         self._validate_invocation()
 
     def _validate_invocation(self) -> None:
-        if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
+        if not (isinstance(self.flags, tuple) and all(map(clean_string, self.flags))):
             raise ConfigError("flags must be a tuple of strings without NUL")
         if not env_ok(self.env):
             raise ConfigError("env must map variable names to strings without NUL")
@@ -156,12 +136,13 @@ class Launch:
             raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
-            ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
+            ("argv", isinstance(self.argv, tuple) and all(map(clean_string, self.argv))),
             (
                 "env",
-                isinstance(env, Mapping) and all(_clean(k) and _clean(v) for k, v in env.items()),
+                isinstance(env, Mapping)
+                and all(clean_string(k) and clean_string(v) for k, v in env.items()),
             ),
-            ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
+            ("unset", isinstance(self.unset, tuple) and all(map(clean_string, self.unset))),
         ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")

@@ -6,8 +6,8 @@ import typing
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.session.adapters import types as base
-from agent_pm.session.adapters.types import (
+from agent_pm.session.adapters import base
+from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
     TURN_END,
@@ -17,6 +17,7 @@ from agent_pm.session.adapters.types import (
     Tui,
 )
 from agent_pm.session.engine import types as engine_types
+from agent_pm.session.engine import validation
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -635,7 +636,7 @@ class SidErrorTest(Case):
     def test_none_for_a_non_empty_printable_string_without_a_slash(self):
         for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
             with self.subTest(sid=sid):
-                self.assertIsNone(engine_types.sid_error(sid))
+                self.assertIsNone(validation.sid_error(sid))
 
     def test_the_error_text_otherwise(self):
         for bad, shown in (
@@ -648,7 +649,7 @@ class SidErrorTest(Case):
         ):
             with self.subTest(bad=bad):
                 self.assertEqual(
-                    engine_types.sid_error(bad),
+                    validation.sid_error(bad),
                     f'sid must be a non-empty printable string without "/", got {shown}',
                 )
 

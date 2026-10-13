@@ -5,8 +5,9 @@ import shlex
 import shutil
 import sys
 
+from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex import sessions
-from agent_pm.session.adapters.codex.common.types import (
+from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
     added_dirs,
@@ -18,7 +19,6 @@ from agent_pm.session.adapters.codex.common.types import (
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.codex.sessions import split_flags
-from agent_pm.session.adapters.types import Tui
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, SessionRequest
 from agent_pm.utils import import_roots
 

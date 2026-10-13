@@ -1,4 +1,4 @@
-"""adapters/types.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts'
+"""adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts'
 tables and the default host), settings() from a read session config, the tui settings from
 [hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the import
 system only for the test's span; the registry itself is never patched. Each test constructs fresh
@@ -18,8 +18,8 @@ from unittest import mock
 import agent_pm.session
 import agent_pm.session.hosts.tmux
 from agent_pm.session import Driver
-from agent_pm.session.adapters import types as registry
-from agent_pm.session.adapters.types import Adapter
+from agent_pm.session.adapters import registry
+from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import ConfigError
 from agent_pm.utils import read_project
 
@@ -322,7 +322,7 @@ class AdapterTest(Base):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
         for source, shown in (
             ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
-            ("from agent_pm.session.adapters.types import Absent\n", "cannot import name 'Absent'"),
+            ("from agent_pm.session.adapters.base import Absent\n", "cannot import name 'Absent'"),
             ("raise OSError('disk gone')\n", "disk gone"),
             ("def broken(:\n", "invalid syntax"),
         ):

@@ -6,7 +6,7 @@
 # through agent_pm.utils.config_file.read_project("session") and hands it to Session.configure (Session.settings).
 
 # ── Adapters ────────────────────────────────────────────
-# [adapters.<name>]  one table per runtime, built only by session/src/agent_pm/session/adapters/types.py; <name> is the
+# [adapters.<name>]  one table per runtime, built only by session/src/agent_pm/session/adapters/registry.py; <name> is the
 #                    runtime name session.engine.api.start takes and the package session/src/agent_pm/session/adapters/<name>/
 #   implementation   required: "adapters.<name>:<Class>Adapter", the Adapter subclass of that package
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error

@@ -15,9 +15,9 @@ from dataclasses import dataclass, field, replace
 from types import ModuleType
 from typing import Protocol
 
-from agent_pm.session.adapters import types as registry
+from agent_pm.session.adapters import registry
+from agent_pm.session.adapters.base import Adapter, Headless, InProcess, Tui
 from agent_pm.session.adapters.selection import check as check_selection
-from agent_pm.session.adapters.types import Adapter, Headless, InProcess, Tui
 from agent_pm.session.engine import records
 from agent_pm.session.engine.records import holds as holds
 from agent_pm.session.engine.records import session_record as session_record
@@ -40,14 +40,12 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
     Usage,
-    sid_error,
 )
+from agent_pm.session.engine.validation import sid_error
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
-from agent_pm.session.modes.headless import types as headless
-from agent_pm.session.modes.in_process import types as in_process
-from agent_pm.session.modes.tui import types as tui
+from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils import STATE, printable_abs
 
 

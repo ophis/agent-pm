@@ -312,6 +312,89 @@ class SharedTypes(Sample):
                 self.assertEqual(guards.shared_types(root), [])
 
 
+class TypesOnly(Sample):
+    HOME = f"utils/{PKG}/utils"
+
+    def found(self, source, name="types.py"):
+        return guards.types_only(self.tree({f"{self.HOME}/{name}": source}))
+
+    def test_top_level_sync_and_async_functions_are_reported(self):
+        self.assertEqual(
+            self.found("def one(): pass\nasync def two(): pass\n"),
+            [
+                f"{self.HOME}/types.py:1: types module function one",
+                f"{self.HOME}/types.py:2: types module function two",
+            ],
+        )
+
+    def test_functions_in_types_packages_and_conditionals_count(self):
+        self.assertEqual(
+            self.found("if True:\n    def helper(): pass\n", "types/helpers.py"),
+            [f"{self.HOME}/types/helpers.py:2: types module function helper"],
+        )
+        self.assertEqual(self.found("def helper(): pass\n", "logic.py"), [])
+
+    def test_plain_classes_are_reported(self):
+        self.assertEqual(
+            self.found("class Worker:\n    pass\n"),
+            [f"{self.HOME}/types.py:1: Worker: not a type class"],
+        )
+
+    def test_allowed_class_kinds_and_aliases(self):
+        source = (
+            "from dataclasses import dataclass as dc\n"
+            "from typing import NamedTuple, TypedDict, Protocol\n"
+            "from enum import Enum\nfrom abc import ABC\n"
+            "@dc\nclass Data:\n    value: int\n"
+            "class Tuple(NamedTuple):\n    value: int\n"
+            "class Table(TypedDict):\n    value: int\n"
+            "class Choice(Enum):\n    value = 1\n"
+            "class Interface(Protocol):\n    def run(self): ...\n"
+            "class Abstract(ABC):\n    pass\n"
+            "class Error(Exception):\n    pass\n"
+            "class Child(Error):\n    pass\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_dunders_properties_and_abstract_methods_are_allowed(self):
+        source = (
+            "from abc import ABC, abstractmethod\n"
+            "class Interface(ABC):\n"
+            "    def __init__(self): self.value = 1\n"
+            "    @property\n    def value(self): return 1\n"
+            "    @abstractmethod\n    def run(self): pass\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_dataclass_methods_may_work_on_their_own_fields_and_methods(self):
+        source = (
+            "from dataclasses import dataclass\n"
+            "@dataclass\nclass Team:\n    root: str\n"
+            "    def custom(self, path): return path != self.root\n"
+            "    def source(self, path): return path if self.custom(path) else 'built-in'\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_methods_on_other_kinds_and_unrelated_dataclass_methods_are_reported(self):
+        source = (
+            "from dataclasses import dataclass\nfrom abc import ABC\n"
+            "class Interface(ABC):\n    def run(self): return 1\n"
+            "@dataclass\nclass Data:\n    value: int\n"
+            "    def run(self): return 1\n"
+            "    def other(self): return self.unknown\n"
+            "    @staticmethod\n    def factory(value): return value\n"
+        )
+        self.assertEqual(
+            self.found(source),
+            [
+                f"{self.HOME}/types.py:11: Data.factory: business method in types module",
+                f"{self.HOME}/types.py:4: Interface.run: business method in types module",
+                f"{self.HOME}/types.py:8: Data.run: business method in types module",
+                f"{self.HOME}/types.py:9: Data.other: business method in types module",
+            ],
+        )
+
+
 class NamespacePackage(Sample):
     def own(self, *extra: str) -> str:
         files = [f"{top}/src/agent_pm/{sub}/__init__.py" for top, sub in guards.PROJECTS.items()]

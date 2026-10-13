@@ -12,7 +12,7 @@ import subprocess
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 
-from agent_pm.session.adapters.types import Headless
+from agent_pm.session.adapters.base import Headless
 from agent_pm.session.engine.types import DriverError, Event, Stderr
 from agent_pm.session.modes.tui_hook import FailureReport
 

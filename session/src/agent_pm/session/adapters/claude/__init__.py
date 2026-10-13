@@ -4,10 +4,10 @@ rest is ClaudeCommon's.
 
 import os
 
-from agent_pm.session.adapters.claude.common.types import ClaudeCommon, added_dirs
+from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.adapters.claude.common import ClaudeCommon, added_dirs
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.adapters.types import Adapter
 from agent_pm.session.engine.types import SessionRequest
 
 

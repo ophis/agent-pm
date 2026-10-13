@@ -21,8 +21,8 @@ from agent_pm.delegate.engine.types import (
     Result,
     Spec,
 )
-from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome
 from agent_pm.delegate.event import DelegateEvent
+from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome
 
 __all__ = [
     "ConfigError",

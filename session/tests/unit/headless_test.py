@@ -17,10 +17,10 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.types import Adapter, Headless
+from agent_pm.session.adapters.base import Adapter, Headless
 from agent_pm.session.engine.types import DriverError, Launch, Reply, SessionRequest, Stderr
-from agent_pm.session.modes.headless import types as headless
-from agent_pm.session.modes.headless.types import HeadlessMode
+from agent_pm.session.modes import headless
+from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.case import Case
 

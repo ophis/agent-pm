@@ -2,7 +2,8 @@
 
 import json
 
-from agent_pm.session.adapters.codex.common.types import (
+from agent_pm.session.adapters.base import Headless
+from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
     flags,
@@ -10,7 +11,6 @@ from agent_pm.session.adapters.codex.common.types import (
     reset_at,
 )
 from agent_pm.session.adapters.codex.sessions import SessionState, split_flags
-from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import (
     Activity,
     Launch,

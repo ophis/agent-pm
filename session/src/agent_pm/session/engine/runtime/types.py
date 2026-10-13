@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import ModuleType
 
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.modes.headless import types as headless
+from agent_pm.session.modes import headless
 
 
 @dataclass(frozen=True, kw_only=True)

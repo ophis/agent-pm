@@ -1,7 +1,8 @@
 """Codex recovery snapshots validate session environment by the Access.env rule."""
 
 from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
-from agent_pm.session.engine.types import SessionRequest, env_ok
+from agent_pm.session.engine.types import SessionRequest
+from agent_pm.session.engine.validation import env_ok
 
 from session.tests.unit.adapters.codex.support import Base
 

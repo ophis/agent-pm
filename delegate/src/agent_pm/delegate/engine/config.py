@@ -6,7 +6,7 @@ harness_host (None unset, else one of `hosts`), policy, trusted_dirs.
 import os
 from collections.abc import Collection, Mapping
 
-from agent_pm.delegate.engine.settings.types import SettingsError, SettingsTypeError
+from agent_pm.delegate.engine.settings import SettingsError, SettingsTypeError
 from agent_pm.utils import import_roots, read_project, real_dirs
 
 DELEGATE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))

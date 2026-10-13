@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
-from agent_pm.delegate.composer.errors.types import ConfigError as ConfigError
+from agent_pm.delegate.composer.errors import ConfigError as ConfigError
 from agent_pm.delegate.engine.config import CONFIG
 from agent_pm.utils import LOCAL
 
