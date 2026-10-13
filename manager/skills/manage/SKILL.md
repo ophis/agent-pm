@@ -49,7 +49,7 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - Permanent deletion (comments, agents, secrets, destructive data changes) is the user's to run. Files go to the Trash.
 - A permission or classifier denial stands: take no other route around it and approve no denied prompt through a pane. Relay "the user approves" only when the user did, with its scope.
 - Tell review and audit sub-agents in their prompt: write only inside your own `mktemp -d` sandbox, disclose any write outside it, clean it up.
-- No mutation testing: never put a known-wrong value into shipped code, by edit or runtime reassignment, to force a branch.
+- No mutation testing: while building, reviewing or testing, never modify the source to see what happens: no manual or tool-driven mutation testing (mutmut etc.), not even briefly or in a throwaway copy that is then run; never put a known-wrong value into shipped code to force a branch. Every brief to a sub-agent (producer, reviewer) carries this rule.
 
 ## Git and reviews
 
