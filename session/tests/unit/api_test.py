@@ -321,7 +321,7 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     f"mode must be one of headless, tui, in_process, got {bad!r}",
-                    lambda: self.start(mode=bad),
+                    lambda *, bad=bad: self.start(mode=bad),
                 )
 
     def test_refuses_an_idle_timeout_that_is_no_positive_number(self):
@@ -330,7 +330,7 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     f"idle_timeout must be a positive number of seconds, got {bad!r}",
-                    lambda: self.start(idle_timeout=bad),
+                    lambda *, bad=bad: self.start(idle_timeout=bad),
                 )
 
     def test_refuses_a_resume_that_is_no_session_id(self):
@@ -339,7 +339,7 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     f"resume must be a session id, got {bad!r:.80}",
-                    lambda: self.start(resume=bad),
+                    lambda *, bad=bad: self.start(resume=bad),
                 )
 
     def test_refuses_a_sid_that_is_not_a_non_empty_printable_string_without_a_slash(self):
@@ -354,7 +354,7 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     f'sid must be a non-empty printable string without "/", got {shown}',
-                    lambda: self.start(sid=bad),
+                    lambda *, bad=bad: self.start(sid=bad),
                 )
 
     def test_refuses_a_sid_other_than_resume(self):
@@ -375,7 +375,9 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     "name: tui mode only",
-                    lambda: self.start(runtime, mode, spec=self.spec(name="w1")),
+                    lambda *, mode=mode, runtime=runtime: self.start(
+                        runtime, mode, spec=self.spec(name="w1")
+                    ),
                 )
 
     def test_protect_is_tui_only(self):
@@ -384,7 +386,9 @@ class ChecksTest(Base):
                 self.refused(
                     ConfigError,
                     "protect: tui mode only",
-                    lambda: self.start(runtime, mode, spec=self.spec(protect=("/p",))),
+                    lambda *, mode=mode, runtime=runtime: self.start(
+                        runtime, mode, spec=self.spec(protect=("/p",))
+                    ),
                 )
 
     def test_headless_flags_and_env_reach_the_adapter_and_child(self):
@@ -415,7 +419,7 @@ class ChecksTest(Base):
                     self.refused(
                         ConfigError,
                         f"{flag}: picks the session; use sid= or resume=",
-                        lambda: self.start(
+                        lambda *, flag=flag, runtime=runtime: self.start(
                             runtime=runtime, spec=self.spec(flags=("--verbose", flag, SID))
                         ),
                     )
@@ -766,7 +770,7 @@ class InProcessTest(Base):
                 self.refused(
                     ConfigError,
                     f"runtime 'fake' does not support {mode} mode",
-                    lambda: self.start(mode=mode),
+                    lambda *, mode=mode: self.start(mode=mode),
                 )
 
     def test_claude_and_codex_do_not_support_it(self):
@@ -781,7 +785,7 @@ class InProcessTest(Base):
                 self.refused(
                     ConfigError,
                     f"runtime {runtime!r} does not support in_process mode",
-                    lambda: self.start(runtime=runtime, mode="in_process"),
+                    lambda *, runtime=runtime: self.start(runtime=runtime, mode="in_process"),
                 )
 
     def test_a_run_idle_past_idle_timeout_yields_idle_timeout_and_goes_on(self):
@@ -1270,7 +1274,7 @@ class TuiStartTest(TuiBase):
         original = fake_adapter.FakeTui.launch
         for project in (True, False):
 
-            def launch(run, *args):
+            def launch(run, *args, project=project):
                 return dataclasses.replace(original(run, *args), project=project)
 
             with (
@@ -1391,7 +1395,9 @@ class TuiStartTest(TuiBase):
             ("/a\nb", r"events must be a printable path, got '/a\nb'"),
         ):
             with self.subTest(bad=bad):
-                self.refused(ConfigError, message, lambda: self.tui(name="w1", events=bad))
+                self.refused(
+                    ConfigError, message, lambda *, bad=bad: self.tui(name="w1", events=bad)
+                )
         self.host.status.assert_not_called()
         self.assertFalse(os.path.lexists(self.root))
 
@@ -1606,11 +1612,11 @@ class AttachTest(TuiBase):
                 self.host.status.return_value = None
                 self.started(*hooked)
                 options = {"@sid": SID, "@state": state}
-                self.host.option.side_effect = lambda target, key: options[key]
+                self.host.option.side_effect = lambda target, key, *, options=options: options[key]
                 self.host.status.return_value, self.host.read.return_value = tmux_host.RUNNING, ""
                 now = [0.0]
 
-                def sleep(seconds):
+                def sleep(seconds, *, now=now):
                     if now[0] > 60:
                         raise AssertionError("no event")
                     now[0] += seconds
@@ -1619,7 +1625,7 @@ class AttachTest(TuiBase):
                             f.write(json.dumps({"ts": "", "label": "tool", "payload": {}}) + "\n")
 
                 with (
-                    mock.patch("time.monotonic", lambda: now[0]),
+                    mock.patch("time.monotonic", lambda *, now=now: now[0]),
                     mock.patch("time.sleep", sleep),
                 ):
                     event = next(self.driver.attach("w1", idle_timeout=1).events())
@@ -1644,7 +1650,7 @@ class AttachTest(TuiBase):
         self.started()
         for found in ("other", None):
             with self.subTest(found=found), self.assertRaises(DriverError) as caught:
-                self.host.option.side_effect = lambda name, key: found
+                self.host.option.side_effect = lambda name, key, *, found=found: found
                 self.driver.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
 

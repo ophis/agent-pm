@@ -301,7 +301,7 @@ class StartTest(Base):
                 proc.wait.return_value = 0
                 original = tui_start.signal.getsignal(signum)
 
-                def spawn(*args, **kwargs):
+                def spawn(*args, proc=proc, signum=signum, **kwargs):
                     tui_start.signal.raise_signal(signum)
                     return proc
 

@@ -139,7 +139,7 @@ class ConfigureTest(Base):
         ):
             with self.subTest(kw=kw):
                 given = {**settings({}), **kw}
-                self.refused(message, lambda: Driver(**given))
+                self.refused(message, lambda *, given=given: Driver(**given))
                 self.assertEqual(self.driver.registry.configured(), ["fake"])
 
     def test_the_forward_tmux_host_name_is_never_loaded(self):
@@ -263,7 +263,7 @@ class AdapterTest(Base):
             with self.subTest(bad=bad):
                 self.refused(
                     f"unsafe runtime name {bad!r}: want a lowercase identifier",
-                    lambda: self.driver.registry.adapter(bad),
+                    lambda *, bad=bad: self.driver.registry.adapter(bad),
                 )
 
     def test_refuses_a_missing_table(self):

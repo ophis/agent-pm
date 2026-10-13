@@ -170,7 +170,7 @@ class ConfigTest(Base):
         for key, value in rows:
             with self.subTest(key=key, value=value):
                 self.refused(
-                    lambda: ClaudeAdapter({key: value}),
+                    lambda *, key=key, value=value: ClaudeAdapter({key: value}),
                     f"[adapters.claude].{key} must be {WHAT[key]}",
                 )
 
@@ -197,7 +197,7 @@ class ConfigTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: ClaudeAdapter({"flags": flags}),
+                    lambda *, flags=flags: ClaudeAdapter({"flags": flags}),
                     "--setting-sources is the Driver's: remove it from [adapters.claude].flags",
                 )
 
@@ -222,10 +222,11 @@ class ModelEffortTest(Base):
             with self.subTest(config=config):
                 common = ClaudeCommon(config)
                 self.refused(
-                    lambda: common.model(2), "no model for tier 2 in [adapters.claude].tiers"
+                    lambda *, common=common: common.model(2),
+                    "no model for tier 2 in [adapters.claude].tiers",
                 )
                 self.refused(
-                    lambda: common.effort("medium"),
+                    lambda *, common=common: common.effort("medium"),
                     "no effort for 'medium' in [adapters.claude].efforts",
                 )
         self.refused(lambda: self.launch(tier=3), "no model for tier 3 in [adapters.claude].tiers")
@@ -355,7 +356,9 @@ class ArgvTest(Base):
             " " + SID,
         ):
             with self.subTest(bad=bad):
-                self.refused(lambda: self.launch(sid=bad), f"session ids are UUIDs, got {bad!r}")
+                self.refused(
+                    lambda *, bad=bad: self.launch(sid=bad), f"session ids are UUIDs, got {bad!r}"
+                )
         self.refused(
             lambda: ClaudeCommon.uuid(SID + "\n"),
             f"claude session ids are UUIDs, got {SID + chr(10)!r}",
@@ -1332,7 +1335,8 @@ class SessionTuiTest(Base):
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda: self.session(flags=flags), f"--settings {value!r:.80}: {WANT_SETTINGS}"
+                    lambda *, flags=flags: self.session(flags=flags),
+                    f"--settings {value!r:.80}: {WANT_SETTINGS}",
                 )
 
 

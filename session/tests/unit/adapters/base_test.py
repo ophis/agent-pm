@@ -133,9 +133,13 @@ class AccessTest(Refusals):
     def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
             with self.subTest(bad=bad):
-                self.refused(lambda: Access(dirs=bad), "dirs must be a tuple of strings")
-                self.refused(lambda: Access(commands=bad), "commands must be a tuple of strings")
-                self.refused(lambda: Access(reads=bad), "reads must be a tuple of strings")
+                self.refused(lambda *, bad=bad: Access(dirs=bad), "dirs must be a tuple of strings")
+                self.refused(
+                    lambda *, bad=bad: Access(commands=bad), "commands must be a tuple of strings"
+                )
+                self.refused(
+                    lambda *, bad=bad: Access(reads=bad), "reads must be a tuple of strings"
+                )
 
     def test_accepts_an_env_of_shell_names_to_strings(self):
         env = {"PYTHONPATH": "/a b;c", "_x1": ""}
@@ -160,7 +164,7 @@ class AccessTest(Refusals):
             None,
         ):
             with self.subTest(bad=bad):
-                self.refused(lambda: Access(env=bad), message)
+                self.refused(lambda *, bad=bad: Access(env=bad), message)
 
 
 class SpecTest(Refusals):
@@ -218,7 +222,7 @@ class SpecTest(Refusals):
         for bad in (["-x"], ("-x\0",), ("-x", 1), "-x", None):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", flags=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", flags=bad),
                     "flags must be a tuple of strings without NUL",
                 )
 
@@ -242,20 +246,22 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", env=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", env=bad),
                     "env must map variable names to strings without NUL",
                 )
 
     def test_refuses_a_name_other_than_none_or_a_string(self):
         for bad in (5, b"w", ("w",)):
             with self.subTest(bad=bad):
-                self.refused(lambda: Spec(workdir="/w", name=bad), "name must be None or a string")
+                self.refused(
+                    lambda *, bad=bad: Spec(workdir="/w", name=bad), "name must be None or a string"
+                )
 
     def test_refuses_protect_that_is_not_a_tuple_of_printable_absolute_paths(self):
         for bad in (["/p"], ("p",), ("",), ("/p\n",), ("/p\0",), ("/p", 1), (b"/p",), "/p", None):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", protect=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", protect=bad),
                     "protect must be a tuple of printable absolute paths",
                 )
 
@@ -273,7 +279,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", reply_tags=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", reply_tags=bad),
                     "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+",
                 )
 
@@ -304,7 +310,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir=bad),
+                    lambda *, bad=bad: Spec(workdir=bad),
                     f"workdir must be a printable absolute path, got {shown}",
                 )
 
@@ -318,7 +324,7 @@ class SpecTest(Refusals):
         for bad, shown in ((0, "0"), (5, "5"), (True, "True"), ("2", "'2'"), (2.0, "2.0")):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", tier=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", tier=bad),
                     f"tier must be an integer 1–4, got {shown}",
                 )
 
@@ -326,7 +332,7 @@ class SpecTest(Refusals):
         for bad, shown in (("extreme", "'extreme'"), ("", "''"), ("LOW", "'LOW'"), (3, "3")):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", effort=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", effort=bad),
                     f"effort must be one of low, medium, high, xhigh, max, got {shown}",
                 )
 
@@ -334,7 +340,7 @@ class SpecTest(Refusals):
         for bad, shown in (("rel", "'rel'"), ("/c\0", r"'/c\x00'")):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", access=Access(cwd=bad)),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd=bad)),
                     f"cwd must be a printable absolute path, got {shown}",
                 )
 
@@ -348,7 +354,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda: Spec(workdir="/w", sid=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", sid=bad),
                     f'sid must be a non-empty printable string without "/", got {shown}',
                 )
 
@@ -412,7 +418,8 @@ class LaunchTest(Refusals):
                 with self.subTest(field=field, bad=bad):
                     fields = {"argv": ("x",), field: bad}
                     self.refused(
-                        lambda: Launch(**fields), f"launch: {field} must be strings without NUL"
+                        lambda *, fields=fields: Launch(**fields),
+                        f"launch: {field} must be strings without NUL",
                     )
 
 

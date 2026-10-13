@@ -563,7 +563,7 @@ class ReadStateTest(Base):
             with self.subTest(stat.filemode(os.lstat(path).st_mode)):
                 out = {}
                 thread = threading.Thread(
-                    target=lambda: out.setdefault("error", self.refused()), daemon=True
+                    target=lambda *, out=out: out.setdefault("error", self.refused()), daemon=True
                 )
                 thread.start()
                 thread.join(10)
@@ -1027,7 +1027,9 @@ class BoundTest(Base):
                 self.host.pane.side_effect = self.host.kill.side_effect = None
                 mode = self.started()
                 held.clear()
-                self.host.pane.side_effect = lambda name: held.append(self.locked()) or holder
+                self.host.pane.side_effect = lambda name, *, holder=holder: (
+                    held.append(self.locked()) or holder
+                )
                 self.host.kill.side_effect = lambda name: held.append(self.locked())
                 mode.stop()
                 self.assertEqual((held, self.locked()), ([True] * (1 + closed), False))
@@ -1202,7 +1204,7 @@ class AttachTest(Base):
         ):
             with self.subTest(lines=lines, state=state):
 
-                def option(target, key):
+                def option(target, key, *, state=state):
                     if (target, key) == ("%7", "@state") and isinstance(state, Exception):
                         raise state
                     return {("%7", "@sid"): SID, ("%7", "@state"): state}.get((target, key))
@@ -1214,7 +1216,9 @@ class AttachTest(Base):
         for found in ("other", None, tmux_host.TuiError("tmux: denied")):
             with self.subTest(found=found):
                 self.host.option.side_effect = (
-                    found if isinstance(found, Exception) else lambda name, key: found
+                    found
+                    if isinstance(found, Exception)
+                    else lambda name, key, *, found=found: found
                 )
                 with self.assertRaises(DriverError) as caught:
                     self.attach()

@@ -895,7 +895,7 @@ class HookTrustIntegrationTest(Live):
                 stream = Stream(self, handle)
                 self.server.tmux("run-shell", "-b", "true")
                 live_tmux.wait(
-                    lambda: (
+                    lambda *, index=index: (
                         "codex tui:"
                         in self.server.tmux(
                             "capture-pane", "-p", "-J", "-S", "-1000", "-t", f"=bad{index}:"
@@ -921,7 +921,7 @@ class HookTrustIntegrationTest(Live):
                 stream = Stream(self, handle)
                 if status in ("untrusted", "modified"):
                     live_tmux.wait(
-                        lambda: (
+                        lambda *, index=index: (
                             "review it"
                             in self.server.tmux(
                                 "capture-pane", "-p", "-J", "-S", "-1000", "-t", f"=u{index}:"
@@ -1052,11 +1052,13 @@ class HookTrustIntegrationTest(Live):
                 self.scene(catalog_case="silent_tree")
                 handle = self.start(f"interrupted{index}", sid=f"interrupted-{index}")
                 probe = live_tmux.wait(
-                    lambda: self.calls("app-server")[before:] or None, WAIT, what="silent preflight"
+                    lambda *, before=before: self.calls("app-server")[before:] or None,
+                    WAIT,
+                    what="silent preflight",
                 )[0]
                 self.addCleanup(cleanup, probe["pid"])
                 descendants = live_tmux.wait(
-                    lambda: (
+                    lambda *, descendants_before=descendants_before: (
                         [r["descendant"] for r in self.logged() if "descendant" in r][
                             descendants_before:
                         ]
@@ -1072,9 +1074,9 @@ class HookTrustIntegrationTest(Live):
                 else:
                     os.kill(probe["parent_pid"], signal.SIGTERM)
                 live_tmux.wait(
-                    lambda: (
+                    lambda *, descendants=descendants, probe=probe: (
                         not self.pid_exists(probe["pid"])
-                        and all(not running(pid) for pid in descendants)
+                        and all((not running(pid) for pid in descendants))
                     ),
                     4,
                     what="interrupted preflight cleanup",

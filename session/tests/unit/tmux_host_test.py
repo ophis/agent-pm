@@ -285,7 +285,7 @@ def panes(*rows):
             dict(zip(("pane_dead", "pane_tty", "pane_id"), row, strict=False)) for row in rows
         ]
         return 0, "".join(
-            re.sub(r"#\{(\w+)\}", lambda m: v[m.group(1)], fmt) + "\n" for v in values
+            re.sub(r"#\{(\w+)\}", lambda m, *, v=v: v[m.group(1)], fmt) + "\n" for v in values
         )
 
     return result
@@ -791,9 +791,9 @@ class Start(Case):
             with self.subTest(name=name):
                 fake = Tmux()
                 for call in (
-                    lambda: self.start(fake, session=name),
-                    lambda: tmux_host.status(name, proc=fake),
-                    lambda: tmux_host.detach(
+                    lambda *, fake=fake, name=name: self.start(fake, session=name),
+                    lambda *, fake=fake, name=name: tmux_host.status(name, proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.detach(
                         name,
                         ["tool"],
                         cwd=self.cwd,
@@ -801,13 +801,15 @@ class Start(Case):
                         proc=fake,
                         sleep=self.sleep,
                     ),
-                    lambda: tmux_host.kill(name, proc=fake),
-                    lambda: tmux_host.send(name, "x", proc=fake, sleep=self.sleep),
-                    lambda: tmux_host.paste(name, "x", proc=fake),
-                    lambda: tmux_host.keys(name, "Enter", proc=fake),
-                    lambda: tmux_host.read(name, proc=fake),
-                    lambda: tmux_host.option(name, "@sid", proc=fake),
-                    lambda: tmux_host.pane(name, proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.kill(name, proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.send(
+                        name, "x", proc=fake, sleep=self.sleep
+                    ),
+                    lambda *, fake=fake, name=name: tmux_host.paste(name, "x", proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.keys(name, "Enter", proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.read(name, proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.option(name, "@sid", proc=fake),
+                    lambda *, fake=fake, name=name: tmux_host.pane(name, proc=fake),
                 ):
                     with self.assertRaises(tmux_host.TuiError):
                         call()
@@ -2599,7 +2601,11 @@ class Stack(Case):
         for fail, calls in (("@opener", 1), ("@pane", 2)):
             with self.subTest(fail=fail):
                 fake = self.fake(
-                    **{"set-option": lambda argv: (1, "", "boom\n") if fail in argv else (0,)}
+                    **{
+                        "set-option": lambda argv, *, fail=fail: (
+                            (1, "", "boom\n") if fail in argv else (0,)
+                        )
+                    }
                 )
                 self.assertIsNone(self.show(fake))
                 self.assertEqual(fake.commands().count("set-option"), calls)
@@ -3201,8 +3207,8 @@ class GridOpen(Case):
             with self.subTest(retile=bad):
                 fake = self.fake({"%3": self.NEW})
                 for call in (
-                    lambda: self.show(fake, retile=bad),
-                    lambda: tmux_host.open_pane("s", retile=bad, proc=fake),
+                    lambda *, bad=bad, fake=fake: self.show(fake, retile=bad),
+                    lambda *, bad=bad, fake=fake: tmux_host.open_pane("s", retile=bad, proc=fake),
                 ):
                     with self.assertRaisesRegex(
                         tmux_host.TuiError, RETILE_ERROR.format(re.escape(repr(bad)))
@@ -3232,8 +3238,10 @@ class GridOpen(Case):
             with self.subTest(per_column=bad):
                 fake = self.fake({"%3": self.NEW})
                 for call in (
-                    lambda: self.show(fake, per_column=bad),
-                    lambda: tmux_host.open_pane("s", per_column=bad, proc=fake),
+                    lambda *, bad=bad, fake=fake: self.show(fake, per_column=bad),
+                    lambda *, bad=bad, fake=fake: tmux_host.open_pane(
+                        "s", per_column=bad, proc=fake
+                    ),
                 ):
                     with self.assertRaisesRegex(
                         tmux_host.TuiError, "^per_column must be an int from 1 to 9999"
