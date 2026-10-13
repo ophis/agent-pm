@@ -169,9 +169,9 @@ class FakeLinear:
 class FakePruner:
     calls = []
 
-    def __init__(self, gql, now, dry, *, work, team, roles, driver):
-        self.driver = driver
-        FakePruner.calls.append((gql, now, dry, work, team, roles))
+    def __init__(self, gql, now, dry, *, scope):
+        self.driver = scope.driver
+        FakePruner.calls.append((gql, now, dry, scope.work, scope.team, scope.roles))
 
     def run(self):
         return 0

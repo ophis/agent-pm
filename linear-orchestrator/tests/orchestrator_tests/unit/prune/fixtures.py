@@ -73,12 +73,10 @@ class PruneScenario(Case):
                 gql,
                 NOW,
                 dry,
-                work=self.work,
-                driver=self.api,
-                team=TEAM_OBJ,
-                roles=ROLES,
                 run=git or Git(),
-                writable=writable,
+                scope=prune.PruneScope(
+                    work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES, writable=writable
+                ),
             ).run()
         self.assertEqual(out.getvalue(), "")
         copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]

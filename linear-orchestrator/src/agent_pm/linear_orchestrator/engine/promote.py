@@ -9,6 +9,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     CALL_ERRORS,
     SERVICE_ERRORS,
     Promotion,
+    PruneScope,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
@@ -295,16 +296,22 @@ class Promoter:
         return left is None
 
 
-def run_prune(gql, now, dry, team, roles, work, pruner=None, *, driver=None):
+def run_prune(gql, now, promoter, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
-        pruner(gql, now, dry, work=work, team=team, roles=roles, driver=driver).run()
+        scope = PruneScope(
+            work=promoter.cfg.runs_dir,
+            team=promoter.team,
+            roles=promoter.roles,
+            driver=promoter.cfg.driver,
+        )
+        pruner(gql, now, promoter.dry, scope=scope).run()
     except Unavailable as e:
-        linear_error("prune", e, dry=dry)
+        linear_error("prune", e, dry=promoter.dry)
     except CALL_ERRORS as e:
-        log("prune", "prune-error", dry=dry, error=one_line(e))
+        log("prune", "prune-error", dry=promoter.dry, error=one_line(e))
 
 
 def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None):
@@ -323,7 +330,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
         promoter.run()
     except Unavailable as e:
         return linear_error("promote", e, dry=dry)
-    run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner, driver=cfg.driver)
+    run_prune(gql, now, promoter, pruner)
     return 0
 
 

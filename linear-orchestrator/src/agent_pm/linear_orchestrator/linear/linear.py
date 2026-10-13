@@ -15,7 +15,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
@@ -23,6 +22,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
     ConfigError,
     LinearError,
+    Team,
     Unavailable,
 )
 from agent_pm.utils import append_line, printable
@@ -324,13 +324,6 @@ def role_ids(gql, roles):
             raise LinearError.roles_account_not_found_in_linear(name, role.account)
         out[uid] = name
     return out
-
-
-@dataclass(frozen=True)
-class Team:
-    id: str
-    name: str
-    states: dict
 
 
 Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name

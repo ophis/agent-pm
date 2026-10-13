@@ -140,3 +140,19 @@ class RouterServices:
     keychain: Callable[[str], bool] | None = None
     start: Callable[..., int] | None = None
     driver: Driver | None = None
+
+
+@dataclass(frozen=True)
+class Team:
+    id: str
+    name: str
+    states: dict[str, str]
+
+
+@dataclass(frozen=True, kw_only=True)
+class PruneScope:
+    work: str
+    team: Team
+    roles: Mapping[str, str]
+    driver: Driver
+    writable: tuple[str, ...] | None = None
