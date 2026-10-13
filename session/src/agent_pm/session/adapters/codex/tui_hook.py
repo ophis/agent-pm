@@ -25,11 +25,7 @@ def bind(label, value, workdir, sid, *, root=None):
     if (
         label not in LABELS
         or value.get("hook_event_name", label) != label
-        or value.get("agent_id") is not None
-        or not sessions.native_id(value.get("session_id"))
-        or not isinstance(value.get("cwd"), str)
-        or not os.path.isabs(value["cwd"])
-        or "\0" in value["cwd"]
+        or not sessions.hook_identity(value)
     ):
         return False
     try:
@@ -37,7 +33,7 @@ def bind(label, value, workdir, sid, *, root=None):
         state = store.load(workdir, sid)
         if state is None:
             raise sessions.RecoveryError("missing Codex recovery state")
-        if os.path.realpath(value["cwd"]) != state.snapshot["cwd"]:
+        if not sessions.hook_identity(value, state.snapshot["cwd"]):
             return False
         store.bind(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
     except (sessions.RecoveryError, OSError, ValueError) as exc:

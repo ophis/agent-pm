@@ -231,6 +231,21 @@ def native_id(value) -> bool:
         return False
 
 
+def hook_identity(value, cwd=None):
+    identifier, path = value.get("session_id"), value.get("cwd")
+    if (
+        value.get("agent_id") is not None
+        or not native_id(identifier)
+        or not isinstance(path, str)
+        or not os.path.isabs(path)
+        or "\0" in path
+        or cwd is not None
+        and os.path.realpath(path) != cwd
+    ):
+        return ""
+    return identifier
+
+
 _SESSION_VERSION = 1
 
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})

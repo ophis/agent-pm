@@ -193,6 +193,36 @@ class TuiTest(Base):
         attached.session_id(self.payload(hook_event_name="Stop", last_assistant_message=None))
         self.assertEqual(attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd()])
 
+    def test_identity_accepts_canonical_cwd_alias_and_keeps_native_binding(self):
+        run, _, _ = self.launch()
+        alias = self.root / "cwd-alias"
+        alias.symlink_to(self.cwd, target_is_directory=True)
+        self.assertEqual(run.session_id(self.payload(cwd=str(alias))), NATIVE)
+        self.assertEqual(run.session_id(self.payload(session_id=CHILD, cwd=str(alias))), "")
+        self.assertEqual(run.native, NATIVE)
+
+    def test_invalid_identity_does_not_bind_or_update_the_reply(self):
+        run = self.adapter.tui()
+        for fields in (
+            {"agent_id": CHILD},
+            {"session_id": None},
+            {"session_id": "invalid"},
+            {"cwd": None},
+            {"cwd": 1},
+            {"cwd": "relative"},
+            {"cwd": "/invalid\0cwd"},
+        ):
+            with self.subTest(fields=fields):
+                self.assertEqual(
+                    run.session_id(
+                        self.payload(
+                            hook_event_name="Stop", last_assistant_message="foreign", **fields
+                        )
+                    ),
+                    "",
+                )
+                self.assertEqual((run.native, run.last_reply), ("", ""))
+
     def test_limit_screen_official_variants_and_reset(self):
         run = self.adapter.tui()
         run.common.config["env"] = {"TZ": "UTC"}

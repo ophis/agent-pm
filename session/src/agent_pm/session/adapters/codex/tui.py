@@ -12,7 +12,6 @@ from agent_pm.session.adapters.codex.common import (
     CodexCommon,
     added_dirs,
     flags,
-    native_id,
     passed,
     refuse,
     reset_at,
@@ -141,17 +140,13 @@ class CodexTui(Tui):
         }
 
     def session_id(self, payload):
-        native, cwd = payload.get("session_id"), payload.get("cwd")
+        native = sessions.hook_identity(payload)
         if (
-            payload.get("agent_id") is not None
-            or not native_id(native)
-            or not isinstance(cwd, str)
-            or not os.path.isabs(cwd)
-            or "\0" in cwd
+            not native
             or self.native
             and native != self.native
             or self.state
-            and os.path.realpath(cwd) != self.state.snapshot["cwd"]
+            and not sessions.hook_identity(payload, self.state.snapshot["cwd"])
         ):
             return ""
         self.native = native

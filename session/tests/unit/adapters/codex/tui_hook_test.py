@@ -51,6 +51,41 @@ class HookTest(Base):
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         self.assertFalse(tui_hook.on_hook("Stop", self.payload(agent_id=CHILD), state))
 
+    def test_invalid_identity_is_ignored_before_loading_a_record(self):
+        for fields in (
+            {"agent_id": CHILD},
+            {"session_id": None},
+            {"session_id": "invalid"},
+            {"cwd": None},
+            {"cwd": 1},
+            {"cwd": "relative"},
+            {"cwd": "/invalid\0cwd"},
+            {"hook_event_name": "SessionStart"},
+        ):
+            with self.subTest(fields=fields), contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertFalse(
+                    tui_hook.bind("Stop", self.payload(**fields), "relative", self.spec.sid)
+                )
+                self.assertEqual(error.getvalue(), "")
+
+    def test_valid_identity_reports_record_failure_before_foreign_cwd_filter(self):
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertFalse(
+                tui_hook.bind(
+                    "Stop", self.payload(cwd=str(self.extra)), str(self.work), self.spec.sid
+                )
+            )
+        self.assertEqual(error.getvalue(), "codex hook: missing Codex recovery state\n")
+
+    def test_cwd_alias_binds_against_the_saved_canonical_path(self):
+        self.prepare()
+        alias = self.root / "cwd-alias"
+        alias.symlink_to(self.cwd, target_is_directory=True)
+        self.assertTrue(
+            tui_hook.bind("Stop", self.payload(cwd=str(alias)), str(self.work), self.spec.sid)
+        )
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+
     def test_generic_isolated_hook_loads_binding_callback_and_records_once(self):
         self.prepare()
         folder = self.root / "hook-session"
