@@ -147,8 +147,9 @@ def runs() -> list[tuple[str, str | None]]:
 def tickets(root):
     """{path relative to `root`: its ticket ids beyond TICKET_EXAMPLES} of each file under `root`."""
     found = {}
-    for top, _, files in os.walk(root):
-        for name in files:
+    for top, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for name in (n for n in files if not n.endswith(".pyc")):
             rel = os.path.relpath(os.path.join(top, name), root)
             with open(os.path.join(top, name), errors="replace") as f:
                 text = f.read()

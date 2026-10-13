@@ -8,13 +8,16 @@ import tempfile
 import unittest
 from unittest import mock
 
-import agent_pm
+try:
+    import agent_pm
+except ImportError:
+    agent_pm = None
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INITS = glob.glob(os.path.join(REPO, "*", "src", "agent_pm", "*", "__init__.py"))
 SRC = {init.split(os.sep)[-2]: os.sep.join(init.split(os.sep)[:-3]) for init in INITS}
 ROOTS = tuple(sorted(set(SRC.values())))
-RUN_WITH = ":".join(os.path.relpath(root, REPO) for root in ROOTS)
+RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
 ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 
@@ -42,7 +45,13 @@ class Case(unittest.TestCase):
             return super().run(result)
 
 
+def _missing() -> str | None:
+    return None if agent_pm else f"agent_pm is not importable: run with PYTHONPATH={RUN_WITH}"
+
+
 def _foreign() -> str | None:
+    if missing := _missing():
+        return missing
     own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
     for path in agent_pm.__path__:
         if os.path.realpath(path) not in own:
@@ -66,9 +75,12 @@ def _foreign() -> str | None:
     return None
 
 
+KEEP = ("PYTHONDONTWRITEBYTECODE",)
+
+
 def child_env(base=None, *extra: str) -> dict[str, str]:
     env = os.environ if base is None else base
     return {
-        **{k: v for k, v in env.items() if not k.startswith("PYTHON")},
+        **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
         "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
     }

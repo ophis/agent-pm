@@ -4,7 +4,7 @@ issues assigned to role accounts, then starts it through the outer (run.py in a 
 
 python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
-(no mode)     One tick (launchd): the hours check, then at most one agent run. Exits 1 a config error or Linear
+(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,

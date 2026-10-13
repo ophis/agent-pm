@@ -101,6 +101,8 @@ def _load(path: str) -> dict:
 def _owned(found: dict, configs: dict[str, dict], taken) -> dict:
     out = {}
     for keys, value in _leaves(found, ()):
+        if value == {} and not any(_has(c, keys) for c in configs.values()):
+            continue
         if taken(_owners(keys, configs)):
             table = out
             for k in keys[:-1]:

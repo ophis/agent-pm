@@ -25,7 +25,9 @@ CASES = (
     "manager/tests",
 )
 RESETS = {"session/tests", "delegate/tests", "linear-orchestrator/tests", "manager/tests"}
-RUN_WITH = "delegate/src:linear-orchestrator/src:manager/src:session/src:utils/src"
+RUN_WITH = os.pathsep.join(
+    f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")
+)
 
 
 class Checks:
@@ -114,6 +116,12 @@ class Checks:
         self.assertIn(f"{message}: run with PYTHONPATH={RUN_WITH}", failure)
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
+    def test_no_importable_agent_pm_fails_the_test_before_its_set_up(self):
+        if not hasattr(self.case, "_missing"):
+            return
+        with mock.patch.object(self.case, "agent_pm", None):
+            self.assert_fails_before_set_up("agent_pm is not importable")
+
     def test_a_subpackage_from_another_tree_fails_the_test_before_its_set_up(self):
         for sub, root in self.case.SRC.items():
             name = f"agent_pm.{sub}"
@@ -173,10 +181,16 @@ class Checks:
             "PYTHONPATH": "/x",
             "PYTHONHOME": "/y",
             "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
         self.assertEqual(
             child_env(base, "/r1", "/r2"),
-            {"HOME": "/h", "PATH": "/b", "PYTHONPATH": os.pathsep.join((*ROOTS, "/r1", "/r2"))},
+            {
+                "HOME": "/h",
+                "PATH": "/b",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPATH": os.pathsep.join((*ROOTS, "/r1", "/r2")),
+            },
         )
         with mock.patch.dict(os.environ, {"PYTHONWARNINGS": "error", "OTHER": "1"}):
             env = child_env()

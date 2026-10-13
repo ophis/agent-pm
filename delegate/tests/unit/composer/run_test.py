@@ -19,7 +19,7 @@ from agent_pm.delegate.composer.run import (
     resolve,
     trusted_dirs,
 )
-from agent_pm.delegate.composer.teams import team
+from agent_pm.delegate.composer.teams import role_tables, team
 from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import config_file
@@ -491,6 +491,26 @@ class TrustedDirs(Fake):
                 with self.assertRaises(ConfigError) as cm:
                     trusted_dirs(self.config, self.local_file)
                 self.assertEqual(str(cm.exception), msg)
+
+
+class BadRead(Fake):
+    def test_a_config_that_cannot_be_read_is_a_config_error_from_each_reader(self):
+        found, c, lf = team(self.root), self.config, self.local_file
+        calls = {
+            "resolve": lambda: resolve("writer", team=found, config=c, local=lf),
+            "index": lambda: composer.index("nobody", found, c, lf),
+            "catalog": lambda: composer.catalog(found, c, lf),
+            "role_tables": lambda: role_tables(c, lf),
+            "trusted_dirs": lambda: trusted_dirs(c, lf),
+        }
+        for text, want in (("bogus = 1\n", "unknown key 'bogus'"), ("x = [\n", "Invalid")):
+            self.local(text)
+            for name, call in calls.items():
+                with (
+                    self.subTest(name, text=text),
+                    self.assertRaisesRegex(ConfigError, f"^config: .*{want}"),
+                ):
+                    call()
 
 
 class ExplicitPaths(Fake):

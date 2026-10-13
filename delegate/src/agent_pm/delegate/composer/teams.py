@@ -235,14 +235,18 @@ def catalog(
     team = team_or_default(team)
     role_tables(config, local)
     return {
-        role: index(role, team, config, local)
-        for role in roles(team, read_project("delegate", path=config, local=local))
+        role: index(role, team, config, local) for role in roles(team, config_of(config, local))
     }
 
 
 def config_of(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
     """`cfg`, the caller's already-read delegate config, else `config` with `local` read."""
-    return read_project("delegate", path=config, local=local) if cfg is None else cfg
+    if cfg is not None:
+        return cfg
+    try:
+        return read_project("delegate", path=config, local=local)
+    except (OSError, ValueError) as e:
+        raise ConfigError(f"config: {e}") from None
 
 
 def role_tables(config: str, local: str, cfg: Mapping | None = None) -> Mapping:

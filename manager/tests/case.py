@@ -16,7 +16,7 @@ INITS = glob.glob(os.path.join(REPO, "*", "src", "agent_pm", "*", "__init__.py")
 SRC = {init.split(os.sep)[-2]: os.sep.join(init.split(os.sep)[:-3]) for init in INITS}
 ROOTS = tuple(sorted(set(SRC.values())))
 PYTHONPATH = os.pathsep.join(ROOTS)
-RUN_WITH = ":".join(os.path.relpath(root, REPO) for root in ROOTS)
+RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
 
 
@@ -71,9 +71,12 @@ def _foreign() -> str | None:
     return None
 
 
+KEEP = ("PYTHONDONTWRITEBYTECODE",)
+
+
 def child_env(base=None, *extra: str) -> dict[str, str]:
     env = os.environ if base is None else base
     return {
-        **{k: v for k, v in env.items() if not k.startswith("PYTHON")},
+        **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
         "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
     }

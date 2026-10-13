@@ -20,6 +20,7 @@ from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
 from agent_pm.utils.git import GUARD
+from agent_pm.utils.paths import import_roots
 from agent_pm.utils.shell import SHORT
 
 from ..case import ORCH_ROOT, PY, Case, child_env
@@ -57,7 +58,7 @@ HTTPS = "https://github.com/ophis/agent-pm.git"
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 ROOT_Q = shlex.quote(config.ROOT)
 GATE = (
-    f"env PYTHONPATH={ROOT_Q}/delegate/src:{ROOT_Q}/session/src:{ROOT_Q}/utils/src:{ROOT_Q}/manager/src:{ROOT_Q}/linear-orchestrator/src "
+    f"env PYTHONPATH={shlex.quote(os.pathsep.join(import_roots(config.ROOT)))} "
     "python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 )
 LABEL = ("linear-orchestrator/config.toml", "core")
@@ -839,6 +840,12 @@ class Local(ConfigFile, Case):
         self.assertEqual(self.load("").roles, self.load(PIPELINE).roles)
         write(os.path.join(self.agent_pm, "local.toml"), CORE_LOCAL)
         self.assertEqual(self.load(PIPELINE).team, TEAM)
+
+    def test_an_empty_local_role_table_adds_no_role(self):
+        self.local(PIPELINE)
+        want = set(self.load("").roles)
+        self.local(PIPELINE + "[roles.ghost]\n")
+        self.assertEqual(set(self.load("").roles), want)
 
     def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
         self.local('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n')

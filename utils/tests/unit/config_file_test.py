@@ -274,6 +274,11 @@ class Projects(Case):
                 self.read(name, **kw)
         self.assertIn("work_dir", self.read("linear-orchestrator"))
 
+    def test_a_new_empty_local_table_is_dropped(self):
+        self.local("[roles.ghost]\n")
+        self.assertNotIn("ghost", self.read("linear-orchestrator").get("roles", {}))
+        self.assertNotIn("ghost", self.read("delegate").get("roles", {}))
+
     def test_a_name_that_is_not_a_project_is_refused(self):
         for name in ("core", "tests", "", "linear_orchestrator", "../delegate"):
             with (

@@ -225,7 +225,7 @@ def linear_error(src, e, dry=False):
 def _stop(src, kind, message, dry, **fields):
     log(src, kind, once=True, dry=dry, **fields)
     try:
-        if sys.stderr.isatty() and not dry:  # elsewhere (launchd) stderr is the log
+        if sys.stderr.isatty() and not dry:  # under a scheduler stderr is the log
             print(f"{src}.py: {message}", file=sys.stderr, flush=True)
     except OSError:
         pass

@@ -109,13 +109,14 @@ max_runs = 3
 # local: "<owner>/<name>" = "~/src/<name>"
 
 # The overlay; optional: core run keys for the Linear orchestrator's agent runs, in delegate/config.toml's layout under
-# [core], the last of delegate/config.toml's layers. config.overlay() fills {{root}} with this repo's root.
+# [core], the last of delegate/config.toml's layers. config.overlay() fills {{root}} with this repo's root and
+# {{pythonpath}} with its import roots (agent_pm.utils.paths.import_roots), shell-quoted.
 #   <run key>  as in delegate/config.toml, local keys included (e.g. a trusted cwd or a show command); users, trusted_dirs,
 #              status_line, workers_per_column, grid_retile and clients are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
-# the gate sets the five import roots itself; why `env`: README.md › Layout (act-as row)
-gate = "env PYTHONPATH={{root}}/delegate/src:{{root}}/session/src:{{root}}/utils/src:{{root}}/manager/src:{{root}}/linear-orchestrator/src python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
+# the gate sets the import roots itself; why `env`: README.md › Layout (act-as row)
+gate = "env PYTHONPATH={{pythonpath}} python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
 # local: [core.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: show = "none"

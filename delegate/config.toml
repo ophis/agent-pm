@@ -21,7 +21,8 @@
 #   runtime         required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
 #                   overlay may set it per role. The Composer passes it through unchecked
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
-#   show            tui mode only: how the agent run's TUI window opens.
+#   show            tui mode only: how the agent run's TUI window opens. Not used yet: a later change wires the
+#                   display; until then the window opens as for "".
 #                   ""           → open a pane: a tmux grid, else stacked (the Driver's show)
 #                   "none"       → open nothing; print the `tmux attach` command
 #                   "<command>"  → run it; {{session}} is the tmux session name

@@ -18,7 +18,7 @@ from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.git import GUARD
-from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.paths import import_roots, temp_dirs, under
 from agent_pm.utils.repos import NAME, OWNER
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
@@ -425,7 +425,11 @@ def _load_config(cfg, root, local):
 
 def _fill_root(value, root):
     if isinstance(value, str):
-        return value.replace("{{root}}", shlex.quote(root))
+        value = value.replace("{{root}}", shlex.quote(root))
+        if "{{pythonpath}}" in value:
+            roots = shlex.quote(os.pathsep.join(import_roots(root)))
+            value = value.replace("{{pythonpath}}", roots)
+        return value
     if isinstance(value, dict):
         return {k: _fill_root(v, root) for k, v in value.items()}
     if isinstance(value, list):
