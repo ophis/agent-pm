@@ -553,7 +553,7 @@ def _literal_violation(source, target, contract):
             (i for i, layer in enumerate(contract["layers"]) if _within(target, layer)), None
         )
         return own is not None and lower is not None and lower < own
-    return False
+    raise ValueError(f"unsupported import contract type: {contract['type']!r}")
 
 
 def layer_commands(repo: str) -> list[str]:

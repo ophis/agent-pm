@@ -75,3 +75,11 @@ class Units(Case):
             )
         )
 
+    def test_tools_can_import_modules_inside_the_same_unit(self):
+        for source in ("team.tools", "team.tools.repo", "team.tools.nested.caller"):
+            with self.subTest(source=source):
+                self.assertFalse(
+                    self.rejected(
+                        "agent_pm.delegate." + source, "agent_pm.delegate.team.tools.helper"
+                    )
+                )

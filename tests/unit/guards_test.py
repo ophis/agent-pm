@@ -144,6 +144,16 @@ class SessionNames(Sample):
 
 
 class LiteralImports(Sample):
+    def test_unknown_contract_types_fail_loudly(self):
+        root = self.tree(
+            {
+                "pyproject.toml": "[[tool.importlinter.contracts]]\ntype = 'unknown'\n",
+                "session/src/agent_pm/session/adapters/probe.py": "__import__('agent_pm.utils')",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported import contract type: 'unknown'"):
+            guards.literal_imports(root)
+
     def check(self, sample, project="session", module="adapters/probe.py"):
         config = Path(REPO, "pyproject.toml").read_text()
         root = self.tree(

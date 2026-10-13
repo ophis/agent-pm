@@ -16,7 +16,8 @@ def violation(importer, imported, policy):
         return False
     container, units = policy["container"], policy["units"]
     if importer.startswith("agent_pm.") and any(
-        _within(imported, unit) for unit in policy.get("unimported_units", ())
+        _within(imported, unit) and not _within(importer, unit)
+        for unit in policy.get("unimported_units", ())
     ):
         return True
     if not _within(importer, container):
