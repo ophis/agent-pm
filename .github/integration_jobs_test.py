@@ -229,13 +229,14 @@ class Repo(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(gate.main(["--check"]), 0)
         self.assertRegex(
-            out.getvalue(), r"^integration jobs match discovery and the workflow: driver \d+, "
+            out.getvalue(), r"^integration jobs match discovery and the workflow: session 1 \d+, "
         )
-        for argv in ([], ["nope"], ["driver", "crew"]):
+        for argv in ([], ["nope"], ["session"], ["manager", "1"]):
             with (
                 self.subTest(argv=argv),
                 self.assertRaisesRegex(
-                    ValueError, "^give --check or a job name: driver, adapters, delegate-composer, "
+                    ValueError,
+                    "^give --check or a job name: session 1, session 2, delegate, linear-orchestrator, ",
                 ),
             ):
                 gate.main(argv)

@@ -225,4 +225,4 @@ export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestr
 
 Commands and where a test goes: `CLAUDE.md` › Tests.
 
-CI (`.github/workflows/test.yml`) runs every `tests/unit/` in one job, integration tests across `.github/integration_jobs.py`'s `JOBS` (`--check` validates assignment), and Ruff over the whole repo (`CLAUDE.md` › Commands).
+CI (`.github/workflows/test.yml`) runs Comment budget, Ruff over the whole repo, `Unit <project>` per project (`repo`: the root `tests/`) and `Integration <project> [shard]` per `.github/integration_jobs.py` `JOBS` entry (`--check` validates assignment).

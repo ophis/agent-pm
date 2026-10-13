@@ -1,7 +1,7 @@
-"""CI integration jobs over DIRECTORIES: JOBS entries, from the repo root, are directories ending in /, files,
-or <file>::<Class>. Exact classes outrank the longest matching path. --check rejects loader errors,
-unmatched classes/tests, empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job> runs
-that job's tests."""
+"""CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each project's): JOBS
+entries, from the repo root, are directories ending in /, files, or <file>::<Class>. Exact classes outrank
+the longest matching path. --check rejects loader errors, unmatched classes/tests, empty jobs, duplicate
+tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests."""
 
 import json
 import re
@@ -11,24 +11,25 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIRECTORIES = tuple(
-    f"{project}tests/integration"
-    for project in ("", "delegate/", "linear-orchestrator/", "manager/", "session/")
+DIRECTORIES = (
+    "tests/integration",
+    *sorted(
+        f"{p.parents[1].name}/tests/integration"
+        for p in ROOT.glob("*/src/agent_pm")
+        if (p.parents[1] / "tests" / "integration").is_dir()
+    ),
 )
 WORKFLOW = ROOT / ".github/workflows/test.yml"
 CREW = "manager/tests/integration/crew_integration_test.py"
 JOBS = {
-    "driver": ["session/tests/integration/"],
-    "adapters": ["session/tests/integration/adapters/"],
-    "delegate-composer": ["delegate/tests/integration/"],
-    "orchestrator": ["linear-orchestrator/tests/integration/"],
-    "crew-1": [f"{CREW}::ClaudeLifecycleTest", f"{CREW}::RuntimeTest"],
-    "crew-2": [f"{CREW}::CodexLifecycleTest", f"{CREW}::RosterTest"],
-    "crew-3": [f"{CREW}::ManagersTest", f"{CREW}::RosterRecoveryTest"],
-    "shared": [
-        "tests/integration/imports_integration_test.py",
-        "session/tests/integration/live_tmux_integration_test.py",
-    ],
+    "session 1": ["session/tests/integration/"],
+    "session 2": ["session/tests/integration/adapters/"],
+    "delegate": ["delegate/tests/integration/"],
+    "linear-orchestrator": ["linear-orchestrator/tests/integration/"],
+    "manager 1": [f"{CREW}::ClaudeLifecycleTest", f"{CREW}::RuntimeTest"],
+    "manager 2": [f"{CREW}::CodexLifecycleTest", f"{CREW}::RosterTest"],
+    "manager 3": [f"{CREW}::ManagersTest", f"{CREW}::RosterRecoveryTest"],
+    "repo": ["tests/integration/"],
 }
 
 
