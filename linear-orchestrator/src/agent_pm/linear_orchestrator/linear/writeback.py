@@ -3,12 +3,10 @@ moves, each step once per session id (the ledger; comment steps by client id, fo
 resume); bounce, the router's repo-check report.
 """
 
-import fcntl
 import functools
 import hashlib
 import json
 import os
-import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,7 +30,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
     subscribe,
 )
-from agent_pm.utils import save
+from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
 
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
@@ -182,24 +180,18 @@ def progress(ctx, event: Progress) -> None:
 
 
 def _read_file(path, workdir):
-    # re-checked on the open fd: a process the agent run left behind could swap it after the
-    # Delegate's check
-    fd = os.open(path, NO_FOLLOW)
-    with os.fdopen(fd, "rb") as f:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise FileError.not_a_regular_file()
-        if st.st_nlink != 1:
-            raise FileError.not_a_single_link_file()
-        real = os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
-        if not real.endswith(".md"):
-            raise FileError.not_a_md_file()
-        if not real.startswith(os.path.join(os.path.realpath(workdir), "")):
-            raise FileError.not_under_the_workdir()
-        data = f.read(MAX_FILE + 1) if st.st_size <= MAX_FILE else None
-    if data is None or len(data) > MAX_FILE:  # len: the file may grow after fstat
-        raise FileError.over_bytes(MAX_FILE)
-    return data
+    try:
+        return read_confined(path, workdir, limit=MAX_FILE)
+    except ConfinedFileError as error:
+        reasons = {
+            ConfinedReason.REGULAR: FileError.not_a_regular_file,
+            ConfinedReason.SINGLE_LINK: FileError.not_a_single_link_file,
+            ConfinedReason.SUFFIX: FileError.not_a_md_file,
+            ConfinedReason.OUTSIDE: FileError.not_under_the_workdir,
+            ConfinedReason.REPLACED: FileError.replaced,
+            ConfinedReason.TOO_LARGE: lambda: FileError.over_bytes(MAX_FILE),
+        }
+        raise reasons[error.reason]() from None
 
 
 def _url(ctx, url):

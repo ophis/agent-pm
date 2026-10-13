@@ -1,9 +1,7 @@
-import fcntl
 import json
 import os
 import shutil
 import tempfile
-from unittest import mock
 
 from agent_pm.linear_orchestrator.linear import linear, writeback
 from orchestrator_tests.case import Case
@@ -23,24 +21,8 @@ from orchestrator_tests.unit.writeback.data import (
 from orchestrator_tests.unit.writeback.fakes import Gql
 
 
-class ProcFcntl:
-    # fcntl.F_GETPATH is macOS's: on Linux (CI) writeback's fd path comes from /proc
-    F_GETPATH = None
-
-    @staticmethod
-    def fcntl(fd, _cmd, _arg):
-        return os.fsencode(os.readlink(f"/proc/self/fd/{fd}"))
-
-
 class Base(Case):
     def setUp(self):
-        if not hasattr(fcntl, "F_GETPATH"):
-            patch = mock.patch.object(fcntl, "fcntl", ProcFcntl.fcntl)
-            flag = mock.patch.object(fcntl, "F_GETPATH", ProcFcntl.F_GETPATH, create=True)
-            flag.start()
-            self.addCleanup(flag.stop)
-            patch.start()
-            self.addCleanup(patch.stop)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
         linear.use_logs(os.path.join(self.tmp, "logs"))

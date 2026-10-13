@@ -318,6 +318,10 @@ class FileError(ValueError):
     def not_under_the_workdir(cls):
         return cls("not under the workdir")
 
+    @classmethod
+    def replaced(cls):
+        return cls("file changed while reading")
+
 
 class TuiError(ValueError):
     @classmethod
