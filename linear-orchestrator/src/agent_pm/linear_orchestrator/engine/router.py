@@ -2,8 +2,7 @@
 the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
 Driver session).
 
-python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake
-ROLE
+python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
 (no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
