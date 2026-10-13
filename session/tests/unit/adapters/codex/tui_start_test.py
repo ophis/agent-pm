@@ -202,7 +202,7 @@ class StartTest(Base):
         proc = mock.Mock()
         proc.stdout.fileno.return_value = 42
         with (
-            mock.patch.object(tui_start.app_server.subprocess, "Popen", return_value=proc) as popen,
+            mock.patch.object(subprocess, "Popen", return_value=proc) as popen,
             mock.patch("select.select", return_value=([42], [], [])),
             mock.patch(
                 "os.read",
@@ -277,7 +277,7 @@ class StartTest(Base):
             )
 
     def test_bad_launch_data_does_not_spawn(self):
-        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
+        with mock.patch.object(subprocess, "Popen") as proc:
             for data in ("null", "not-json", "{}"):
                 with self.assertRaises(tui_start.StartError):
                     tui_start.main([data])
@@ -372,7 +372,7 @@ class ProtectTest(Base):
 
     def test_bad_protect_launch_data_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
-        with mock.patch.object(tui_start.app_server.subprocess, "Popen") as proc:
+        with mock.patch.object(subprocess, "Popen") as proc:
             for key in ("protect", "add_dirs"):
                 for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
                     with (

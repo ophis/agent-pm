@@ -5,6 +5,7 @@ import dataclasses
 import json
 import os
 import queue
+import select as select_module
 import signal
 import stat
 import subprocess
@@ -996,7 +997,7 @@ class HookTrustIntegrationTest(Live):
         env = {**dict(os.environ), **launch.env}
         clock, select, wait = (
             time.monotonic,
-            tui_start.app_server.select.select,
+            select_module.select,
             subprocess.Popen.wait,
         )
         started = clock()
@@ -1009,7 +1010,7 @@ class HookTrustIntegrationTest(Live):
                 ),
             ),
             mock.patch.object(
-                tui_start.app_server.select,
+                select_module,
                 "select",
                 side_effect=lambda r, w, e, t: select(r, w, e, min(t, 0.01)),
             ),
