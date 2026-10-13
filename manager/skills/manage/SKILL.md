@@ -1,12 +1,27 @@
 ---
 name: manage
-description: "Your guidelines for this session as the commander of workers, role runs and sub-agents; run it in your commander session (e.g. ctmux's)."
+description: "Coordinate work in this commander session."
 disable-model-invocation: true
 ---
 
 # manage
 
-For the rest of this session you are the commander: you coordinate, and workers, role runs and sub-agents do the work. Workers and role runs: `/agent-pm:tmux`; a role run in this conversation: `/agent-pm:act-as`.
+For the rest of this session you are the commander: coordinate work through Crew and sub-agents. Crew commands below; a role run in this conversation: `/agent-pm:act-as`. Terms: `CONTEXT.md`.
+
+## Crew commands
+
+Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. When using `ctmux`, run the holder wrapper inside its manager terminal; `ctmux` provides terminal setup. Choose the manager command and each launch command yourself.
+
+| Command | Use |
+|---|---|
+| `agent-pm-crew hold --manager NAME -- <manager argv>` | Start the commander under a lifetime lease. Keep the wrapper running until the manager command exits. The user's forced takeover fences a hung holder's authority while its command may keep running; see `hold --help`. |
+| `agent-pm-crew run NAME -- <argv>` | Launch the chosen command and record its returned Record. Configure its layer's options; runtime policy: `README.md` › Runtime policy. |
+| `agent-pm-crew attach` | Reconcile entries, read events and show available work. It checks the holder lease. |
+| `agent-pm-crew resume NAME` | Recover one `gone` entry through its recorded resume command. |
+| `agent-pm-crew release` | Hand over: stop listening and release authority. The successor starts a new holder, then attaches. |
+| `agent-pm-crew stop NAME` | Close the entry's work and remove its bookkeeping. |
+| `agent-pm-crew stop-all` | On the user's instruction to stop everything, close recorded work and matching display orphans. |
+| `agent-pm-crew forget NAME --force` | Repair bookkeeping when its controller is unavailable, without calling it. Work may remain alive. Ordinary `forget` requires confirmed inactivity; failed status leaves liveness unknown. |
 
 ## The user
 
@@ -32,10 +47,8 @@ For the rest of this session you are the commander: you coordinate, and workers,
 - Message a worker with the text alone, no sender label.
 - Before sending text to a worker, read its pane: if a sub-agent's view is selected (input box `Message @<agent>…`), the text goes to that sub-agent, not the worker. Send only from the main view, then confirm it reached the worker's transcript.
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
-- Once a worker's work is done and nothing in its pane awaits the user's review or answer (including an open PR the user hasn't reviewed), stop it: this is the user's standing say-so for `/agent-pm:tmux` › Direct › Stop, the only way to close its pane.
-- The user saying to stop everything: `/agent-pm:tmux` › Direct › Stop all.
-- Hand-over to another commander: you stop listening and run `agent-pm-crew release`; the one taking over attaches (`/agent-pm:tmux` › Start).
-- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir (an ad-hoc run's: `/agent-pm:tmux` › Role runs, step 2): `git worktree remove` its worktrees, then delete the rest of `src/` and its temp files; keep the logs (`run.jsonl`, transcripts).
+- Once a worker's work is done and nothing in its main view awaits the user's review or answer (including an open PR the user hasn't reviewed), the user's standing permission authorizes stopping its Crew entry (Crew commands).
+- Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir: `git worktree remove` its worktrees, then clean the remaining `src/` and temp files per Safety; keep the logs (`run.jsonl`, transcripts).
 - Pull the default branch only while `tmux ls` shows no `agent-pm-*` driver session: a scheduled router may have started one.
 
 ## Babysitting
