@@ -15,7 +15,7 @@ from contextlib import redirect_stderr, suppress
 from agent_pm.session.hosts.tmux import grids, tmux_host
 from agent_pm.session.hosts.tmux.model import types as tmux_model
 
-from session.tests.unit.tmux.fixtures import TileFixture
+from session.tests.unit.tmux.fixtures import GridSnapshot, TileFixture
 from session.tests.unit.tmux.support import (
     PY,
     SCRIPT,
@@ -32,10 +32,10 @@ from session.tests.unit.tmux.support import (
 class TileCoordinationTest(TileFixture):
     def test_a_hook_run_returns_at_once_while_another_tile_holds_the_lock(self):
         release = hold(self, self.lock)
-        fake = self.tile(*self.WIDE, wait=False)
+        fake = self.tile(GridSnapshot(*self.WIDE), wait=False)
         self.assertEqual(fake.calls, [self.SOCKET])
         release()
-        fake = self.tile(*self.WIDE, wait=False)
+        fake = self.tile(GridSnapshot(*self.WIDE), wait=False)
         self.assertEqual(
             fake.calls,
             [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
@@ -43,7 +43,7 @@ class TileCoordinationTest(TileFixture):
 
     def test_an_explicit_tile_waits_for_the_lock_then_tiles(self):
         release = hold(self, self.lock)
-        fake, seen = self.fake(*self.WIDE), []
+        fake, seen = self.fake(GridSnapshot(*self.WIDE)), []
 
         def poll(sleeps):
             seen.append(list(fake.calls))
@@ -69,7 +69,7 @@ class TileCoordinationTest(TileFixture):
         self.assertEqual((tmux_model.TILE_POLL, tmux_model.TILE_WAIT), (0.05, 5))
         hold(self, self.lock)
         slept = clock(self)
-        fake = self.fake(*self.WIDE)
+        fake = self.fake(GridSnapshot(*self.WIDE))
         with self.assertRaisesRegex(tmux_host.TuiError, "^grid @3: busy$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
@@ -79,16 +79,16 @@ class TileCoordinationTest(TileFixture):
     def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
         os.symlink(self.sock + "-target", self.lock)
         want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.ELOOP)}$"
-        fake = self.fake(*self.WIDE)
+        fake = self.fake(GridSnapshot(*self.WIDE))
         with self.assertRaisesRegex(tmux_host.TuiError, want):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
-        fake = self.fake(*self.WIDE)
+        fake = self.fake(GridSnapshot(*self.WIDE))
         with (
             unittest.mock.patch.object(sys, "executable", PY),
         ):
             self.assertRegex(
-                grids._grid_up(
+                grids.open_grid(
                     "@3",
                     "%0",
                     tmux_host.GridSettings(per_column=3, retile="all"),
@@ -107,7 +107,7 @@ class TileCoordinationTest(TileFixture):
         os.chdir(cwd.name)
         for sock in ("", "default"):
             with self.subTest(sock=sock):
-                fake = self.fake(*self.WIDE, sock=sock)
+                fake = self.fake(GridSnapshot(*self.WIDE, sock=sock))
                 with self.assertRaisesRegex(
                     tmux_host.TuiError,
                     f"^grid @3: socket path {re.escape(repr(sock))}: want an absolute path$",
@@ -119,7 +119,7 @@ class TileCoordinationTest(TileFixture):
     def test_a_fifo_at_the_lock_path_does_not_hang(self):
         os.mkfifo(self.lock, 0o600)
         with deadline(), suppress(tmux_host.TuiError):  # flock on a FIFO: ENOTSUP on macOS
-            self.tile(*self.WIDE)
+            self.tile(GridSnapshot(*self.WIDE))
 
     def test_grid_tiles_keeps_the_re_tiles_of_the_last_tile_window_then_adds_now(self):
         # now 1000000 ms: the window is 990001..1000000; junk, stale and future times are dropped
@@ -144,22 +144,27 @@ class TileCoordinationTest(TileFixture):
                 "999999\t1000000",
             ]
         )
-        fake = self.tile(*self.WIDE, tiles=tiles)
+        fake = self.tile(GridSnapshot(*self.WIDE, tiles=tiles))
         self.assertEqual(
             fake.calls[4:], self.applied(self.WIDE_SENT, "990001 999998 999999 1000000 1000000")
         )
-        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3, tiles=tiles)
+        fake = self.tile(GridSnapshot(self.THREE, ["%0", "%1", "%2", "%3"], self.W3, tiles=tiles))
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
         self.assertEqual((tmux_model.TILE_LIMIT, tmux_model.TILE_WINDOW), (50, 10))
-        line = "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next worker that opens rebuilds it"
+        line = (
+            "tui: grid @3: auto re-tiling stopped: 51 re-tiles in 10 s; the next "
+            "worker that opens rebuilds it"
+        )
         recent = [str(990001 + i * 199) for i in range(50)]
         for message in ((0,), (1, "", "no client\n"), OSError("gone")):
             with self.subTest(message=message):
                 err = io.StringIO()
                 with redirect_stderr(err):
-                    fake = self.tile(*self.WIDE, tiles=" ".join(recent), message=message)
+                    fake = self.tile(
+                        GridSnapshot(*self.WIDE, tiles=" ".join(recent)), message=message
+                    )
                 self.assertEqual(
                     fake.calls,
                     [
@@ -172,7 +177,7 @@ class TileCoordinationTest(TileFixture):
                     ],
                 )
                 self.assertEqual(err.getvalue(), line + "\n")
-        fake = self.tile(*self.WIDE, tiles=" ".join(recent[1:]))
+        fake = self.tile(GridSnapshot(*self.WIDE, tiles=" ".join(recent[1:])))
         self.assertEqual(
             fake.calls[4:], self.applied(self.WIDE_SENT, " ".join([*recent[1:], "1000000"]))
         )
@@ -180,7 +185,7 @@ class TileCoordinationTest(TileFixture):
     def test_after_a_teardown_grid_up_under_off_sets_no_hook(self):
         recent = " ".join(str(990001 + i * 199) for i in range(50))
         with redirect_stderr(io.StringIO()):
-            fake = self.tile(*self.WIDE, tiles=recent)
+            fake = self.tile(GridSnapshot(*self.WIDE, tiles=recent))
         self.assertEqual(fake.calls[4], self.TEARDOWN)
         del fake.calls[:]
         with (
@@ -188,7 +193,7 @@ class TileCoordinationTest(TileFixture):
             contextlib.nullcontext(unittest.mock.Mock()) as tile,
         ):
             self.assertIsNone(
-                grids._grid_up(
+                grids.open_grid(
                     "@3",
                     "%0",
                     tmux_host.GridSettings(per_column=3, retile="off"),
@@ -216,13 +221,13 @@ class TileCoordinationTest(TileFixture):
         # a failed re-tile: @grid-busy unset all the same, its failure not masking the re-tile's;
         # the lock freed
         fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
-        fake = self.fake(*self.WIDE, **fail)
+        fake = self.fake(GridSnapshot(*self.WIDE), **fail)
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             tmux_host.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with grids._grid_lock(self.sock, "@3", wait=False) as held:
+        with grids.grid_lock(self.sock, "@3", wait=False) as held:
             self.assertTrue(held)
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
-            self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
+            self.tile(GridSnapshot(dump("160x48,0,0,0"), ["%0"]), fail=("set-hook",))
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
             tmux_host.tile("@3", proc=Tmux(fail=("display-message",)))

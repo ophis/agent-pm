@@ -60,7 +60,12 @@ class HandleTest(Base):
         handle = self.start(spec=self.spec(access=Access(cwd=cwd, project=True)), sid="s1")
         self.assertEqual((handle.sid, handle.runtime, handle.mode), ("s1", "fake", "headless"))
         info = SessionInfo(
-            "s1", "", cwd, True, os.path.join(self.workdir, "fake-s1.jsonl"), "fake --resume s1"
+            sid="s1",
+            native_id="",
+            cwd=cwd,
+            project=True,
+            transcript=os.path.join(self.workdir, "fake-s1.jsonl"),
+            resume="fake --resume s1",
         )
         self.assertEqual(handle.info(), info)
         self.assertIsNone(handle.reply)
@@ -288,7 +293,7 @@ class InProcessTest(Base):
 
 
 class ModeTest(Case):
-    def test_the_protocols_methods_and_the_headless_and_in_process_modes_have_each_with_its_parameters(
+    def test_headless_and_in_process_modes_implement_protocol_signatures(
         self,
     ):
         def params(function):

@@ -57,7 +57,14 @@ class HandleOverAModeTest(Case):
             "tui",
             Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
             state=HandleState(
-                info=SessionInfo("s1", native_id, self.dir, False, "", ""),
+                info=SessionInfo(
+                    sid="s1",
+                    native_id=native_id,
+                    cwd=self.dir,
+                    project=False,
+                    transcript="",
+                    resume="",
+                ),
                 idle_timeout=idle_timeout,
             ),
             services=HandleServices(host=self.mode, **kwargs),
@@ -107,9 +114,11 @@ class HandleOverAModeTest(Case):
     def test_binding_record_failure_remains_fatal(self):
         adapter = fake_adapter.FakeAdapter({})
         handle = self.handle((0, [SessionBound("n1")], True), adapter=adapter)
-        with mock.patch("os.open", side_effect=OSError("binding failed")):
-            with self.assertRaisesRegex(OSError, "binding failed"):
-                self.events(handle)
+        with (
+            mock.patch("os.open", side_effect=OSError("binding failed")),
+            self.assertRaisesRegex(OSError, "binding failed"),
+        ):
+            self.events(handle)
         self.assertIn(("stop",), self.mode.calls)
         self.assertEqual(handle.info().native_id, "")
 
@@ -120,7 +129,12 @@ class HandleOverAModeTest(Case):
         )
         handle = self.handle((0, [SessionBound("n1")], True), adapter=adapter)
         self.events(handle)
-        self.assertEqual(handle.info(), SessionInfo("s1", "n1", self.dir, False, "/t", ""))
+        self.assertEqual(
+            handle.info(),
+            SessionInfo(
+                sid="s1", native_id="n1", cwd=self.dir, project=False, transcript="/t", resume=""
+            ),
+        )
 
     def test_events_in_order_the_modes_exited_dropped_exited_last_in_poll_slices(self):
         handle = self.handle(
@@ -171,9 +185,11 @@ class HandleOverAModeTest(Case):
 
     def test_an_exception_from_the_mode_stops_it_then_propagates(self):
         handle = self.handle()
-        with mock.patch.object(self.mode, "poll", side_effect=RuntimeError("boom")):
-            with self.assertRaisesRegex(RuntimeError, "boom"):
-                self.events(handle)
+        with (
+            mock.patch.object(self.mode, "poll", side_effect=RuntimeError("boom")),
+            self.assertRaisesRegex(RuntimeError, "boom"),
+        ):
+            self.events(handle)
         self.assertEqual(self.mode.calls, [("stop",)])
         self.assertEqual(self.events(handle), [])
 
@@ -385,8 +401,10 @@ class WritableDirsTest(Base):
             dirs.assert_not_called()
 
     def test_an_os_error_from_the_adapter_is_a_config_error(self):
-        with self.dirs(side_effect=PermissionError(13, "denied")):
-            with self.assertRaises(ConfigError) as caught:
-                self.driver.writable_dirs("probe", self.spec())
+        with (
+            self.dirs(side_effect=PermissionError(13, "denied")),
+            self.assertRaises(ConfigError) as caught,
+        ):
+            self.driver.writable_dirs("probe", self.spec())
         self.assertEqual(str(caught.exception), "probe's writable dirs: [Errno 13] denied")
         self.assertIsInstance(caught.exception.__cause__, PermissionError)

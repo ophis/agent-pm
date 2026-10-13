@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr
+from dataclasses import dataclass
 
 from agent_pm.session.hosts.tmux import tmux_host
 
@@ -16,8 +17,43 @@ from session.tests.unit.tmux.support import (
     Tmux,
     clock,
     environ,
+    grid_set,
+    record,
     which,
 )
+
+
+@dataclass(frozen=True)
+class GridSnapshot:
+    layout: str
+    panes: tuple | list
+    rows: tuple | list = ()
+    manager: str = "%0"
+    n: str = ""
+    zoomed: str = "0"
+    size: tuple = (160, 48)
+    tiles: str = ""
+    sock: str | None = None
+    recorded: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class GridOpening:
+    window: str = "@1"
+    manager: str = "%3"
+    opener: str = "mgr"
+    n: int = 3
+    retile: str = "all"
+    hooks: bool = True
+
+
+def opening_commands(facts: GridOpening | None = None):
+    facts = facts or GridOpening()
+    return [
+        *record(facts.opener, "%20"),
+        grid_set(facts.window, facts.manager, facts.n, hooks=facts.hooks, retile=facts.retile),
+        *([] if facts.retile == "off" else [["tile", facts.window, facts.n]]),
+    ]
 
 
 class StartFixture(Case):
@@ -90,8 +126,11 @@ class TileFixture(Case):
         "-p",
         "-t",
         "@3",
-        "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t#{@grid-manager}\t"
-        "#{@grid-per-column}\t#{@grid-panes}\t#{@grid-tiles}",
+        (
+            "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t"
+            "#{window_layout}\t#{@grid-manager}\t#{@grid-per-column}\t"
+            "#{@grid-panes}\t#{@grid-tiles}"
+        ),
     ]
 
     PANES = ["tmux", "list-panes", "-t", "@3", "-F", "#{pane_id}"]
@@ -182,26 +221,23 @@ class TileFixture(Case):
         self.lock = self.sock + "-3.lock"
         clock(self)
 
-    def fake(
-        self,
-        layout,
-        panes,
-        rows=(),
-        manager="%0",
-        n="",
-        zoomed="0",
-        size=(160, 48),
-        fail=(),
-        tiles="",
-        message=(0,),
-        sock=None,
-        recorded=None,
-        **results,
-    ):
+    def fake(self, snapshot: GridSnapshot, *, fail=(), message=(0,), **results):
         """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the result
         of another display-message; rows: (session id, name, @opener, @pane) besides mgr's;
         recorded: @grid-panes (None: panes' pane set, kept as self.set).
         """
+        layout, panes, rows, manager, n, zoomed, size, tiles, sock, recorded = (
+            snapshot.layout,
+            snapshot.panes,
+            snapshot.rows,
+            snapshot.manager,
+            snapshot.n,
+            snapshot.zoomed,
+            snapshot.size,
+            snapshot.tiles,
+            snapshot.sock,
+            snapshot.recorded,
+        )
         rows = [("$1", "mgr", "", ""), *rows]
         self.set = " ".join(sorted(panes, key=lambda p: int(p[1:])))
         recorded = self.set if recorded is None else recorded
@@ -222,9 +258,11 @@ class TileFixture(Case):
             },
         )
 
-    def tile(self, *args, per_column=None, wait=True, if_panes_changed=False, **kw):
+    def tile(
+        self, snapshot: GridSnapshot, *, per_column=None, wait=True, if_panes_changed=False, **kw
+    ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
-        fake = self.fake(*args, **kw)
+        fake = self.fake(snapshot, **kw)
         tmux_host.tile(
             "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake
         )

@@ -168,7 +168,7 @@ class DetachTest(StartFixture):
                 with self.assertRaisesRegex(tmux_host.TuiError, r"^session d did not start$"):
                     self.detach(fake)
                 self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
-                self.assertIs(fake.dir_at_kill, False)
+                self.assertIs(fake.dir_at_kill, expr2=False)
                 self.assertAlmostEqual(
                     sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
                 )
@@ -206,14 +206,14 @@ class DetachTest(StartFixture):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_an_interrupt_after_new_session_kills_the_session(self):
-        def interrupt(*args, **kw):
+        def interrupt(*_args, **_kw):
             raise KeyboardInterrupt
 
         fake, self.sleep = Tmux(hand_over=False), interrupt
         with self.assertRaises(KeyboardInterrupt):
             self.detach(fake)
         self.assertEqual(fake.commands(), ["new-session", "kill-session"])
-        self.assertIs(fake.dir_at_kill, False)
+        self.assertIs(fake.dir_at_kill, expr2=False)
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_refused_before_tmux(self):
@@ -385,7 +385,11 @@ class ExecTest(Case):
         self.assertTrue(os.path.exists(self.path))
 
     def test_block_signals_stay_blocked_in_argv(self):
-        code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
+        code = (
+            "import json, signal; "
+            "print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, "
+            "[]))))"
+        )
         for extra, want in (
             ({}, set()),
             ({"block": [signal.SIGHUP, signal.SIGTERM]}, {signal.SIGHUP, signal.SIGTERM}),

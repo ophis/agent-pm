@@ -18,8 +18,8 @@ class GridTreeTest(Case):
         if layout is None:
             layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
         else:
-            layout = tmux_layout._parse_layout(layout)
-        return tmux_layout._grid_tree("%0", panes, [self.MGR, *rows], layout)
+            layout = tmux_layout.parse_layout(layout)
+        return tmux_layout.grid_tree("%0", panes, [self.MGR, *rows], layout)
 
     def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = [
@@ -133,15 +133,19 @@ class GridTreeTest(Case):
             (
                 cycle,
                 ["%0", "%1", "%2", "%3", "%4"],
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39x12,121,0,3,39x11,121,13,4]},"
-                "80x23,80,25,2]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39"
+                    "x12,121,0,3,39x11,121,13,4]},80x23,80,25,2]}"
+                ),
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2")],
             ),
             (
                 [*cycle, (6, "x", "a", "%5")],
                 ["%0", "%1", "%2", "%3", "%4", "%5"],
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39x8,121,0,3,39x7,121,9,4]},"
-                "80x15,80,17,1,80x15,80,33,2]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39"
+                    "x8,121,0,3,39x7,121,9,4]},80x15,80,17,1,80x15,80,33,2]}"
+                ),
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2"), slot("%5")],
             ),
         ):
@@ -154,7 +158,10 @@ class GridTreeTest(Case):
             # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
             (
                 "main cell",
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,80x7,80,25,5],80x15,80,33,3]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17[80x7,80,17,4,"
+                    "80x7,80,25,5],80x15,80,33,3]}"
+                ),
                 [
                     (2, "w1", "mgr", "%1"),
                     (4, "w3", "mgr", "%3"),
@@ -167,7 +174,10 @@ class GridTreeTest(Case):
             # pm-1 (with a %4 and b %5) killed, its orphans' cell last
             (
                 "place by name",
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33[80x7,80,33,4,80x7,80,41,5]]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17,3,80x15,80,33"
+                    "[80x7,80,33,4,80x7,80,41,5]]}"
+                ),
                 [
                     (2, "engineer-1", "mgr", "%1"),
                     (4, "researcher-1", "mgr", "%3"),
@@ -180,8 +190,10 @@ class GridTreeTest(Case):
             # w1 (%1) has children c (%2, killed; its children a %4, b %5) and d (%3)
             (
                 "sub cell",
-                "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,4,"
-                "39x11,121,13,5],39x23,121,25,3]}}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[3"
+                    "9x12,121,0,4,39x11,121,13,5],39x23,121,25,3]}}"
+                ),
                 [
                     (2, "w1", "mgr", "%1"),
                     (4, "d", "w1", "%3"),
@@ -195,8 +207,10 @@ class GridTreeTest(Case):
             # cell
             (
                 "skipping a manual pane's cell",
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9,39x15,121,17[39x7,121,17,4,"
-                "39x7,121,25,5]},80x15,80,33,3]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,9"
+                    ",39x15,121,17[39x7,121,17,4,39x7,121,25,5]},80x15,80,33,3]}"
+                ),
                 [
                     (2, "w1", "mgr", "%1"),
                     (4, "w3", "mgr", "%3"),
@@ -221,7 +235,7 @@ class GridTreeTest(Case):
         ]
         orphans = slot(None, slot("%3"), slot("%4"))
         for layout in (
-            tmux_layout._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+            tmux_layout.render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
             "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
             "39x11,121,13,4],39x23,121,25,5]}}",
         ):
@@ -235,7 +249,7 @@ class GridTreeTest(Case):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved
         # first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
-        layout = tmux_layout._render_layout(grid([slot("%1"), *groups], 1))
+        layout = tmux_layout.render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [
@@ -261,6 +275,6 @@ class GridTreeTest(Case):
                 layout = grid([slot(p) for p in panes[1:]], per_column)
                 rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
                 self.assertEqual(
-                    self.tree(rows, panes, tmux_layout._render_layout(layout)),
+                    self.tree(rows, panes, tmux_layout.render_layout(layout)),
                     [slot(p) for p in panes[1:]],
                 )

@@ -82,19 +82,27 @@ class GridLayoutTest(Case):
             (
                 3,
                 4,
-                "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,40x15,80,33,3],"
-                "39x48,121,0,4}}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x16,80,0,1,40x15,80,17,2,"
+                    "40x15,80,33,3],39x48,121,0,4}}"
+                ),
             ),
             (
                 3,
                 7,
-                "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,26x15,80,33,3],"
-                "26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],26x48,134,0,7}}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{26x48,80,0[26x16,80,0,1,26x15,80,17,2,"
+                    "26x15,80,33,3],26x48,107,0[26x16,107,0,4,26x15,107,17,5,26x15,107,33,6],"
+                    "26x48,134,0,7}}"
+                ),
             ),
             (
                 2,
                 3,
-                "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2],39x48,121,0,3}}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0[40x24,80,0,1,40x23,80,25,2]"
+                    ",39x48,121,0,3}}"
+                ),
             ),
         ):
             with self.subTest(per_column=per_column, n=n):
@@ -155,8 +163,11 @@ class GridLayoutTest(Case):
             (
                 "a grandchild halves the child's cell",
                 [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")],
-                "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2,"
-                "39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},80x15,80,33,5]}",
+                (
+                    "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0,1,80x15,80,17{40x15,80,17,2"
+                    ",39x15,121,17[39x7,121,17{19x7,121,17,3,19x7,141,17,6},39x7,121,25,4]},8"
+                    "0x15,80,33,5]}"
+                ),
             ),
             (
                 "an orphan group stacks full width",
@@ -185,7 +196,7 @@ class GridLayoutTest(Case):
             [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")]
         )
         self.assertEqual(
-            [leaf.pane for leaf in tmux_layout._leaves(root)],
+            [leaf.pane for leaf in tmux_layout.layout_leaves(root)],
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
 
@@ -195,7 +206,7 @@ class SwapsTest(Case):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
             with self.subTest(want=want):
-                swaps = tmux_layout._swaps(have, list(want))
+                swaps = tmux_layout.pane_swaps(have, list(want))
                 order = list(have)
                 for source, target in swaps:
                     i, j = order.index(source), order.index(target)
@@ -214,7 +225,7 @@ class LayoutStringTest(Case):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
-            self.assertEqual(tmux_layout._checksum(text), csum)
+            self.assertEqual(tmux_layout.layout_checksum(text), csum)
 
     def test_parse(self):
         Cell, lr, tb = tmux_host.Cell, tmux_model.LEFT_RIGHT, tmux_model.TOP_BOTTOM
@@ -236,12 +247,12 @@ class LayoutStringTest(Case):
                 ),
             ),
         )
-        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL), want)
-        self.assertEqual(tmux_layout._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+        self.assertEqual(tmux_layout.parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(tmux_layout.parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
 
     def test_round_trip(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            self.assertEqual(tmux_layout._render_layout(tmux_layout._parse_layout(sample)), sample)
+            self.assertEqual(tmux_layout.render_layout(tmux_layout.parse_layout(sample)), sample)
 
     def test_malformed(self):
         text = MAIN_VERTICAL.split(",", 1)[1]
@@ -262,7 +273,7 @@ class LayoutStringTest(Case):
             "160x48,0,0,1\n",
         ):
             with self.subTest(bad=bad):
-                self.assertIsNone(tmux_layout._parse_layout(bad))
+                self.assertIsNone(tmux_layout.parse_layout(bad))
 
 
 class ContainerTest(Case):

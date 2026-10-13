@@ -37,12 +37,72 @@ class SessionsTest(TuiBase):
         self.assertEqual(
             self.driver.sessions(),
             [
-                row("mgr", None, None, "working", None, None, None, None, True),
-                row("w1", SID, "fake", "done", "%3", "mgr", "m", None, False),
-                row("w2", None, None, "blocked", None, None, "", None, False),
-                row("w3", None, None, "working", None, None, None, None, False),
-                row("w4", None, "fake", "dead", None, None, None, "bye", False),
-                row("w5", None, "fake9_", "working", None, None, None, None, False),
+                row(
+                    name="mgr",
+                    sid=None,
+                    runtime=None,
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=True,
+                ),
+                row(
+                    name="w1",
+                    sid=SID,
+                    runtime="fake",
+                    state="done",
+                    pane="%3",
+                    opener="mgr",
+                    shown="m",
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w2",
+                    sid=None,
+                    runtime=None,
+                    state="blocked",
+                    pane=None,
+                    opener=None,
+                    shown="",
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w3",
+                    sid=None,
+                    runtime=None,
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w4",
+                    sid=None,
+                    runtime="fake",
+                    state="dead",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines="bye",
+                    own=False,
+                ),
+                row(
+                    name="w5",
+                    sid=None,
+                    runtime="fake9_",
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=False,
+                ),
             ],
         )
         self.assertEqual(self.host.mock_calls, [mock.call.listing(None), mock.call.own_session()])
@@ -87,7 +147,17 @@ class SessionsTest(TuiBase):
             [f.name for f in dataclasses.fields(SessionRow)],
             ["name", "sid", "runtime", "state", "pane", "opener", "shown", "last_lines", "own"],
         )
-        found = SessionRow("w1", None, None, "working", None, None, None, None, False)
+        found = SessionRow(
+            name="w1",
+            sid=None,
+            runtime=None,
+            state="working",
+            pane=None,
+            opener=None,
+            shown=None,
+            last_lines=None,
+            own=False,
+        )
         with self.assertRaises(dataclasses.FrozenInstanceError):
             found.state = "done"
 

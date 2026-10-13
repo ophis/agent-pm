@@ -29,7 +29,7 @@ from session.tests.unit.tmux.support import (
 
 
 class StartTest(StartFixture):
-    def test_new_session_runs_the_wrapper_keeps_a_dead_pane_decorated_in_the_same_call_opening_no_pane(
+    def test_start_runs_wrapper_decorates_dead_pane_without_opening_a_pane(
         self,
     ):
         # in tmux or iTerm2 all the same: start never shows the session
@@ -294,7 +294,7 @@ class StartTest(StartFixture):
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_an_interrupt_after_new_session_kills_the_session(self):
-        def interrupt(*args, **kw):
+        def interrupt(*_args, **_kw):
             raise KeyboardInterrupt
 
         fake = Tmux(hand_over=False)
@@ -302,12 +302,12 @@ class StartTest(StartFixture):
         with self.assertRaises(KeyboardInterrupt):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
-        self.assertIs(fake.dir_at_kill, False)
+        self.assertIs(fake.dir_at_kill, expr2=False)
         self.assertEqual(os.listdir(self.temp), [])
 
     def test_tmux_missing(self):
         # status: unknown; new-session: the error
-        def missing(argv, **kw):
+        def missing(_argv, **_kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")
 
         with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: "):
@@ -325,7 +325,7 @@ class StartTest(StartFixture):
                     fake.commands(), ["display-message", "new-session", "kill-session"]
                 )
                 self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
-                self.assertIs(fake.dir_at_kill, False)
+                self.assertIs(fake.dir_at_kill, expr2=False)
                 self.assertAlmostEqual(
                     sum(c.args[0] for c in self.sleep.call_args_list), tmux_model.HANDOVER_TIMEOUT
                 )

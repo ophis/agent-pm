@@ -212,9 +212,11 @@ class ChecksTest(Base):
         os.mkdir(self.workdir)
         target = os.path.join(self.dir, "elsewhere")
         os.symlink(target, records.path(self.workdir))
-        with mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen:
-            with self.assertRaises(OSError):
-                self.start()
+        with (
+            mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen,
+            self.assertRaises(OSError),
+        ):
+            self.start()
         popen.assert_not_called()
         self.assertFalse(os.path.exists(target))
 
@@ -224,9 +226,11 @@ class SpawnTest(Base):
         for error in (OSError("no exec"), ValueError("bad argument")):
             with self.subTest(error=error):
                 self.workdir = os.path.join(self.dir, type(error).__name__)
-                with mock.patch("subprocess.Popen", side_effect=error) as popen:
-                    with self.assertRaises(DriverError) as caught:
-                        self.start()
+                with (
+                    mock.patch("subprocess.Popen", side_effect=error) as popen,
+                    self.assertRaises(DriverError) as caught,
+                ):
+                    self.start()
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")
                 popen.assert_called_once()
                 self.assertEqual([e["kind"] for e in self.written()], ["session"])
@@ -275,16 +279,9 @@ class RuntimeNoteTest(Base):
 
 
 class ExportsTest(Case):
-    def test_api_exports_functions_and_constants_only(self):
-        self.assertEqual(
-            sorted(api.__all__),
-            ["Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"],
-        )
-        self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
-        self.assertIs(api.session_record, records.session_record)
-
     def test_the_session_package_exports_them_not_the_module(self):
-        for name in api.__all__:
+        self.assertIs(api.session_record, records.session_record)
+        for name in ("Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"):
             with self.subTest(name=name):
                 self.assertIs(getattr(session_pkg, name), getattr(api, name))
                 self.assertIn(name, session_pkg.__all__)

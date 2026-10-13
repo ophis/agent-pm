@@ -185,7 +185,9 @@ class CliTest(Case):
             ],
         )
         self.assertIn("--if-panes-changed", self.main("tile", "-h")[1])
-        tile.side_effect = lambda window, wait, if_panes_changed: real(window, wait=wait, proc=fake)
+        tile.side_effect = lambda window, wait, if_panes_changed: real(
+            window, wait=wait, if_panes_changed=if_panes_changed, proc=fake
+        )
         self.assertEqual(
             self.main("tile", "3"), (1, "", "tui: invalid window id '3': want @[0-9]+\n")
         )

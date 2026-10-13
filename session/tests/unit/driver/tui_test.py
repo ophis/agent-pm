@@ -8,7 +8,6 @@ import stat
 from unittest import mock
 
 from agent_pm.session.engine import records
-from agent_pm.session.engine.launch.types import _identity_drop
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -68,11 +67,11 @@ class TuiStartTest(TuiBase):
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
 
-        def status(name):
+        def status(_name):
             order.append(("status", os.path.exists(records.path(self.workdir))))
 
         self.host.status.side_effect = status
-        self.host.start.side_effect = lambda *a, **k: order.append(
+        self.host.start.side_effect = lambda *_a, **_k: order.append(
             ("start", [e["kind"] for e in self.written()])
         )
         handle = self.tui(name="w1", sid=SID, events=self.events)
@@ -84,7 +83,12 @@ class TuiStartTest(TuiBase):
         self.assertEqual(
             (handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui")
         )
-        self.assertEqual(handle.info(), SessionInfo(SID, "", self.workdir, False, "", ""))
+        self.assertEqual(
+            handle.info(),
+            SessionInfo(
+                sid=SID, native_id="", cwd=self.workdir, project=False, transcript="", resume=""
+            ),
+        )
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
@@ -125,7 +129,7 @@ class TuiStartTest(TuiBase):
     def test_the_names_lock_is_held_from_prepare_to_begin(self):
         held = []
 
-        def locked(*args, **kwargs):
+        def locked(*_args, **_kwargs):
             fd = os.open(os.path.join(self.root, "w1.lock"), os.O_RDONLY)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -198,7 +202,7 @@ class TuiStartTest(TuiBase):
     def test_the_status_line_is_the_tui_settings(self):
         self.configure(tui=True, settings={"status_line": True})
         self.tui(name="w1")
-        self.assertIs(self.host.start.call_args.kwargs["options"].status_line, True)
+        self.assertIs(self.host.start.call_args.kwargs["options"].status_line, expr2=True)
 
     def test_a_bad_tui_setting_is_refused_before_anything(self):
         self.configure(tui=True, settings={"status_line": "yes"})
@@ -278,7 +282,8 @@ class EnvironmentTest(TuiBase):
         ):
             with self.subTest(environ=environ):
                 self.environ(**environ)
-                self.assertEqual(set(environ) & _identity_drop(self.driver.registry), dropped)
+                child = self.env("codex-defaults")
+                self.assertEqual(set(environ) - set(child), dropped)
 
     def test_session_env_keys_need_no_adapter_allowlist(self):
         self.environ(KEEP="k")
@@ -345,7 +350,12 @@ class AttachTest(TuiBase):
             (handle.name, handle.sid, handle.runtime, handle.mode, handle.reply),
             ("w1", SID, "fake", "tui", "r1"),
         )
-        self.assertEqual(handle.info(), SessionInfo(SID, "n1", self.workdir, False, "", ""))
+        self.assertEqual(
+            handle.info(),
+            SessionInfo(
+                sid=SID, native_id="n1", cwd=self.workdir, project=False, transcript="", resume=""
+            ),
+        )
         self.assertEqual(
             self.host.mock_calls,
             [
@@ -365,7 +375,7 @@ class AttachTest(TuiBase):
         self.started(("tool", {"session_id": "n1"}))
         records.note(records.path(self.workdir), "result", outcome={"status": "done"})
 
-        def metadata(adapter, info):
+        def metadata(_adapter, info):
             self.assertEqual(info.native_id, "n1")
             return dataclasses.replace(info, transcript="/attached", resume="resume n1")
 
@@ -388,13 +398,15 @@ class AttachTest(TuiBase):
                 self.host.status.return_value = None
                 self.started(*hooked)
                 options = {"@sid": SID, "@state": state}
-                self.host.option.side_effect = lambda target, key, *, options=options: options[key]
+                self.host.option.side_effect = lambda _target, key, *, options=options: options[key]
                 self.host.status.return_value, self.host.read.return_value = tmux_host.RUNNING, ""
                 now = [0.0]
 
-                def sleep(seconds, *, now=now):
+                failure = AssertionError("no event")
+
+                def sleep(seconds, *, now=now, failure=failure):
                     if now[0] > 60:
-                        raise AssertionError("no event")
+                        raise failure
                     now[0] += seconds
                     if now[0] - seconds < 10 <= now[0]:
                         with open(hooks, "a") as f:
@@ -426,7 +438,7 @@ class AttachTest(TuiBase):
         self.started()
         for found in ("other", None):
             with self.subTest(found=found), self.assertRaises(DriverError) as caught:
-                self.host.option.side_effect = lambda name, key, *, found=found: found
+                self.host.option.side_effect = lambda _name, _key, *, found=found: found
                 self.driver.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
 

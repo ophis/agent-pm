@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -45,7 +46,7 @@ class BlankAdapter(fake_adapter.FakeAdapter):
 
 
 class BlankRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, request: SessionRequest):
+    def launch(self, _prompt, _request: SessionRequest):
         return Launch(())
 
 
@@ -55,8 +56,12 @@ class FailingAdapter(fake_adapter.FakeAdapter):
 
 
 class FailingRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, request: SessionRequest):
-        raise LookupError("no binding")
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.failure = LookupError("no binding")
+
+    def launch(self, _prompt, _request: SessionRequest):
+        raise self.failure
 
 
 class QuietAdapter(fake_adapter.FakeAdapter):
@@ -71,13 +76,17 @@ class CheckedAdapter(fake_adapter.InProcessFakeAdapter):
 class CheckedRun(fake_adapter.FakeInProcess):
     """check: refuses tier 4, records preflight, and retains the request for execution."""
 
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.failure = engine_types.ConfigError("tier 4 is unmapped")
+
     def check(self, request: SessionRequest):
         self.checked_request = request
         spec = request.spec
         resume = request.resumed
         LAUNCHED.append(spec)
         if spec.tier == 4:
-            raise engine_types.ConfigError("tier 4 is unmapped")
+            raise self.failure
         with open(self.adapter.config["log"], "a", encoding="utf-8") as f:
             f.write(
                 json.dumps(
@@ -253,6 +262,7 @@ class Base(Case):
             try:
                 found.extend(handle.events())
             except BaseException as e:
+                logging.exception("Driver test worker failed")
                 errors.append(e)
 
         thread = threading.Thread(target=run, daemon=True)
@@ -278,9 +288,11 @@ class Base(Case):
 
     def refused(self, error, message, call):
         """call() raises `error` with `message`, nothing started and no run record written."""
-        with mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen:
-            with self.assertRaises(error) as caught:
-                call()
+        with (
+            mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen,
+            self.assertRaises(error) as caught,
+        ):
+            call()
         self.assertEqual(str(caught.exception), message)
         popen.assert_not_called()
         self.assertFalse(os.path.exists(records.path(self.workdir)))
@@ -304,11 +316,12 @@ class StubMode:
 
     def __init__(self, clock, script, code):
         self.clock, self.script, self.code, self.calls = clock, list(script), code, []
+        self.failure = AssertionError("polled past the script")
 
     def poll(self, timeout):
         self.calls.append(("poll", timeout))
         if self.clock.now > self.LATE:
-            raise AssertionError("polled past the script")
+            raise self.failure
         if self.script and self.script[0][0] <= self.clock.now + timeout:
             at, events, ended = self.script.pop(0)
             self.clock.now = max(self.clock.now, at)

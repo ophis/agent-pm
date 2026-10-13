@@ -176,7 +176,7 @@ def grid_read(pane):
     return ["tmux", "list-panes", "-t", pane, "-F", GRID_PANES]
 
 
-def grid_set(window, manager, n=3, hooks=True, retile="all"):
+def grid_set(window, manager, n=3, *, hooks=True, retile="all"):
     """The one tmux call setting a grid window's options, unsetting @grid-busy, then per grid hook
     in order: with hooks, setting each of retile's MODE_HOOKS (each starts a no-wait tile unless
     @grid-busy is the window, under open-close only when the pane set changed); unsetting each other
@@ -235,7 +235,7 @@ def environ(**values):
     return unittest.mock.patch.dict(os.environ, values, clear=True)
 
 
-def clock(test, on_sleep=lambda n: None):
+def clock(test, on_sleep=lambda _n: None):
     """time.monotonic and time.sleep patched for test, the clock at 1000 s: a sleep advances it,
     then calls on_sleep(sleeps so far). Returns the slept seconds.
     """
@@ -261,14 +261,17 @@ def hold(test, path):
     return lambda: fcntl.flock(fd, fcntl.LOCK_UN)
 
 
+class DeadlineError(AssertionError):
+    def __init__(self, seconds):
+        super().__init__(f"still running after {seconds} s")
+
+
 @contextmanager
 def deadline(seconds=5):
-    """Fails a block still running after seconds (a blocked open is interrupted) instead of hanging."""
+    """Fail after the deadline, interrupting a blocked open."""
 
     def expire(*_):
-        raise AssertionError(
-            f"still running after {seconds} s"
-        )  # not an OSError, which _grid_lock makes a TuiError
+        raise DeadlineError(seconds)  # An OSError would become a TuiError.
 
     old = signal.signal(signal.SIGALRM, expire)
     signal.setitimer(signal.ITIMER_REAL, seconds)
@@ -315,7 +318,7 @@ def chained(calls):
 
 
 def panes(*rows):
-    """A list-panes result printing rows of (pane_dead, pane_tty, pane_id) in the call's -F format."""
+    """Print (pane_dead, pane_tty, pane_id) rows in the list-panes call's -F format."""
 
     def result(argv):
         fmt = argv[argv.index("-F") + 1]
@@ -339,7 +342,7 @@ class Tmux:
     `writer`).
     """
 
-    def __init__(self, pane=None, fail=(), hand_over=True, results=None, wrapper="exec"):
+    def __init__(self, pane=None, fail=(), *, hand_over=True, results=None, wrapper="exec"):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
         self.wrapper = wrapper
         self.calls, self.kwargs = [], []
@@ -368,22 +371,25 @@ class Tmux:
                 else done(argv, 0, self.pane + "\n")
             )
         if argv[1] == "new-session":
-            at = argv.index(tmux_host.EXEC)
-            self.path, self.fifo = argv[at + 1 : at + 3]
-            self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
-            self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
-            self.fifo_mode = os.stat(self.fifo).st_mode
-            with open(self.path) as f:
-                self.handover = json.load(f)
-            if self.hand_over:
-                self.writer = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
-                os.unlink(self.path)
-                if self.wrapper != "hang":
-                    if self.wrapper != "exec":
-                        data = self.wrapper
-                        os.write(self.writer, data if isinstance(data, bytes) else b"%d" % data)
-                    os.close(self.writer)
+            self.take_launch(argv)
         return done(argv)
+
+    def take_launch(self, argv):
+        at = argv.index(tmux_host.EXEC)
+        self.path, self.fifo = argv[at + 1 : at + 3]
+        self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
+        self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
+        self.fifo_mode = os.stat(self.fifo).st_mode
+        with open(self.path) as f:
+            self.handover = json.load(f)
+        if self.hand_over:
+            self.writer = os.open(self.fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.unlink(self.path)
+            if self.wrapper != "hang":
+                if self.wrapper != "exec":
+                    data = self.wrapper
+                    os.write(self.writer, data if isinstance(data, bytes) else b"%d" % data)
+                os.close(self.writer)
 
     def commands(self):
         return [c[1] if c[0] == "tmux" else c[0] for c in self.calls]
@@ -447,7 +453,7 @@ def row(name, **fields):
 def seq(*results):
     """A Tmux result giving each of results in turn."""
     it = iter(results)
-    return lambda argv: next(it)
+    return lambda _argv: next(it)
 
 
 def slot(pane, *children):
@@ -455,19 +461,19 @@ def slot(pane, *children):
 
 
 def body(cell):
-    return tmux_layout._render_layout(cell).split(",", 1)[1]
+    return tmux_layout.render_layout(cell).split(",", 1)[1]
 
 
 def dump(text):
     """A layout body as #{window_layout} prints it, with its checksum."""
-    return f"{tmux_layout._checksum(text)},{text}"
+    return f"{tmux_layout.layout_checksum(text)},{text}"
 
 
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
         cells = [slot(f"%{i}") for i in range(1, cells + 1)]
-    return tmux_layout._grid_layout(
+    return tmux_layout.grid_layout(
         cells,
         "%0",
         geometry=tmux_host.GridGeometry(

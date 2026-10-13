@@ -3,7 +3,7 @@
 from agent_pm.session.hosts.tmux import grids, tmux_host
 from agent_pm.session.hosts.tmux import layout as tmux_layout
 
-from session.tests.unit.tmux.fixtures import TileFixture
+from session.tests.unit.tmux.fixtures import GridSnapshot, TileFixture
 from session.tests.unit.tmux.support import (
     SESSIONS,
     dump,
@@ -17,8 +17,11 @@ class TileApplicationTest(TileFixture):
     def test_swaps_and_select_layout_sent_muted_then_unmuted(self):
         # manual pane %4, split from %1, follows it in pane index order; it goes last, in a second
         # column
-        layout = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
-        fake = self.tile(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3)
+        layout = (
+            "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,"
+            "17,2,80x15,80,33,3]}"
+        )
+        fake = self.tile(GridSnapshot(layout, ["%0", "%1", "%4", "%2", "%3"], self.W3))
         self.assertEqual(
             fake.calls,
             [
@@ -77,8 +80,8 @@ class TileApplicationTest(TileFixture):
         # the manager full width on top, a manual pane %1 below it split for w1 (%2): the manager
         # gets half
         layout = dump("160x48,0,0[160x24,0,0,0,160x11,0,25,1,160x11,0,37,2]")
-        fake = self.tile(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")])
-        want = tmux_layout._render_layout(grid([slot("%2"), slot("%1")]))
+        fake = self.tile(GridSnapshot(layout, ["%0", "%1", "%2"], [("$2", "w1", "mgr", "%2")]))
+        want = tmux_layout.render_layout(grid([slot("%2"), slot("%1")]))
         self.assertEqual(
             fake.calls[4:],
             self.applied(
@@ -103,7 +106,7 @@ class TileApplicationTest(TileFixture):
         )
 
     def test_no_op_when_the_layouts_cells_match(self):
-        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
+        fake = self.tile(GridSnapshot(self.THREE, ["%0", "%1", "%2", "%3"], self.W3))
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
         # the target's cells in another tree: a pass over the target would move them, but none
         # follows a no-op
@@ -111,14 +114,16 @@ class TileApplicationTest(TileFixture):
             "200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}"
         )
         rows = [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")]
-        fake = self.tile(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
+        fake = self.tile(
+            GridSnapshot(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
+        )
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_an_already_laid_out_window_records_its_pane_set_alone(self):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
         # --if-panes-changed tile skips a drag
         panes = ["%0", "%9", "%10"]
-        layout = tmux_layout._render_layout(grid([slot("%9"), slot("%10")]))
+        layout = tmux_layout.render_layout(grid([slot("%9"), slot("%10")]))
         record = ["tmux", "set-option", "-w", "-t", "@3", "@grid-panes", "%0 %9 %10"]
         for recorded in (
             "",
@@ -131,21 +136,23 @@ class TileApplicationTest(TileFixture):
         ):
             for flag in (False, True):
                 with self.subTest(recorded=recorded, if_panes_changed=flag):
-                    fake = self.tile(layout, panes, recorded=recorded, if_panes_changed=flag)
+                    fake = self.tile(
+                        GridSnapshot(layout, panes, recorded=recorded), if_panes_changed=flag
+                    )
                     self.assertEqual(
                         fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, record]
                     )
-        fake = self.tile(layout, panes)
+        fake = self.tile(GridSnapshot(layout, panes))
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
         with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: boom$"):
-            self.tile(layout, panes, recorded="", fail=("set-option",))
+            self.tile(GridSnapshot(layout, panes, recorded=""), fail=("set-option",))
 
     def test_if_panes_changed_skips_while_the_pane_set_is_the_recorded_one(self):
         # a drag or resize keeps the pane set: no pass, nothing sent; without the flag the drag
         # snaps back
-        fake = self.tile(*self.WIDE, if_panes_changed=True)
+        fake = self.tile(GridSnapshot(*self.WIDE), if_panes_changed=True)
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
-        fake = self.tile(*self.WIDE)
+        fake = self.tile(GridSnapshot(*self.WIDE))
         self.assertEqual(
             fake.calls,
             [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
@@ -154,7 +161,7 @@ class TileApplicationTest(TileFixture):
         # new set
         for recorded in ("", "%0 %1", "%0 %1 %2 %3", "%0 %2 %1", "%0 %1 %2;", "%0 %1 %2\x00", "x"):
             with self.subTest(recorded=recorded):
-                fake = self.tile(*self.WIDE, if_panes_changed=True, recorded=recorded)
+                fake = self.tile(GridSnapshot(*self.WIDE, recorded=recorded), if_panes_changed=True)
                 self.assertEqual(
                     fake.calls,
                     [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
@@ -162,10 +169,10 @@ class TileApplicationTest(TileFixture):
 
     def test_if_panes_changed_reads_only_holding_the_lock(self):
         release = hold(self, self.lock)
-        fake = self.tile(*self.WIDE, wait=False, if_panes_changed=True, recorded="")
+        fake = self.tile(GridSnapshot(*self.WIDE, recorded=""), wait=False, if_panes_changed=True)
         self.assertEqual(fake.calls, [self.SOCKET])
         release()
-        fake = self.tile(*self.WIDE, wait=False, if_panes_changed=True, recorded="")
+        fake = self.tile(GridSnapshot(*self.WIDE, recorded=""), wait=False, if_panes_changed=True)
         self.assertEqual(
             fake.calls,
             [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
@@ -174,18 +181,21 @@ class TileApplicationTest(TileFixture):
     def test_if_panes_changed_zoomed_no_grid_or_torn_down_records_nothing(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
             with self.subTest(**kw):
-                fake = self.tile(*self.WIDE, if_panes_changed=True, recorded="", **kw)
+                fake = self.tile(GridSnapshot(*self.WIDE, recorded="", **kw), if_panes_changed=True)
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ])
         fake = self.tile(
-            dump("160x48,0,0[160x16,0,0,1,160x15,0,17,2,160x15,0,33,3]"),
-            ["%1", "%2", "%3"],
-            self.W3,
+            GridSnapshot(
+                dump("160x48,0,0[160x16,0,0,1,160x15,0,17,2,160x15,0,33,3]"),
+                ["%1", "%2", "%3"],
+                self.W3,
+                recorded="%0 %1 %2 %3",
+            ),
             if_panes_changed=True,
-            recorded="%0 %1 %2 %3",
         )
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN])
         fake = self.tile(
-            "bogus", ["%0", "%1", "%2", "%3"], self.W3, if_panes_changed=True, recorded=""
+            GridSnapshot("bogus", ["%0", "%1", "%2", "%3"], self.W3, recorded=""),
+            if_panes_changed=True,
         )
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
 
@@ -207,11 +217,14 @@ class TileApplicationTest(TileFixture):
                 ["%0", "%3", "%2", "%1"],
                 [("$2", "w1", "old2", "%1"), ("$3", "w2", "old1", "%2"), ("$4", "w3", "w2", "%3")],
                 ("%2", "%3"),
-                "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151,0,3},100x24,100,26,1]}",
+                (
+                    "200x50,0,0{99x50,0,0,0,100x50,100,0[100x25,100,0{50x25,100,0,2,49x25,151"
+                    ",0,3},100x24,100,26,1]}"
+                ),
             ),
         ):
             with self.subTest(n=n):
-                fake = self.tile(dump(layout), panes, rows, n=n, size=(200, 50))
+                fake = self.tile(GridSnapshot(dump(layout), panes, rows, n=n, size=(200, 50)))
                 self.assertEqual(
                     fake.calls[4:],
                     self.applied(
@@ -231,12 +244,17 @@ class TileApplicationTest(TileFixture):
                         ]
                     ),
                 )
-                after = [leaf.pane for leaf in tmux_layout._leaves(tmux_layout._parse_layout(want))]
-                fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
+                after = [
+                    leaf.pane for leaf in tmux_layout.layout_leaves(tmux_layout.parse_layout(want))
+                ]
+                fake = self.tile(GridSnapshot(dump(want), after, rows, n=n, size=(200, 50)))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
-        split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
+        split = (
+            "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,"
+            "17,2,80x15,80,33,3]}"
+        )
         for layout, panes, zoomed, want, reads in (
             (
                 split,
@@ -244,7 +262,7 @@ class TileApplicationTest(TileFixture):
                 "0",
                 (
                     [("%2", "%4"), ("%3", "%4")],
-                    tmux_layout._parse_layout(tmux_layout._render_layout(grid(4))),
+                    tmux_layout.parse_layout(tmux_layout.render_layout(grid(4))),
                     "1 x 2",
                     "%0 %1 %2 %3 %4",
                 ),
@@ -254,15 +272,15 @@ class TileApplicationTest(TileFixture):
             (self.THREE, ["%0", "%1", "%2", "%3"], "1", None, [self.READ]),
         ):
             with self.subTest(layout=layout, zoomed=zoomed):
-                fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
-                self.assertEqual(grids._grid_pass("@3", None, fake, if_panes_changed=False), want)
+                fake = self.fake(GridSnapshot(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2"))
+                self.assertEqual(grids.grid_pass("@3", None, fake, if_panes_changed=False), want)
                 self.assertEqual(fake.calls, reads)
 
     def test_a_dead_worker_keeps_its_cell(self):
         # FR-12: w2's command exited (its session and dead pane stay), its host pane %2 attaches on;
         # w1 (%1) closed
         layout = dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x32,80,0,2,80x15,80,33,3]}")
-        fake = self.tile(layout, ["%0", "%2", "%3"], self.W3[1:])
+        fake = self.tile(GridSnapshot(layout, ["%0", "%2", "%3"], self.W3[1:]))
         self.assertEqual(
             fake.calls[4:],
             self.applied(
@@ -271,7 +289,7 @@ class TileApplicationTest(TileFixture):
                     "select-layout",
                     "-t",
                     "@3",
-                    tmux_layout._render_layout(grid([slot("%2"), slot("%3")])),
+                    tmux_layout.render_layout(grid([slot("%2"), slot("%3")])),
                 ]
             ),
         )
@@ -280,7 +298,7 @@ class TileApplicationTest(TileFixture):
     def test_zoomed_or_no_grid_window_only_reads_it(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
             with self.subTest(**kw):
-                fake = self.tile(*self.WIDE, **kw)
+                fake = self.tile(GridSnapshot(*self.WIDE, **kw))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ])
 
     def test_teardown_when_the_manager_is_gone_invalid_or_alone(self):
@@ -295,7 +313,7 @@ class TileApplicationTest(TileFixture):
             ("%0", dump("160x48,0,0,0"), ["%0"]),
         ):
             with self.subTest(manager=manager, panes=panes):
-                fake = self.tile(layout, panes, self.W3, manager=manager)
+                fake = self.tile(GridSnapshot(layout, panes, self.W3, manager=manager))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN])
 
     def test_nothing_changed_when_the_layout_is_unreadable_or_not_the_windows_panes(self):
@@ -310,19 +328,19 @@ class TileApplicationTest(TileFixture):
             (dump("160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,1,80x23,80,25,1]}"), four[:2]),
         ):
             with self.subTest(layout=layout, panes=panes):
-                fake = self.tile(layout, panes, self.W3)
+                fake = self.tile(GridSnapshot(layout, panes, self.W3))
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
 
     def test_too_small_nothing_changed(self):
         # three cells side by side, 4 high: a column of three needs 5
         layout = dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}")
-        fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
+        fake = self.tile(GridSnapshot(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4)))
         self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
 
     def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
         layout = dump(
-            "116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x3,52,4{32x3,52,4,4,"
-            "31x3,85,4,5},64x3,52,8{32x3,52,8,6,31x3,85,8,2}]}"
+            "116x11,0,0{51x11,0,0,0,64x11,52,0[64x3,52,0{32x3,52,0,3,31x3,85,0,1},64x"
+            "3,52,4{32x3,52,4,4,31x3,85,4,5},64x3,52,8{32x3,52,8,6,31x3,85,8,2}]}"
         )
         rows = [
             ("$2", "w1", "mgr", "%1"),
@@ -333,7 +351,9 @@ class TileApplicationTest(TileFixture):
             ("$7", "w6", "mgr", "%6"),
         ]
         fake = self.tile(
-            layout, ["%0", "%3", "%1", "%4", "%5", "%6", "%2"], rows, n="4", size=(116, 11)
+            GridSnapshot(
+                layout, ["%0", "%3", "%1", "%4", "%5", "%6", "%2"], rows, n="4", size=(116, 11)
+            )
         )
         self.assertEqual(
             fake.calls[4:],
@@ -384,7 +404,7 @@ class TileApplicationTest(TileFixture):
             ("$6", "z", "x", "%2"),
             ("$7", "w", "y", "%3"),
         ]
-        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], rows)
+        fake = self.tile(GridSnapshot(self.THREE, ["%0", "%1", "%2", "%3"], rows))
         self.assertEqual(
             fake.calls[4:],
             self.applied(
@@ -400,7 +420,10 @@ class TileApplicationTest(TileFixture):
                     "select-layout",
                     "-t",
                     "@3",
-                    "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0,3},80x23,80,25,2]}",
+                    (
+                        "9a41,160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,1"
+                        "21,0,3},80x23,80,25,2]}"
+                    ),
                 ]
             ),
         )
@@ -417,10 +440,12 @@ class TileApplicationTest(TileFixture):
         ]
         panes = ["%0", "%1", "%2", "%3", "%4", "%5"]
         fake = self.tile(
-            tmux_layout._render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
+            GridSnapshot(
+                tmux_layout.render_layout(grid([slot(p) for p in panes[1:]], 6)), panes, rows, n="6"
+            )
         )
         cells = [slot("%1", slot("%3")), slot("%5"), slot("%2"), slot("%4")]
-        self.assertEqual(fake.calls[4][-1], tmux_layout._render_layout(grid(cells, 6)))
+        self.assertEqual(fake.calls[4][-1], tmux_layout.render_layout(grid(cells, 6)))
 
     def test_per_column_argument_else_the_window_option_else_the_default(self):
         panes = ["%0", "%1", "%2", "%3", "%4"]
@@ -438,8 +463,10 @@ class TileApplicationTest(TileFixture):
             ("x", {}, None),
         ):
             with self.subTest(n=n, **kw):
-                fake = self.tile(tmux_layout._render_layout(grid(4)), panes, rows, n=n, **kw)
-                want = tmux_layout._render_layout(grid(4, per_column)) if per_column else None
+                fake = self.tile(
+                    GridSnapshot(tmux_layout.render_layout(grid(4)), panes, rows, n=n), **kw
+                )
+                want = tmux_layout.render_layout(grid(4, per_column)) if per_column else None
                 self.assertEqual(
                     fake.calls[4:],
                     self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [],
