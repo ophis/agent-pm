@@ -6,9 +6,9 @@ import sys
 from datetime import UTC, datetime
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
     Activity,
+    ConfigError,
     LimitHit,
     Reply,
     SessionBound,

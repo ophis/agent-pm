@@ -23,8 +23,7 @@ from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.session.adapters.types import ConfigError
-from agent_pm.session.engine.types import SessionRequest
+from agent_pm.session.engine.types import ConfigError, SessionRequest
 from agent_pm.utils import read_project
 
 from session.tests import fake_adapter

@@ -20,7 +20,6 @@ from unittest import mock
 import agent_pm.session as session_pkg
 from agent_pm.session import Driver
 from agent_pm.session.adapters import selection
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.api import POLL, Mode
@@ -28,6 +27,7 @@ from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
+    ConfigError,
     DriverError,
     Exited,
     IdleTimeout,

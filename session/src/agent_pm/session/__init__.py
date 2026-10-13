@@ -2,7 +2,6 @@
 Adapter (adapters/), behind the ABCs Session and Host; `__all__` is its public API.
 """
 
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.api import (
     MODES as MODES,
 )
@@ -30,6 +29,7 @@ from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
+    ConfigError,
     DriverError,
     Exited,
     IdleTimeout,

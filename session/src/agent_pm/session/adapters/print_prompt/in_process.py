@@ -9,8 +9,7 @@ import os
 import tempfile
 
 from agent_pm.session.adapters.base import InProcess
-from agent_pm.session.adapters.types import ConfigError
-from agent_pm.session.engine.types import Reply, SessionRequest, TurnEnd
+from agent_pm.session.engine.types import ConfigError, Reply, SessionRequest, TurnEnd
 
 START = "the composed prompt is handed to the caller"
 

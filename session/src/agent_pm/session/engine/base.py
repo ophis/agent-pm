@@ -5,8 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
+    ConfigError,
     Event,
     IdleTimeout,
     SessionInfo,

@@ -5,7 +5,8 @@ import re
 from collections.abc import Mapping
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.types import ConfigError, Settings, TuiSettings
+from agent_pm.session.adapters.types import Settings, TuiSettings
+from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host

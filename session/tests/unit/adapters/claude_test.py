@@ -7,9 +7,9 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
     Access,
+    ConfigError,
     Launch,
     SessionRequest,
     SessionStatus,

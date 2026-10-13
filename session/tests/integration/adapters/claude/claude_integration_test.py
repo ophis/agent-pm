@@ -19,11 +19,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
     Activity,
+    ConfigError,
     Exited,
     IdleTimeout,
     LimitHit,

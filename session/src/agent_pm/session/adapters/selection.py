@@ -1,7 +1,7 @@
 import re
 from collections.abc import Iterator
 
-from agent_pm.session.adapters.types import ConfigError
+from agent_pm.session.engine.types import ConfigError
 
 UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
