@@ -1,7 +1,6 @@
 """Repository guards on independent sample trees and the checkout."""
 
 import importlib
-import inspect
 import json
 import os
 import subprocess
@@ -10,21 +9,21 @@ from pathlib import Path
 
 from tests import guards
 from tests.case import ORCH_ROOT, PY, REPO, SRC, Case, child_env
+from tests.checks import checks
 from tests.guard_samples import PKG, Sample, fixtures, flat, own_case
 
 OPKG = "src/agent_pm/linear_orchestrator"
-PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
+PROBE = (
+    "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in "
+    "sys.argv[1:]}))\n"
+)
 
 
 class RealTree(Case):
     def test_each_guard_is_clean(self):
-        for name, guard in inspect.getmembers(guards, inspect.isfunction):
-            if name.startswith("_") or guard.__module__ != guards.__name__:
-                continue
-            roots = SRC.values() if name == "private_imports" else (REPO,)
-            for root in roots:
-                with self.subTest(name, root=root):
-                    self.assertEqual(guard(root), [])
+        for name, found in checks(REPO):
+            with self.subTest(name):
+                self.assertEqual(found, [])
 
     def test_utils_holds_none_of_the_modules_that_left_it(self):
         moved = ("protocol",)
@@ -94,7 +93,9 @@ class EveryTest(Sample):
             {
                 "a.py": "class A:\n    @classmethod\n    def setUpClass(cls): pass\n"
                 "    @classmethod\n    async def tearDownClass(cls): pass\n",
-                "b/c.py": "def setUpModule(): pass\ndef tearDownModule(): pass\ndef setUp(): pass\n",
+                "b/c.py": (
+                    "def setUpModule(): pass\ndef tearDownModule(): pass\ndef setUp(): pass\n"
+                ),
             }
         )
         self.assertEqual(
@@ -113,7 +114,9 @@ class PrivateImports(Sample):
         root = self.tree(
             {
                 f"{PKG}/a.py": "from b import _x\nfrom . import _y\n",
-                f"{PKG}/c.py": "import b.d\nfrom e import f as g\n\ndef h():\n    return b.d._z, g._w\n",
+                f"{PKG}/c.py": (
+                    "import b.d\nfrom e import f as g\n\ndef h():\n    return b.d._z, g._w\n"
+                ),
             }
         )
         self.assertEqual(
@@ -140,12 +143,17 @@ class ImportHygiene(Sample):
     def test_any_sys_path_mutation(self):
         root = self.tree(
             {
-                "tests/a.py": "import sys\nsys.path.insert(0, 'x')\ndef f():\n    sys.path.append('x')\n",
+                "tests/a.py": (
+                    "import sys\nsys.path.insert(0, 'x')\ndef f():\n    sys.path.append('x')\n"
+                ),
                 "tests/b.py": "import sys\nsys.path = []\nsys.path[0] = 'x'\nsys.path += ['x']\n"
                 "del sys.path[0]\n",
-                "tests/c.py": "import sys as s\nfrom sys import path as p\nfrom unittest import mock\n"
-                "s.path.extend([])\np.remove('x')\np[:0] = ['x']\np += ['x']\n"
-                "mock.patch('sys.path', [])\n@mock.patch.object(s, 'path', [])\ndef g(): pass\n",
+                "tests/c.py": (
+                    "import sys as s\nfrom sys import path as p\nfrom unittest import mock\n"
+                    "s.path.extend([])\np.remove('x')\np[:0] = ['x']\np += ['x']\n"
+                    "mock.patch('sys.path', [])\n@mock.patch.object(s, 'path', [])\ndef g(): "
+                    "pass\n"
+                ),
                 "tests/d.py": "import sys\nfrom sys import path\nfrom unittest import mock\n"
                 "x = [sys.path[0], sys.path.index('x'), list(sys.path), sys.path.copy()]\n"
                 "path = []\nmock.patch('os.path.join')\nmock.patch.object(sys, 'argv', [])\n",
@@ -163,13 +171,22 @@ class ImportHygiene(Sample):
             {
                 "tests/a.py": "import os\nos.environ['A'] = '1'\nos.environ.update(A='1')\n"
                 "del os.environ['A']\nos.environ |= {}\nos.putenv('A', '1')\n",
-                "tests/b.py": "import os as o\nfrom os import environ, putenv\nfrom unittest import mock\n"
-                "class C:\n    environ.setdefault('A', '1')\nif True:\n    putenv('A', '1')\n"
-                "mock.patch.dict(environ, {'A': '1'}).start()\no.environ.pop('A')\n",
-                "tests/c.py": "import os\nfrom unittest import mock\nA = os.environ.get('A', os.environ['B'])\n"
-                "def f():\n    os.environ['A'] = '1'\n    os.putenv('A', '1')\n"
-                "g = lambda: os.environ.clear()\n@mock.patch.dict(os.environ, {'A': '1'})\n"
-                "class D:\n    @mock.patch.dict(os.environ, {'A': '1'})\n    def h(self): pass\n",
+                "tests/b.py": (
+                    "import os as o\nfrom os import environ, putenv\nfrom unittest "
+                    "import mock\n"
+                    "class C:\n    environ.setdefault('A', '1')\nif "
+                    "True:\n    putenv('A', '1')\n"
+                    "mock.patch.dict(environ, {'A': '1'}).start()\n"
+                    "o.environ.pop('A')\n"
+                ),
+                "tests/c.py": (
+                    "import os\nfrom unittest import mock\nA = os.environ.get('A', "
+                    "os.environ['B'])\n"
+                    "def f():\n    os.environ['A'] = '1'\n    os.putenv('A', '1')\n"
+                    "g = lambda: os.environ.clear()\n@mock.patch.dict(os.environ, {'A': '1'})\n"
+                    "class D:\n    @mock.patch.dict(os.environ, {'A': '1'})\n    def h(self): "
+                    "pass\n"
+                ),
             }
         )
         self.assertEqual(
@@ -228,7 +245,8 @@ class SharedTypes(Sample):
                 self.assertEqual(
                     guards.shared_types(root),
                     [
-                        f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: a shared class belongs in a types.py"
+                        f"{self.UTILS}/b.py:1: agent_pm.utils.a.A: "
+                        "a shared class belongs in a types.py"
                     ],
                 )
 
@@ -304,9 +322,12 @@ class PackageTop(Sample):
         self.assertEqual(
             guards.package_top(self.tree(files)),
             [
-                f"delegate/{PKG}/delegate/misc: not __init__.py, cli.py, engine/ or a listed subpackage",
-                f"manager/{PKG}/manager/y.py: not __init__.py, cli.py, engine/ or a listed subpackage",
-                f"session/{PKG}/session/extra.py: not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"delegate/{PKG}/delegate/misc: "
+                "not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"manager/{PKG}/manager/y.py: "
+                "not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"session/{PKG}/session/extra.py: "
+                "not __init__.py, cli.py, engine/ or a listed subpackage",
             ],
         )
 
@@ -432,7 +453,10 @@ class TestBoundaries(Sample):
         root = self.tree(
             {
                 "session/src/agent_pm/session/engine/api.py": "import time\n",
-                "session/tests/probe.py": "from unittest.mock import patch\nfrom agent_pm.session.engine import api\npatch.object(api.time, 'sleep')\n",
+                "session/tests/probe.py": (
+                    "from unittest.mock import patch\nfrom agent_pm.session.engine import api\n"
+                    "patch.object(api.time, 'sleep')\n"
+                ),
             }
         )
         self.assertEqual(guards.test_boundaries(root), [])
@@ -441,3 +465,14 @@ class TestBoundaries(Sample):
                 "from unittest.mock import patch\npatch(target='agent_pm.session.start')", "session"
             )
         )
+
+
+class FileLength(Sample):
+    def test_limit_counts_every_physical_line(self):
+        for count in (500, 501):
+            root = self.tree({"tests/example.py": "pass\n" * count})
+            with self.subTest(count=count):
+                self.assertEqual(
+                    guards.file_length(root),
+                    [] if count == 500 else ["tests/example.py: 501 lines exceeds 500"],
+                )

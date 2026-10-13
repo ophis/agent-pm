@@ -1,7 +1,7 @@
 """Each tests/case.py: temporary HOME, import-root checks and child environment."""
 
-import importlib
 import contextlib
+import importlib
 import os
 import sys
 import tempfile
@@ -10,9 +10,10 @@ import unittest
 from unittest import mock
 
 import agent_pm
+from agent_pm.delegate import IMPORT_ROOTS
 
 from tests import guards
-from tests.case import Case, REPO
+from tests.case import REPO, Case
 
 CASES = (
     "tests",
@@ -99,7 +100,7 @@ class Checks:
     def test_a_set_up_without_super_runs_in_the_temp_home(self):
         seen = []
         result = self.run_inner(
-            lambda inner: None,
+            lambda _inner: None,
             set_up=lambda inner: seen.append(
                 (os.environ["HOME"], inner.home, os.path.isdir(inner.agent_pm))
             ),
@@ -170,7 +171,7 @@ class Checks:
         self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
         self.assertEqual(len(own), 5)
         self.assertEqual(self.case.SRC, guards_src())
-        self.assertEqual(self.case.ROOTS, agent_pm.delegate.engine.config.IMPORT_ROOTS)
+        self.assertEqual(self.case.ROOTS, IMPORT_ROOTS)
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath_where_kept(self):

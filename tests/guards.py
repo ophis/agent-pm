@@ -2,10 +2,7 @@
 
 import ast
 import os
-import re
 import tomllib
-
-from agent_pm.utils.config_file import LEVELS
 
 from tests.guard_ast import (
     _at_import,
@@ -23,67 +20,50 @@ from tests.guard_ast import (
     _spellings,
     _strings,
 )
-
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
-TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
-TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
-TOML_IMPLEMENTATION = re.compile(
-    r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
-)
-TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
-TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
-PKG = "agent_pm"
-SESSION = "session"
-ORCH = "linear_orchestrator"
-
-PROJECTS = {p: p.replace("-", "_") for level in LEVELS for p in level}
-LAYERS = tuple(PROJECTS)
-ORCH_PKG = f"{PKG}.{ORCH}"
-ORCH_SRC = f"src/{PKG}/{ORCH}/"
-ORCH_PROJECT = "linear-orchestrator"
-LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_package entry
-TOP = {"__init__.py", "cli.py", "engine"}
-SUBPACKAGES = {
-    SESSION: {"adapters", "hosts", "modes"},
-    "delegate": {"composer", "event", "team"},
-    "linear-orchestrator": {"linear"},
-}
-LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
-TREES = (*PROJECTS, "tests", ".github")
-TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
-CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
-LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
-SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
-CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
-ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
-STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
-STATUS_LOG_CLOCK = "%H:%M:%S"
-# until TASK-368
-
-COMMAND_SRC = (
+from tests.guard_rules import (
+    ADAPTERS_HOME,
+    COMMAND,
+    COMMAND_DOCS,
+    COMMAND_FILES,
+    COMMAND_SRC,
+    CONFIG_LEVELS,
+    CONFIG_PY,
+    ENTRIES,
+    HANDOFF,
+    HANDOFF_HOME,
+    LEFTOVERS,
+    LINEAR,
+    LOAD_HELPERS,
+    LOCAL_EXAMPLE,
+    LOWER,
+    ONCE,
+    ORCH_PROJECT,
+    PKG,
+    PROJECTS,
+    PYTHON,
+    PYTHON_OK,
+    RUNTIME,
+    SESSION_COMMAND,
     SESSION_SRC,
-    f"delegate/src/{PKG}/delegate/",
-    f"{ORCH_PROJECT}/{ORCH_SRC}",
+    SPAWNS,
+    STATUS_LOG_CLOCK,
+    STATUS_LOG_HOME,
+    SUBPACKAGES,
+    TMUX_HOST,
+    TOML_CODE,
+    TOML_HEADER,
+    TOML_IMPLEMENTATION,
+    TOML_RUNTIME,
+    TOML_STRING,
+    TOOL_STRINGS,
+    TOP,
+    TREES,
 )
-COMMAND = "agent-pm-"
-SESSION_COMMAND = "agent-pm-session"
-SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
-LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
-CONFIG_PY = f"{ORCH_SRC}engine/config.py"
-TOOL_STRINGS = ("tmux", "adapters")
-TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
-ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
-ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
-LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
-HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
-HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
-COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
-COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
-PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
-PYTHON_OK = re.compile(
-    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{PKG}\.\w"
-    r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
-)
+from tests.guard_rules import CONFIG_FILE as CONFIG_FILE
+from tests.guard_rules import LAYERS as LAYERS
+from tests.guard_rules import TESTS as TESTS
+
+# until TASK-368
 
 
 def layer_commands(repo: str) -> list[str]:
@@ -491,4 +471,12 @@ def test_boundaries(repo: str) -> list[str]:
         for line, reason in _boundary_violations(
             text, rel.split("/")[0].replace("-", "_"), modules, shipped="/src/" in rel
         )
+    )
+
+
+def file_length(repo: str) -> list[str]:
+    return sorted(
+        f"{rel}: {len(text.splitlines())} lines exceeds 500"
+        for rel, text in _tree_files(repo, ".py")
+        if len(text.splitlines()) > 500
     )
