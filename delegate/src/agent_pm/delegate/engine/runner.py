@@ -11,7 +11,16 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import OUTCOME, RunConfig, Team
-from agent_pm.delegate.engine.plan import ConfigError, Plan, plan
+from agent_pm.delegate.engine.plan import plan
+from agent_pm.delegate.engine.types import (
+    Begun,
+    ConfigError,
+    Finished,
+    Limit,
+    Plan,
+    Progress,
+    Result,
+)
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import marks, outcome_block
@@ -30,37 +39,6 @@ NUDGE = (
     "Return says. If you are waiting for background work, wait for it first."
 )
 END = "end"
-
-
-@dataclass(frozen=True)
-class Limit:
-    """resets_at: epoch seconds, None when not given."""
-
-    resets_at: float | None
-
-
-@dataclass(frozen=True)
-class Result:
-    returncode: int
-    outcome: Outcome | None
-    error: str = ""
-    limit: Limit | None = None
-
-
-@dataclass(frozen=True)
-class Begun:
-    sid: str
-
-
-@dataclass(frozen=True)
-class Progress:
-    name: str
-    text: str
-
-
-@dataclass(frozen=True)
-class Finished:
-    result: Result
 
 
 Event = Begun | Progress | Finished

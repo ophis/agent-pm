@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
-from agent_pm.delegate.engine.plan import ConfigError, Plan
+from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import SessionStatusLog, api
 from agent_pm.utils.files import append_line
 from agent_pm.utils.text import printable
