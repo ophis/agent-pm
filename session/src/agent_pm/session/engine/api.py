@@ -52,17 +52,6 @@ from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils import STATE, load_class, printable_abs, sid_error
 
-__all__ = [
-    "Driver",
-    "Handle",
-    "MODES",
-    "SIGNALS",
-    "holds",
-    "note",
-    "session_record",
-    "sessions",
-    "close",
-]
 MODES = ("headless", "tui", "in_process")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5

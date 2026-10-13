@@ -2072,7 +2072,17 @@ class RuntimeNoteTest(Base):
 class ExportsTest(Case):
     def test_the_session_package_exports_them_not_the_module(self):
         self.assertIs(api.session_record, records.session_record)
-        for name in ("Driver", "Handle", "MODES", "SIGNALS", "holds", "note", "session_record"):
+        for name in (
+            "Driver",
+            "Handle",
+            "MODES",
+            "SIGNALS",
+            "holds",
+            "note",
+            "session_record",
+            "sessions",
+            "close",
+        ):
             with self.subTest(name=name):
                 self.assertIs(getattr(session_pkg, name), getattr(api, name))
                 self.assertIn(name, session_pkg.__all__)
@@ -2083,20 +2093,7 @@ class ExportsTest(Case):
                     self.assertIs(getattr(session_pkg, name), getattr(engine_types, name))
 
     def test_constants(self):
-        self.assertEqual(
-            api.__all__,
-            [
-                "Driver",
-                "Handle",
-                "MODES",
-                "SIGNALS",
-                "holds",
-                "note",
-                "session_record",
-                "sessions",
-                "close",
-            ],
-        )
+        self.assertFalse(hasattr(api, "__all__"))
         self.assertEqual(
             (api.MODES, api.STATES, api.POLL),
             (("headless", "tui", "in_process"), ("live", "absent", "unknown"), 0.5),
