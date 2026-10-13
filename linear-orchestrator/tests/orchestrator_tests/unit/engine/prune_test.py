@@ -232,11 +232,14 @@ class PruneScenario(Case):
         self.user_queries = 0
         before, err = (len(logged(self.logs)), io.StringIO())
         with redirect_stderr(err):
-            code = promote.main(
-                [], gql=gql, now=NOW, config_path=path, pruner=partial(prune.Pruner, run=Git())
-            )
+            code = promote.main([], gql=gql, now=NOW, config_path=path, pruner=self.pruner)
         self.events, self.err = (logged(self.logs)[before:], err.getvalue())
         return (code, fake.issues["DR-1"]["state"], "\n".join(show(e) for e in self.events))
+
+    def pruner(self, *args, **kwargs):
+        # promote passes driver= at call time, overriding a partial's: the real Driver lists and
+        # closes the developer's tmux sessions.
+        return prune.Pruner(*args, **{**kwargs, "run": Git(), "driver": self.api})
 
     def outage(self, op, issues, failed):
         for name, error in FAILURES.items():
@@ -941,6 +944,13 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual((code, gql.archived), (0, ["id-TASK-1"]))
         self.assertIn("prune-archived TASK-1", out)
         self.assertEqual(self.user_queries, len(tp.ROLE))
+
+    def test_promote_tick_lists_and_closes_sessions_through_the_fake_driver(self):
+        self.api.live = [A]
+        code, _, out = self.tick(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
+        self.assertEqual(code, 0)
+        self.assertIn(f"prune-closed TASK-7 session={A}", out)
+        self.assertEqual(self.api.order, [("sessions", None), ("close", A)])
 
     def test_prune_failure_leaves_handoff_alone(self):
         clone = self.mkc("TASK-49", "src", "o", "repo")
