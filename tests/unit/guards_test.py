@@ -1136,6 +1136,7 @@ class ConfigOnce(Sample):
             ],
         )
 
+class OrchestratorAbsent(Sample):
     def test_an_absent_or_empty_tree_is_clean(self):
         for root in (os.path.join(self.tree({}), "missing"), self.tree({"config.toml": ""})):
             for guard in (guards.orchestrator_text, guards.config_once):
