@@ -88,7 +88,7 @@ def _bounded(call, limit):
     def run():
         try:
             out["value"] = call()
-        except SERVICE_ERRORS as e:
+        except BaseException as e:  # noqa: BLE001  # Forward failures to the caller thread.
             out["error"] = e
 
     t = threading.Thread(target=run, daemon=True)

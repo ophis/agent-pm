@@ -104,6 +104,10 @@ STANDALONE = frozenset(
 NOQA_ALLOWED = {
     (f"{SESSION_SRC}modes/headless.py", "BLE001"): "Forward failures to the caller thread.",
     (f"{SESSION_SRC}modes/in_process.py", "BLE001"): "Forward failures to the caller thread.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/sessions.py",
+        "BLE001",
+    ): "Forward failures to the caller thread.",
 }
 
 
