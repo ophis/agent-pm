@@ -112,7 +112,7 @@ def _listed(run, docs, ident, dir_):
     if res.returncode != 0:
         if re.search(r"HTTP 404\b", res.stderr or ""):
             return None
-        raise RuntimeError(f"gh api contents {d}: {err_text(res)}")
+        raise InputError.gh_api_contents(d, err_text(res))
     names = _names(res.stdout)
     if names is None:
         raise InputError.gh_api_contents_unusable_response(d)

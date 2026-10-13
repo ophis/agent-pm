@@ -68,7 +68,7 @@ class Skip(Exception):
 
 class Pruner:
     def __init__(
-        self, gql, now, dry, *, work, team, roles, run=config.sh_run, writable=None, driver=None
+        self, gql, now, dry, *, work, team, roles, run=config.sh_run, writable=None, driver
     ):
         self.driver = driver
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
@@ -275,8 +275,9 @@ class Pruner:
 
     def run(self):
         finished = {self.team.states["done"], self.team.states["canceled"]}
-        self.tuis = self.live_tuis()
-        if self.tuis is None:
+        found = self.live_tuis()
+        self.tuis = found or {}
+        if found is None:
             self.error(error="tui sessions unknown")
         else:
             try:

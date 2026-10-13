@@ -118,7 +118,6 @@ def _clean(s):
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
-CONFIG_ERRORS = (LinearError, ValueError, OSError)
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
@@ -133,7 +132,7 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
         return
     text = json.dumps(line, ensure_ascii=False)
     try:
-        if not dry and path:
+        if not dry and path and logs:
             os.makedirs(logs, exist_ok=True)
             append_line(path, text + "\n")
     except OSError:

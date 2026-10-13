@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -149,7 +150,7 @@ class Gate:
     def __init__(self, runs, now, dry, say=None, *, driver):
         self.driver = driver
         self.limits, self.dry, self.seen = limits(runs, now), dry, {}
-        self.say = say or functools.partial(log, "router", dry=dry)
+        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
 
     def blocked(self, runtime, ident):
         if runtime not in self.seen:
@@ -232,7 +233,7 @@ class Board:
     def __init__(self, gql, entries, now, dry, cfg, gate, say=None):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
         self.cfg, self.gate = cfg, gate
-        self.say = say or functools.partial(log, "router", dry=dry)
+        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
@@ -577,7 +578,7 @@ def outer(a, cfg, *, gql, run, keychain):
                 *RUN,
                 "--uuid",
                 issue.id,
-                *(["--target", f"{repo.owner}/{repo.name}"] if build else []),
+                *(["--target", f"{repo.owner}/{repo.name}"] if build and repo is not None else []),
                 *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
                 f"--input={text}",
             ],

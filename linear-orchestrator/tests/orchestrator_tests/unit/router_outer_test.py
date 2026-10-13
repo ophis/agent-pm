@@ -310,7 +310,7 @@ class Outer(OuterBase):
     def test_docs_failure_is_transient(self):
         self.gql.issue = node(title="Compare queues", description="Which queue fits?")
         for r, reason in (
-            (ok(code=1, stderr="HTTP 500"), "RuntimeError: gh api contents Research: HTTP 500"),
+            (ok(code=1, stderr="HTTP 500"), "InputError: gh api contents Research: HTTP 500"),
             (OSError("gh missing"), "OSError: gh missing"),
         ):
             with self.subTest(reason=reason):

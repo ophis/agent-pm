@@ -102,7 +102,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
                     log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         elif isinstance(event, delegate.Progress):
             writeback.progress(ctx, event)
-        elif isinstance(event, delegate.Finished):
+        elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
             writeback.finish(ctx, event.result.outcome)
 
     rc, result = 1, None

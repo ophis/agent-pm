@@ -30,7 +30,7 @@ class FakeApi:
     def sessions(self, match=None):
         self.order.append(("sessions", match))
         if self.live is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
+            raise DriverError.sessions_unavailable()
         return [
             SessionRow(n, None, None, "working", None, None, None, None, False)
             for n in self.live

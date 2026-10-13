@@ -337,7 +337,7 @@ def _limit(ctx, resets_at):
 def bounce(ctx, issue: Issue, reason: str) -> None:
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
-    if src and src["team"]["id"] == ctx.team:
+    if h is not None and src and src["team"]["id"] == ctx.team:
         text = (
             f"Repo check failed: {reason}. To build it, move {h.source}"
             f" to Handoff again with a comment `Repo: <owner>/<name>` naming the "

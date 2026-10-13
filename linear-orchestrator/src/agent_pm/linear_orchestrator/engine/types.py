@@ -1,10 +1,23 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
+import os
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
+
+from agent_pm import delegate
+from agent_pm.session import Driver
 
 
 class ConfigError(Exception):
+    @classmethod
+    def work_overlaps_clone(cls, key, clone, value):
+        return cls(
+            f"linear-orchestrator/config.toml: work_dir must neither lie in nor "
+            f"contain local_clones.{key} {clone}: {value!r}"
+        )
+
     def __init__(self, msg: str, logs_dir: str | None = None):
         super().__init__(msg)
         self.msg, self.logs_dir = msg, logs_dir
@@ -349,3 +362,68 @@ CALL_ERRORS = (
     subprocess.SubprocessError,
 )
 SERVICE_ERRORS = (*CALL_ERRORS, Unavailable)
+
+
+@dataclass(frozen=True)
+class Task:
+    kind: Literal["research", "design", "build"]
+    prefix: str = ""
+    start: str = ""
+    done: str = ""
+    question: str = ""
+    failed: str = ""
+    failed_new: str = "in_review"
+    retitle: bool = False
+    approve: bool = False
+    files: bool = False
+    hint: str = ""
+
+
+@dataclass(frozen=True)
+class Role:
+    account: str
+    key: str
+    tasks: tuple[str, ...]
+    max_runs: int
+    next: str | None
+    require_instructions: bool
+    run: delegate.RunConfig
+
+
+@dataclass(frozen=True)
+class Docs:
+    repo: str
+    branch: str
+    dirs: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class Config:
+    team: str
+    states: Mapping[str, str]
+    human_members: tuple[str, ...]
+    harness_key: str
+    task_label_group: str
+    task_labels: Mapping[str, str]
+    roles: Mapping[str, Role]
+    project_repos: Mapping[str, str]
+    local_clones: Mapping[str, str]
+    work_dir: str
+    docs: Docs
+    stages: Mapping[str, int]
+    driver: Driver
+
+    @property
+    def runs_dir(self) -> str:
+        return os.path.join(self.work_dir, "work")
+
+    @property
+    def logs_dir(self) -> str:
+        return os.path.join(self.work_dir, "logs")
+
+    @property
+    def runs_log(self) -> str:
+        return os.path.join(self.logs_dir, "runs.jsonl")
+
+    def run_dir(self, issue: str) -> str:
+        return os.path.join(self.runs_dir, issue)

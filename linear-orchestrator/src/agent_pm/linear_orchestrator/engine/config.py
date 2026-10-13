@@ -9,14 +9,19 @@ import os
 import re
 import shlex
 import subprocess
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import Any
 
-from agent_pm import delegate, utils
-from agent_pm.linear_orchestrator.engine.types import ConfigError, TuiError
-from agent_pm.session import Driver
+import agent_pm.utils as utils
+from agent_pm import delegate
+from agent_pm.linear_orchestrator.engine.types import (
+    Config,
+    ConfigError,
+    Docs,
+    Role,
+    Task,
+    TuiError,
+)
 from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
@@ -60,21 +65,6 @@ REQUIRED = (
 )
 
 
-@dataclass(frozen=True)
-class Task:
-    kind: Literal["research", "design", "build"]
-    prefix: str = ""
-    start: str = ""
-    done: str = ""
-    question: str = ""
-    failed: str = ""
-    failed_new: str = "in_review"
-    retitle: bool = False
-    approve: bool = False
-    files: bool = False
-    hint: str = ""
-
-
 REPO_HINT = "To change the target repo, edit the description's `Repo:` line."
 TASKS = {
     "researcher": Task("research", start="Research started:", failed_new="todo", hint=REPO_HINT),
@@ -95,56 +85,6 @@ TASKS = {
 CLONES = ("src", "publish")
 
 
-@dataclass(frozen=True)
-class Role:
-    account: str
-    key: str
-    tasks: tuple[str, ...]
-    max_runs: int
-    next: str | None
-    require_instructions: bool
-    run: delegate.RunConfig
-
-
-@dataclass(frozen=True)
-class Docs:
-    repo: str
-    branch: str
-    dirs: Mapping[str, str]
-
-
-@dataclass(frozen=True)
-class Config:
-    team: str
-    states: Mapping[str, str]
-    human_members: tuple[str, ...]
-    harness_key: str
-    task_label_group: str
-    task_labels: Mapping[str, str]
-    roles: Mapping[str, Role]
-    project_repos: Mapping[str, str]
-    local_clones: Mapping[str, str]
-    work_dir: str
-    docs: Docs
-    stages: Mapping[str, int]
-    driver: Driver | None = None
-
-    @property
-    def runs_dir(self) -> str:
-        return os.path.join(self.work_dir, "work")
-
-    @property
-    def logs_dir(self) -> str:
-        return os.path.join(self.work_dir, "logs")
-
-    @property
-    def runs_log(self) -> str:
-        return os.path.join(self.logs_dir, "runs.jsonl")
-
-    def run_dir(self, issue: str) -> str:
-        return os.path.join(self.runs_dir, issue)
-
-
 def load(
     root: str = ROOT,
     *,
@@ -158,12 +98,7 @@ def load(
         raise ConfigError.read_failed(e) from None
     work = _work_dir(cfg, root)
     try:
-        found, core_cfg = _load(cfg, root, work, local, core)
-        try:
-            driver = delegate.configure(local=local, cfg=core_cfg)
-        except delegate.ConfigError as e:
-            raise ConfigError(str(e)) from None
-        return replace(found, driver=driver)
+        return _load(cfg, root, work, local, core)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -209,9 +144,9 @@ def sh_run(argv, timeout):
     )
 
 
-def repo_slug(value):
+def repo_slug(value) -> tuple[str, str] | None:
     m = re.fullmatch(rf"({OWNER})/({NAME})", value) if isinstance(value, str) else None
-    return m.groups() if m and m.group(2) not in (".", "..") else None
+    return (m.group(1), m.group(2)) if m and m.group(2) not in (".", "..") else None
 
 
 def role_for(roles, email):
@@ -261,10 +196,7 @@ def _work_dir(cfg, root, clones=None):
         raise ConfigError.work_overlaps_repo(real, v)
     for k, clone in (clones or {}).items():
         if _overlap(path, clone):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: work_dir must neither lie in nor "
-                f"contain local_clones.{k} {clone}: {v!r}"
-            )
+            raise ConfigError.work_overlaps_clone(k, clone, v)
     return path
 
 
@@ -280,7 +212,11 @@ def _load(cfg, root, work, local, core):
         k: MappingProxyType(dict(cfg[k]))
         for k in ("states", "task_labels", "project_repos", "local_clones")
     }
-    found = Config(
+    try:
+        driver = delegate.configure(local=local, cfg=core_cfg)
+    except delegate.ConfigError as e:
+        raise ConfigError(str(e)) from None
+    return Config(
         team=cfg["team"],
         human_members=tuple(cfg.get("human_members") or ()),
         harness_key=cfg["harness_key"],
@@ -289,9 +225,12 @@ def _load(cfg, root, work, local, core):
         work_dir=work,
         docs=docs,
         stages=MappingProxyType(_stage_order(cfg["roles"])),
-        **frozen,
+        states=frozen["states"],
+        task_labels=frozen["task_labels"],
+        project_repos=frozen["project_repos"],
+        local_clones=frozen["local_clones"],
+        driver=driver,
     )
-    return found, core_cfg
 
 
 def _uuid(v):
@@ -372,7 +311,7 @@ def _load_config(cfg, root, local):
         seen[v] = k
 
 
-def _fill_root(value, root):
+def _fill_root(value: Any, root: str) -> Any:
     if isinstance(value, str):
         value = value.replace("{{root}}", shlex.quote(root))
         if "{{pythonpath}}" in value:
@@ -391,7 +330,7 @@ def _runnable(cfg, root, work, core, core_cfg, local):
         core_roles = core_cfg.get("roles", {})
         trusted = delegate.trusted_dirs(core, local, cfg=core_cfg)
     except (OSError, ValueError, delegate.ComposerConfigError) as e:
-        raise ConfigError(f"core: {e}") from None
+        raise ConfigError.core(e) from None
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError.work_trusted(d, work)
@@ -413,7 +352,7 @@ def _runnable(cfg, root, work, core, core_cfg, local):
             )
             tasks = tuple(delegate.task_index(name, config=core, local=local, cfg=core_cfg))
         except delegate.ComposerConfigError as e:
-            raise ConfigError(f"core: {e}") from None
+            raise ConfigError.core(e) from None
         out[name] = Role(
             p["account"],
             p["key"],
