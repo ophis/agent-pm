@@ -1182,7 +1182,7 @@ def _grid_pass(
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
     leaves = [] if current is None else _leaves(current)
-    if current is None or sorted(leaf_pane(leaf) for leaf in leaves) != sorted(panes):
+    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
         return None
     if manager not in panes or len(panes) == 1:
         _grid_down(window, proc)
@@ -1219,7 +1219,7 @@ def _grid_pass(
         )
         if want is None or _leaves(want) == _leaves(at):
             break
-        order, at = [leaf_pane(c) for c in _leaves(want)], want
+        order, at = [c.pane for c in _leaves(want)], want
     if _leaves(at) == leaves:
         return None if recorded == pane_set else ([], None, tiles, pane_set)
     return _swaps(panes, order), at, tiles, pane_set
@@ -1307,13 +1307,9 @@ def _render_layout(cell: Cell) -> str:
 def _body(c: Cell) -> str:
     head = f"{c.w}x{c.h},{c.x},{c.y}"
     if c.kind == LEAF:
-        return f"{head},{leaf_pane(c)[1:]}"
+        assert c.pane is not None
+        return f"{head},{c.pane[1:]}"
     return head + c.kind[0] + ",".join(_body(child) for child in c.children) + c.kind[1]
-
-
-def leaf_pane(cell: Cell) -> str:
-    assert cell.pane is not None
-    return cell.pane
 
 
 def _leaves(cell: Cell) -> list[Cell]:
@@ -1327,7 +1323,8 @@ def _leaves(cell: Cell) -> list[Cell]:
 
 def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
     if cell.kind == LEAF:
-        return {leaf_pane(cell): [*above, cell]}
+        assert cell.pane is not None
+        return {cell.pane: [*above, cell]}
     return {
         pane: path
         for child in cell.children
