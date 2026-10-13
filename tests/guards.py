@@ -225,8 +225,7 @@ PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
 
 
 PYTHON_OK = re.compile(
-    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{PKG}\.\w"
-    r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
+    f"\\S+[ \\t]+-P[ \\t]+(?:-m[ \\t]+{PKG}\\.\\w|(?:<team>|\\{{\\{{team\\}}\\}})/tools/\\w+\\.py(?=[ \\t]|\\Z))"
 )
 
 
@@ -704,8 +703,7 @@ def status_log_format(repo: str) -> list[str]:
             rel = f"{top}/src/{rel}"
             if rel not in (STATUS_LOG_HOME, TMUX_HOST):
                 found.update(
-                    f"{rel}:{line}: status log line format outside "
-                    "session/engine/status_log.py or hosts/tmux/tmux_host.py"
+                    f"{rel}:{line}: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
                     for line, s in _strings(ast.parse(text, rel))
                     if STATUS_LOG_CLOCK in s
                 )

@@ -57,10 +57,7 @@ def _foreign() -> str | None:
     own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
     for path in agent_pm.__path__:
         if os.path.realpath(path) not in own:
-            return (
-                f"agent_pm.__path__ holds {path}, not only this tree's: "
-                f"run with PYTHONPATH={RUN_WITH}"
-            )
+            return f"agent_pm.__path__ holds {path}, not only this tree's: run with PYTHONPATH={RUN_WITH}"
     if missing := own - {os.path.realpath(p) for p in agent_pm.__path__}:
         return (
             f"agent_pm.__path__ lacks {', '.join(sorted(missing))}: run with PYTHONPATH={RUN_WITH}"
@@ -73,10 +70,7 @@ def _foreign() -> str | None:
             found = os.path.dirname(found) if os.path.basename(where) == "__init__.py" else found
             root = SRC.get(sub)
             if root is None or os.path.realpath(found) != os.path.realpath(root):
-                return (
-                    f"{name} is imported from {found}, not this tree's {root}: "
-                    f"run with PYTHONPATH={RUN_WITH}"
-                )
+                return f"{name} is imported from {found}, not this tree's {root}: run with PYTHONPATH={RUN_WITH}"
     return None
 
 
