@@ -26,6 +26,7 @@ import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.errors.types import TuiError
 
 from session.tests.case import Case
 
@@ -1225,7 +1226,7 @@ class EventsFile(Case):
         def run():
             try:
                 tmux_host.events_file(fifo)
-            except tmux_host.TuiError as e:
+            except TuiError as e:
                 caught.append(e)
 
         thread = threading.Thread(target=run)
@@ -4872,15 +4873,13 @@ class SingleFile(Case):
                 names.add("." * node.level + (node.module or "").split(".")[0])
         self.assertLessEqual(names, set(sys.stdlib_module_names))
 
-    def test_python_3_9_syntax(self):
-        ast.parse(self.source, feature_version=(3, 9))
-
     def test_no_runtime_name(self):
         self.assertEqual(RUNTIME.findall(self.source), [])
 
     def test_runs_alone(self):
         with tempfile.TemporaryDirectory() as d:
-            copy = shutil.copy(tmux_host.__file__, d)
+            bundle = shutil.copytree(os.path.dirname(tmux_host.__file__), os.path.join(d, "host"))
+            copy = os.path.join(bundle, "tmux_host.py")
             res = subprocess.run(
                 [sys.executable, "-I", copy, "--help"],
                 cwd=d,

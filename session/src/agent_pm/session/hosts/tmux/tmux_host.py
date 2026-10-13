@@ -1,6 +1,6 @@
 """Hosts a command (e.g. an agent runtime's interactive CLI) in a detached tmux session an agent or
-a person can watch and drive; agent-pm's only tmux caller. One file, tmux 3.3+ and the stdlib,
-importing no agent_pm module: copy it anywhere. start never opens a pane; show does. Errors raise
+a person can watch and drive; agent-pm's only tmux caller. tmux 3.3+ and the stdlib,
+importing no agent_pm module: copy this directory with its bundled helpers anywhere. start never opens a pane; show does. Errors raise
 TuiError.
 """
 
@@ -13,6 +13,7 @@ import itertools
 import json
 import os
 import re
+import runpy
 import shlex
 import shutil
 import signal
@@ -156,8 +157,13 @@ except BaseException as e:
     raise"""
 
 
-class TuiError(Exception):
-    pass
+_load_file = runpy.run_path(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "loading/types.py")
+)["load_file"]
+TuiError = _load_file(
+    "agent_pm.session.hosts.tmux.errors.types",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "errors/types.py"),
+).TuiError
 
 
 class Anchor(NamedTuple):

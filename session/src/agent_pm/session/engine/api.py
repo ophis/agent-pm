@@ -50,6 +50,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.errors.types import TuiError
 from agent_pm.session.modes.headless import types as headless
 from agent_pm.session.modes.in_process import types as in_process
 from agent_pm.session.modes.tui import types as tui
@@ -454,7 +455,7 @@ def _events(events, *, host=tmux_host) -> str | None:
         raise ConfigError.events_path(events)
     try:
         return host.events_file(events)
-    except tmux_host.TuiError as e:
+    except TuiError as e:
         raise ConfigError(str(e)) from None
 
 
@@ -716,7 +717,7 @@ class Driver:
             raise DriverError.sessions_unavailable()
         try:
             own = self.host.own_session() if found else None
-        except tmux_host.TuiError as e:
+        except TuiError as e:
             raise DriverError.sessions_unavailable(e) from None
         return [_row(f, own) for f in found]
 
@@ -735,11 +736,11 @@ class Driver:
             self.host.anchor(split_from)
             try:
                 return self.host.opener()
-            except tmux_host.TuiError:
+            except TuiError:
                 if split_from is None:
                     raise
                 return None
-        except tmux_host.TuiError as e:
+        except TuiError as e:
             hint = "" if split_from else ": run from tmux or iTerm2, or pass split_from"
             raise DriverError(f"no pane to show the TUI beside ({e}){hint}") from None
 
@@ -772,5 +773,5 @@ class Driver:
         _placement(None, None, opener)
         try:
             self.host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)
-        except tmux_host.TuiError as e:
+        except TuiError as e:
             raise DriverError(f"detach {name}: {e}") from e

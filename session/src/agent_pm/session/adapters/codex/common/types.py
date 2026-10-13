@@ -9,8 +9,8 @@ from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent_pm.session.adapters.codex.persistence.types import RecoveryError
 from agent_pm.session.adapters.codex.sessions import (
-    RecoveryError,
     SessionFile,
     SessionState,
     absolute_path,

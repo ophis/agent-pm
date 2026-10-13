@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import re
+import runpy
 import stat
 import sys
 from datetime import datetime
@@ -52,8 +53,13 @@ SESSION_STATE = {
 }
 
 
-class HookError(Exception):
-    """One stderr line; the hook stops."""
+_load_file = runpy.run_path(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../hosts/tmux/loading/types.py")
+)["load_file"]
+HookError = _load_file(
+    "agent_pm.session.modes.hooks.types",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks/types.py"),
+).HookError
 
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
@@ -202,8 +208,10 @@ def append(path: str, record: dict) -> None:
 
 
 def load_tmux_host():
-    """By path: nothing joins sys.path or sys.modules."""
+    """Load the host by path, without changing the search path or caching the host module."""
     spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
+    if spec is None or spec.loader is None:
+        raise HookError.unloadable_host(TMUX_HOST)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

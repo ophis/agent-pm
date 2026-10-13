@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import stat
 import tempfile
 import time
@@ -64,10 +65,13 @@ def added_dirs(flags, cwd: str) -> list[str]:
     ]
 
 
-class RecoveryError(Exception):
-    @classmethod
-    def identity(cls) -> RecoveryError:
-        return cls("invalid recovery state identity")
+_load_file = runpy.run_path(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../hosts/tmux/loading/types.py")
+)["load_file"]
+RecoveryError = _load_file(
+    "agent_pm.session.adapters.codex.persistence.types",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/types.py"),
+).RecoveryError
 
 
 def absolute_path(path: object, label: str) -> str:
