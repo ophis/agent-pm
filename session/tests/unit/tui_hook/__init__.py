@@ -1,1 +1,0 @@
-"""Tui hook tests."""

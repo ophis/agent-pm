@@ -3,8 +3,8 @@
 ## Gotchas
 
 - This file never loads in an agent run outside a trusted cwd (README › Install). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
-- Input rendering and write-back changes: `linear-orchestrator/tests/orchestrator_tests/unit/inputs/` and `linear-orchestrator/tests/orchestrator_tests/unit/writeback/` pin input text and Linear calls.
-- Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`delegate/tests/unit/composer/real/shipped_test.py` checks): without the start report the Delegate logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
+- Input rendering and write-back changes: `linear-orchestrator/tests/orchestrator_tests/unit/inputs_test.py` and `linear-orchestrator/tests/orchestrator_tests/unit/writeback_test.py` pin input text and Linear calls.
+- Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`delegate/tests/unit/composer/real_test.py` checks): without the start report the Delegate logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in the team text (`delegate/src/agent_pm/delegate/team/`) or skills.
 - Skills and `config.toml` comments name a file by its path and a skill by its slash command (`/agent-pm:act-as`), never "the act-as skill" or `agent-pm:act-as`.
 - A project's `config.toml` holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guards.py` `explicit_keys`). Levels, merge and ownership: `utils/src/agent_pm/utils/config_file.py`'s docstring.
