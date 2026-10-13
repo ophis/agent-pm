@@ -18,3 +18,75 @@ typeCheckingMode = "basic"
 pythonVersion = "3.11"
 include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
 extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
+
+[tool.importlinter]
+root_packages = ["agent_pm", "manager.tests", "linear-orchestrator.tests", "delegate.tests", "session.tests", "utils.tests", "tests", "orchestrator_test_helpers"]
+
+[[tool.importlinter.contracts]]
+name = "Production layers"
+type = "layers"
+layers = ["agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "agent_pm.utils"]
+
+[[tool.importlinter.contracts]]
+name = "manager uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.manager", "manager.tests"]
+forbidden_modules = ["agent_pm.linear_orchestrator.*", "agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "manager tests respect layer ownership"
+type = "forbidden"
+source_modules = ["manager.tests"]
+forbidden_modules = ["tests"]
+
+[[tool.importlinter.contracts]]
+name = "linear_orchestrator uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.linear_orchestrator", "linear-orchestrator.tests", "orchestrator_test_helpers"]
+forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "linear_orchestrator tests respect layer ownership"
+type = "forbidden"
+source_modules = ["linear-orchestrator.tests", "orchestrator_test_helpers"]
+forbidden_modules = ["tests", "agent_pm.manager", "manager.tests"]
+
+[[tool.importlinter.contracts]]
+name = "delegate uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.delegate", "delegate.tests"]
+forbidden_modules = ["agent_pm.session.*", "agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "delegate tests respect layer ownership"
+type = "forbidden"
+source_modules = ["delegate.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "manager.tests", "linear-orchestrator.tests", "orchestrator_test_helpers"]
+
+[[tool.importlinter.contracts]]
+name = "session uses lower public packages"
+type = "forbidden"
+source_modules = ["agent_pm.session", "session.tests"]
+forbidden_modules = ["agent_pm.utils.*"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "session tests respect layer ownership"
+type = "forbidden"
+source_modules = ["session.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "manager.tests", "linear-orchestrator.tests", "delegate.tests", "orchestrator_test_helpers"]
+
+[[tool.importlinter.contracts]]
+name = "utils tests respect layer ownership"
+type = "forbidden"
+source_modules = ["utils.tests"]
+forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "linear-orchestrator.tests", "delegate.tests", "session.tests", "orchestrator_test_helpers"]
+
+[[tool.importlinter.contracts]]
+name = "Modes do not import the session API"
+type = "forbidden"
+source_modules = ["agent_pm.session.modes"]
+forbidden_modules = ["agent_pm.session.engine.api"]

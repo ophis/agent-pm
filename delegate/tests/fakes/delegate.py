@@ -18,7 +18,7 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.session import NotDisplayable, SessionStatus
-from agent_pm.utils import Record, Status, files
+from agent_pm.utils import Record, Status, save
 
 FILE = "delegate.json"
 
@@ -32,7 +32,7 @@ def _load(workdir) -> dict:
 
 
 def _save(workdir: str, state: dict) -> dict:
-    files.save(os.path.join(workdir, FILE), json.dumps(state))
+    save(os.path.join(workdir, FILE), json.dumps(state))
     return state
 
 
