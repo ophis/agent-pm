@@ -569,6 +569,167 @@ class RosterTest(Case):
         self.assertFalse(thread.is_alive())
         self.assertEqual(self.roster.entries()["x"].note, "after")
 
+    def test_busy_roster_lock_times_out_without_changing_ledger(self):
+        self.live()
+        before = Path(self.roster.path).read_bytes()
+        fd = os.open(Path(self.directory, "roster.lock"), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            ticks = 0
+
+            def instant():
+                nonlocal ticks
+                ticks += 31
+                return ticks
+
+            with (
+                mock.patch.object(time, "monotonic", side_effect=instant),
+                self.assertRaisesRegex(RosterError, "busy"),
+            ):
+                self.roster.note("x", "blocked")
+        finally:
+            os.close(fd)
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertIsNone(self.roster.entries()["x"].note)
+
+    def test_foreign_roster_lock_is_refused_without_changing_ledger(self):
+        self.live()
+        before = Path(self.roster.path).read_bytes()
+        target = Path(self.directory, "roster.lock").stat()
+        original = os.fstat
+
+        def foreign(fd):
+            opened = original(fd)
+            if (opened.st_dev, opened.st_ino) == (target.st_dev, target.st_ino):
+                values = list(opened)
+                values[4] += 1
+                return os.stat_result(values)
+            return opened
+
+        with (
+            mock.patch.object(os, "fstat", side_effect=foreign),
+            self.assertRaisesRegex(RosterError, "owned by you"),
+        ):
+            self.roster.note("x", "blocked")
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_foreign_manager_directory_is_refused_without_changing_ledger(self):
+        self.live()
+        before = Path(self.roster.path).read_bytes()
+        original = os.lstat
+
+        def foreign(path, *args, **kwargs):
+            opened = original(path, *args, **kwargs)
+            if os.fspath(path) == self.directory:
+                values = list(opened)
+                values[4] += 1
+                return os.stat_result(values)
+            return opened
+
+        with (
+            mock.patch.object(os, "lstat", side_effect=foreign),
+            self.assertRaisesRegex(RosterError, "directory owned by you"),
+        ):
+            self.roster.note("x", "blocked")
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_rotate_refuses_unsafe_current_and_archive_files(self):
+        path = Path(self.roster.events)
+        data = b"h" * (1 << 20) + b"\n12:00:00 x done\n"
+        path.write_bytes(data)
+        self.roster.advance(1, 0)
+        ledger = Path(self.roster.path).read_bytes()
+        outside = Path(self.home, "outside")
+        outside.write_bytes(b"keep")
+        original = os.fstat
+        for target in (path, Path(str(path) + ".1")):
+            for kind in ("symlink", "fifo", "foreign"):
+                with self.subTest(target=target.name, kind=kind):
+                    if target.exists():
+                        target.unlink()
+                    if kind == "symlink":
+                        target.symlink_to(outside)
+                    elif kind == "fifo":
+                        os.mkfifo(target)
+                    else:
+                        target.write_bytes(data if target == path else b"archive")
+                    identity = target.lstat()
+
+                    def foreign(fd, kind=kind, identity=identity):
+                        opened = original(fd)
+                        if kind == "foreign" and (opened.st_dev, opened.st_ino) == (
+                            identity.st_dev,
+                            identity.st_ino,
+                        ):
+                            values = list(opened)
+                            values[4] += 1
+                            return os.stat_result(values)
+                        return opened
+
+                    with (
+                        mock.patch.object(os, "fstat", side_effect=foreign),
+                        self.assertRaises(RosterError),
+                    ):
+                        self.roster.rotate_events()
+                    self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
+                    self.assertEqual(outside.read_bytes(), b"keep")
+                    target.unlink()
+                    if target == path:
+                        path.write_bytes(data)
+        self.assertEqual(path.read_bytes(), data)
+
+    def test_failed_archive_rename_preserves_events_cursor_and_generation(self):
+        path = Path(self.roster.events)
+        data = b"h" * (1 << 20) + b"\n12:00:00 x done\n"
+        path.write_bytes(data)
+        self.roster.advance(1, 0)
+        ledger = Path(self.roster.path).read_bytes()
+        original = os.replace
+
+        def failed(source, destination):
+            if os.fspath(source) == str(path) and os.fspath(destination) == str(path) + ".1":
+                raise OSError("archive rename failed")
+            return original(source, destination)
+
+        with (
+            mock.patch.object(os, "replace", side_effect=failed),
+            self.assertRaisesRegex(RosterError, "archive rename failed"),
+        ):
+            self.roster.rotate_events()
+        self.assertEqual(path.read_bytes(), data)
+        self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
+        self.assertEqual((self.content()["cursor"], self.content()["gen"]), (1, 0))
+
+    def test_created_and_rotated_events_file_mode_is_0600(self):
+        path = Path(self.roster.events)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        path.write_bytes(b"h" * (1 << 20) + b"\n12:00:00 x done\n")
+        self.roster.advance(1, 0)
+        self.assertTrue(self.roster.rotate_events())
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(Path(str(path) + ".1").stat().st_mode), 0o600)
+
+    def test_rotation_size_boundary_is_strict(self):
+        path = Path(self.roster.events)
+        path.write_bytes(b"h" * ((1 << 20) - 1) + b"\n")
+        self.roster.advance(1, 0)
+        ledger = Path(self.roster.path).read_bytes()
+        self.assertFalse(self.roster.rotate_events())
+        self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
+        append_line(path, b"12:00:00 x done\n")
+        self.assertTrue(self.roster.rotate_events())
+        self.assertEqual(self.roster.backlog(), (0, 1, ["12:00:00 x done"]))
+
+    def test_rotation_consumed_byte_boundary_is_inclusive(self):
+        path = Path(self.roster.events)
+        half = (1 << 20) // 2
+        path.write_bytes(b"h" * (half - 2) + b"\n" + b"u" * (half + 1) + b"\n")
+        self.roster.advance(1, 0)
+        self.assertFalse(self.roster.rotate_events())
+        path.write_bytes(b"h" * (half - 1) + b"\n" + b"u" * half + b"\n")
+        self.assertTrue(self.roster.rotate_events())
+        self.assertEqual((self.content()["cursor"], self.content()["gen"]), (0, 1))
+
     def test_events_ignore_partial_line_and_advance_is_monotonic(self):
         path = self.roster.events
         append_line(path, "one\ntwo\npartial")
