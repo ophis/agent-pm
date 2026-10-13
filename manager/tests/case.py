@@ -2,14 +2,18 @@
 SRC, ROOTS, PYTHONPATH).
 """
 
+import contextlib
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
 import agent_pm
-from agent_pm.utils import import_roots
+from agent_pm.utils import Record, import_roots
+
+from utils.tests.fakes import ctl
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOTS = import_roots(REPO)
@@ -41,6 +45,51 @@ class Case(unittest.TestCase):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
             return super().run(result)
+
+    def setup_ctl(self) -> str:
+        self.ctl_dir = os.path.join(self.home, "ctl")
+        self.bin_dir = os.path.join(self.home, "bin")
+        os.mkdir(self.bin_dir)
+        command = ctl.install(self.bin_dir, self.ctl_dir)
+        self.enterContext(
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PATH": os.pathsep.join(
+                        (self.bin_dir, os.path.dirname(sys.executable), os.defpath)
+                    )
+                },
+            )
+        )
+        return command
+
+    def fake_record(self, name: str, *, display: str | None = None) -> Record:
+        return Record(
+            1,
+            "fake",
+            name,
+            (name,),
+            None,
+            None,
+            (ctl.COMMAND,),
+            (ctl.COMMAND, "resume", name),
+            display,
+            None,
+        )
+
+    @contextlib.contextmanager
+    def listed(self, records=()):
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == ("agent-pm-session", "ls", "--here", "--records"):
+                return subprocess.CompletedProcess(
+                    argv, 0, "".join(record.to_line() + "\n" for record in records), ""
+                )
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            yield
 
 
 def _foreign(modules=None) -> str | None:
