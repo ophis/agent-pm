@@ -1,4 +1,4 @@
-"""Parsed host settings and their configuration failures."""
+"""Parsed host settings."""
 
 from dataclasses import dataclass
 
@@ -7,7 +7,3 @@ from dataclasses import dataclass
 class Hosts:
     default: str
     tables: dict[str, dict]
-
-
-class HostsError(ValueError):
-    pass

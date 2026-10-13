@@ -923,16 +923,16 @@ class OutcomeFiles(Base):
     def test_skipped(self):
         for name, make, reason in (
             ("symlink", self.symlink, "OSError: "),
-            ("hard link", self.hard_link, "FileError: not a single-link file"),
-            ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "FileError: not a .md file"),
-            ("outside the workdir", self.outside, "FileError: not under the workdir"),
-            ("outside through a linked dir", self.linked_dir, "FileError: not under the workdir"),
+            ("hard link", self.hard_link, "ValueError: not a single-link file"),
+            ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "ValueError: not a .md file"),
+            ("outside the workdir", self.outside, "ValueError: not under the workdir"),
+            ("outside through a linked dir", self.linked_dir, "ValueError: not under the workdir"),
             (
                 "too big",
                 lambda ctx: self.write(ctx, "big.md", "x" * 1_000_001),
-                "FileError: over 1000000 bytes",
+                "ValueError: over 1000000 bytes",
             ),
-            ("fifo, without blocking", self.fifo, "FileError: not a regular file"),
+            ("fifo, without blocking", self.fifo, "ValueError: not a regular file"),
         ):
             with self.subTest(name):
                 ctx = self.ctx()

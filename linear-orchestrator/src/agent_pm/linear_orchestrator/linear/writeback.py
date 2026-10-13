@@ -49,10 +49,6 @@ class Context:
     target: tuple[str, str] | None
 
 
-class FileError(ValueError):
-    pass
-
-
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
 )
@@ -196,7 +192,7 @@ def _read_file(path, workdir):
             ConfinedReason.REPLACED: "file changed while reading",
             ConfinedReason.TOO_LARGE: f"over {MAX_FILE} bytes",
         }
-        raise FileError(reasons[error.reason]) from None
+        raise ValueError(reasons[error.reason]) from None
 
 
 def _url(ctx, url):

@@ -19,10 +19,6 @@ from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import GUARD, NAME, OWNER, STATE, import_roots, temp_dirs, under
 
 
-class TuiError(ValueError):
-    pass
-
-
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
 CONFIG = os.path.join(ROOT, "linear-orchestrator", "config.toml")
 LOCAL = utils.LOCAL
@@ -109,7 +105,7 @@ def session(role, issue):
 def tui_prefix(role, issue):
     name = f"{role}-{issue}"
     if not re.fullmatch(_ROLE_ISSUE, name):
-        raise TuiError(f"TUI session prefix {name!r}: want {_ROLE_ISSUE}")
+        raise ValueError(f"TUI session prefix {name!r}: want {_ROLE_ISSUE}")
     return name + "-"
 
 

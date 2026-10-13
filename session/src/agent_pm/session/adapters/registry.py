@@ -10,7 +10,6 @@ from agent_pm.session.engine.types import ConfigError
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.types import HostsError
 from agent_pm.utils import load_class as load
 
 
@@ -37,7 +36,7 @@ TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 
 def settings(config: Mapping) -> dict:
     if not isinstance(config, Mapping):
-        raise HostsError("session config: want a table")
+        raise ValueError("session config: want a table")
     found = tables.parse(config.get("hosts"))
     return {
         "adapters": config.get("adapters", {}),
