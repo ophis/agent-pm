@@ -165,6 +165,26 @@ NOQA_ALLOWED = {
         "BLE001",
         "__main__",
     ): "the hook must never fail the client runtime",
+    (
+        f"{SESSION_SRC}adapters/codex/tui_hook.py",
+        "duplicate-code",
+        "_sibling",
+    ): "standalone stdlib-only scripts cannot share code",
+    (
+        f"{SESSION_SRC}adapters/codex/tui_start.py",
+        "duplicate-code",
+        "_sibling",
+    ): "standalone stdlib-only scripts cannot share code",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
+        "duplicate-code",
+        "outer",
+    ): "B8 direct keyword call",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
+        "duplicate-code",
+        "inner",
+    ): "B8 direct keyword call",
 }
 
 
@@ -564,6 +584,7 @@ def source_suppressions(repo: str) -> list[str]:
     found, seen = [], set()
     for path, text in _tree_files(repo, ".py"):
         functions = list(_suppression_functions(ast.parse(text)))
+        disabled = {}
         for token in tokenize.generate_tokens(io.StringIO(text).readline):
             if token.type != tokenize.COMMENT or not re.search(
                 r"#\s*(?:(?:ruff|flake8)\s*:\s*noqa\b|noqa\b|type\s*:\s*ignore\b|(?:pyright|pylint|isort)\s*:)",
@@ -572,14 +593,6 @@ def source_suppressions(repo: str) -> list[str]:
             ):
                 continue
             at = f"{path}:{token.start[0]}"
-            match = re.fullmatch(
-                r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
-                token.string,
-                re.I,
-            )
-            if not match:
-                found.append(f"{at}: suppression needs explicit codes and a recorded reason")
-                continue
             scope = next(
                 (
                     name
@@ -588,6 +601,36 @@ def source_suppressions(repo: str) -> list[str]:
                 ),
                 "<module>",
             )
+            pylint = re.fullmatch(
+                r"# pylint: (disable|enable)=duplicate-code(?:\s+#\s*(.+?))?\s*",
+                token.string,
+            )
+            if pylint:
+                key = (path, "duplicate-code", scope)
+                detail = f"suppression duplicate-code in {scope}"
+                if pylint[1] == "enable":
+                    if key not in disabled or disabled[key] != token.start[1] or pylint[2]:
+                        found.append(f"{at}: {detail} has no matching disable")
+                    else:
+                        del disabled[key]
+                elif key not in NOQA_ALLOWED:
+                    found.append(f"{at}: {detail} is not allowed")
+                elif pylint[2] != NOQA_ALLOWED[key]:
+                    found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
+                elif key in seen:
+                    found.append(f"{at}: duplicate {detail}")
+                else:
+                    disabled[key] = token.start[1]
+                    seen.add(key)
+                continue
+            match = re.fullmatch(
+                r"#\s*noqa\s*:\s*([A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)\s*#\s*(.+?)\s*",
+                token.string,
+                re.I,
+            )
+            if not match:
+                found.append(f"{at}: suppression needs explicit codes and a recorded reason")
+                continue
             for code in re.split(r"\s*,\s*", match[1].upper()):
                 key = (path, code, scope)
                 detail = f"suppression {code} in {scope}"
@@ -599,6 +642,10 @@ def source_suppressions(repo: str) -> list[str]:
                     found.append(f"{at}: duplicate {detail}")
                 else:
                     seen.add(key)
+        found.extend(
+            f"{path}: suppression {code} in {scope} has no matching enable"
+            for _, code, scope in disabled
+        )
     found.extend(
         f"{path}: suppression {code} in {scope} has no matching comment"
         for path, code, scope in sorted(NOQA_ALLOWED.keys() - seen)

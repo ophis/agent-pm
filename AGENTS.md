@@ -22,7 +22,7 @@ Session and Delegate internal units use the longest matching package; their depe
 
 Repository design rules live in `tests/guards.py`: namespace and subsystem placement, unit test placement, shared types, runtime ownership, configuration and import side effects. A helper used by one file stays there as a private function; otherwise, a helper independent of its layer's own classes goes in `utils/`. Shared data types live in their layer's types module; standalone scripts keep theirs local. The `standalone_imports` guard owns their inventory and enforces standard-library-only imports.
 
-Source suppressions require a matching entry in `tests/guards.py`'s `NOQA_ALLOWED`.
+Python suppressions require a matching entry in `tests/guards.py`'s `NOQA_ALLOWED`; Pylint disables are paired with block-scoped enables.
 
 ## Domain docs
 

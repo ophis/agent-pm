@@ -97,6 +97,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     rec = sessions.base(
         sid=a.sid, workdir=rd, runtime=a.runtime, started_at=now(), driver=cfg.driver
     )
+    # pylint: disable=duplicate-code  # B8 direct keyword call
     ctx = writeback.context(
         cfg,
         role,
@@ -108,6 +109,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         project=a.project,
         target=config.repo_slug(a.target) if a.target else None,
     )
+    # pylint: enable=duplicate-code
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):
