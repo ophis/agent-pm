@@ -9,6 +9,13 @@ import time
 from agent_pm.utils import append_line
 
 
+class StatusError(ValueError):
+    @classmethod
+    def text(cls, label: str, value: object, *, one_word: bool) -> "StatusError":
+        want = "printable text without whitespace" if one_word else "non-empty printable text"
+        return cls(f"event {label}: want {want}, not {value!r}")
+
+
 def _text(label: str, value, *, one_word: bool = False) -> str:
     if not (
         isinstance(value, str)
@@ -16,8 +23,7 @@ def _text(label: str, value, *, one_word: bool = False) -> str:
         and value.isprintable()
         and (not one_word or value.split() == [value])
     ):
-        want = "printable text without whitespace" if one_word else "non-empty printable text"
-        raise ValueError(f"event {label}: want {want}, not {value!r}")
+        raise StatusError.text(label, value, one_word=one_word)
     return value
 
 

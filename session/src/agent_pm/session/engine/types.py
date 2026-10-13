@@ -106,6 +106,9 @@ class Spec:
             raise ConfigError.cwd(self.access.cwd)
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
+        self._validate_invocation()
+
+    def _validate_invocation(self) -> None:
         if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
             raise ConfigError.flags()
         if not env_ok(self.env):
