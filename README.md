@@ -211,6 +211,7 @@ pyright
 lint-imports --no-cache
 pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
 python3 -m tests.checks
+python3 .github/run_tests.py "Repository imports" tests/integration
 python3 .github/integration_jobs.py --check
 actionlint -shellcheck= -pyflakes=
 typos --config pyproject.toml
@@ -219,4 +220,5 @@ typos --config pyproject.toml
 One project's unit tests: `python3 .github/run_tests.py "Session unit" session/tests/unit`.
 Run project and repository unit tests with `python3 .github/run_tests.py Unit --unit`; integration
 shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
-shards; its required `CI` job succeeds only when every dependency succeeds.
+shards; Lint also runs the repository import integration test with its pinned tools installed. Its
+required `CI` job succeeds only when every dependency succeeds.

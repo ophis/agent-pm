@@ -361,6 +361,5 @@
   "session.tests.integration.tui_integration_test.SameNameTest.test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept": 1.351298,
   "session.tests.integration.tui_integration_test.TuiTest.test_a_runtime_exit_ends_with_its_code_the_session_live_until_close": 0.901208,
   "session.tests.integration.tui_integration_test.TuiTest.test_a_session_over_hooks_send_idle_attach_and_stop": 4.125705,
-  "session.tests.integration.tui_integration_test.TuiTest.test_an_unreachable_server_is_unknown_and_no_end": 1.463853,
-  "tests.integration.imports_integration_test.ImportsAlone.test_each_module": 13.981043
+  "session.tests.integration.tui_integration_test.TuiTest.test_an_unreachable_server_is_unknown_and_no_end": 1.463853
 }

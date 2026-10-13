@@ -48,6 +48,19 @@ jobs:
       - name: Repository design and test boundaries
         if: ${{ !cancelled() }}
         run: python3 -m tests.checks
+      - name: Protect shipped source
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Repository import integration tests
+        if: ${{ !cancelled() }}
+        run: python3 -X faulthandler .github/run_tests.py 'Repository imports' tests/integration
+      - name: Require unchanged checkout
+        if: ${{ always() }}
+        run: |
+          status=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --porcelain)
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
       - name: Integration duration assignment
         if: ${{ !cancelled() }}
         run: python3 .github/integration_jobs.py --check

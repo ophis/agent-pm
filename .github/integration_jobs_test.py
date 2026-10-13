@@ -1,6 +1,8 @@
 """Duration scheduling and complete integration-shard coverage."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import integration_jobs as gate
 
@@ -10,6 +12,25 @@ def case(name):
 
 
 class Assignment(unittest.TestCase):
+    def test_shards_discover_only_project_integration_suites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for directory in (
+                "tests/integration",
+                "session/tests/integration",
+                "linear-orchestrator/tests/orchestrator_tests/integration",
+            ):
+                package = root / directory
+                package.mkdir(parents=True)
+                (package / "__init__.py").touch()
+            self.assertEqual(
+                gate.directories(root),
+                [
+                    "linear-orchestrator/tests/orchestrator_tests/integration",
+                    "session/tests/integration",
+                ],
+            )
+
     def test_longest_tests_are_assigned_first_to_the_least_loaded_shard(self):
         found = [case(name) for name in ("Session", "Delegate", "Manager", "Orchestrator")]
         durations = dict(zip((test.id() for test in found), (10, 8, 2, 1), strict=True))

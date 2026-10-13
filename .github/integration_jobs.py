@@ -18,15 +18,12 @@ JOBS = tuple(str(number) for number in range(1, 9))
 
 
 def directories(root):
-    return [
-        "tests/integration",
-        *sorted(
-            str(path.relative_to(root))
-            for pattern in ("*/tests/integration", "*/tests/*/integration")
-            for path in root.glob(pattern)
-            if (path / "__init__.py").is_file()
-        ),
-    ]
+    return sorted(
+        str(path.relative_to(root))
+        for pattern in ("*/tests/integration", "*/tests/*/integration")
+        for path in root.glob(pattern)
+        if (path / "__init__.py").is_file()
+    )
 
 
 def tests(suite):
