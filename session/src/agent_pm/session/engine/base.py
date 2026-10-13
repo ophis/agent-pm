@@ -18,7 +18,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.tables import Hosts
+from agent_pm.session.hosts.types import Hosts
 from agent_pm.utils import Display, Record
 
 
