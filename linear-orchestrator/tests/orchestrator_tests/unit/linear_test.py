@@ -455,6 +455,23 @@ class Unavailable(Case):
             "linear api error: [{'message': 'm', 'extensions': {'code': 'RATELIMITED'}}]",
         )
 
+    def test_malformed_response_is_unavailable(self):
+        for body in (b"null", b"[]", b"1", b"{}", b'{"data": null}', b'{"data": []}'):
+            with self.subTest(body=body), self.assertRaises(linear.Unavailable):
+                self.gql(VIEWER, body=body)
+
+    def test_malformed_rate_limit_errors_keep_the_original_http_error(self):
+        for body in (
+            b"null",
+            b"[]",
+            b'{"errors": null}',
+            b'{"errors": [null, 1, {"extensions": 1}]}',
+        ):
+            error = http_error(400, body)
+            with self.subTest(body=body), self.assertRaises(urllib.error.HTTPError) as caught:
+                self.gql(VIEWER, opened=error)
+            self.assertIs(caught.exception, error)
+
     def test_operation_is_the_first_field_of_the_top_level_selection_set(self):
         cases = {
             VIEWER: "viewer",

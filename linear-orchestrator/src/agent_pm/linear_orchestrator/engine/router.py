@@ -24,19 +24,22 @@ import fcntl
 import functools
 import os
 import re
+import subprocess
 import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from traceback import format_exception
 
 from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
-    SERVICE_ERRORS,
     ConfigError,
+    InputError,
     Invalid,
+    IssueError,
     LinearError,
     Transient,
     Unavailable,
@@ -81,7 +84,7 @@ def exhausted(usage, max_5h=MAX_5H):
 def read_usage(runtime, *, driver):
     try:
         return driver.usage(runtime)
-    except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
+    except (SessionConfigError, DriverError):
         return None
 
 
@@ -315,7 +318,7 @@ class Board:
                     driver=self.cfg.driver,
                 )
                 self.statuses[sid] = None if st.resumable == "unknown" else st
-            except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
+            except (SessionConfigError, DriverError):
                 self.statuses[sid] = None
         return self.statuses[sid]
 
@@ -533,7 +536,7 @@ class Launch:
             try:
                 st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
                 why = None if st.resumable == "yes" else st.resumable
-            except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError) as e:
+            except (SessionConfigError, DriverError) as e:
                 why = one_line(e)
             if why:
                 return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
@@ -549,7 +552,7 @@ class Launch:
         self.build = config.TASKS[role].kind == "build"
         try:
             issue = issues.read_issue(self.gql, a.issue)
-        except SERVICE_ERRORS as e:
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
             return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
         ctx = writeback.from_request(cfg, self.role, self.gql, a, issue.id)
         repo, result = self.target(issue, ctx)
@@ -564,14 +567,14 @@ class Launch:
                 repo = target.check(
                     issue, cfg.project_repos, run=self.run, work=cfg.runs_dir, roles=cfg.roles
                 )
-            except SERVICE_ERRORS as e:
+            except (OSError, subprocess.TimeoutExpired) as e:
                 return (None, fail(a.issue, "transient", f"repo check: {one_line(e)}", 3))
             if isinstance(repo, Transient) or (isinstance(repo, Invalid) and a.mode == "resume"):
                 return (None, fail(a.issue, "transient", repo.reason, 3))
             if isinstance(repo, Invalid):
                 try:
                     writeback.bounce(ctx, issue, repo.reason)
-                except SERVICE_ERRORS as e:
+                except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
                     return (None, fail(a.issue, "transient", f"bounce: {one_line(e)}", 3))
                 log("router", "bounce", a.issue, reason=repo.reason)
                 return (None, 0)
@@ -592,7 +595,7 @@ class Launch:
         rd = cfg.run_dir(a.issue)
         try:
             sources = inputs.gather(issue, self.role, cfg.docs, run=self.run)
-        except SERVICE_ERRORS as e:
+        except (InputError, OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
         try:
             os.makedirs(rd, exist_ok=True)
@@ -605,7 +608,7 @@ class Launch:
                 docs=cfg.docs,
             ).replace("\x00", "")
             text = text.encode("utf-8", "replace").decode()
-        except SERVICE_ERRORS as e:
+        except OSError as e:
             log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
             return 1
         try:
@@ -756,7 +759,7 @@ def tick(opts, cfg, gql, *, start, now, hour):
         if not dry:
             try:
                 trim(runs, now)
-            except SERVICE_ERRORS as e:
+            except (OSError, UnicodeDecodeError) as e:
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, driver=cfg.driver)
@@ -773,8 +776,13 @@ def tick(opts, cfg, gql, *, start, now, hour):
 def start_run(start, args, say):
     try:
         result = start(args)
-    except SERVICE_ERRORS as error:
-        say("launch-error", args.issue, error=one_line(error))
+    except (Exception, SystemExit) as error:  # noqa: BLE001  # A recorded launch may fail.
+        say(
+            "launch-error",
+            args.issue,
+            error=one_line(error),
+            traceback="".join(format_exception(error)),
+        )
     else:
         say("launch", args.issue, exit=result)
     return 0

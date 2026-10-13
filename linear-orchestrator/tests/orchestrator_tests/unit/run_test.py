@@ -28,6 +28,7 @@ from orchestrator_tests.unit.run_fixtures import (
     UUID,
     Base,
     Gql,
+    logged,
 )
 
 RUNTIME = "claude"
@@ -340,6 +341,18 @@ class RunExecution(Case):
             ],
         )
 
+    def test_a_run_error_records_its_original_cause_once(self):
+        error = RuntimeError("failed run")
+        error.__cause__ = ValueError("original cause")
+        self.gql, self.delegate = Gql(), FakeRun(self.order, error=error)
+        self.assertEqual(self.main(), 0)
+        records = [e for e in logged(self.logs) if e["kind"] == "run-error"]
+        self.assertEqual(len(records), 1)
+        self.assertIn("ValueError: original cause", records[0]["traceback"])
+        self.assertIn("direct cause", records[0]["traceback"])
+        self.assertIn("RuntimeError: failed run", records[0]["traceback"])
+        self.assertEqual(self.gql.calls, [*created(ended("interrupted", 1, seq=1)), REPAIR])
+
     def test_run_error(self):
         cases = [
             (
@@ -357,6 +370,14 @@ class RunExecution(Case):
                     "run no-outcome TASK-7 error=no result",
                 ],
             ),
+            (
+                dict(error=AttributeError("run defect")),
+                [
+                    "run run-error TASK-7 error=AttributeError: run defect",
+                    "run end TASK-7 sid={} exit=1",
+                    "run no-outcome TASK-7 error=no result",
+                ],
+            ),
         ]
         for kw, lines in cases:
             with self.subTest(kw=kw):
@@ -364,6 +385,10 @@ class RunExecution(Case):
                 n = len(self.said())
                 self.assertEqual(self.main(), 0)
                 self.assertEqual(self.said()[n + 1 :], [x.format(SID) for x in lines])
+                if error := kw.get("error"):
+                    record = next(e for e in logged(self.logs)[n:] if e["kind"] == "run-error")
+                    self.assertIn("in inner", record["traceback"])
+                    self.assertIn(f"{type(error).__name__}: {error}", record["traceback"])
                 self.assertEqual(self.gql.calls, [*created(ended("interrupted", 1, seq=1)), REPAIR])
 
     def test_a_config_role_or_task_error_logs_config_error_and_end(self):

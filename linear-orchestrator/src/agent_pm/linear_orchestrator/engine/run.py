@@ -11,11 +11,11 @@ import re
 import signal
 import sys
 from dataclasses import replace
+from traceback import format_exception
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import (
-    SERVICE_ERRORS,
     ConfigError,
     Stopped,
 )
@@ -92,7 +92,7 @@ def _report_outcome(a, cfg, ctx, result):
                 runtime=a.runtime,
                 resets_at=writeback.local_time(at),
             )
-        except SERVICE_ERRORS as e:
+        except OSError as e:
             log("run", "run-error", a.issue, error=one_line(e))
     elif not (result and result.outcome):
         log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
@@ -151,11 +151,16 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
             on_event=functools.partial(_event, a, cfg, ctx, post),
         )
         rc = result.returncode
-    except (*SERVICE_ERRORS, delegate.ConfigError, SessionConfigError, DriverError, Stopped) as e:
-        if isinstance(e, Stopped):
-            rc = e.code
-        else:
-            log("run", "run-error", a.issue, error=one_line(e))
+    except Stopped as e:
+        rc = e.code
+    except (Exception, SystemExit) as e:  # noqa: BLE001  # Finish reporting a failed run.
+        log(
+            "run",
+            "run-error",
+            a.issue,
+            error=one_line(e),
+            traceback="".join(format_exception(e)),
+        )
     finally:
         log("run", "end", a.issue, sid=a.sid, exit=rc)
         _report_outcome(a, cfg, ctx, result)

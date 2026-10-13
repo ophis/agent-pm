@@ -8,15 +8,18 @@ import functools
 import hashlib
 import json
 import os
+import subprocess
 from datetime import datetime
+from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS, repo_slug
 from agent_pm.linear_orchestrator.engine.target import MAPPED
 from agent_pm.linear_orchestrator.engine.types import (
-    SERVICE_ERRORS,
     FileError,
+    LinearError,
     Stopped,
+    Unavailable,
 )
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
@@ -115,7 +118,15 @@ def local_time(epoch):
 
 
 def _error(ctx, step, e):
-    log("writeback", "step-error", ctx.ident, sid=ctx.sid, step=step, error=one_line(e))
+    log(
+        "writeback",
+        "step-error",
+        ctx.ident,
+        sid=ctx.sid,
+        step=step,
+        error=one_line(e),
+        traceback="".join(format_exception(e)),
+    )
 
 
 def _guarded_move(ctx, issue, ident, to, frm):
@@ -149,7 +160,7 @@ def _step(ctx, step, call, cid=None):
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
-    except SERVICE_ERRORS as e:
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, step, e)
         return e
     log("writeback", "step", ctx.ident, sid=ctx.sid, step=step, found=found or None)
@@ -172,7 +183,7 @@ def progress(ctx, event: Progress) -> None:
         else:
             digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
             _post(ctx, f"progress:{event.name}:{digest}", f"Progress ({event.name}): {event.text}")
-    except SERVICE_ERRORS as e:
+    except Exception as e:  # noqa: BLE001  # A sink failure must not stop the run.
         _error(ctx, "sink", e)
 
 
@@ -212,7 +223,7 @@ def finish(ctx, outcome: Outcome) -> bool:
     # comment's end
     try:
         return _finish(ctx, outcome)
-    except (*SERVICE_ERRORS, Stopped) as e:
+    except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after failed steps.
         _error(ctx, "finish", e)
         return False
 
@@ -265,7 +276,7 @@ def _attach(ctx, url, title, attached):
         return
     try:
         call(ctx.gql, M_ATTACH, "attachmentLinkURL", i=ctx.issue_id, u=url, t=title)
-    except SERVICE_ERRORS as e:
+    except LinearError as e:
         if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
             raise
 
@@ -276,7 +287,7 @@ def _finish(ctx, o):
 
     try:
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
-    except SERVICE_ERRORS as e:
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, "read", e)
         return False
 
@@ -316,7 +327,7 @@ def _finish(ctx, o):
 def limit(ctx, resets_at: float | None) -> bool:
     try:
         return _limit(ctx, resets_at)
-    except (*SERVICE_ERRORS, Stopped) as e:
+    except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after a failed limit.
         _error(ctx, "limit", e)
         return False
 
@@ -329,7 +340,7 @@ def _limit(ctx, resets_at):
     # not ledgered: a resumed sid that hits the limit again moves again
     try:
         _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")
-    except SERVICE_ERRORS as e:
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, "move:in_review", e)
         return False
     return True
@@ -344,7 +355,7 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
             f" to Handoff again with a comment `Repo: <owner>/<name>` naming the "
             f"target repo."
         ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
-        with contextlib.suppress(*SERVICE_ERRORS):
+        with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)

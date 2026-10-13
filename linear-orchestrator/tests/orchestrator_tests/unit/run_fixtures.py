@@ -82,7 +82,7 @@ def show(event):
     fields = [
         f"{k}={v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)}"
         for k, v in event.items()
-        if k not in ("ts", "src", "kind", "issue")
+        if k not in ("ts", "src", "kind", "issue", "traceback")
     ]
     return " ".join([event["kind"], *([event["issue"]] if "issue" in event else []), *fields])
 

@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import CALL_ERRORS, Unavailable
+from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
@@ -31,7 +31,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
 )
 from agent_pm.session import ConfigError, DriverError
-from agent_pm.utils import GUARD, SHORT, common_dir, under
+from agent_pm.utils import GUARD, SHORT, GitError, common_dir, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
@@ -198,7 +198,7 @@ class Pruner:
                         once=True,
                         reason=f"branch {branch} in {clone} kept: not pushed",
                     )
-        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        except (GitError, OSError, subprocess.TimeoutExpired) as e:
             self.error(ident, error=one_line(e))
 
     def rmdir_owners(self, ident, owners):
@@ -251,7 +251,7 @@ class Pruner:
             nodes = self.finished_issues(finished)
         except Unavailable:
             raise
-        except CALL_ERRORS as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(error=f"archive: Linear: {one_line(e)}")
             return
         for node in nodes:
@@ -268,7 +268,7 @@ class Pruner:
                     call(self.gql, M_ARCHIVE, "issueArchive", i=node["id"])
                 except Unavailable:
                     raise
-                except CALL_ERRORS as e:
+                except (LinearError, OSError, subprocess.SubprocessError) as e:
                     self.error(ident, error=f"archive: {one_line(e)}")
                     continue
                 self.say("prune-archived", ident)
@@ -299,7 +299,7 @@ class Pruner:
             issue = self.gql(Q_ISSUE, i=ident)["issue"]
         except Unavailable:
             raise
-        except CALL_ERRORS as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.error(ident, error=f"Linear: {one_line(e)}")
             return
         if not issue or issue["state"]["id"] not in finished:

@@ -5,7 +5,7 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import Outcome
-from agent_pm.linear_orchestrator.engine.types import LinearError
+from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import ConfigError, SessionStatus
 from orchestrator_tests import case
@@ -363,6 +363,24 @@ class Failure(Case):
             raise exc
 
         return gql
+
+    def test_an_unexpected_worker_error_keeps_its_original_type(self):
+        for error in (
+            AttributeError("worker defect"),
+            ImportError("missing worker module"),
+            SystemExit(3),
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(
+                    start(self.failing(error), self.record()),
+                    f"{type(error).__name__}: {error}",
+                )
+
+    def test_worker_control_flow_propagates_to_the_caller(self):
+        for error in (KeyboardInterrupt(), Stopped(143)):
+            with self.subTest(error=error), self.assertRaises(type(error)) as caught:
+                sessions._bounded(lambda: self.failing(error)("query"), 1)
+            self.assertIs(caught.exception, error)
 
     def test_update_failure_never_creates(self):
         for exc, reason in (

@@ -1524,6 +1524,13 @@ class RuntimeUsage(Base):
         self.write_runs()
         return runtime_usage.Gate(self.runs, NOW, dry=False, driver=self.api)
 
+    def test_a_usage_probe_defect_is_not_unknown_usage(self):
+        error = AttributeError("adapter defect")
+        self.api.usages["a"] = error
+        with self.assertRaises(AttributeError) as caught:
+            runtime_usage.read_usage("a", driver=self.api)
+        self.assertIs(caught.exception, error)
+
     def test_thresholds(self):
         self.assertEqual(
             (runtime_usage.MAX_5H, router.BRAKE_5H, runtime_usage.MAX_WEEK), (90, 80, 100)
@@ -1538,7 +1545,7 @@ class RuntimeUsage(Base):
             (reading(None, None), None),
             (None, "reason=usage unknown"),
             (ConfigError("no runtime a"), "reason=usage unknown"),
-            (RuntimeError("boom"), "reason=usage unknown"),
+            (DriverError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(value=value):
@@ -1718,7 +1725,7 @@ class RunBrake(Base):
             (reading(None, None), 0, "five_hour=none weekly=none"),
             (None, 1, "unknown"),
             (ConfigError("no runtime a"), 1, "unknown"),
-            (RuntimeError("boom"), 1, "unknown"),
+            (DriverError("boom"), 1, "unknown"),
         )
         for value, rc, out in rows:
             with self.subTest(value=value):
@@ -2395,11 +2402,19 @@ class RunLaunching(OuterBase):
         )
         self.assertEqual(self.api.info, [("b", SID, self.rd)])
 
+    def test_a_status_defect_does_not_become_a_transient_resume(self):
+        error = AttributeError("adapter defect")
+        self.api.statuses[SID] = error
+        with self.assertRaises(AttributeError) as caught:
+            self.outer(mode="resume")
+        self.assertIs(caught.exception, error)
+        self.assertEqual((self.api.detached, self.gql.calls), ([], []))
+
     def test_a_resume_not_resumable_starts_nothing(self):
         for value, why in (
             (NO, "no"),
             (SessionStatus("unknown", None, ""), "unknown"),
-            (RuntimeError("boom"), "RuntimeError: boom"),
+            (DriverError("boom"), "DriverError: boom"),
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
@@ -2989,12 +3004,25 @@ class TickRecords(TickScenario):
                 Start(raises={"TASK-1": RuntimeError("x")}),
                 "launch-error TASK-1 error=RuntimeError: x",
             ),
+            (
+                Start(raises={"TASK-1": AttributeError("start defect")}),
+                "launch-error TASK-1 error=AttributeError: start defect",
+            ),
+            (
+                Start(raises={"TASK-1": SystemExit(3)}),
+                "launch-error TASK-1 error=SystemExit: 3",
+            ),
         ]
         for start, end in cases:
             with self.subTest(end=end):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, start=start), 0)
                 self.assertEqual(self.said()[-1], end)
+                if "TASK-1" in start.raises:
+                    error = start.raises["TASK-1"]
+                    record = logged(self.logs)[-1]
+                    self.assertIn("in start_run", record["traceback"])
+                    self.assertIn(f"{type(error).__name__}: {error}", record["traceback"])
                 (launch,) = self.start.launches
                 self.assertEqual(
                     self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a")
@@ -3494,7 +3522,6 @@ class StaleRunRecovery(Base):
             SessionStatus("unknown", None, ""),
             DriverError("boom"),
             ConfigError("no runtime a"),
-            OSError("gone"),
         )
         for st in statuses:
             with self.subTest(st=st):

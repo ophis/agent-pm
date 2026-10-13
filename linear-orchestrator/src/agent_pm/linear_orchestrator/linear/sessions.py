@@ -8,7 +8,6 @@ import threading
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import (
-    SERVICE_ERRORS,
     LinearError,
 )
 from agent_pm.linear_orchestrator.linear import linear
@@ -57,7 +56,7 @@ def status(workdir, runtime, sid, *, driver):
 def command(rec):
     try:
         st = status(rec["workdir"], rec["runtime"], rec["sid"], driver=rec["driver"])
-    except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError):
+    except (SessionConfigError, DriverError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 
@@ -97,7 +96,10 @@ def _bounded(call, limit):
     if t.is_alive():
         return None, f"timed out after {limit}s"
     if "error" in out:
-        return None, linear.one_line(out["error"])
+        error = out["error"]
+        if not isinstance(error, (Exception, SystemExit)):
+            raise error
+        return None, linear.one_line(error)
     return out["value"], None
 
 

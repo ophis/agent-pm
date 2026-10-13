@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -37,8 +38,12 @@ from agent_pm.utils import (
     LOCAL,
     LONG,
     SHORT,
+    ConfigFileError,
+    GitError,
     Invalid,
     Once,
+    PathError,
+    PathTypeError,
     Repo,
     Runner,
     check_slug,
@@ -231,7 +236,7 @@ def _add_checkout(state: Worktree, selection: BranchSelection, *, run: Runner) -
     try:
         git(run, wt, "config", "--worktree", "core.symlinks", state.symlinks)
         git(run, wt, "reset", "-q", "--hard", timeout=LONG)
-    except (RuntimeError, subprocess.TimeoutExpired):
+    except (GitError, subprocess.TimeoutExpired):
         run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
         raise
 
@@ -448,6 +453,11 @@ def main(
     a = ap.parse_args(argv)
     try:
         cfg = read_project("delegate", path=config, local=local)
+        links = trusted_dirs(cfg) if a.cmd == "worktree" else frozenset()
+    except (ConfigFileError, tomllib.TOMLDecodeError, PathError, PathTypeError, OSError) as e:
+        err.write(f"repo.py: {redact(str(e))}\n")
+        return 1
+    try:
         if a.cmd == "worktree":
             r = worktree(
                 a.repo,
@@ -457,7 +467,7 @@ def main(
                 base_branch=a.base,
                 run=run,
                 temp=temp,
-                links=trusted_dirs(cfg),
+                links=links,
             )
         else:
             r = status(
@@ -472,14 +482,7 @@ def main(
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2
-    except (
-        RuntimeError,
-        OSError,
-        ValueError,
-        TypeError,
-        AttributeError,
-        subprocess.TimeoutExpired,
-    ) as e:
+    except (RepoCommandError, GitError, OSError, subprocess.TimeoutExpired) as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 1
     json.dump(r, out)

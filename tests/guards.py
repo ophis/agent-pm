@@ -102,12 +102,61 @@ STANDALONE = frozenset(
 
 
 NOQA_ALLOWED = {
-    (f"{SESSION_SRC}modes/headless.py", "BLE001"): "Forward failures to the caller thread.",
-    (f"{SESSION_SRC}modes/in_process.py", "BLE001"): "Forward failures to the caller thread.",
+    (
+        f"{SESSION_SRC}modes/headless.py",
+        "BLE001",
+        "HeadlessMode._pump",
+    ): "Forward failures to the caller thread.",
+    (
+        f"{SESSION_SRC}modes/in_process.py",
+        "BLE001",
+        "InProcessMode._pump",
+    ): "Forward failures to the caller thread.",
     (
         f"{ORCH_PROJECT}/{ORCH_SRC}linear/sessions.py",
         "BLE001",
+        "_bounded.run",
     ): "Forward failures to the caller thread.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "Promoter.pending",
+    ): "Keep reading the other handoffs.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "Promoter.run",
+    ): "Keep processing other handoffs.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/promote.py",
+        "BLE001",
+        "run_prune",
+    ): "Prune failures leave promotions intact.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
+        "BLE001",
+        "start_run",
+    ): "A recorded launch may fail.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
+        "BLE001",
+        "inner",
+    ): "Finish reporting a failed run.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "progress",
+    ): "A sink failure must not stop the run.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "finish",
+    ): "Report the session after failed steps.",
+    (
+        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        "BLE001",
+        "limit",
+    ): "Report the session after a failed limit.",
 }
 
 
@@ -483,6 +532,7 @@ def source_suppressions(repo: str) -> list[str]:
     for project in PROJECTS:
         for rel, text in _files(os.path.join(repo, project, "src"), (".py",)):
             path = f"{project}/src/{rel}"
+            functions = list(_suppression_functions(ast.parse(text)))
             for token in tokenize.generate_tokens(io.StringIO(text).readline):
                 if token.type != tokenize.COMMENT or not re.search(
                     r"#\s*(?:noqa\b|type\s*:\s*ignore\b)", token.string, re.I
@@ -497,21 +547,40 @@ def source_suppressions(repo: str) -> list[str]:
                 if not match:
                     found.append(f"{at}: suppression needs explicit codes and a recorded reason")
                     continue
+                scope = next(
+                    (
+                        name
+                        for first, last, name in reversed(functions)
+                        if first <= token.start[0] <= last
+                    ),
+                    "<module>",
+                )
                 for code in re.split(r"\s*,\s*", match[1].upper()):
-                    key = (path, code)
+                    key = (path, code, scope)
+                    detail = f"suppression {code} in {scope}"
                     if key not in NOQA_ALLOWED:
-                        found.append(f"{at}: suppression {code} is not allowed")
+                        found.append(f"{at}: {detail} is not allowed")
                     elif match[2] != NOQA_ALLOWED[key]:
-                        found.append(f"{at}: suppression {code} reason differs from NOQA_ALLOWED")
+                        found.append(f"{at}: {detail} reason differs from NOQA_ALLOWED")
                     elif key in seen:
-                        found.append(f"{at}: duplicate suppression {code}")
+                        found.append(f"{at}: duplicate {detail}")
                     else:
                         seen.add(key)
     found.extend(
-        f"{path}: suppression {code} has no matching comment"
-        for path, code in sorted(NOQA_ALLOWED.keys() - seen)
+        f"{path}: suppression {code} in {scope} has no matching comment"
+        for path, code, scope in sorted(NOQA_ALLOWED.keys() - seen)
     )
     return found
+
+
+def _suppression_functions(tree, parents=()):
+    for node in ast.iter_child_nodes(tree):
+        scope = parents
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = (*parents, node.name)
+            if not isinstance(node, ast.ClassDef):
+                yield node.lineno, node.end_lineno, ".".join(scope)
+        yield from _suppression_functions(node, scope)
 
 
 def standalone(repo: str) -> list[str]:

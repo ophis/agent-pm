@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 import functools
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from traceback import format_exception
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import (
-    CALL_ERRORS,
-    SERVICE_ERRORS,
     ConfigError,
+    LinearError,
     Promotion,
     Unavailable,
 )
@@ -113,8 +114,13 @@ class Promoter:
                     work.append(Promotion(src, detail, role, nxt, cutoff, first, latest))
                 except Unavailable:
                     raise
-                except CALL_ERRORS as e:
-                    self.say("handoff-error", src["identifier"], error=one_line(e))
+                except Exception as e:  # noqa: BLE001  # Keep reading the other handoffs.
+                    self.say(
+                        "handoff-error",
+                        src["identifier"],
+                        error=one_line(e),
+                        traceback="".join(format_exception(e)),
+                    )
         return sorted(work, key=lambda handoff: handoff.latest)
 
     def run(self):
@@ -132,8 +138,13 @@ class Promoter:
                 self.promote(handoff)
             except Unavailable:
                 raise
-            except CALL_ERRORS as e:
-                self.say("handoff-error", src["identifier"], error=one_line(e))
+            except Exception as e:  # noqa: BLE001  # Keep processing other handoffs.
+                self.say(
+                    "handoff-error",
+                    src["identifier"],
+                    error=one_line(e),
+                    traceback="".join(format_exception(e)),
+                )
                 if self.now - parse_time(latest) > GRACE:
                     self.bounce_failed(src, e, handoff.child)
 
@@ -222,7 +233,7 @@ class Promoter:
         self.say("promote", src["identifier"], to=child["identifier"])
         try:  # the source is Done now; a lost comment must not bounce it
             self.comment(src, f"Promoted to {child['identifier']}.")
-        except SERVICE_ERRORS as e:
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -259,7 +270,7 @@ class Promoter:
                 self.say("handoff-failed", src["identifier"], to="in_review")
         except Unavailable:
             raise
-        except CALL_ERRORS as e:
+        except (LinearError, OSError, subprocess.SubprocessError) as e:
             self.say(
                 "handoff-error",
                 src["identifier"],
@@ -312,8 +323,14 @@ def run_prune(gql, now, promoter, pruner=None):
         ).run()
     except Unavailable as e:
         linear_error("prune", e, dry=promoter.dry)
-    except CALL_ERRORS as e:
-        log("prune", "prune-error", dry=promoter.dry, error=one_line(e))
+    except (Exception, SystemExit) as e:  # noqa: BLE001  # Prune failures leave promotions intact.
+        log(
+            "prune",
+            "prune-error",
+            dry=promoter.dry,
+            error=one_line(e),
+            traceback="".join(format_exception(e)),
+        )
 
 
 def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None):

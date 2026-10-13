@@ -1,7 +1,6 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
 import os
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -51,19 +50,6 @@ class TuiError(ValueError):
 
 class InputError(RuntimeError):
     pass
-
-
-CALL_ERRORS = (
-    LinearError,
-    OSError,
-    ValueError,
-    LookupError,
-    TypeError,
-    RuntimeError,
-    subprocess.SubprocessError,
-)
-
-SERVICE_ERRORS = (*CALL_ERRORS, Unavailable)
 
 
 @dataclass(frozen=True)

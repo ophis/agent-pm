@@ -1,5 +1,6 @@
 import functools
 import io
+import json
 import os
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -39,6 +40,10 @@ class PromotionFailures(Base):
         self.assertEqual(other["state"], "Done")
         self.assertEqual(self.fake.issues["DR-1"]["state"], "Handoff")
         self.assertIn("handoff-error DR-1", self.out)
+        errors = [e for e in logged(self.logs) if e["kind"] == "handoff-error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("in pending", errors[0]["traceback"])
+        self.assertIn("LinearError: linear api error: boom", errors[0]["traceback"])
 
     def test_failing_over_grace_bounces(self):
         for fail, existing, posted in (
@@ -63,6 +68,11 @@ class PromotionFailures(Base):
                 self.assertEqual(
                     (src["state"], src["posted"], src["subscribers"]),
                     ("In Review", [posted], ["me@x.com"]),
+                )
+                record = [e for e in logged(self.logs) if e["kind"] == "handoff-error"][-1]
+                self.assertIn("in run", record["traceback"])
+                self.assertIn(
+                    f"LinearError: linear api error: {self.fake.fail[fail]}", record["traceback"]
                 )
 
     def test_grace_counts_from_latest_handoff(self):
@@ -349,20 +359,24 @@ class PromotionCleanup(Base):
                 pass
 
             def run(self):
-                raise RuntimeError("boom")
+                raise error
 
         self.ready("DR-1")
-        for name, pruner in (("run error", Boom),):
-            with self.subTest(name):
-                rc = self.run_main("--dry-run", pruner=pruner)
+        for error in (RuntimeError("boom"), ImportError("missing pruner"), SystemExit(3)):
+            with self.subTest(error=error):
+                rc = self.run_main("--dry-run", pruner=Boom)
                 self.assertEqual(rc, 0)
                 self.assertEqual(
                     self.out.splitlines()[0], "promote DR-1 role=pm project=Deep Research"
                 )
                 self.assertRegex(
                     self.out.splitlines()[1],
-                    r"^prune-error error=RuntimeError: boom",
+                    f"^prune-error error={type(error).__name__}: {error}",
                 )
+                record = json.loads(self.err.splitlines()[-1])
+                self.assertEqual(record["kind"], "prune-error")
+                self.assertIn("in run_prune", record["traceback"])
+                self.assertIn(f"{type(error).__name__}: {error}", record["traceback"])
 
 
 class HandoffPromotion(Base):

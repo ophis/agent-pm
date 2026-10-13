@@ -168,6 +168,32 @@ class Base(Case):
         return path
 
 
+class CommandFailures(Base):
+    def test_process_failures_are_reported_with_exit_one(self):
+        for error in (OSError("gh unavailable"), subprocess.TimeoutExpired(["gh", "api"], 60)):
+            with self.subTest(error=error):
+
+                def run(_argv, _timeout, error=error):
+                    raise error
+
+                code, out, err = self.main(
+                    ["worktree", "o/n", "--dir", self.dir, "--branch", "TASK-1-x"], run
+                )
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn(str(error), err)
+
+    def test_unexpected_runner_defects_are_not_reported_as_command_failures(self):
+        for error in (AttributeError("missing result"), TypeError("bad call"), RuntimeError("bug")):
+            with self.subTest(error=error):
+
+                def run(_argv, _timeout, error=error):
+                    raise error
+
+                with self.assertRaises(type(error)) as raised:
+                    self.main(["worktree", "o/n", "--dir", self.dir, "--branch", "TASK-1-x"], run)
+                self.assertIs(raised.exception, error)
+
+
 class Clone(Case):
     """A real clone of a bare repo, its origin reading as github.com/o/n."""
 

@@ -128,11 +128,22 @@ class EveryTest(Sample):
 
 
 class SourceSuppressions(Sample):
+    def scoped(self, scope, comments, *, comment_only=False):
+        lines = []
+        parts = scope.split(".")
+        for depth, name in enumerate(parts):
+            declaration = f"class {name}:" if name[0].isupper() else f"def {name}():"
+            lines.append("    " * depth + declaration)
+        indent = "    " * len(parts)
+        lines.extend(indent + ("" if comment_only else "pass  ") + comment for comment in comments)
+        if comment_only:
+            lines.append(indent + "pass")
+        return "\n".join(lines) + "\n"
+
     def found(self, extra=None, *, replace=None):
-        files = {
-            path: f"value = 1  # noqa: {code}  # {reason}\n"
-            for (path, code), reason in guards.NOQA_ALLOWED.items()
-        }
+        files = {}
+        for (path, code, scope), reason in guards.NOQA_ALLOWED.items():
+            files[path] = files.get(path, "") + self.scoped(scope, [f"# noqa: {code}  # {reason}"])
         files.update(extra or {})
         if replace is not None:
             files.pop(replace)
@@ -178,51 +189,97 @@ class SourceSuppressions(Sample):
         path = "utils/src/agent_pm/utils/a.py"
         self.assertEqual(
             self.found({path: "value = 1  # noqa: BLE001  # Forward failures.\n"}),
-            [f"{path}:1: suppression BLE001 is not allowed"],
+            [f"{path}:1: suppression BLE001 in <module> is not allowed"],
         )
 
     def test_compound_codes_cannot_hide_an_unlisted_rule(self):
-        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
         self.assertEqual(
-            self.found({path: f"value = 1  # noqa: {code}, F401  # {reason}\n"}),
-            [f"{path}:1: suppression F401 is not allowed"],
+            self.found({path: self.scoped(scope, [f"# noqa: {code}, F401  # {reason}"])}),
+            [f"{path}:3: suppression F401 in {scope} is not allowed"],
         )
 
     def test_reason_must_match_the_inventory(self):
-        (path, code), _ = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), _ = next(iter(guards.NOQA_ALLOWED.items()))
         self.assertEqual(
-            self.found({path: f"value = 1  # noqa: {code}  # Different reason.\n"}),
+            self.found({path: self.scoped(scope, [f"# noqa: {code}  # Different reason."])}),
             [
-                f"{path}:1: suppression {code} reason differs from NOQA_ALLOWED",
-                f"{path}: suppression {code} has no matching comment",
+                f"{path}:3: suppression {code} in {scope} reason differs from NOQA_ALLOWED",
+                f"{path}: suppression {code} in {scope} has no matching comment",
             ],
         )
 
     def test_each_inventory_entry_needs_a_comment(self):
-        path, code = next(iter(guards.NOQA_ALLOWED))
+        path, code, scope = next(iter(guards.NOQA_ALLOWED))
         for files, replace in (({path: "value = 1\n"}, None), ({}, path)):
             with self.subTest(replace=replace):
                 self.assertEqual(
                     self.found(files, replace=replace),
-                    [f"{path}: suppression {code} has no matching comment"],
+                    [f"{path}: suppression {code} in {scope} has no matching comment"],
                 )
 
     def test_duplicate_comments_cannot_reuse_an_entry(self):
-        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
-        comment = f"value = 1  # noqa: {code}  # {reason}\n"
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        comment = f"# noqa: {code}  # {reason}"
         self.assertEqual(
-            self.found({path: comment * 2}),
-            [f"{path}:2: duplicate suppression {code}"],
+            self.found({path: self.scoped(scope, [comment, comment])}),
+            [f"{path}:4: duplicate suppression {code} in {scope}"],
         )
 
     def test_whitespace_case_and_comment_only_lines_are_checked(self):
-        (path, code), reason = next(iter(guards.NOQA_ALLOWED.items()))
-        self.assertEqual(self.found({path: f"#  NOQA : {code.lower()} # {reason}\n"}), [])
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
         self.assertEqual(
-            self.found({path: f"# noqa: {code} # {reason} # type: ignore\n"}),
+            self.found(
+                {
+                    path: self.scoped(
+                        scope, [f"#  NOQA : {code.lower()} # {reason}"], comment_only=True
+                    )
+                }
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.found({path: self.scoped(scope, [f"# noqa: {code} # {reason} # type: ignore"])}),
             [
-                f"{path}:1: suppression {code} reason differs from NOQA_ALLOWED",
-                f"{path}: suppression {code} has no matching comment",
+                f"{path}:3: suppression {code} in {scope} reason differs from NOQA_ALLOWED",
+                f"{path}: suppression {code} in {scope} has no matching comment",
+            ],
+        )
+
+    def test_same_file_and_rule_do_not_allow_another_function(self):
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        comment = f"# noqa: {code} # {reason}"
+        for other in ("other", "Other._pump", "HeadlessMode.other", "HeadlessMode._pump.nested"):
+            with self.subTest(other):
+                source = self.scoped(scope, [comment]) + self.scoped(other, [comment])
+                line = len(scope.split(".")) + len(other.split(".")) + 2
+                self.assertEqual(
+                    self.found({path: source}),
+                    [f"{path}:{line}: suppression {code} in {other} is not allowed"],
+                )
+
+    def test_nested_functions_use_the_innermost_qualified_name(self):
+        self.assertEqual(self.found(), [])
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        comment = f"# noqa: {code} # {reason}"
+        source = self.scoped(scope + ".nested", [comment])
+        self.assertEqual(
+            self.found({path: source}),
+            [
+                f"{path}:4: suppression {code} in {scope}.nested is not allowed",
+                f"{path}: suppression {code} in {scope} has no matching comment",
+            ],
+        )
+
+    def test_async_methods_and_moved_module_comments_cannot_borrow_an_entry(self):
+        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        source = self.scoped(scope, [f"# noqa: {code} # {reason}"])
+        self.assertEqual(self.found({path: source.replace("def _pump", "async def _pump")}), [])
+        self.assertEqual(
+            self.found({path: f"pass  # noqa: {code} # {reason}\n"}),
+            [
+                f"{path}:1: suppression {code} in <module> is not allowed",
+                f"{path}: suppression {code} in {scope} has no matching comment",
             ],
         )
 

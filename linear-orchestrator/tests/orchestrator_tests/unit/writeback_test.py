@@ -359,6 +359,9 @@ class ProgressReporting(Base):
             writeback.progress(self.ctx(gql=gql), START)
         writeback.progress(replace(self.ctx(), role="nope"), START)
         self.assertEqual(self.lines(), [f"step-error {ID} step=sink error=KeyError: 'nope'"])
+        (record,) = logged()
+        self.assertIn("in progress", record["traceback"])
+        self.assertIn("KeyError: 'nope'", record["traceback"])
 
 
 class CompletionFailures(Base):
@@ -369,6 +372,9 @@ class CompletionFailures(Base):
             )
         )
         self.assertEqual(self.lines(), [f"step-error {ID} step=finish error=KeyError: 'nope'"])
+        (record,) = logged()
+        self.assertIn("in finish", record["traceback"])
+        self.assertIn("KeyError: 'nope'", record["traceback"])
 
     def test_signal_exit_stops_the_steps(self):
         for name in ("read", "subscribe", "comment", "attach"):
@@ -744,6 +750,10 @@ class UsageLimitReporting(Base):
                 self.assertFalse(writeback.limit(self.ctx(gql=gql), T))
                 self.assertEqual(gql.calls[-1][0], name)
                 self.assertEqual(self.lines()[-1], f"step-error {ID} {line}")
+                if "step=limit" in line:
+                    record = logged()[-1]
+                    self.assertIn("in limit", record["traceback"])
+                    self.assertIn("Stopped: 143", record["traceback"])
 
 
 class CompletionSteps(Base):

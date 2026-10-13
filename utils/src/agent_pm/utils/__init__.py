@@ -1,7 +1,7 @@
 """Public utility modules and functions shared by the layers."""
 
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, read_project, unset
+from agent_pm.utils.config_file import LOCAL, ConfigFileError, read_project, unset
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.files import (
     ConfinedFileError,
@@ -15,6 +15,7 @@ from agent_pm.utils.git import (
     GUARD,
     NAME,
     OWNER,
+    GitError,
     Invalid,
     Repo,
     check_slug,
@@ -27,6 +28,8 @@ from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
+    PathError,
+    PathTypeError,
     import_roots,
     printable_abs,
     real_dirs,
@@ -41,16 +44,20 @@ from agent_pm.utils.text import printable, sid_error
 
 __all__ = [
     "CLASS_PATH",
+    "ConfigFileError",
     "ConfinedFileError",
     "ConfinedReason",
     "Display",
     "GUARD",
+    "GitError",
     "Invalid",
     "LOCAL",
     "LONG",
     "NAME",
     "OWNER",
     "Once",
+    "PathError",
+    "PathTypeError",
     "Record",
     "Repo",
     "Runner",

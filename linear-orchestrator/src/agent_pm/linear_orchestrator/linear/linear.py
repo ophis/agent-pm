@@ -19,7 +19,6 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID as ISSUE_ID
 from agent_pm.linear_orchestrator.engine.types import (
-    SERVICE_ERRORS,
     STATES,
     ConfigError,
     LinearError,
@@ -71,21 +70,31 @@ def linear_gql(query, *, service, timeout=30, **variables):
         raise Unavailable(operation(query), reason=one_line(cause)) from None
     try:
         body = json.loads(raw)
-    except ValueError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         raise Unavailable(operation(query), reason="response not JSON") from None
+    if not isinstance(body, dict):
+        raise Unavailable(operation(query), reason="response not a GraphQL object")
     if body.get("errors"):
         raise LinearError(f"linear api error: {body['errors']}")
+    if not isinstance(body.get("data"), dict):
+        raise Unavailable(operation(query), reason="response has no GraphQL data")
     return body["data"]
 
 
 def _rate_limited(e):
     try:
-        return any(
-            (x.get("extensions") or {}).get("code") == "RATELIMITED"
-            for x in json.loads(e.read())["errors"]
-        )
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        body = json.loads(e.read())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return False
+    if not isinstance(body, dict) or not isinstance(body.get("errors"), list):
+        return False
+    for error in body["errors"]:
+        if not isinstance(error, dict):
+            continue
+        extensions = error.get("extensions")
+        if isinstance(extensions, dict) and extensions.get("code") == "RATELIMITED":
+            return True
+    return False
 
 
 def key(service, timeout):
@@ -275,7 +284,7 @@ def subscribe(gql, issue, emails):
     for email in emails:
         try:
             call(gql, M_SUBSCRIBE, "issueSubscribe", i=issue, e=email)
-        except SERVICE_ERRORS as e:
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
             notes += f"\n\nCould not subscribe {email}: {one_line(e)}"
     return notes
 

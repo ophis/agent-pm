@@ -9,10 +9,7 @@ from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine import router as routing
-from agent_pm.linear_orchestrator.engine.types import SERVICE_ERRORS
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.fixture_errors import StepFailure
 from orchestrator_tests.integration.flow_fixtures import (
@@ -122,7 +119,7 @@ class BoardExpectations(TmuxFlow):
             self.verify()
         except AssertionError as e:
             raise StepFailure(n, name, e) from e
-        except (*SERVICE_ERRORS, DriverError, SessionConfigError) as e:
+        except Exception as e:
             e.add_note(f"failed at step {n} ({name})")
             raise
 
