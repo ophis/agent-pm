@@ -164,6 +164,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             "tui_hook.py",
             "hook_schema.py",
             "app_server.py",
+            "siblings.py",
         ):
             with self.subTest(name=name):
                 result = subprocess.run(

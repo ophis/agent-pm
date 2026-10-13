@@ -2,34 +2,14 @@
 
 from __future__ import annotations
 
-import importlib.util
+import runpy
 import os
 import sys
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
-def _sibling(name):
-    # pylint: disable=duplicate-code  # standalone stdlib-only scripts cannot share code
-    key, path = "_agent_pm_codex_" + name, os.path.join(DIRECTORY, name + ".py")
-    if key in sys.modules:
-        found = getattr(sys.modules[key], "__file__", None)
-        if found != path:
-            raise ImportError(f"{key} is {found}, not {path}")
-        return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"{path}: cannot load Python module")
-    # Postponed dataclass annotations resolve through their registered module.
-    module = sys.modules[key] = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[key]
-        raise
-    # pylint: enable=duplicate-code
-    return module
-
+_sibling = runpy.run_path(os.path.join(DIRECTORY, "siblings.py"))["load"]
 
 sessions = _sibling("sessions")
 HOOKS = _sibling("hook_schema").HOOKS

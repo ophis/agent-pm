@@ -98,6 +98,7 @@ STANDALONE = frozenset(
         "adapters/codex/app_server.py",
         "adapters/codex/hook_schema.py",
         "adapters/codex/sessions.py",
+        "adapters/codex/siblings.py",
         "adapters/codex/tui_start.py",
         "adapters/codex/tui_hook.py",
     )
@@ -165,16 +166,6 @@ NOQA_ALLOWED = {
         "BLE001",
         "__main__",
     ): "the hook must never fail the client runtime",
-    (
-        f"{SESSION_SRC}adapters/codex/tui_hook.py",
-        "duplicate-code",
-        "_sibling",
-    ): "standalone stdlib-only scripts cannot share code",
-    (
-        f"{SESSION_SRC}adapters/codex/tui_start.py",
-        "duplicate-code",
-        "_sibling",
-    ): "standalone stdlib-only scripts cannot share code",
     (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
         "duplicate-code",

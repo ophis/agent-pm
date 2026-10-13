@@ -252,13 +252,19 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_disable_requires_a_matching_enable(self):
-        path = "session/src/agent_pm/session/adapters/codex/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "_sibling"]
+        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
+        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
+        other = self.scoped(
+            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
+        )
         self.assertEqual(
             self.found(
-                {path: self.scoped("_sibling", [f"# pylint: disable=duplicate-code  # {reason}"])}
+                {
+                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
+                    + other
+                }
             ),
-            [f"{path}: suppression duplicate-code in _sibling has no matching enable"],
+            [f"{path}: suppression duplicate-code in outer has no matching enable"],
         )
 
     def test_unlisted_pylint_blocks_and_unmatched_enables_are_rejected(self):
@@ -282,18 +288,22 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_enable_cannot_close_another_scope(self):
-        path = "session/src/agent_pm/session/adapters/codex/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "_sibling"]
+        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
+        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
+        other = self.scoped(
+            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
+        )
         self.assertEqual(
             self.found(
                 {
-                    path: self.scoped("_sibling", [f"# pylint: disable=duplicate-code  # {reason}"])
+                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
                     + self.scoped("other", ["# pylint: enable=duplicate-code"])
+                    + other
                 }
             ),
             [
                 f"{path}:4: suppression duplicate-code in other has no matching disable",
-                f"{path}: suppression duplicate-code in _sibling has no matching enable",
+                f"{path}: suppression duplicate-code in outer has no matching enable",
             ],
         )
 
