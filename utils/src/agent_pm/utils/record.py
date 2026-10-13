@@ -4,6 +4,7 @@ session layer interprets it.
 """
 
 import json
+from collections.abc import Iterable, Iterator
 from dataclasses import Field, asdict, dataclass, fields
 from typing import Any, ClassVar, Self
 
@@ -108,3 +109,13 @@ class Status(_Line):
             _check(
                 ok=value is None or isinstance(value, str), message=f"{field}: want null or a str"
             )
+
+
+def json_records(lines: Iterable[str | bytes]) -> Iterator[dict]:
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(record, dict):
+            yield record
