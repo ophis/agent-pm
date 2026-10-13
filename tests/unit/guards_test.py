@@ -591,7 +591,6 @@ class ManagerImports(Sample):
                 f"{crew} agent_pm.linear_orchestrator",
                 f"{crew} agent_pm.session.engine.types",
                 f"{roster} agent_pm.manager.crew",
-                f"{roster} agent_pm.session.Session",
                 f"{x} agent_pm.delegate.engine.config",
                 f"{x} agent_pm.manager.roster",
                 f"{x} agent_pm.session.api",

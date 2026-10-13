@@ -26,7 +26,7 @@ session_api_uses(repo) UPPER uses api.X only for an api __all__ name not session
 shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
                       is in a *.types module or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
-orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, `from session import api`, EXPORTERS' __all__
+orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED but CONFIG, session's __all__ (until TASK-372), EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
@@ -175,14 +175,8 @@ MANAGER_ALLOWED = {
     "manager.crew": ("utils", "manager.roster", "manager.engine.types"),
     "manager.roster": ("utils", "manager.engine.types"),
 }
-MANAGER_EXCEPTIONS = {
-    "manager.crew": (
-        f"{PKG}.{CONFIG}",  # until TASK-371
-        f"{PKG}.session.Session",  # until TASK-371
-        f"{PKG}.session.api",  # until TASK-371
-    ),
-    "manager.roster": (f"{PKG}.session.api",),  # until TASK-371
-}
+MANAGER_EXCEPTIONS = {"manager.crew": (f"{PKG}.{CONFIG}",)}  # until TASK-371
+MANAGER_SESSION = ("manager.crew", "manager.roster")  # session names, until TASK-371
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
 SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
@@ -316,6 +310,7 @@ def manager_imports(repo: str) -> list[str]:
                 m.split(".")[0] in sys.stdlib_module_names
                 or any(_within(inner, u) for u in allowed)
                 or m in MANAGER_EXCEPTIONS.get(name, ())
+                or (name in MANAGER_SESSION and m.rpartition(".")[0] == f"{PKG}.{SESSION}")
             ):
                 found.add(f"{rel}: {name} imports {m}")
     return sorted(found)
@@ -760,7 +755,7 @@ def _denied(rel, module, name, exported):
         )
     return not (
         _shared(target)
-        or (module, name) == (f"{PKG}.{SESSION}", "api")  # both until TASK-372
+        or (module == f"{PKG}.{SESSION}" and name != "Session")  # both until TASK-372
         or (module, name, rel) == (f"{PKG}.{SESSION}", "Session", CONFIG_PY)
     )
 

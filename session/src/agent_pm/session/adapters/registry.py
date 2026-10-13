@@ -1,8 +1,8 @@
 """The adapter registry: Session.configure's settings (the [adapters.<name>] tables, the hosts' tables, the default
-host), checked and stored by configure() until the next configure() or reset() (tests). adapter(name) builds the class
+host), checked and stored by configure() until the next configure() or reset(). adapter(name) builds the class
 [adapters.<name>].implementation names; tui() reads [hosts.tmux]'s display keys. Unconfigured or any failure:
-ConfigError. settings(config): configure's keyword arguments from an already-read session config (its [adapters] and
-[hosts], the latter through tables.parse); else ValueError."""
+ConfigError. settings(config): configure's keyword arguments from a read session config
+([hosts] through tables.parse); else ValueError."""
 
 import copy
 import re
