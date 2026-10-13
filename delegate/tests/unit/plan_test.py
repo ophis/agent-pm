@@ -26,9 +26,9 @@ from agent_pm.session import api
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import temp_dirs, under
 
+from delegate.tests.case import REPO, Case, committed
 from delegate.tests.unit.composer.team_test import POET, VERSE
 from session.tests import fake_adapter
-from tests.case import REPO, Case, committed
 
 SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")

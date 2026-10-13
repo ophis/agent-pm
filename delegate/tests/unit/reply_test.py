@@ -5,7 +5,7 @@ import unittest
 from agent_pm.delegate.composer import PROGRESS
 from agent_pm.delegate.event.reply import MARK, marks, outcome_block
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 
 class Marks(Case):

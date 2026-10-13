@@ -25,7 +25,7 @@ from agent_pm.manager import crew, roster
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
 
-from tests.case import PYTHONPATH, SRC, Case
+from manager.tests.case import PYTHONPATH, SRC, Case
 
 CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")
 MODULE = ["-P", "-m", "agent_pm.manager.crew"]

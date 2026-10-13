@@ -38,6 +38,15 @@ def flat(suite):
         yield from flat(test) if isinstance(test, unittest.TestSuite) else (test,)
 
 
+def own_case(test, top):
+    """A Case of the test's own tests/case.py, or a lower project's (guards.TEST_ORDER)."""
+    order = guards.TEST_ORDER
+    project = top.split("/")[0]
+    trees = [top] if project not in order else order[: order.index(project) + 1]
+    modules = {f"{t}.tests.case" if t in order else f"{t}.case" for t in trees}
+    return any(c.__name__ == "Case" and c.__module__ in modules for c in type(test).__mro__)
+
+
 class Sample(Case):
     def tree(self, files: dict[str, str]) -> str:
         tmp = tempfile.TemporaryDirectory()
@@ -69,6 +78,7 @@ class RealTree(Case):
             (guards.import_hygiene, REPO),
             (guards.namespace_package, REPO),
             (guards.python_commands, REPO),
+            (guards.test_layers, REPO),
             *((guard, ORCH) for guard in ORCH_GUARDS),
             *((guards.private_imports, src) for src in SRC.values()),
         ):
@@ -133,7 +143,7 @@ class EveryTest(Sample):
                 start = os.path.join(REPO, top, suite)
                 if os.path.isdir(start):
                     tests = loader.discover(start, "*_test.py", REPO)
-                    found += [test.id() for test in flat(tests) if not isinstance(test, Case)]
+                    found += [test.id() for test in flat(tests) if not own_case(test, top)]
         self.assertEqual((loader.errors, found), ([], []))
 
     def test_has_no_class_or_module_fixture(self):
@@ -584,6 +594,49 @@ class ManagerImports(Sample):
         self.assertEqual(
             guards.manager_imports(root),
             sorted(f"{rel}: imports agent_pm.manager.roster" for rel in files),
+        )
+
+
+class TestLayers(Sample):
+    def test_a_project_test_imports_its_own_lower_projects_and_the_stdlib(self):
+        root = self.tree(
+            {
+                "utils/tests/a.py": "import os\nfrom agent_pm.utils import files\nfrom utils.tests import case\n",
+                "session/tests/unit/a.py": "from agent_pm.utils import files\nfrom utils.tests.case import Case\n"
+                "from agent_pm.session import api\nfrom ..case import Case\n",
+                f"{guards.ORCH_PROJECT}/tests/unit/a.py": "from ..case import Case\n"
+                "from delegate.tests import case\nfrom agent_pm.delegate import composer\n",
+                "manager/tests/a.py": "from agent_pm.linear_orchestrator import x\nfrom session.tests import y\n",
+            }
+        )
+        self.assertEqual(guards.test_layers(root), [])
+
+    def test_the_root_tests_and_a_higher_project_are_refused(self):
+        root = self.tree(
+            {
+                "utils/tests/a.py": "from tests.case import Case\nfrom agent_pm.session import api\n"
+                "from session.tests import case\n",
+                "session/tests/fakes/b.py": "import tests.guards\nfrom agent_pm.delegate.engine import config\n"
+                "from agent_pm.manager import roster\n",
+                "delegate/tests/c.py": "from tests import case\nimport agent_pm.linear_orchestrator.x\n"
+                "from manager.tests import y\n",
+                f"{guards.ORCH_PROJECT}/tests/d.py": "from agent_pm.manager import crew\n",
+            }
+        )
+        self.assertEqual(
+            guards.test_layers(root),
+            [
+                "delegate/tests/c.py: imports agent_pm.linear_orchestrator.x",
+                "delegate/tests/c.py: imports manager.tests",
+                "delegate/tests/c.py: imports tests.case",
+                f"{guards.ORCH_PROJECT}/tests/d.py: imports agent_pm.manager.crew",
+                "session/tests/fakes/b.py: imports agent_pm.delegate.engine.config",
+                "session/tests/fakes/b.py: imports agent_pm.manager.roster",
+                "session/tests/fakes/b.py: imports tests.guards",
+                "utils/tests/a.py: imports agent_pm.session.api",
+                "utils/tests/a.py: imports session.tests",
+                "utils/tests/a.py: imports tests.case",
+            ],
         )
 
 

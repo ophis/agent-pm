@@ -2,9 +2,9 @@
 
 import unittest
 
+from delegate.tests.case import Case
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.delegate import FakeDelegate
-from tests.case import Case
 
 
 class FakeDelegateContract(DelegateContract, Case):

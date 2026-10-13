@@ -7,7 +7,7 @@ from unittest import mock
 from agent_pm.session.hosts.tables import Hosts, parse
 from agent_pm.utils import registry
 
-from tests.case import Case
+from session.tests.case import Case
 
 TWO = """[hosts]
 default = "a"

@@ -9,7 +9,7 @@ import subprocess
 
 from agent_pm.delegate import cli, composer
 
-from tests.case import REPO, Case
+from delegate.tests.case import REPO, Case
 
 SKILL_DIR = os.path.join(REPO, "delegate", "skills", "act-as")
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)

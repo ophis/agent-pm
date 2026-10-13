@@ -14,7 +14,7 @@ from agent_pm.session import Displayable, DriverError, Host
 from agent_pm.session.engine.api import Key, Paste
 from agent_pm.utils.record import Record
 
-from tests.case import PY, REPO, child_env
+from session.tests.case import PY, REPO, child_env
 
 OTHER_DISPLAY = "elsewhere:1.2"
 DEADLINE = 10

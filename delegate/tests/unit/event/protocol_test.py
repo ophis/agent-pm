@@ -5,7 +5,7 @@ import unittest
 from agent_pm.delegate import composer
 from agent_pm.delegate import event as protocol
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 
 class ProtocolTest(Case):

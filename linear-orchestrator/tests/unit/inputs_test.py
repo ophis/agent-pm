@@ -12,7 +12,7 @@ from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils.shell import SHORT
 
-from tests.case import Case
+from ..case import Case
 
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}

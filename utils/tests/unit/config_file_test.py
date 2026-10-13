@@ -1,4 +1,4 @@
-"""utils/config_file.py: merge, read_config; config.py: the core config's pair (CONFIG, LOCAL)."""
+"""utils/config_file.py: merge, read_config."""
 
 import copy
 import os
@@ -8,12 +8,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate.engine.config import CONFIG, LOCAL
 from agent_pm.utils.config_file import merge, read_config
 
-from tests.case import REPO, Case
+from utils.tests.case import REPO, Case
 
-LOCAL_SHOWN = "~/.agent-pm/core-new.local.toml"
+LOCAL = "~/.agent-pm/core-new.local.toml"
 
 
 class ConfigFileTest(Case):
@@ -93,13 +92,9 @@ class Defaults(Case):
         with open(os.path.join(self.agent_pm, name), "w", encoding="utf-8") as f:
             f.write(text)
 
-    def test_the_new_cores_config_pair(self):
-        self.assertEqual(CONFIG, os.path.join(REPO, "delegate", "config.toml"))
-        self.assertEqual(LOCAL, LOCAL_SHOWN)
-
     def test_both_paths_are_required_and_devnull_merges_nothing(self):
         self.local('extra = "x"\n')
-        for args in ((), (CONFIG,), (self.path,)):
+        for args in ((), (self.path,)):
             with self.subTest(args=args), self.assertRaises(TypeError):
                 read_config(*args)
         self.assertEqual(

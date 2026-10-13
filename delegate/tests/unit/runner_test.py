@@ -39,9 +39,9 @@ from agent_pm.delegate.event.outcome import save
 from agent_pm.session import api
 from agent_pm.utils import text as text_utils
 
+from delegate.tests.case import Case
 from session.tests import fake_adapter
 from session.tests.unit.api_test import SPAWNS
-from tests.case import Case
 
 SID = "11111111-2222-3333-4444-555555555555"
 NAME = "fake-11111111"

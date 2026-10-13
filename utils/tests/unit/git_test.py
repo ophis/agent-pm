@@ -9,7 +9,7 @@ import unittest.mock
 import agent_pm.utils.git
 from agent_pm.utils.git import common_dir
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 def git(*argv):

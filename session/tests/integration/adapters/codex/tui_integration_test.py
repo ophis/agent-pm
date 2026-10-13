@@ -34,8 +34,8 @@ from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.engine import records
 
 from session.tests import live_tmux
+from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
-from tests.case import PY, REPO, ROOTS, Case, child_env, settings
 
 WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

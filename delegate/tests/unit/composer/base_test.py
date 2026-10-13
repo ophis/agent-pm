@@ -6,7 +6,7 @@ import unittest
 import agent_pm.delegate.engine.config
 from agent_pm.delegate.composer import base
 
-from tests.case import REPO, SRC, Case
+from delegate.tests.case import REPO, SRC, Case
 
 
 class Paths(Case):
@@ -19,6 +19,11 @@ class Paths(Case):
         self.assertFalse(hasattr(base, "SRC"))
         self.assertEqual(base.CONFIG, agent_pm.delegate.engine.config.CONFIG)
         self.assertEqual(base.CONFIG, os.path.join(REPO, "delegate", "config.toml"))
+
+
+class NoCopy(Case):
+    def test_the_composer_holds_no_copy_of_utils_markdown(self):
+        self.assertFalse(hasattr(base, "unfenced"))
 
 
 class Fill(Case):

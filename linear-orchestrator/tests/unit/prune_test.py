@@ -17,8 +17,7 @@ from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import api
 from agent_pm.utils import paths, shell
 
-from tests.case import Case
-
+from ..case import Case
 from . import promote_test as tp
 from .board_ids import STATES as IDS_BY_KEY
 from .board_ids import TEAM, team_node

@@ -2,10 +2,9 @@
 
 import unittest
 
-from agent_pm.delegate.composer import base
 from agent_pm.utils.markdown import fenced, unfenced
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 class Unfenced(Case):
@@ -19,9 +18,6 @@ class Unfenced(Case):
         ):
             with self.subTest(text=text):
                 self.assertEqual(unfenced(text), want)
-
-    def test_composer_holds_no_copy(self):
-        self.assertFalse(hasattr(base, "unfenced"))
 
 
 class Fenced(Case):

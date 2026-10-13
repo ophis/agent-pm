@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.api import Key, Paste
 from agent_pm.utils.record import Display, Record
@@ -21,6 +20,8 @@ from agent_pm.utils.record import Display, Record
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}
 SUPERVISOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supervisor.py")
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(SUPERVISOR))))
+PYTHONPATH = os.pathsep.join(os.path.join(_REPO, p, "src") for p in ("session", "utils"))
 START_TIMEOUT = 10
 POLL = 0.05
 

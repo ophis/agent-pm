@@ -16,11 +16,10 @@ import agent_pm.session.hosts.tmux
 from agent_pm.session import Session
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter, ConfigError
-from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.utils import registry as class_registry
 
 from session.tests import fake_adapter
-from tests.case import HOSTS, Case, committed, settings
+from session.tests.case import HOSTS, Case, settings
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 UNCONFIGURED = "the session is not configured: call Session.configure first"
@@ -95,14 +94,6 @@ class ConfigureTest(Base):
             self.assertEqual(registry.adapter("fake").config, {"scenario": "/s"})
             self.assertEqual(registry.tui(), registry.TuiSettings(True, None, None))
         opened.assert_not_called()
-
-    def test_the_committed_adapters_build_print_prompt(self):
-        Session.configure(**settings(committed()))
-        self.assertEqual(registry.configured(), ["claude", "codex", "print_prompt"])
-        for name, table in committed().items():
-            with self.subTest(name=name):
-                self.assertEqual({"roles", "output"} & set(table), set())
-        self.assertIs(type(registry.adapter("print_prompt")), PrintPromptAdapter)
 
     def test_configuring_again_replaces_and_reset_drops(self):
         self.register(fake=fake_adapter)

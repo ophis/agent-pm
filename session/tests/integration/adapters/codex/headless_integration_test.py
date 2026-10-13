@@ -28,9 +28,9 @@ from agent_pm.session.adapters.base import (
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine import records
 
+from session.tests.case import REPO, Case, settings
 from session.tests.integration.adapters.codex import fake_codex
 from session.tests.selection import configured
-from tests.case import REPO, Case, settings
 
 NATIVE = fake_codex.NATIVE
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

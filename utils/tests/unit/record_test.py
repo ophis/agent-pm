@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 from agent_pm.utils.record import Record, RecordError, Status
 
-from tests.case import Case
+from utils.tests.case import Case
 
 FULL = Record(
     v=1,

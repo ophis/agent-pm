@@ -28,10 +28,10 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import live_tmux
+from session.tests.case import PY, child_env
 from session.tests.integration import detach_integration_test as detach_live
 from session.tests.integration import tui_integration_test as tui_live
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import PY, child_env
 
 MANAGER, SID, IDLE, WAIT, Stream = (
     tui_live.MANAGER,

@@ -14,6 +14,7 @@ from agent_pm.delegate import Begun, Finished, Limit, Progress, composer, run
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session.adapters import registry
 
+from delegate.tests.case import Case
 from delegate.tests.integration.cli_integration_test import (
     DONE,
     RESETS,
@@ -27,7 +28,6 @@ from delegate.tests.integration.cli_integration_test import (
 )
 from delegate.tests.unit.runner_test import block
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import Case
 
 
 class Base(Case):

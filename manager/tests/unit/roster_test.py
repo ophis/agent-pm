@@ -22,7 +22,7 @@ import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
 from agent_pm.session import api
 
-from tests.case import PY, SRC, Case, child_env
+from manager.tests.case import PY, SRC, Case, child_env
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"

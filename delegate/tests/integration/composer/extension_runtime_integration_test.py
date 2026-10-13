@@ -6,8 +6,8 @@ import unittest
 
 from agent_pm.delegate.composer.prompt import RETURN
 
+from delegate.tests.case import ROOTS
 from delegate.tests.integration.composer import child
-from tests.case import ROOTS
 
 BANNER = "Extension handover."
 LOCAL = (

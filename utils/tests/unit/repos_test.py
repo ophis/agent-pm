@@ -5,7 +5,7 @@ import unittest
 
 from agent_pm.utils import repos
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 class Parse(Case):

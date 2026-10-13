@@ -15,7 +15,8 @@
 
 ## Tests
 
-- A test of `agent_pm.<sub>` goes in its project's `tests/unit/` or `tests/integration/`; a shared helper with its owner (`session/tests/live_tmux.py`); only repo-wide checks in the root `tests/` (`case.py`, `guards.py`).
+- A test of `agent_pm.<sub>` goes in its project's `tests/unit/` or `tests/integration/`; a shared helper with its owner (`session/tests/live_tmux.py`); each project's `tests/case.py` holds its own `Case` copy and only the helpers its tests use; only repo-wide checks in the root `tests/` (`case.py`, `guards.py`).
+- Tests follow the layer rule (utils < session < delegate < linear-orchestrator < manager): a project's tests import their own project, lower ones (source or tests) and the stdlib, never the root `tests` (`tests/guards.py` `test_layers`).
 - Imports: the repo root on `sys.path` (`-t .`) makes each project's `tests/` the package `<project>.tests` (e.g. `session.tests.fakes.host`), the root's `tests`; `linear-orchestrator`'s hyphen leaves its tests only relative imports. No two test packages share a dotted name, so one process may run them all.
 - Run (PYTHONPATH: README › Tests):
 

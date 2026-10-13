@@ -22,9 +22,9 @@ from agent_pm.session.adapters.base import (
 )
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from session.tests.case import ROOTS
 from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
-from tests.case import ROOTS
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 

@@ -19,8 +19,8 @@ from agent_pm.delegate.engine.config import (
 from agent_pm.session.hosts import tables
 from agent_pm.utils.config_file import read_config
 
-from tests import case
-from tests.case import Case
+from delegate.tests import case
+from delegate.tests.case import Case
 
 TWO = """[hosts]
 default = "a"
@@ -44,6 +44,7 @@ class PathsTest(Case):
         self.assertEqual(DELEGATE, os.path.join(case.REPO, "delegate"))
         self.assertEqual(CONFIG, os.path.join(DELEGATE, "config.toml"))
         self.assertTrue(os.path.isfile(CONFIG))
+        self.assertEqual(agent_pm.delegate.engine.config.LOCAL, "~/.agent-pm/core-new.local.toml")
         self.assertEqual((IMPORT_ROOTS, PYTHONPATH), (case.ROOTS, case.PYTHONPATH))
 
 

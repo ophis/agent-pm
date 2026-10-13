@@ -17,7 +17,7 @@ from agent_pm.delegate.composer import TEAM
 from agent_pm.utils import git as git_utils
 from agent_pm.utils import repos, shell
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 LOCAL = "core-new.local.toml"
 SHA = "a" * 40

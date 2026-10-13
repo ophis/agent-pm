@@ -5,7 +5,7 @@ import unittest
 
 from agent_pm.utils import shell
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 class ErrText(Case):

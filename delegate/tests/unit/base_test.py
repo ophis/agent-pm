@@ -7,7 +7,7 @@ from agent_pm import delegate, session
 from agent_pm.delegate import Delegate, composer, event
 from agent_pm.session import Host, Session
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 POSITIONAL = ["role", "task", "input", "workdir"]
 KEYWORD = {

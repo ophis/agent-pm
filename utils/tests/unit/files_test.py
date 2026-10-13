@@ -12,7 +12,7 @@ from pathlib import Path
 
 from agent_pm.utils import files
 
-from tests.case import Case
+from utils.tests.case import Case
 
 DATA = b"0123456789"
 

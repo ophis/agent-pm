@@ -9,12 +9,12 @@ import os
 import shlex
 import sys
 
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import files
 from agent_pm.utils.record import Record, RecordError, Status
 
 COMMAND = "fake-ctl"
 SCRIPT = os.path.abspath(__file__)
+PYTHONPATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "src")
 SESSIONS = "sessions.json"
 CALLS = "calls.jsonl"
 GONE = {"alive": False, "state": "gone", "outcome": None, "displayable": False, "display": None}

@@ -9,8 +9,8 @@ from unittest import mock
 from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from session.tests.case import REPO, Case
 from session.tests.selection import configured
-from tests.case import REPO, Case
 
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"

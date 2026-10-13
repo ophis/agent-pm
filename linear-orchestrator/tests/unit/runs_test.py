@@ -11,7 +11,7 @@ from unittest import mock
 import agent_pm.utils.files
 from agent_pm.linear_orchestrator.engine import runs
 
-from tests import case
+from .. import case
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
 EAST, WEST = timezone(timedelta(hours=8)), timezone(timedelta(hours=-4))

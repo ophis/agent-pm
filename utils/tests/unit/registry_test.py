@@ -10,7 +10,7 @@ from unittest import mock
 
 from agent_pm.utils import registry
 
-from tests.case import Case
+from utils.tests.case import Case
 
 MODULE = """from collections.abc import Sized
 

@@ -36,7 +36,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
-from tests.case import SRC, Case
+from session.tests.case import SRC, Case
 
 NAME = "w1"
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

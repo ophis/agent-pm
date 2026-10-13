@@ -13,7 +13,7 @@ from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import api
 
-from tests import case
+from .. import case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"

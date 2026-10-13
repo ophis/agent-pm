@@ -14,8 +14,8 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
 
+from session.tests.case import PYTHONPATH, Case
 from session.tests.unit.adapters.codex.support import NATIVE, Base
-from tests.case import PYTHONPATH, Case
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
 SCRIPTS = ("tui_hook.py", "tui_start.py")

@@ -30,8 +30,8 @@ from agent_pm.session.adapters.base import (
     Window,
 )
 
+from session.tests.case import PY, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import PY, Case, child_env
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.5  # idle_timeout, in seconds

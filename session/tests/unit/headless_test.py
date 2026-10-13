@@ -18,7 +18,7 @@ from agent_pm.session.engine.types import DriverError
 from agent_pm.session.modes import headless
 from agent_pm.session.modes.headless import HeadlessMode
 
-from tests.case import Case
+from session.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 PROBE_TIMEOUT = 2  # probe()'s timeout where it must pass, in seconds

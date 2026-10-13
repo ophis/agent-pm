@@ -15,8 +15,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, promote
 from agent_pm.linear_orchestrator.linear import linear, sessions
 
-from tests.case import Case
-
+from ..case import Case
 from . import run_fixtures
 from .board_ids import ACCOUNTS, HEADER, TEAM, team_node
 from .board_ids import STATES as IDS_BY_KEY

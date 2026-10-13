@@ -15,8 +15,8 @@ from agent_pm.linear_orchestrator.engine import config
 from delegate.tests.integration.cli_integration_test import mark, option
 from delegate.tests.unit.runner_test import block
 from session.tests import live_tmux
-from tests.case import PYTHONPATH
 
+from ..case import PYTHONPATH
 from .flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,

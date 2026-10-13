@@ -19,7 +19,7 @@ The new identity is one of:
 | CE | `delegate.tests.integration.composer.extension_runtime_integration_test` |
 | CTD | `delegate.tests.integration.composer.team_dirs_integration_test` |
 | DCL | `session.tests.integration.adapters.claude.claude_integration_test` |
-| DEA | `session.tests.integration.extension_adapter_integration_test` |
+| DEA | `delegate.tests.integration.extension_adapter_integration_test` |
 | H | `session.tests.integration.adapters.codex.headless_integration_test.HeadlessIntegrationTest` |
 | T | `session.tests.integration.adapters.codex.tui_integration_test.TuiIntegrationTest` |
 | K | `session.tests.integration.adapters.codex.tui_integration_test.HookTrustIntegrationTest` |

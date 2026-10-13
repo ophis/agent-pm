@@ -20,6 +20,7 @@ from agent_pm.delegate.composer.run import check_old_keys
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils.markdown import unfenced
 
+from delegate.tests.case import REPO, ROOTS, Case
 from delegate.tests.unit.composer.prompt_test import (
     RUN,
     composed,
@@ -32,7 +33,6 @@ from delegate.tests.unit.composer.prompt_test import (
     task_text,
 )
 from delegate.tests.unit.composer.team_test import INTRO
-from tests.case import REPO, ROOTS, Case
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 # outcome.schema.json at main 3e5f9f3

@@ -4,7 +4,7 @@ import unittest
 
 from agent_pm.utils.text import printable
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 class Printable(Case):

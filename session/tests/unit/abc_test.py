@@ -19,7 +19,7 @@ from agent_pm.session import (
     api,
 )
 
-from tests.case import Case
+from session.tests.case import Case
 
 NAMES = (
     "Session",

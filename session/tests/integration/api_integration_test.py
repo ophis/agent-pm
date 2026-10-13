@@ -32,7 +32,7 @@ from agent_pm.session.adapters.base import (
 from agent_pm.session.engine import records
 
 from session.tests import fake_adapter
-from tests.case import Case
+from session.tests.case import Case
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.3  # idle_timeout, in seconds

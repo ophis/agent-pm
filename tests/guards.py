@@ -26,6 +26,7 @@ orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session impo
                       (composer's and `from session import Session` in config.py only), no bare name
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
+test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in TEST_ORDER
 """
 
 import ast
@@ -125,6 +126,7 @@ PROJECTS = {
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 TREES = (*PROJECTS, "tests")
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
+TEST_ORDER = ("utils", SESSION, "delegate", ORCH_PROJECT, "manager")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
@@ -691,6 +693,22 @@ def _dotted(node, bound):
         node = node.value
     base = [bound.get(node.id, node.id)] if isinstance(node, ast.Name) else []
     return ".".join([*base, *reversed(chain)])
+
+
+def test_layers(repo: str) -> list[str]:
+    rank = {p: i for i, p in enumerate(TEST_ORDER)}
+    owner = {sub: project for project, sub in PROJECTS.items()}
+    found = set()
+    for project in TEST_ORDER:
+        for rel, text in _files(os.path.join(repo, project, "tests"), ".py"):
+            rel = f"{project}/tests/{rel}"
+            package = rel.split("/")[:-1]
+            for m in _imports(ast.parse(text, rel), package, PKG):
+                parts = m.split(".")
+                top = owner.get(parts[1], "") if parts[0] == PKG and len(parts) > 1 else parts[0]
+                if top == "tests" or rank.get(top, -1) > rank[project]:
+                    found.add(f"{rel}: imports {m}")
+    return sorted(found)
 
 
 def _private(name):

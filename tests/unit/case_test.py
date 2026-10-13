@@ -1,5 +1,7 @@
-"""tests/case.py: Case.run's temp HOME, registry resets and import-root checks, on inner tests; child_env."""
+"""Each tests/case.py (CASES): Case.run's temp HOME, registry resets (RESETS) and import-root checks, on inner
+tests; child_env where kept."""
 
+import importlib
 import os
 import sys
 import tempfile
@@ -11,14 +13,31 @@ import agent_pm
 import agent_pm.delegate.engine.config
 from agent_pm.session.adapters import registry
 
-from tests.case import ORCH_ROOT, PYTHONPATH, REPO, ROOTS, SRC, Case, child_env
+from tests import guards
+from tests.case import Case
+
+CASES = (
+    "tests",
+    "utils/tests",
+    "session/tests",
+    "delegate/tests",
+    "linear-orchestrator/tests",
+    "manager/tests",
+)
+RESETS = {"session/tests", "delegate/tests", "linear-orchestrator/tests", "manager/tests"}
+RUN_WITH = "delegate/src:linear-orchestrator/src:manager/src:session/src:utils/src"
 
 
-class CaseTest(Case):
+class Checks:
+    tree = ""
+
+    def setUp(self):
+        self.case = importlib.import_module(f"{self.tree.replace('/', '.')}.case")
+
     def run_inner(self, test, set_up=None) -> unittest.TestResult:
         """test(inner) run as an inner Case's test, whose setUp calls set_up(inner) (if given), never super()."""
 
-        class Inner(Case):
+        class Inner(self.case.Case):
             def setUp(inner):
                 if set_up:
                     set_up(inner)
@@ -69,7 +88,7 @@ class CaseTest(Case):
         self.assertNotEqual(home, self.home)
         self.assertTrue(made)
 
-    def test_the_registry_is_reset_before_and_after_a_failing_test_too(self):
+    def test_the_registry_is_reset_before_and_after_a_failing_test_too_where_kept(self):
         calls = []
 
         def test(inner):
@@ -79,7 +98,8 @@ class CaseTest(Case):
         with mock.patch.object(registry, "reset", side_effect=lambda: calls.append("reset")):
             result = self.run_inner(test)
         self.assertEqual(len(result.failures), 1)
-        self.assertEqual(calls, ["reset", "test", "reset"])
+        reset = ["reset"] if self.tree in RESETS else []
+        self.assertEqual(calls, [*reset, "test", *reset])
 
     def module(self, name, root):
         """A package module `name` (agent_pm.<sub>) found under `root`."""
@@ -91,15 +111,11 @@ class CaseTest(Case):
         ran = []
         result = self.run_inner(ran.append, set_up=ran.append)
         ((_, failure),) = result.failures
-        self.assertIn(
-            f"{message}: run with PYTHONPATH=delegate/src:session/src:utils/src:manager/src:"
-            "linear-orchestrator/src",
-            failure,
-        )
+        self.assertIn(f"{message}: run with PYTHONPATH={RUN_WITH}", failure)
         self.assertEqual((ran, result.testsRun, result.errors), ([], 1, []))
 
     def test_a_subpackage_from_another_tree_fails_the_test_before_its_set_up(self):
-        for sub, root in SRC.items():
+        for sub, root in self.case.SRC.items():
             name = f"agent_pm.{sub}"
             elsewhere = {name: self.module(name, "/elsewhere/src")}
             with self.subTest(name), mock.patch.dict(sys.modules, elsewhere):
@@ -116,16 +132,18 @@ class CaseTest(Case):
             )
 
     def test_a_missing_import_root_fails_the_test(self):
-        manager = os.path.realpath(os.path.join(SRC["manager"], "agent_pm"))
+        manager = os.path.realpath(os.path.join(self.case.SRC["manager"], "agent_pm"))
         path = [p for p in agent_pm.__path__ if os.path.realpath(p) != manager]
         with mock.patch.object(agent_pm, "__path__", path):
             self.assert_fails_before_set_up(f"agent_pm.__path__ lacks {manager}")
 
     def test_the_orchestrator_absent_or_this_trees_passes(self):
-        self.assertEqual(ORCH_ROOT, os.path.join(REPO, "linear-orchestrator", "src"))
+        orch = self.case.SRC["linear_orchestrator"]
+        self.assertEqual(orch, os.path.join(self.case.REPO, "linear-orchestrator", "src"))
+        self.assertEqual(getattr(self.case, "ORCH_ROOT", orch), orch)
         name = "agent_pm.linear_orchestrator"
-        self.assertTrue(os.path.isfile(self.module(name, ORCH_ROOT).__file__))
-        for found in (None, self.module(name, ORCH_ROOT)):
+        self.assertTrue(os.path.isfile(self.module(name, orch).__file__))
+        for found in (None, self.module(name, orch)):
             ran = []
             with self.subTest(found=found), mock.patch.dict(sys.modules):
                 sys.modules.pop(name, None)
@@ -136,13 +154,18 @@ class CaseTest(Case):
             self.assertEqual(len(ran), 1)
 
     def test_agent_pm_spans_exactly_this_trees_five_src_dirs(self):
-        own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
+        own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in self.case.ROOTS}
         self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
         self.assertEqual(len(own), 5)
-        self.assertEqual(PYTHONPATH, agent_pm.delegate.engine.config.PYTHONPATH)
+        self.assertEqual(self.case.SRC, guards_src())
+        self.assertEqual(self.case.ROOTS, agent_pm.delegate.engine.config.IMPORT_ROOTS)
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
-    def test_child_env_drops_python_variables_and_sets_pythonpath(self):
+    def test_child_env_drops_python_variables_and_sets_pythonpath_where_kept(self):
+        if self.tree == "utils/tests":
+            self.assertFalse(hasattr(self.case, "child_env"))
+            return
+        child_env, ROOTS, PYTHONPATH = self.case.child_env, self.case.ROOTS, self.case.PYTHONPATH
         base = {
             "HOME": "/h",
             "PATH": "/b",
@@ -160,6 +183,17 @@ class CaseTest(Case):
         self.assertEqual(
             (env["PYTHONPATH"], env["OTHER"], env["HOME"]), (PYTHONPATH, "1", self.home)
         )
+
+
+def guards_src():
+    return {
+        sub: os.path.join(guards.REPO, project, "src") for project, sub in guards.PROJECTS.items()
+    }
+
+
+for _tree in CASES:
+    _name = "".join(p.title() for p in _tree.replace("-", "/").split("/")) + "Case"
+    globals()[_name] = type(_name, (Checks, Case), {"tree": _tree})
 
 
 if __name__ == "__main__":

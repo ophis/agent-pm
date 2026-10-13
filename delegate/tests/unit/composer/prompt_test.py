@@ -22,9 +22,9 @@ from agent_pm.delegate.composer.prompt import (
 from agent_pm.delegate.composer.run import RunParams, resolve
 from agent_pm.delegate.composer.teams import index, team
 
+from delegate.tests.case import Case
 from delegate.tests.unit.composer.run_test import CONFIG
 from delegate.tests.unit.composer.team_test import FILES, INTRO, POET, VERSE, WRITER
-from tests.case import Case
 
 TEXTS = {
     "guide.md": (

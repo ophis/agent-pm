@@ -24,8 +24,8 @@ from agent_pm.delegate.composer.run import (
 from agent_pm.delegate.composer.teams import team
 from agent_pm.delegate.engine.config import PYTHONPATH
 
+from delegate.tests.case import Case
 from delegate.tests.unit.composer.team_test import EDITOR, FILES, POET, VERSE
-from tests.case import Case
 
 CONFIG = """\
 tier = 2

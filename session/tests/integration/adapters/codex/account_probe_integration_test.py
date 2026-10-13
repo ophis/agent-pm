@@ -9,8 +9,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from session.tests.case import REPO, SRC, Case
 from session.tests.integration.adapters.codex import fake_app_server
-from tests.case import REPO, SRC, Case
 
 
 class AccountProbeIntegrationTest(Case):

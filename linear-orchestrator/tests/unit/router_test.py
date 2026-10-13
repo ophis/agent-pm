@@ -25,8 +25,7 @@ from agent_pm.session import api
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.shell import SHORT
 
-from tests.case import PYTHONPATH
-
+from ..case import PYTHONPATH
 from . import run_fixtures
 from .board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from .board_ids import STATES as IDS_BY_KEY

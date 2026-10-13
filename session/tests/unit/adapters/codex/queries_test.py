@@ -9,9 +9,9 @@ from unittest import mock
 from agent_pm.session.adapters.base import Launch, SessionStatus, Usage, Window
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from session.tests.case import Case
 from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
-from tests.case import Case
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 

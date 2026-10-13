@@ -7,7 +7,7 @@ from unittest import mock
 
 from agent_pm.utils.args import Once
 
-from tests.case import Case
+from utils.tests.case import Case
 
 
 class OnceTest(Case):

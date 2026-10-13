@@ -11,7 +11,7 @@ from agent_pm.session.adapters.base import Adapter, InProcess, Reply, Spec, Stde
 from agent_pm.session.engine.types import DriverError
 from agent_pm.session.modes.in_process import InProcessMode
 
-from tests.case import Case
+from session.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds

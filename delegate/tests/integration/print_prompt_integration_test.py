@@ -12,8 +12,8 @@ import unittest
 
 from agent_pm.delegate import composer
 
+from delegate.tests.case import Case
 from delegate.tests.unit.skills.act_as_test import argv, head, prefix
-from tests.case import Case
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")

@@ -19,6 +19,7 @@ import unittest
 
 from agent_pm.session.engine import records
 
+from delegate.tests.case import PYTHONPATH, Case
 from delegate.tests.integration.cli_integration_test import (
     ASKING,
     CLI,
@@ -30,7 +31,6 @@ from delegate.tests.integration.cli_integration_test import (
 from delegate.tests.unit.runner_test import block
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import PYTHONPATH, Case
 
 MANAGER = "mgr"
 ROLE = "dummy-tester"

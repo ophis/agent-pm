@@ -16,7 +16,7 @@ from agent_pm.delegate.event import outcome
 from agent_pm.delegate.event.outcome import STATUSES, InvalidOutcome, Outcome, read, validate
 from agent_pm.utils import files
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 DONE = {"status": "done", "title": "T", "summary": "S", "deliverable": "# Doc\n"}
 FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out.md"}

@@ -1,5 +1,5 @@
 """A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of
-the projects but the orchestrator, the fake adapter's package copied in as session's adapters/fake/ and its table
+delegate, session and utils, the fake adapter's package copied in as session's adapters/fake/ and its table
 appended to the copy's delegate/config.toml, nothing else changed, runs a headless session through
 session.engine.api.start in a child Python whose PYTHONPATH is only the copy's src/ dirs. A table without its
 package, or a package without its table, fails there before anything starts."""
@@ -11,11 +11,12 @@ import subprocess
 import tempfile
 import unittest
 
+from delegate.tests.case import PY, REPO, Case, child_env
 from session.tests import fake_adapter
-from tests.case import PROJECTS, PY, REPO, Case, child_env
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
+PROJECTS = ("delegate", "session", "utils")
 # The child: configures the session from the copy's config, starts runtime argv[2] headless in workdir argv[1] and prints its events; a ConfigError exits 1, its text
 # on stderr.
 CHILD = """import dataclasses, json, sys
@@ -37,12 +38,11 @@ class ExtensionAdapterIntegration(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        projects = [p for sub, p in PROJECTS.items() if sub != "linear_orchestrator"]
-        for project in projects:
+        for project in PROJECTS:
             shutil.copytree(
                 os.path.join(REPO, project), os.path.join(self.root, project), ignore=SKIP
             )
-        self.srcs = os.pathsep.join(os.path.join(self.root, p, "src") for p in projects)
+        self.srcs = os.pathsep.join(os.path.join(self.root, p, "src") for p in PROJECTS)
         self.src = os.path.join(self.root, "session", "src")
         self.config = os.path.join(self.root, "delegate", "config.toml")
         self.package("fake")

@@ -16,8 +16,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import promote, prune, router
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 
-from tests.case import Case
-
+from ..case import Case
 from ..unit.board_ids import STATES, TASK_GROUP, TEAM
 from . import fake_linear
 

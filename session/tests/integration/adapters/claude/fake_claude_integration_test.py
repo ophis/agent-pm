@@ -17,10 +17,9 @@ from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 
-from session.tests import live_tmux
+from session.tests import case, live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.selection import configured
-from tests import case
 
 FAKE = os.path.abspath(fake_claude.__file__)
 SID = "11111111-2222-4333-8444-555555555555"

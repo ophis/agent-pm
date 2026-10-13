@@ -15,8 +15,8 @@ from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import api
 
+from delegate.tests.case import Case
 from delegate.tests.unit.plan_test import SID, Base
-from tests.case import Case
 
 TUI = "dummy-tester-11111111"
 DRIVER = f"{TUI}-drive"

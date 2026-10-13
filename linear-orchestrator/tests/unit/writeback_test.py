@@ -18,8 +18,7 @@ from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Resu
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 
-from tests.case import Case
-
+from ..case import Case
 from . import board_ids, run_fixtures
 from .run_fixtures import logged, show
 

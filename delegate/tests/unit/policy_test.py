@@ -7,9 +7,9 @@ from agent_pm.session.adapters.base import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from delegate.tests.case import REPO
 from session.tests.selection import configured
 from session.tests.unit.adapters.codex.support import NATIVE, Base
-from tests.case import REPO
 
 
 class PolicyTest(Base):

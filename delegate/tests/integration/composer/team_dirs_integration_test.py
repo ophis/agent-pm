@@ -11,8 +11,8 @@ import unittest
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
 from agent_pm.utils.paths import temp_dirs, under
 
+from delegate.tests.case import REPO
 from delegate.tests.integration.composer import child
-from tests.case import REPO
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
 TEAMS = os.path.join(REPO, "work", "new-team-dirs-tests")

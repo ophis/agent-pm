@@ -1,6 +1,7 @@
-"""Case, every test's base; session settings helpers (HOSTS, settings, committed); child helpers; this tree's import
-roots (SRC, ROOTS, PYTHONPATH)."""
+"""Case, the repo-wide checks' base; child helpers (PY, child_env, ORCH_ROOT); this tree's import roots (REPO,
+SRC, ROOTS, PYTHONPATH)."""
 
+import glob
 import os
 import sys
 import tempfile
@@ -8,43 +9,20 @@ import unittest
 from unittest import mock
 
 import agent_pm
-import agent_pm.delegate.engine.config
-from agent_pm.session import Session
-from agent_pm.session.adapters import registry
-from agent_pm.utils.config_file import read_config
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROJECTS = {
-    "delegate": "delegate",
-    "session": "session",
-    "utils": "utils",
-    "manager": "manager",
-    "linear_orchestrator": "linear-orchestrator",
-}
-SRC = {sub: os.path.join(REPO, project, "src") for sub, project in PROJECTS.items()}
-ROOTS = tuple(sorted(SRC.values()))
+INITS = glob.glob(os.path.join(REPO, "*", "src", "agent_pm", "*", "__init__.py"))
+SRC = {init.split(os.sep)[-2]: os.sep.join(init.split(os.sep)[:-3]) for init in INITS}
+ROOTS = tuple(sorted(set(SRC.values())))
 PYTHONPATH = os.pathsep.join(ROOTS)
-ORCH_ROOT = SRC["linear_orchestrator"]
+RUN_WITH = ":".join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
-_session_settings = agent_pm.delegate.engine.config.session_settings
-RUN_WITH = ":".join(f"{project}/src" for project in PROJECTS.values())
-HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
-
-
-def settings(adapters, tmux=None) -> dict:
-    """Session.configure's arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default tmux."""
-    hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
-    return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
-
-
-def committed(local: str = os.devnull) -> dict:
-    """The core config's [adapters], `local` merged (default none), even under Case.configure_session."""
-    return _session_settings(read_config(agent_pm.delegate.engine.config.CONFIG, local))["adapters"]
+ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 
 
 class Case(unittest.TestCase):
     """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), the registry reset before and after."""
+    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm)."""
 
     def run(self, result=None):
         if foreign := _foreign():
@@ -62,22 +40,7 @@ class Case(unittest.TestCase):
         ):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
-            registry.reset()
-            try:
-                return super().run(result)
-            finally:
-                registry.reset()
-
-    def configure_session(self, adapters, tmux=None) -> None:
-        """Session.configure with settings(adapters, tmux), also what session_settings returns for the rest
-        of the test, so an entry configuring again keeps them."""
-        given = settings(adapters, tmux)
-        self.enterContext(
-            mock.patch.object(
-                agent_pm.delegate.engine.config, "session_settings", return_value=given
-            )
-        )
-        Session.configure(**given)
+            return super().run(result)
 
 
 def _foreign() -> str | None:

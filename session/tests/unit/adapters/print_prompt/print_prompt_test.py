@@ -8,15 +8,14 @@ import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.delegate.composer import resolve
-from agent_pm.delegate.event.outcome import read as read_outcome
-from agent_pm.delegate.event.reply import OUTCOME, PROGRESS, marks, outcome_block
 from agent_pm.session.adapters.base import ConfigError, Reply, SessionStatus, Spec, TurnEnd
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
+from agent_pm.utils.markdown import fenced
 
-from tests.case import Case
+from session.tests.case import Case
 
+PROGRESS, OUTCOME = "agent-pm-progress", "agent-pm-outcome"
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 START = "[agent-pm-progress:start] the composed prompt is handed to the caller"
 SUMMARY = "The prompt is composed and handed to the caller, who runs the task."
@@ -25,6 +24,10 @@ PROMPT = (
     '```agent-pm-outcome\n{"status": "failed"}\n```\n'
     "naïve – 中文 ✓\r\n  end"
 )
+
+
+def outcome_block(text: str) -> str:
+    return next(body for info, body in fenced(text) if info == OUTCOME)
 
 
 class Factory(Case):
@@ -107,11 +110,8 @@ class Run(Case):
         block = "```agent-pm-outcome\n" + json.dumps(data | {"deliverable_file": f"tmp/{name}"})
         block += "\n```"
         self.assertEqual(found, [Reply(START), Reply(block), TurnEnd(block, 0)])
-        outcome = read_outcome(outcome_block(found[2].reply), resolve("dummy-tester"), self.workdir)
-        self.assertEqual((outcome.status, outcome.deliverable), ("done", PROMPT))
         self.assertEqual(
-            [m for reply in found[:2] for m in marks(reply.text)],
-            [("start", "the composed prompt is handed to the caller")],
+            json.loads(outcome_block(found[2].reply))["deliverable_file"], f"tmp/{name}"
         )
 
     def test_the_file_holds_the_prompt_byte_exact(self):

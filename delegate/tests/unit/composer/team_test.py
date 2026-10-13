@@ -22,7 +22,7 @@ from agent_pm.delegate.composer.teams import (
 )
 from agent_pm.utils import config_file
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
 WRITER = (

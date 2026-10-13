@@ -22,8 +22,7 @@ from agent_pm.utils import config_file
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.shell import SHORT
 
-from tests.case import ORCH_ROOT, PY, Case, child_env
-
+from ..case import ORCH_ROOT, PY, Case, child_env
 from .board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
 
 BASE = (

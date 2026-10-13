@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from session.tests import live_tmux
-from tests.case import Case
+from session.tests.case import Case
 
 
 class Live(Case):

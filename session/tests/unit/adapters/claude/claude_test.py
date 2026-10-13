@@ -1,6 +1,6 @@
 """adapters/claude/: ClaudeCommon's config, flags, env, paths, usage and session status;
 ClaudeHeadless's launch and parse; ClaudeTui's launch with session flags, hook payloads and
-usage-limit screen; ClaudeAdapter's hooks and writable dirs; the committed [adapters.claude] table. HOME and
+usage-limit screen; ClaudeAdapter's hooks and writable dirs. HOME and
 CLAUDE_CONFIG_DIR are temp dirs; nothing starts a process."""
 
 import json
@@ -15,7 +15,6 @@ from functools import partial
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import (
     ACTIVITY,
     BLOCKED,
@@ -42,8 +41,8 @@ from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.adapters.selection import select
 
+from session.tests.case import Case
 from session.tests.selection import configured
-from tests.case import Case, committed
 
 
 class ClaudeCommon(UnconfiguredCommon):
@@ -1755,31 +1754,6 @@ class WritableDirsTest(Base):
                     self.assertEqual(
                         configured(ClaudeAdapter, CONFIG).writable_dirs(spec, resume), dirs
                     )
-
-
-class CommittedConfigTest(Base):
-    def test_the_claude_table_builds_a_claude_adapter(self):
-        tables = committed()
-        self.assertEqual(
-            tables["claude"],
-            {
-                "implementation": "adapters.claude:ClaudeAdapter",
-                "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
-                "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
-            },
-        )
-        self.configure_session(tables)
-        adapter = registry.adapter("claude")
-        self.assertIs(type(adapter), ClaudeAdapter)
-        argv = (
-            adapter.headless()
-            .launch("hi", Spec(workdir=self.work, tier=4, effort="low", sid=SID), False)
-            .argv
-        )
-        self.assertEqual(
-            argv[4:10],
-            ("--model", "haiku", "--effort", "low", "--setting-sources", "user"),
-        )
 
 
 if __name__ == "__main__":

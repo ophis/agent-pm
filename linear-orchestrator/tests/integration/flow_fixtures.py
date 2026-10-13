@@ -16,8 +16,8 @@ from agent_pm.linear_orchestrator.linear import linear
 
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import PY, Case, child_env
 
+from ..case import PY, Case, child_env
 from ..unit import board_ids, run_fixtures
 from ..unit.run_fixtures import ID, SID
 from . import fake_gh, fake_linear

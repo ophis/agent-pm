@@ -18,9 +18,9 @@ from agent_pm.delegate.engine.config import session_settings
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session import Session, api
 
+from delegate.tests.case import PY, Case, child_env
 from delegate.tests.unit.runner_test import block
 from session.tests.integration.adapters.claude import fake_claude
-from tests.case import PY, Case, child_env
 
 CLI = (*PY, "-m", "agent_pm.delegate.cli")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"

@@ -20,10 +20,10 @@ from unittest import mock
 
 from agent_pm.manager import crew, roster
 
+from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
-from tests.case import PY, PYTHONPATH, REPO, SRC, Case
 
 CREW = [*PY, "-m", "agent_pm.manager.crew"]
 ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.crew"]

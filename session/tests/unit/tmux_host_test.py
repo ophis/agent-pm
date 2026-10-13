@@ -24,8 +24,9 @@ from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdo
 
 from agent_pm.session.hosts.tmux import tmux_host
 
-from tests import guards
-from tests.case import Case
+from session.tests.case import Case
+
+RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
@@ -4805,7 +4806,7 @@ class Cli(Case):
             self.assertNotIn(option, out)
         for cmd in ((), ("start",), ("send",), ("read",), ("show",), ("tile",)):
             with self.subTest(cmd=cmd):
-                self.assertIsNone(guards.RUNTIME.search(self.main(*cmd, "-h")[1]))
+                self.assertIsNone(RUNTIME.search(self.main(*cmd, "-h")[1]))
 
     def test_subcommands(self):
         send, read, show, status = (self.patch(n) for n in ("send", "read", "show", "status"))
@@ -4952,7 +4953,7 @@ class SingleFile(Case):
         ast.parse(self.source, feature_version=(3, 9))
 
     def test_no_runtime_name(self):
-        self.assertEqual(guards.RUNTIME.findall(self.source), [])
+        self.assertEqual(RUNTIME.findall(self.source), [])
 
     def test_runs_alone(self):
         with tempfile.TemporaryDirectory() as d:

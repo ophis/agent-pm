@@ -9,7 +9,7 @@ from unittest import mock
 
 from agent_pm.utils.paths import printable_abs, real_dirs, temp_dirs, under
 
-from tests.case import REPO, Case
+from utils.tests.case import REPO, Case
 
 
 class PathsTest(Case):

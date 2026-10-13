@@ -11,8 +11,8 @@ from contextlib import redirect_stderr
 from agent_pm.delegate import Begun, ConfigError, Finished, Progress, composer, plan, run
 from agent_pm.delegate.event.reply import marks
 
+from delegate.tests.case import Case
 from delegate.tests.unit.runner_test import no_child
-from tests.case import Case
 
 SID = "11111111-2222-3333-4444-555555555555"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")

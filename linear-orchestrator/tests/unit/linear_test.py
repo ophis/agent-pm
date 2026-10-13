@@ -16,8 +16,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.linear import linear
 
-from tests.case import Case
-
+from ..case import Case
 from .board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
 from .outage import FAILURES, failing
 

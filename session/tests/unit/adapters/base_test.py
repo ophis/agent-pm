@@ -36,7 +36,7 @@ from agent_pm.session.adapters.base import (
     Window,
 )
 
-from tests.case import Case
+from session.tests.case import Case
 
 
 class StubAdapter(Adapter):

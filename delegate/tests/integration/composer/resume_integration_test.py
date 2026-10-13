@@ -7,8 +7,8 @@ import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME
 
+from delegate.tests.case import REPO
 from delegate.tests.integration.composer import child
-from tests.case import REPO
 
 TEAM = os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "team")
 ANSWER = "Say hello."

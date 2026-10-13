@@ -13,9 +13,9 @@ from agent_pm.session import api
 from agent_pm.session.adapters.base import Usage, Window
 from agent_pm.session.adapters.codex import CodexAdapter
 
+from session.tests.case import REPO, Case
 from session.tests.integration.adapters.codex import fake_app_server
 from session.tests.selection import configured
-from tests.case import REPO, Case
 
 FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 

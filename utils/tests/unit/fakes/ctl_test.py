@@ -7,7 +7,7 @@ import unittest
 
 from agent_pm.utils.record import Record, Status
 
-from tests.case import Case
+from utils.tests.case import Case
 from utils.tests.fakes import ctl
 
 

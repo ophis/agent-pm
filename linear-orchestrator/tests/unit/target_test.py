@@ -15,7 +15,7 @@ from agent_pm.linear_orchestrator.engine import config, target
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils.shell import SHORT
 
-from tests.case import Case
+from ..case import Case
 
 
 def ok(stdout="", code=0, stderr=""):

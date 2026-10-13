@@ -3,7 +3,7 @@ session_info() and writable_dirs(), the session env (Access.env) reaching a sess
 fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
 Session.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
 patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
-run; claude and codex, from the committed config, refuse it. The Mode protocol, and a Handle over a scripted Mode on a
+run; claude and codex refuse it. The Mode protocol, and a Handle over a scripted Mode on a
 fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
 detach) over tmux_host autospecced (no tmux runs)."""
 
@@ -24,7 +24,6 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import api
 from agent_pm.session.adapters import base, selection
 from agent_pm.session.adapters.base import Access, Launch
@@ -34,10 +33,11 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 
 from session.tests import fake_adapter
-from tests.case import Case, committed
+from session.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+PYTHONPATH = "/child"
 TMUX = "/opt/tmux/bin/tmux"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
@@ -733,7 +733,12 @@ class InProcessTest(Base):
                 )
 
     def test_claude_and_codex_do_not_support_it(self):
-        self.configure_session(committed())
+        self.configure_session(
+            {
+                "claude": {"implementation": "adapters.claude:ClaudeAdapter"},
+                "codex": {"implementation": "adapters.codex:CodexAdapter"},
+            }
+        )
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 self.refused(

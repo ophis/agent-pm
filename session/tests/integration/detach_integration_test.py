@@ -16,7 +16,7 @@ from agent_pm.session import api
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import live_tmux
-from tests.case import Case
+from session.tests.case import Case
 
 MANAGER = "mgr"
 # The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists, at most 30 s.

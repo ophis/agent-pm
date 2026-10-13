@@ -7,7 +7,7 @@ from agent_pm import delegate
 from agent_pm.delegate import event as event_package
 from agent_pm.delegate.event import KINDS, DelegateEvent, DelegateEventError
 
-from tests.case import Case
+from delegate.tests.case import Case
 
 SID = "1234abcd-0000-4000-8000-000000000000"
 BEGUN = DelegateEvent("begun", sid=SID)

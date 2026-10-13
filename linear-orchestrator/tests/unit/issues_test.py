@@ -4,7 +4,7 @@ import unittest
 
 from agent_pm.linear_orchestrator.linear import issues
 
-from tests.case import Case
+from ..case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 HUMANS = ("ann@example.com", "bob@example.com")

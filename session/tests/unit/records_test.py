@@ -14,7 +14,7 @@ from datetime import datetime
 from agent_pm.session.engine import records
 from agent_pm.utils import files
 
-from tests.case import Case
+from session.tests.case import Case
 
 SID = "4f1c2b9e-0d6a-4c1e-9b7a-2e5f8a3d6c10"
 

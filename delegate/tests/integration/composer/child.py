@@ -7,8 +7,8 @@ import os
 import subprocess
 import tempfile
 
-from tests import case
-from tests.case import PY, child_env
+from delegate.tests import case
+from delegate.tests.case import PY, child_env
 
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nfrom agent_pm.delegate import composer\n"

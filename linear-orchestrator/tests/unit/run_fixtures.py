@@ -10,8 +10,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 
-from tests.case import Case
-
+from ..case import Case
 from .board_ids import HEADER, STATES, role
 
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
