@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -185,6 +186,29 @@ class Commands(Case):
         self.assertTrue(status.alive)
         self.succeeded("stop", "r", "--manager", "mgr")
         self.assertEqual(roster.entries(), {})
+
+    def test_resume_continues_after_runtime_failure_and_exits_one(self):
+        roster = Roster(self.directory)
+        first = replace(self.fake_record("a"), resume=("missing-resume-command", "resume", "a"))
+        ctl.set_session(self.ctl_dir, "a", alive=False, sid=first.sid)
+        roster.adopt(first)
+        roster.mark("a", State.GONE)
+        second = Crew(roster).run(Spec("b", (self.command, "start", "b")))
+        ctl.set_session(self.ctl_dir, "b", alive=False)
+        roster.mark("b", State.GONE)
+        with mock.patch.dict(os.environ, _without_manager_identity(), clear=True):
+            result = self.invoke("resume", "a", "b", "--manager", "mgr")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("missing-resume-command", result.stderr)
+        self.assertEqual([Record.parse(line) for line in result.stdout.splitlines()], [second])
+        entries = roster.entries()
+        self.assertEqual((entries["a"].state, entries["a"].record), (State.GONE, first))
+        self.assertEqual((entries["b"].state, entries["b"].record), (State.LIVE, second))
+        self.assertEqual(entries["b"].sid, second.sid)
+        self.assertEqual(
+            [call["argv"] for call in ctl.calls(self.ctl_dir) if call["argv"][0] == "resume"],
+            [["resume", "b"]],
+        )
 
     def test_status_batches_two_keys_and_skips_show_for_invisible_hosts(self):
         crew = Crew(Roster(self.directory))
