@@ -642,18 +642,31 @@ class Roster:
         return value
 
     def advance(self, after: int | None, gen: int) -> int:
+        return self.watch_events(after, gen)[0]
+
+    def watch_events(self, after: int | None, gen: int) -> tuple[int, tuple[int, int] | None]:
         with self._locked() as data:
             self._lease(data)
             value = self._cursor(data, after, gen)
             data["cursor"] = max(data["cursor"], value)
-            return value
+            return value, self._events.identity()
 
-    def next_event(self, after: int | None, gen: int) -> tuple[int, str | None]:
+    def event_identity(self) -> tuple[int, int] | None:
+        with self._locked():
+            return self._events.identity()
+
+    def next_event(
+        self, after: int | None, gen: int, *, identity: tuple[int, int] | None = None
+    ) -> tuple[int, str | None]:
         with self._locked() as data:
+            if identity is not None and identity != self._events.identity():
+                raise Stale("events file replaced: run crew attach")
             value = self._cursor(data, after, gen)
             if self._events.due(data["cursor"]):
                 raise Stale("events rotation due: run crew attach")
             lines = self._events.following(value)
+            if identity is not None and identity != self._events.identity():
+                raise Stale("events file replaced: run crew attach")
             return (value + 1, lines[0]) if lines else (value, None)
 
     def rotate_events(self) -> bool:

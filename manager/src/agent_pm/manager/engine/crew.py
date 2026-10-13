@@ -352,9 +352,11 @@ class Crew:
 
     def next_event(self, *, after: int | None, gen: int) -> tuple[int, str]:
         self._listed = None
-        cursor = self.roster.advance(after, gen)
+        cursor, identity = self.roster.watch_events(after, gen)
         while True:
-            line, event = self.roster.next_event(cursor, gen)
+            if identity is None:
+                identity = self.roster.event_identity()
+            line, event = self.roster.next_event(cursor, gen, identity=identity)
             if event is not None:
                 cursor = line
                 if EVENT.fullmatch(event):

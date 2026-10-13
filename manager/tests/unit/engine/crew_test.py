@@ -15,7 +15,7 @@ from unittest import mock
 
 from agent_pm.manager.engine.crew import BIN, HERE, Crew
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Held, RosterError, Spec, State
+from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
 
 from manager.tests.case import Case
@@ -647,6 +647,62 @@ class CrewTest(Case):
         successor = Crew(Roster(self.directory))
         self.assertEqual(successor.next_event(after=2, gen=0), result)
         self.assertEqual(self.roster.backlog()[0], 2)
+
+    def test_next_event_refuses_replacement_deletion_shrink_and_unsafe_file_while_waiting(self):
+        path = self.roster.events
+        replacement = os.path.join(self.home, "replacement")
+        for action in ("replace", "delete", "shrink", "symlink", "fifo"):
+            with self.subTest(action=action):
+                if os.path.lexists(path):
+                    os.unlink(path)
+                with open(path, "w", encoding="utf-8") as stream:
+                    stream.write("diagnostic\n")
+
+                def wait(delay, action=action):
+                    self.assertEqual(delay, 0.5)
+                    if action == "replace":
+                        with open(replacement, "w", encoding="utf-8") as stream:
+                            stream.write("diagnostic\n12:00:00 worker done\n")
+                        os.replace(replacement, path)
+                    elif action == "shrink":
+                        with open(path, "w", encoding="utf-8"):
+                            pass
+                    else:
+                        os.unlink(path)
+                        if action == "symlink":
+                            os.symlink(replacement, path)
+                        elif action == "fifo":
+                            os.mkfifo(path)
+
+                with (
+                    mock.patch("time.sleep", side_effect=wait),
+                    self.assertRaises((Stale, RosterError)),
+                ):
+                    self.crew.next_event(after=1, gen=0)
+                with open(self.roster.path, encoding="utf-8") as stream:
+                    self.assertEqual(json.load(stream)["cursor"], 1)
+
+    def test_next_event_refuses_an_event_file_that_becomes_unreadable_while_waiting(self):
+        path = self.roster.events
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("diagnostic\n")
+        waiting = []
+        native_open = os.open
+
+        def open_file(file, *args, **kwargs):
+            if file == path and waiting:
+                raise PermissionError("events unreadable")
+            return native_open(file, *args, **kwargs)
+
+        with (
+            mock.patch("time.sleep", side_effect=waiting.append),
+            mock.patch("os.open", side_effect=open_file),
+            self.assertRaisesRegex(RosterError, "not a readable regular file"),
+        ):
+            self.crew.next_event(after=1, gen=0)
+        self.assertEqual(waiting, [0.5])
+        with open(self.roster.path, encoding="utf-8") as stream:
+            self.assertEqual(json.load(stream)["cursor"], 1)
 
     def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
         with open(self.roster.events, "a", encoding="utf-8") as stream:

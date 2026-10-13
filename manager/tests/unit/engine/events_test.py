@@ -61,6 +61,37 @@ class EventsTest(Case):
         )
         self.crashed(script)
 
+    def test_identity_returns_native_owned_file_identity_and_none_when_missing(self):
+        opened = os.stat(self.events.path, follow_symlinks=False)
+        self.assertEqual(self.events.identity(), (opened.st_dev, opened.st_ino))
+        Path(self.events.path).unlink()
+        self.assertIsNone(self.events.identity())
+
+    def test_identity_refuses_symlink_fifo_and_directory(self):
+        Path(self.events.path).unlink()
+        outside = Path(self.directory, "outside")
+        outside.write_bytes(b"keep\n")
+        for kind in ("symlink", "fifo", "directory"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    Path(self.events.path).symlink_to(outside)
+                elif kind == "fifo":
+                    os.mkfifo(self.events.path)
+                else:
+                    os.mkdir(self.events.path)
+                with self.assertRaises(OSError):
+                    self.events.identity()
+                self.assertEqual(outside.read_bytes(), b"keep\n")
+                if kind == "directory":
+                    os.rmdir(self.events.path)
+                else:
+                    Path(self.events.path).unlink()
+
+    def test_identity_refuses_a_file_owned_by_another_user(self):
+        with mock.patch("os.getuid", return_value=os.getuid() + 1), self.assertRaises(OSError):
+            self.events.identity()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original)
+
     def test_committed_rotation_keeps_unread_order_and_cleans_intent(self):
         with file_lock(self.events.path, own=True):
             self.assertTrue(self.events.rotate(1, 0))

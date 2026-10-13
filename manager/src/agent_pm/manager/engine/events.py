@@ -57,6 +57,12 @@ class Events:
         self.candidate = self.path + ".next"
         self.rollback = self.path + ".rollback"
 
+    def identity(self) -> tuple[int, int] | None:
+        try:
+            return _identity(self.path)
+        except FileNotFoundError:
+            return None
+
     def ensure(self) -> None:
         fd = os.open(
             self.path,
