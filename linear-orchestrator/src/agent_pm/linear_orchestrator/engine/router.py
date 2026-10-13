@@ -538,10 +538,10 @@ def full_roles(roles, live):
     return {r for r in roles if len(live[r]) >= roles[r].max_runs}
 
 
-def begin(runs, *, mode, issue, sid, role, task, runtime):
+def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
     ident = issue["identifier"]
     kind = "resume" if mode == "resume" else "start"
-    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime)
+    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime, now=now)
     return argparse.Namespace(
         issue=ident,
         project=issue["project"]["id"],
@@ -717,7 +717,16 @@ def tick(opts, cfg, gql, *, start, now, hour):
             if run is None or dry:
                 return 0
             mode, issue, sid, role, task, runtime = run
-            a = begin(runs, mode=mode, issue=issue, sid=sid, role=role, task=task, runtime=runtime)
+            a = begin(
+                runs,
+                mode=mode,
+                issue=issue,
+                sid=sid,
+                role=role,
+                task=task,
+                runtime=runtime,
+                now=lambda: now,
+            )
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
@@ -772,7 +781,16 @@ def run_issue(opts, cfg, gql, now, start):
             return 0
         mode, issue, sid, role, task, runtime = run
         return start(
-            begin(runs, mode=mode, issue=issue, sid=sid, role=role, task=task, runtime=runtime)
+            begin(
+                runs,
+                mode=mode,
+                issue=issue,
+                sid=sid,
+                role=role,
+                task=task,
+                runtime=runtime,
+                now=lambda: now,
+            )
         )
 
 

@@ -3,7 +3,6 @@
 config's Linear ids.
 """
 
-import datetime as dt
 import hashlib
 import http.client
 import json
@@ -37,8 +36,8 @@ def use_logs(path):
     LOGS_DIR = path
 
 
-def stamp():
-    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+def stamp(*, now=datetime.now):
+    return now().astimezone().isoformat(timespec="seconds")
 
 
 def operation(query):
@@ -129,21 +128,27 @@ ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
 
 
-def log(src, kind, issue=None, *, once=False, dry=False, **fields):
-    _log(_line(src, kind, issue, **fields), LOGS_DIR, once=once, dry=dry)
+def log(src, kind, issue=None, *, once=False, dry=False, now=datetime.now, **fields):
+    _log(_line(src, kind, issue, now=now, **fields), LOGS_DIR, once=once, dry=dry, now=now)
 
 
-def _line(src, kind, issue=None, **fields):
+def _line(src, kind, issue=None, *, now=datetime.now, **fields):
     return {
         k: v
-        for k, v in {"ts": stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
+        for k, v in {
+            "ts": stamp(now=now),
+            "src": src,
+            "kind": kind,
+            "issue": issue,
+            **fields,
+        }.items()
         if v is not None
     }
 
 
-def _log(line, logs, *, once, dry):
+def _log(line, logs, *, once, dry, now=datetime.now):
     path, key = os.path.join(logs, "orchestrator.jsonl") if logs else None, _key(line)
-    if once and not dry and path and key in _recent_keys(path):
+    if once and not dry and path and key in _recent_keys(path, now=now):
         return
     text = json.dumps(line, ensure_ascii=False)
     try:
@@ -159,27 +164,28 @@ def _log(line, logs, *, once, dry):
         pass
 
 
-def config_error(src, e, *, dry=False):
+def config_error(src, e, *, dry=False, now=datetime.now):
     reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
     logs = e.logs_dir if isinstance(e, ConfigError) else LOGS_DIR
-    return _stop(src, "config-error", reason, dry, logs=logs, reason=reason)
+    return _stop(src, "config-error", reason, dry, logs=logs, reason=reason, now=now)
 
 
-def linear_error(src, e, *, dry=False):
+def linear_error(src, e, *, dry=False, now=datetime.now):
     return _stop(
         src,
         "linear-error",
         f"Linear unavailable: {e}",
         dry,
         logs=LOGS_DIR,
+        now=now,
         op=e.op,
         status=e.status,
         reason=e.reason,
     )
 
 
-def _stop(src, kind, message, dry, *, logs, **fields):
-    _log(_line(src, kind, **fields), logs, once=True, dry=dry)
+def _stop(src, kind, message, dry, *, logs, now=datetime.now, **fields):
+    _log(_line(src, kind, now=now, **fields), logs, once=True, dry=dry, now=now)
     try:
         if sys.stderr.isatty() and not dry:  # under a scheduler stderr is the log
             print(f"{src}.py: {message}", file=sys.stderr, flush=True)
@@ -192,8 +198,8 @@ def _key(line):
     return json.dumps([line.get(k) for k in ONCE])
 
 
-def _recent_keys(path):
-    cutoff, keys = dt.datetime.now(UTC) - WINDOW, set()
+def _recent_keys(path, *, now=datetime.now):
+    cutoff, keys = now(UTC) - WINDOW, set()
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             for raw in f:

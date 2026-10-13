@@ -15,7 +15,7 @@ from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, 
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import ACCOUNTS, STATES, TASK_GROUP, TEAM, team_node
-from orchestrator_tests.unit.clock import frozen, logs_at
+from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.outage import FAILURES, failing
 from orchestrator_tests.unit.streams import Stderr
 
@@ -122,11 +122,14 @@ class Logs(Case):
         self.path = os.path.join(self.logs, "orchestrator.jsonl")
         linear.use_logs(self.logs)
 
+    def now(self, tz=None):
+        instant = datetime.fromisoformat(self.TS)
+        return instant if tz is None else instant.astimezone(tz)
+
     def stderr(self, call, fail=None, *, tty=False):
         err = Stderr(tty=tty, fail=fail)
         with (
             mock.patch.object(sys, "stderr", err),
-            frozen(self.TS),
         ):
             out = call()
         return out, err.getvalue()
@@ -550,7 +553,7 @@ class Helpers(Case):
 
 class Log(Logs):
     def log(self, *args, tty=False, fail=None, **kw):
-        return self.stderr(lambda: linear.log(*args, **kw), tty=tty, fail=fail)[1]
+        return self.stderr(lambda: linear.log(*args, now=self.now, **kw), tty=tty, fail=fail)[1]
 
     def test_line_shape_and_key_order(self):
         self.assertEqual(self.log("router", "claim", "TASK-1", role="pm", task=None), "")
@@ -749,7 +752,7 @@ class LogsDirDefault(Case):
 
 class ApiErrors(Logs):
     def error(self, e, src="router", *, tty=False, dry=False):
-        return self.stderr(lambda: linear.linear_error(src, e, dry=dry), tty=tty)
+        return self.stderr(lambda: linear.linear_error(src, e, dry=dry, now=self.now), tty=tty)
 
     def test_once_a_day_per_reason_printed_only_on_a_terminal(self):
         timeout, limit = (
@@ -809,9 +812,11 @@ class ConfigurationFailures(Logs):
     def test_error_destination_deduplicates_without_changing_the_configured_log(self):
         destination = os.path.join(self.tmp, "rejected-config")
         error = ConfigError("invalid role", destination)
-        code, said = self.stderr(lambda: linear.config_error("router", error))
+        code, said = self.stderr(lambda: linear.config_error("router", error, now=self.now))
         self.assertEqual((code, said), (1, ""))
-        code, said = self.stderr(lambda: linear.config_error("router", error), tty=True)
+        code, said = self.stderr(
+            lambda: linear.config_error("router", error, now=self.now), tty=True
+        )
         self.assertEqual((code, said), (1, "router.py: invalid role\n"))
         text = self.text(os.path.join(destination, "orchestrator.jsonl"))
         self.assertEqual(text, self.json("router", "config-error", reason="invalid role"))
@@ -821,7 +826,7 @@ class ConfigurationFailures(Logs):
         destination = os.path.join(self.tmp, "rejected-config")
         code, said = self.stderr(
             lambda: linear.config_error(
-                "router", ConfigError("invalid role", destination), dry=True
+                "router", ConfigError("invalid role", destination), dry=True, now=self.now
             )
         )
         self.assertEqual(
@@ -830,11 +835,13 @@ class ConfigurationFailures(Logs):
         self.assertEqual((linear.LOGS_DIR, os.listdir(self.tmp)), (self.logs, []))
 
     def test_a_failure_without_a_destination_does_not_use_a_previous_config(self):
-        self.stderr(lambda: linear.config_error("router", ConfigError("invalid work path")))
+        self.stderr(
+            lambda: linear.config_error("router", ConfigError("invalid work path"), now=self.now)
+        )
         self.assertEqual((linear.LOGS_DIR, os.listdir(self.tmp)), (self.logs, []))
 
     def test_plain_reasons_keep_the_configured_destination(self):
-        code, said = self.stderr(lambda: linear.config_error("run", "invalid task"))
+        code, said = self.stderr(lambda: linear.config_error("run", "invalid task", now=self.now))
         self.assertEqual((code, said), (1, ""))
         self.assertEqual(self.text(), self.json("run", "config-error", reason="invalid task"))
 

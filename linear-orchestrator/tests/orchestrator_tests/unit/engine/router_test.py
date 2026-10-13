@@ -29,7 +29,7 @@ from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TASK_GROUP, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
-from orchestrator_tests.unit.clock import frozen, logs_at
+from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import (
@@ -1166,9 +1166,9 @@ class RouterEntry(OuterBase):
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.fake = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
 
-    def entry(self, *argv, live=(), tty=False):
+    def entry(self, *argv, live=(), tty=False, now=NOW):
         outer = {"run": self.run_, "keychain": self.keychain}
-        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer)
+        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer, now=now)
 
     def test_claims_then_starts_run_py_after_its_start_line(self):
         for argv, said in (
@@ -1214,8 +1214,7 @@ class RouterEntry(OuterBase):
         self.assertIn("claim TASK-7 role=engineer task=light-build runtime=a", self.said())
 
     def test_a_resume_keeps_the_runtime_of_its_claim(self):
-        with frozen(ago(minutes=60)):
-            self.assertEqual(self.entry(), 0)
+        self.assertEqual(self.entry(now=NOW - timedelta(minutes=60)), 0)
         sid = self.last_run()[2]
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
@@ -1742,8 +1741,7 @@ class ScheduledUsageGates(TickBase):
 
     def test_a_resume_keeps_the_runtime_of_its_claim(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        with frozen(ago(minutes=60)):
-            self.tick(fake)
+        self.tick(fake, now=NOW - timedelta(minutes=60))
         (claimed,) = self.start.launches
         self.assertEqual(self.last_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
         with open(self.runs) as f:
@@ -2569,19 +2567,19 @@ class RunStartRecords(Base):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         found = issue("TASK-1", "In Progress", "researcher")
         stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
-        with frozen(stamp):
-            got = [
-                router.begin(
-                    path,
-                    mode=mode,
-                    issue=found,
-                    sid="s1",
-                    role="researcher",
-                    task=task,
-                    runtime="a",
-                )
-                for mode, task in (("new", "light-research"), ("resume", None))
-            ]
+        got = [
+            router.begin(
+                path,
+                mode=mode,
+                issue=found,
+                sid="s1",
+                role="researcher",
+                task=task,
+                runtime="a",
+                now=lambda: datetime.fromisoformat(stamp),
+            )
+            for mode, task in (("new", "light-research"), ("resume", None))
+        ]
         with open(path) as f:
             self.assertEqual(
                 f.read(),
@@ -3782,8 +3780,7 @@ class ScheduledRuns(TickScenario):
     def test_begin_appends_one_json_line_to_runs_jsonl(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
-        with frozen(stamp):
-            self.tick(fake, "--now", hour=12)
+        self.tick(fake, "--now", hour=12, now=datetime.fromisoformat(stamp))
         (launch,) = self.start.launches
         self.assertEqual(
             self.state,
