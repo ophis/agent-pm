@@ -21,7 +21,7 @@ from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.utils import printable
 
 
-def _stop(signum, frame):
+def _stop(signum, _frame):
     raise Stopped(128 + signum)  # the Delegate then stops its session
 
 
