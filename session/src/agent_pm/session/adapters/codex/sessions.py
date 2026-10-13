@@ -293,7 +293,7 @@ def session_identity(workdir: object, sid: object) -> tuple[str, str]:
 def _state(data: object, workdir: str, sid: str) -> SessionState:
     if (
         not isinstance(data, dict)
-        or set(data) != _SESSION_KEYS
+        or frozenset(data) != _SESSION_KEYS
         or type(data["version"]) is not int
         or data["version"] != _SESSION_VERSION
     ):
@@ -560,19 +560,11 @@ def bind_session(
         raise RecoveryError("invalid Codex recovery native ID")
     root = store_directory(create=False, root=root)
     if root is None:
-        raise RecoveryError(
-            "missing Codex recovery state"
-            if sid is None
-            else f"missing recovery state for run ID {sid!r}"
-        )
+        raise RecoveryError(f"missing recovery state for run ID {sid!r}")
     with _locked(root, timeout):
         existing = load_session(workdir, sid, root=root)
         if existing is None:
-            raise RecoveryError(
-                "missing Codex recovery state"
-                if sid is None
-                else f"missing recovery state for run ID {sid!r}"
-            )
+            raise RecoveryError(f"missing recovery state for run ID {sid!r}")
         validated = _state(
             {
                 "version": _SESSION_VERSION,
@@ -621,9 +613,7 @@ def _state_data(fd: int, path: str):
                 raise RecoveryError(f"malformed recovery state: file too large: {path}")
             data = json.loads(text)
     except (ValueError, UnicodeError, RecursionError) as exc:
-        raise RecoveryError(
-            "malformed recovery state" if path is None else f"malformed recovery state: {path}"
-        ) from exc
+        raise RecoveryError(f"malformed recovery state: {path}") from exc
     finally:
         if fd >= 0:
             os.close(fd)

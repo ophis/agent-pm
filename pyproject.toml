@@ -6,7 +6,7 @@ line-length = 100
 select = [
     "E101", "E401", "E402", "E701", "E702", "E703", "E711", "E712", "E713", "E714",
     "E721", "E722", "E731", "E741", "E742", "E743", "E902", "F",
-    "UP", "B", "SIM", "I", "ERA001", "PLR0917",
+    "UP", "B", "SIM", "I", "ERA001", "PLR0917", "PLR0133",
     "ARG001", "ARG004", "ARG005", "TID", "BLE", "TRY002", "TRY201", "TRY203", "TRY300",
     "TRY400", "TRY401", "FBT",
 ]
@@ -18,6 +18,8 @@ ban-relative-imports = "all"
 
 [tool.pyright]
 typeCheckingMode = "basic"
+reportUnnecessaryComparison = "error"
+reportUnnecessaryCast = "error"
 pythonVersion = "3.11"
 include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
 extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
