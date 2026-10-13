@@ -7,7 +7,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from functools import partial
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.engine.prune import types as prune
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import sh
 from orchestrator_tests.case import Case

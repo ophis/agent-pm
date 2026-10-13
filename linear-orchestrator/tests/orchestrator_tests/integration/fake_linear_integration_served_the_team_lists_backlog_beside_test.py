@@ -1,7 +1,8 @@
 import uuid
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.engine.prune import types as prune
 from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 from orchestrator_tests.integration import fake_linear

@@ -2,7 +2,8 @@ import os
 import subprocess
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, prune
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.prune import types as prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.session import ConfigError, DriverError
 from agent_pm.utils import temp_dirs

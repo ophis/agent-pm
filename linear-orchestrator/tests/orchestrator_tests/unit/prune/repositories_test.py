@@ -3,7 +3,7 @@ import shutil
 from functools import partial
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import prune
+from agent_pm.linear_orchestrator.engine.prune import types as prune
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.unit.prune.data import git, gql_for, write
 from orchestrator_tests.unit.prune.fixtures import Git, PruneScenario

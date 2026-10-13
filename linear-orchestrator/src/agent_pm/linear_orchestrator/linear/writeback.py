@@ -18,7 +18,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     FileError,
     Stopped,
 )
-from agent_pm.linear_orchestrator.linear.issues import Issue
 from agent_pm.linear_orchestrator.linear.linear import (
     call,
     client_id,
@@ -29,7 +28,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
     subscribe,
 )
-from agent_pm.linear_orchestrator.linear.types import Context, RunIdentity
+from agent_pm.linear_orchestrator.linear.types import Context, Issue, RunIdentity
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
 
 M_TITLE = (

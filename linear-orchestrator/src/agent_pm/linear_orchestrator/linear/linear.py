@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID as ISSUE_ID
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
     ConfigError,
@@ -116,7 +117,6 @@ def _clean(s):
     return bool(s) and s.isprintable() and not any(c.isspace() for c in s)
 
 
-ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
 

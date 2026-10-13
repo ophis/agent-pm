@@ -302,7 +302,7 @@ def run_prune(gql, now, promoter, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
-            from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
+            from agent_pm.linear_orchestrator.engine.prune.types import Pruner as pruner
         scope = PruneScope(
             work=promoter.cfg.runs_dir,
             team=promoter.team,

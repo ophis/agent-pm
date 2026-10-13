@@ -3,7 +3,7 @@ import re
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import inputs, target
-from agent_pm.linear_orchestrator.linear import issues
+from agent_pm.linear_orchestrator.linear.types import Handoff
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.inputs.data import (
     ANN,
@@ -270,7 +270,7 @@ class HandoffComments(Case):
             ]
         )
         iss = issue(d, ident="ENG-7", title="ENG: Registry")
-        instructions = issues.parse_handoff(d).instructions
+        instructions = Handoff.parse(d).instructions
         self.assertTrue(instructions.endswith(f"\nRepo: ophis/agent-pm\nPRD: {prd}"))
         self.assertEqual(target.parse_repo(d), ("ophis", "agent-pm"))
         gh = Gh({endpoint("Product%20Design/2026-09-05-PM-9-q.md"): ok("# PRD\n")})

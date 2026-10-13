@@ -1,7 +1,7 @@
 import subprocess
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import prune
+from agent_pm.linear_orchestrator.engine.prune import types as prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import GUARD

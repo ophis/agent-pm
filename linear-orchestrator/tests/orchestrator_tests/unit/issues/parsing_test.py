@@ -5,6 +5,7 @@ its comments.
 import unittest
 
 from agent_pm.linear_orchestrator.linear import issues
+from agent_pm.linear_orchestrator.linear.types import Handoff
 from orchestrator_tests.case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -261,8 +262,8 @@ class ParseHandoff(Case):
         for name, description, instructions, comments in cases:
             with self.subTest(name):
                 self.assertEqual(
-                    issues.parse_handoff(description),
-                    issues.Handoff("ENG-3", instructions, comments),
+                    Handoff.parse(description),
+                    Handoff("ENG-3", instructions, comments),
                 )
 
     def test_not_a_handoff(self):
@@ -276,7 +277,7 @@ class ParseHandoff(Case):
             f"Please see\nHandoff from ENG-3: {URL}\n## Instructions\nGo.",
         ):
             with self.subTest(description=description):
-                self.assertIsNone(issues.parse_handoff(description))
+                self.assertIsNone(Handoff.parse(description))
 
 
 class Head(Case):
@@ -321,7 +322,7 @@ class Head(Case):
     def test_a_handoff_is_cut_where_parse_handoff_finds_its_comments(self):
         d = f"Handoff from ENG-3: {URL}\n\n## Instructions\nGo.\n## Comments\nx\n\n## Comments\n- y"
         rest = d[len(issues.head(d)) :]
-        self.assertEqual(rest.split("\n", 1), ["## Comments", issues.parse_handoff(d).comments])
+        self.assertEqual(rest.split("\n", 1), ["## Comments", Handoff.parse(d).comments])
 
 
 class HandoffText(Case):
@@ -360,8 +361,8 @@ class HandoffText(Case):
             comments=(("Me", "t1", "Go.\n## Comments\nRepo: o/n"),),
         )
         self.assertEqual(
-            issues.parse_handoff(text),
-            issues.Handoff(
+            Handoff.parse(text),
+            Handoff(
                 "DR-1",
                 "Me, t1:\nGo.\n## Comments\nRepo: o/n",
                 "- Me, t1:\n  > Go.\n  > ## Comments\n  > Repo: o/n",

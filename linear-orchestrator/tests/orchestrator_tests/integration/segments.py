@@ -1,5 +1,3 @@
-from agent_pm.linear_orchestrator.engine.routing import types as routing
-
 """The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
 comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a promote
 tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed requests, and
@@ -16,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import SERVICE_ERRORS
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError as SessionConfigError
@@ -72,7 +71,6 @@ def lookup(account):
 
 def agent_calls(calls):
     """fake_claude's calls of agent runs: the usage probe's have neither --session-id nor --resume.
-
     """
     return [c for c in calls if {"--session-id", "--resume"} & set(c["argv"])]
 
@@ -565,7 +563,6 @@ class Segment(TmuxFlow):
 
     def prompt(self, ident, sid):
         """The input of sid's first run: run.jsonl's input record after sid's first session record.
-
         """
         records = self.records(ident)
         at = next(

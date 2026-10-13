@@ -198,3 +198,6 @@ class ClonePaths:
     work: str
     clones: Mapping[str, str]
     writable: tuple[str, ...] | None = None
+
+
+ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"

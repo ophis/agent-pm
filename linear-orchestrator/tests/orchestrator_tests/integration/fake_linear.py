@@ -1,5 +1,3 @@
-from agent_pm.linear_orchestrator.engine.routing import types as routing
-
 """Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback HTTP:
 each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its
 answer projected to the query's selection.
@@ -21,7 +19,9 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agent_pm.linear_orchestrator.engine import config, promote, prune
+from agent_pm.linear_orchestrator.engine import config, promote
+from agent_pm.linear_orchestrator.engine.prune import types as prune
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.integration.fixture_errors import FakeCredentialError, FixtureError, Problem
@@ -43,9 +43,14 @@ NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
 MODULES = {
-    m.__name__.rpartition(".")[2]: m for m in (linear, issues, sessions, writeback, promote, prune)
+    "linear": linear,
+    "issues": issues,
+    "sessions": sessions,
+    "writeback": writeback,
+    "promote": promote,
+    "prune": prune,
+    "router": routing,
 }
-MODULES["router"] = routing
 
 BUILT = {
     "router.issues": routing.q_issues(),
