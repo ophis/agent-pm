@@ -13,7 +13,8 @@ import os
 import tomllib
 from collections.abc import Iterator, Mapping
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
+from agent_pm.utils.paths import ROOT
+
 LOCAL = "~/.agent-pm/local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
 UNCONFIGURED = ("utils", "manager")  # no own file

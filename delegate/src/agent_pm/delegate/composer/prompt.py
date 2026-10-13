@@ -28,7 +28,6 @@ from agent_pm.delegate.composer.base import (
     outline,
     read_text,
 )
-from agent_pm.delegate.composer.teams import index, tasks_path, team_or_default
 from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
 from agent_pm.utils.markdown import unfenced
@@ -67,7 +66,7 @@ RETURN = (
 
 
 def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> str:
-    team = team_or_default(team)
+    team = teams.team_or_default(team)
     names = {
         "role": run.role_title,
         "role_anchor": anchor(run.role_title),
@@ -191,7 +190,7 @@ def _task_path(after: str, paths) -> str | None:
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
     used = teams.used(team, run.role, run.templates)
-    paths = {t: teams.lookup(team, "tasks", t) for t in index(run.role, team)}
+    paths = {t: teams.lookup(team, "tasks", t) for t in teams.index(run.role, team)}
     tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))
@@ -236,7 +235,8 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
 
 def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], team: Team) -> str:
     texts = dict(texts) | {
-        label: body for body, label in (teams.read(team, "tasks", t) for t in index(run.role, team))
+        label: body
+        for body, label in (teams.read(team, "tasks", t) for t in teams.index(run.role, team))
     }
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
     texts |= {
@@ -244,7 +244,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     }
     values = {
         "workdir": _code(os.path.abspath(params.workdir)),
-        "tasks": _code(tasks_path(run.role, team)),
+        "tasks": _code(teams.tasks_path(run.role, team)),
         "team": _code(team.root),
         "gate": _code(run.gate or "none"),
     }

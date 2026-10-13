@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 
-from agent_pm.utils.config_file import ROOT
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 
 
 def real_dirs(paths, label: str) -> frozenset[str]:

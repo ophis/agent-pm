@@ -1,4 +1,4 @@
-"""The Composer's shared types: its ConfigError, a role's run config, one run's params, its Team and a run's access
+"""The Composer's shared types: ConfigError (the whole delegate's), a role's run config, one run's params, its Team and a run's access
 intent."""
 
 import os

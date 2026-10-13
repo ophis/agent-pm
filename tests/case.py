@@ -10,13 +10,13 @@ from unittest import mock
 
 try:
     import agent_pm
+    from agent_pm.utils.paths import import_roots
 except ImportError:
     agent_pm = None
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-INITS = glob.glob(os.path.join(REPO, "*", "src", "agent_pm", "*", "__init__.py"))
-SRC = {init.split(os.sep)[-2]: os.sep.join(init.split(os.sep)[:-3]) for init in INITS}
-ROOTS = tuple(sorted(set(SRC.values())))
+ROOTS = import_roots(REPO) if agent_pm else tuple(sorted(glob.glob(os.path.join(REPO, "*", "src"))))
+SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
 ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")

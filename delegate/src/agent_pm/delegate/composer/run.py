@@ -42,7 +42,7 @@ OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
 
 
-def lookup(layer: Mapping, role: str, key: str):
+def run_key(layer: Mapping, role: str, key: str):
     for table in (layer.get("roles", {}).get(role, {}), layer):
         if key in table:
             return table[key]
@@ -211,7 +211,7 @@ def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
 
 def _run_keys(layer: Mapping, role: str) -> dict:
     """A layer's run keys for `role`; an [output] key "" is unset."""
-    values = {k: v for k in RUN_KEYS if (v := lookup(layer, role, k)) is not None}
+    values = {k: v for k in RUN_KEYS if (v := run_key(layer, role, k)) is not None}
     if isinstance(output := values.get("output"), Mapping):
         values["output"] = {k: v for k, v in output.items() if v != ""}
     return values
