@@ -30,6 +30,8 @@ class Entry:
     note: str | None
     started: str
     argv: tuple[str, ...] = ()
+    sid: str | None = None
+    receipt: str | None = None
 
 
 class RosterError(Exception):

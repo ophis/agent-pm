@@ -12,6 +12,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
+from uuid import uuid4
 
 from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
@@ -29,7 +30,7 @@ class RosterTest(Case):
             "custom",
             "x",
             ("s1", "s2"),
-            "sid",
+            str(uuid4()),
             self.home,
             ("fake-ctl",),
             ("fake-ctl", "resume", "x"),
@@ -38,7 +39,7 @@ class RosterTest(Case):
         )
 
     def begin(self, name="x", note=None):
-        self.roster.begin(Spec(name, ("fake-ctl", "start", name), note))
+        self.roster.begin(Spec(name, ("fake-ctl", "start", name), note), sid=self.record.sid)
 
     def live(self, name="x", note=None):
         self.begin(name, note)
@@ -69,7 +70,7 @@ class RosterTest(Case):
             Spec("x", ("fake",), "a" * 501),
         ):
             with self.subTest(intent=intent), self.assertRaises(RosterError):
-                self.roster.begin(intent)
+                self.roster.begin(intent, sid=self.record.sid)
         self.assertFalse(os.path.exists(self.directory))
 
     def test_duplicate_name_and_missing_entry_fail(self):
@@ -131,7 +132,7 @@ class RosterTest(Case):
     def test_generic_record_names_are_safe_roster_keys(self):
         for name in ("external.run", "external run", "external/run", "../external", "外部"):
             with self.subTest(name=name):
-                record = replace(self.record, name=name, sessions=(name,))
+                record = replace(self.record, name=name, sessions=(name,), sid=str(uuid4()))
                 self.assertEqual(self.roster.adopt(record), name)
                 self.assertEqual(Roster(self.directory).entries()[name].record, record)
         self.assertFalse((Path(self.directory).parent / "external").exists())
@@ -191,7 +192,7 @@ class RosterTest(Case):
         self.assertEqual(self.content()["holder"]["session"], "b")
         with self.assertRaises(RosterError):
             self.begin()
-        other.begin(Spec("x", ("fake",)))
+        other.begin(Spec("x", ("fake",)), sid=self.record.sid)
 
     def test_every_mutation_checks_current_lease(self):
         self.roster.hold("a", lambda _: False)
@@ -199,7 +200,7 @@ class RosterTest(Case):
         other = Roster(self.directory)
         other.hold("b", lambda _: False)
         for operation in (
-            lambda: self.roster.begin(Spec("y", ("fake",))),
+            lambda: self.roster.begin(Spec("y", ("fake",)), sid=str(uuid4())),
             lambda: self.roster.commit("x", self.record),
             lambda: self.roster.mark("x", State.GONE),
             lambda: self.roster.claim_resume("x"),
@@ -454,6 +455,94 @@ class RosterTest(Case):
         self.assertGreater(
             datetime.datetime.fromisoformat(started), datetime.datetime.fromisoformat(old)
         )
+
+    def test_sid_and_private_receipt_exist_before_start_and_cleanup_after_commit(self):
+        self.begin("alias", "keep")
+        entry = self.roster.entries()["alias"]
+        self.assertEqual(entry.sid, self.record.sid)
+        receipt = Path(self.directory, entry.receipt)
+        self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
+        with self.roster.open_receipt("alias") as output:
+            output.write(b"diagnostic\n" + self.record.to_line().encode() + b"\n")
+        self.assertEqual(self.roster.receipt_record("alias"), self.record)
+        self.roster.commit("alias", self.record)
+        self.assertFalse(receipt.exists())
+        self.assertIsNone(self.roster.entries()["alias"].receipt)
+
+    def test_commit_rejects_null_different_and_previously_owned_sid(self):
+        self.begin()
+        before = Path(self.roster.path).read_bytes()
+        for sid in (None, str(uuid4())):
+            with self.subTest(sid=sid), self.assertRaisesRegex(RosterError, "Record.sid"):
+                self.roster.commit("x", replace(self.record, sid=sid))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        with self.assertRaisesRegex(RosterError, "already owned"):
+            self.roster.begin(Spec("second", ("fake",)), sid=self.record.sid)
+
+    def test_lost_adoption_matches_sid_not_name_or_sessions(self):
+        self.begin("alias", "keep")
+        self.roster.mark("alias", State.LOST)
+        before = self.roster.entries()["alias"]
+        record = replace(self.record, name="other", sessions=("unrelated",))
+        self.assertEqual(self.roster.adopt(record), "alias")
+        after = self.roster.entries()["alias"]
+        self.assertEqual(
+            (after.record, after.note, after.started), (record, before.note, before.started)
+        )
+        self.assertEqual(self.roster.adopt(record), "alias")
+        self.assertEqual(list(self.roster.entries()), ["alias"])
+
+    def test_unmatched_sid_leaves_a_lost_entry_unchanged(self):
+        self.begin()
+        self.roster.mark("x", State.LOST)
+        before = Path(self.roster.path).read_bytes()
+        self.assertIsNone(self.roster.adopt(replace(self.record, sid=str(uuid4()))))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_ambiguous_or_already_owned_sid_is_refused_without_writes(self):
+        self.begin("alias")
+        self.roster.mark("alias", State.LOST)
+        data = self.content()
+        data["entries"]["duplicate"] = data["entries"]["alias"]
+        Path(self.roster.path).write_text(json.dumps(data))
+        before = Path(self.roster.path).read_bytes()
+        with self.assertRaisesRegex(RosterError, "more than one"):
+            self.roster.adopt(self.record)
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.roster.remove("duplicate")
+        self.roster.adopt(self.record)
+        with self.assertRaisesRegex(RosterError, "already owned"):
+            self.roster.adopt(replace(self.record, ctl=("another-ctl",)))
+
+    def test_receipt_survives_failure_until_remove_and_orphans_are_cleaned(self):
+        self.begin()
+        entry = self.roster.entries()["x"]
+        receipt = Path(self.directory, entry.receipt)
+        self.roster.mark("x", State.LOST)
+        self.assertTrue(receipt.exists())
+        orphan = Path(self.directory, "receipt-orphan.stdout")
+        orphan.write_bytes(b"abandoned")
+        self.roster.entries()
+        self.assertFalse(orphan.exists())
+        self.assertTrue(receipt.exists())
+        self.roster.remove("x")
+        self.assertFalse(receipt.exists())
+
+    def test_receipt_symlink_and_fifo_are_refused(self):
+        for kind in ("symlink", "fifo"):
+            with self.subTest(kind=kind):
+                self.begin()
+                entry = self.roster.entries()["x"]
+                path = Path(self.directory, entry.receipt)
+                path.unlink()
+                if kind == "symlink":
+                    path.symlink_to(Path(self.home, "outside"))
+                else:
+                    os.mkfifo(path)
+                with self.assertRaises((OSError, RosterError)), self.roster.open_receipt("x"):
+                    self.fail("unsafe receipt opened")
+                path.unlink()
+                self.roster.remove("x")
 
 
 if __name__ == "__main__":

@@ -5,16 +5,20 @@ import datetime
 import fcntl
 import json
 import os
+import re
 import stat
+import tempfile
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, replace
+from typing import BinaryIO
+from uuid import UUID
 
 from agent_pm.manager.engine.events import Events
 from agent_pm.manager.engine.types import Entry, Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Record, printable, read_regular, save
 
-VERSION = 1
+VERSION = 2
 NOTE_MAX = 500
 ROSTER_MAX = 1 << 20
 LOCK_TIMEOUT = 30
@@ -37,8 +41,18 @@ def _note(note: str | None) -> None:
         raise RosterError(f"note: want null or printable text of at most {NOTE_MAX} characters")
 
 
+def _sid(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = UUID(value)
+    except ValueError:
+        return False
+    return str(parsed) == value and parsed.version == 4
+
+
 def _entry(data: dict) -> Entry:
-    if set(data) != {"record", "state", "note", "started", "argv"}:
+    if set(data) != {"record", "state", "note", "started", "argv", "sid", "receipt"}:
         raise ValueError("entry: invalid fields")
     record = None if data["record"] is None else Record.parse(json.dumps(data["record"]))
     state = State(data["state"])
@@ -49,14 +63,23 @@ def _entry(data: dict) -> Entry:
     ):
         raise ValueError("started: want an ISO 8601 time with a UTC offset")
     argv = data["argv"]
-    if not isinstance(argv, list) or not all(isinstance(word, str) for word in argv):
+    if not isinstance(argv, list | tuple) or not all(isinstance(word, str) for word in argv):
         raise ValueError("argv: want a list of strings")
     if state in {State.STARTING, State.LOST}:
         if record is not None or not argv:
             raise ValueError("starting/lost: want an intent without a Record")
     elif record is None:
         raise ValueError(f"{state}: missing Record")
-    return Entry(record, state, data["note"], data["started"], tuple(argv))
+    sid, receipt = data["sid"], data["receipt"]
+    if receipt is not None and (
+        not isinstance(receipt, str) or re.fullmatch(r"receipt-[a-z0-9_]+\.stdout", receipt) is None
+    ):
+        raise ValueError("receipt: want an allocated receipt filename")
+    if record is not None and record.sid != sid:
+        raise ValueError("sid: differs from Record.sid")
+    if state in {State.STARTING, State.LOST, State.RESUMING} and not _sid(sid):
+        raise ValueError("sid: want a canonical uuid4")
+    return Entry(record, state, data["note"], data["started"], tuple(argv), sid, receipt)
 
 
 class Roster:
@@ -117,6 +140,7 @@ class Roster:
                 data = self._read()
                 before = json.dumps(data, sort_keys=True)
                 yield data
+                self._settle_receipts(data)
                 if json.dumps(data, sort_keys=True) != before:
                     save(
                         self.path,
@@ -124,6 +148,7 @@ class Roster:
                         own=True,
                         durable=True,
                     )
+                self._cleanup_receipts(data)
             finally:
                 os.close(fd)
         except OSError as error:
@@ -148,7 +173,7 @@ class Roster:
             }:
                 raise ValueError("want roster fields")
             if type(data["version"]) is not int or data["version"] != VERSION:
-                raise ValueError("version: want 1")
+                raise ValueError(f"version: want {VERSION}")
             for field in ("cursor", "gen"):
                 if type(data[field]) is not int or data[field] < 0:
                     raise ValueError(f"{field}: want a nonnegative integer")
@@ -203,9 +228,32 @@ class Roster:
         with self._locked() as data:
             return {name: _entry(value) for name, value in data["entries"].items()}
 
-    def begin(self, intent: Spec) -> None:
+    def _new_receipt(self) -> str:
+        fd, path = tempfile.mkstemp(prefix="receipt-", suffix=".stdout", dir=self.directory)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return os.path.basename(path)
+
+    def _cleanup_receipts(self, data: dict) -> None:
+        referenced = {entry["receipt"] for entry in data["entries"].values()}
+        for item in os.scandir(self.directory):
+            if (
+                re.fullmatch(r"receipt-[a-z0-9_]+\.stdout", item.name) is None
+                or item.name in referenced
+            ):
+                continue
+            info = item.stat(follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise RosterError(f"{item.path}: not a regular receipt owned by you")
+            os.unlink(item.path)
+
+    def begin(self, intent: Spec, *, sid: str) -> Entry:
         _name(intent.name)
         _note(intent.note)
+        if not _sid(sid):
+            raise RosterError("sid: want a canonical uuid4")
         if (
             not intent.argv
             or not all(isinstance(word, str) for word in intent.argv)
@@ -216,17 +264,103 @@ class Roster:
             self._lease(data)
             if intent.name in data["entries"]:
                 raise RosterError(f"{intent.name}: already in roster")
-            data["entries"][intent.name] = asdict(
-                Entry(None, State.STARTING, intent.note, _now(), intent.argv)
+            if any(value["sid"] == sid for value in data["entries"].values()):
+                raise RosterError(f"sid {sid}: already owned")
+            entry = Entry(
+                None, State.STARTING, intent.note, _now(), intent.argv, sid, self._new_receipt()
             )
+            data["entries"][intent.name] = asdict(entry)
+        return entry
+
+    @contextlib.contextmanager
+    def open_receipt(self, name: str) -> Iterator[BinaryIO]:
+        with self._locked() as data:
+            self._lease(data)
+            entry = self._get(data, name)
+            if entry.receipt is None:
+                raise RosterError(f"{name}: no launch receipt")
+            path = os.path.join(self.directory, entry.receipt)
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                info = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.getuid()
+                    or info.st_nlink != 1
+                ):
+                    raise RosterError(f"{path}: not a private regular receipt owned by you")
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BaseException:
+                os.close(fd)
+                raise
+        with os.fdopen(fd, "wb") as stream:
+            yield stream
+
+    def _receipt_record(self, entry: Entry) -> Record:
+        if entry.receipt is None:
+            raise RosterError("no launch receipt")
+        path = os.path.join(self.directory, entry.receipt)
+        raw = read_regular(path, limit=ROSTER_MAX, tail=True, own=True)
+        if raw is None:
+            raise RosterError(f"{path}: not a readable receipt owned by you")
+        lines = raw.splitlines()
+        if not lines:
+            raise RosterError("no Record received")
+        try:
+            return Record.parse(lines[-1].decode("utf-8"))
+        except ValueError as error:
+            raise RosterError(f"invalid final Record: {error}") from error
+
+    def receipt_record(self, name: str) -> Record:
+        with self._locked() as data:
+            self._lease(data)
+            return self._receipt_record(self._get(data, name))
+
+    def _settle_receipts(self, data: dict) -> None:
+        for name, value in data["entries"].items():
+            entry = _entry(value)
+            if entry.state != State.LIVE or entry.receipt is None:
+                continue
+            path = os.path.join(self.directory, entry.receipt)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                    raise RosterError(f"{path}: not a regular receipt owned by you")
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                try:
+                    recorded = self._receipt_record(entry)
+                except RosterError:
+                    continue
+                if recorded == entry.record:
+                    data["entries"][name] = asdict(replace(entry, receipt=None))
+            finally:
+                os.close(fd)
+
+    def _commit(self, data: dict, name: str, record: Record) -> None:
+        entry = self._get(data, name)
+        if record.sid is None or record.sid != entry.sid:
+            raise RosterError(f"{name}: Record.sid does not match launch sid {entry.sid}")
+        if any(
+            other != name and value["sid"] == record.sid for other, value in data["entries"].items()
+        ):
+            raise RosterError(f"sid {record.sid}: already owned")
+        if entry.state == State.LIVE and entry.record == record:
+            data["entries"][name] = asdict(replace(entry, receipt=None))
+            return
+        if entry.state not in {State.STARTING, State.RESUMING}:
+            raise RosterError(f"{name}: cannot commit {entry.state}")
+        data["entries"][name] = asdict(
+            replace(entry, record=record, state=State.LIVE, argv=(), receipt=None)
+        )
 
     def commit(self, name: str, record: Record) -> None:
         with self._locked() as data:
             self._lease(data)
-            entry = self._get(data, name)
-            if entry.state not in {State.STARTING, State.RESUMING}:
-                raise RosterError(f"{name}: cannot commit {entry.state}")
-            data["entries"][name] = asdict(replace(entry, record=record, state=State.LIVE, argv=()))
+            self._commit(data, name, record)
 
     def _get(self, data: dict, name: str) -> Entry:
         if name not in data["entries"]:
@@ -247,8 +381,14 @@ class Roster:
         if state != entry.state and state not in allowed[entry.state]:
             raise RosterError(f"{name}: cannot change {entry.state} to {state}")
         started = _now() if state == State.RESUMING and entry.state != state else entry.started
-        data["entries"][name] = asdict(replace(entry, state=state, started=started))
-        return entry
+        receipt = (
+            self._new_receipt()
+            if state == State.RESUMING and entry.state != state
+            else entry.receipt
+        )
+        updated = replace(entry, state=state, started=started, receipt=receipt)
+        data["entries"][name] = asdict(updated)
+        return updated
 
     def mark(self, name: str, state: State) -> None:
         with self._locked() as data:
@@ -281,26 +421,37 @@ class Roster:
             self._lease(data)
             data["entries"][name] = asdict(replace(self._get(data, name), note=text))
 
-    def adopt(self, record: Record) -> str:
+    def adopt(self, record: Record) -> str | None:
         _name(record.name)
         with self._locked() as data:
             self._lease(data)
-            for name, value in data["entries"].items():
-                current = _entry(value)
-                if current.record is not None and (
-                    current.record.name == record.name
-                    or set(current.record.sessions) & set(record.sessions)
-                ):
-                    return name
-            old = data["entries"].get(record.name)
-            if old is not None:
-                entry = _entry(old)
-                if entry.state != State.LOST:
+            matches = [
+                name
+                for name, value in data["entries"].items()
+                if record.sid is not None and value["sid"] == record.sid
+            ]
+            if len(matches) > 1:
+                raise RosterError(f"sid {record.sid}: more than one roster entry matches")
+            if matches:
+                name = matches[0]
+                current = self._get(data, name)
+                if current.state in {State.LOST, State.RESUMING}:
+                    data["entries"][name] = asdict(
+                        replace(current, record=record, state=State.LIVE, argv=())
+                    )
+                elif current.state != State.STARTING and current.record != record:
+                    raise RosterError(f"sid {record.sid}: already owned by {name}")
+                return name
+            if record.name in data["entries"]:
+                current = self._get(data, record.name)
+                if current.record == record:
                     return record.name
-                entry = replace(entry, record=record, state=State.LIVE, argv=())
-            else:
-                entry = Entry(record, State.LIVE, None, _now())
-            data["entries"][record.name] = asdict(entry)
+                if current.state == State.LOST:
+                    return None
+                raise RosterError(f"{record.name}: already owned by another sid")
+            data["entries"][record.name] = asdict(
+                Entry(record, State.LIVE, None, _now(), sid=record.sid)
+            )
             return record.name
 
     def backlog(self) -> tuple[int, int, list[str]]:

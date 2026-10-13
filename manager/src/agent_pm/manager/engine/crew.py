@@ -3,14 +3,16 @@
 import os
 import shlex
 import subprocess
+import sys
 import time
+import uuid
 from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Entry, Spec, State
+from agent_pm.manager.engine.types import Entry, RosterError, Spec, State
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
@@ -65,24 +67,40 @@ class Crew:
     def _alive(self, owner: str) -> bool:
         return any(owner == record.name or owner in record.sessions for record in self._here())
 
-    def _start(self, argv: tuple[str, ...]) -> Record:
-        lines = self._execute(argv, events=True).splitlines()
-        if not lines:
-            raise RuntimeError(f"{shlex.join(argv)}: no Record received")
+    def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
+        env = {**self._env(events=True), "AGENT_PM_SID": sid}
         try:
-            return Record.parse(lines[-1])
-        except ValueError as error:
-            raise RuntimeError(f"{shlex.join(argv)}: invalid final Record: {error}") from error
+            with self.roster.open_receipt(name) as receipt:
+                result = subprocess.run(
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=receipt,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=TIMEOUT,
+                    env=env,
+                )
+                if result.returncode:
+                    reason = result.stderr.strip() or f"exit {result.returncode}"
+                    raise RuntimeError(f"{shlex.join(argv)}: {reason}")
+                return self.roster.receipt_record(name)
+        except OSError as error:
+            raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"{shlex.join(argv)}: no response within {TIMEOUT} seconds"
+            ) from error
 
     def run(self, spec: Spec) -> Record:
         self._listed = None
-        self.roster.begin(spec)
+        sid = str(uuid.uuid4())
+        self.roster.begin(spec, sid=sid)
         try:
-            record = self._start(spec.argv)
-        except (RuntimeError, ValueError):
+            record = self._start(spec.argv, spec.name, sid)
+            self.roster.commit(spec.name, record)
+        except (RosterError, RuntimeError, ValueError):
             self.roster.mark(spec.name, State.LOST)
             raise
-        self.roster.commit(spec.name, record)
         return record
 
     def _statuses(self, entries: dict[str, Entry]) -> dict[str, Status]:
@@ -148,15 +166,16 @@ class Crew:
             if entry.state == State.STARTING:
                 self.roster.mark(name, State.LOST)
             elif entry.state == State.RESUMING:
-                record = entry.record
-                live = record is not None and any(
-                    record.name == found.name or bool(set(record.sessions) & set(found.sessions))
-                    for found in here
-                )
+                live = entry.sid is not None and any(entry.sid == found.sid for found in here)
                 if not live:
                     self.roster.mark(name, State.GONE)
         for record in here:
-            self.roster.adopt(record)
+            try:
+                adopted = self.roster.adopt(record)
+                if adopted is None:
+                    print(f"crew: adopt {record.name}: no matching launch sid", file=sys.stderr)
+            except RosterError as error:
+                print(f"crew: adopt {record.name}: {error}", file=sys.stderr)
         entries = self.roster.entries()
         answers = self._statuses(entries)
         shown: list[Record] = []
@@ -220,14 +239,14 @@ class Crew:
         if claimed is None:
             return None
         record = claimed.record
-        if record is None:
-            raise RuntimeError(f"{name}: no Record to resume")
+        if record is None or claimed.sid is None:
+            raise RuntimeError(f"{name}: no Record or sid to resume")
         try:
-            resumed = self._start(record.resume)
-        except (RuntimeError, ValueError):
+            resumed = self._start(record.resume, name, claimed.sid)
+            self.roster.commit(name, resumed)
+        except (RosterError, RuntimeError, ValueError):
             self.roster.mark(name, State.GONE)
             raise
-        self.roster.commit(name, resumed)
         return resumed
 
     def stop(self, name: str) -> None:

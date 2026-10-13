@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from unittest import mock
 
 import agent_pm
@@ -63,13 +64,15 @@ class Case(unittest.TestCase):
         )
         return command
 
-    def fake_record(self, name: str, *, display: str | None = None) -> Record:
+    def fake_record(
+        self, name: str, *, display: str | None = None, sid: str | None = None
+    ) -> Record:
         return Record(
             1,
             "fake",
             name,
             (name,),
-            None,
+            sid or str(uuid.uuid4()),
             None,
             (ctl.COMMAND,),
             (ctl.COMMAND, "resume", name),

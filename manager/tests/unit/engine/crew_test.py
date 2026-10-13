@@ -1,10 +1,13 @@
 """Crew starts and controls Records through real fake-ctl processes, never lower-layer APIs."""
 
+import contextlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -12,7 +15,7 @@ from unittest import mock
 
 from agent_pm.manager.engine.crew import BIN, HERE, Crew
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Held, Spec, State
+from agent_pm.manager.engine.types import Held, RosterError, Spec, State
 from agent_pm.utils import Status
 
 from manager.tests.case import Case
@@ -68,19 +71,24 @@ class CrewTest(Case):
         record = self.fake_record("worker")
         code = "\n".join(
             (
-                "import fcntl,json,os",
+                "import fcntl,json,os,stat",
                 f"path={self.directory!r}",
                 "with open(path+'/roster.json') as f: entry=json.load(f)['entries']['worker']",
                 "assert entry['state']=='starting' and entry['record'] is None",
+                "assert stat.S_ISREG(os.fstat(1).st_mode)",
                 "fd=os.open(path+'/roster.lock',os.O_RDWR)",
                 "fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)",
                 "assert os.environ['AGENT_PM_EVENTS']==path+'/events'",
                 f"assert os.environ['PATH'].split(os.pathsep)[0]=={BIN!r}",
                 "print('starter diagnostics')",
-                f"print({record.to_line()!r})",
+                "assert os.environ['AGENT_PM_SID']==entry['sid']",
+                f"record=json.loads({record.to_line()!r})",
+                "record['sid']=os.environ['AGENT_PM_SID']",
+                "print(json.dumps(record))",
             )
         )
-        self.assertEqual(self.crew.run(Spec("worker", (sys.executable, "-c", code))), record)
+        started = self.crew.run(Spec("worker", (sys.executable, "-c", code)))
+        self.assertEqual(started, replace(record, sid=self.roster.entries()["worker"].sid))
 
     def test_bad_empty_nonzero_and_missing_command_runs_become_lost(self):
         cases = {
@@ -90,7 +98,7 @@ class CrewTest(Case):
             "missing": ("missing-starter-task371",),
         }
         for name, argv in cases.items():
-            with self.subTest(name=name), self.assertRaises(RuntimeError):
+            with self.subTest(name=name), self.assertRaises((RuntimeError, RosterError)):
                 self.crew.run(Spec(name, argv))
             self.assertEqual(self.roster.entries()[name].state, State.LOST)
             with self.assertRaisesRegex(RuntimeError, "lost.*no Record"):
@@ -130,6 +138,80 @@ class CrewTest(Case):
             self.crew.resume("gone")
         self.assertEqual(self.roster.entries()["gone"].state, State.GONE)
 
+    def test_inherited_sid_is_overwritten_on_both_start_and_resume(self):
+        inherited = str(uuid.uuid4())
+        with mock.patch.dict(os.environ, {"AGENT_PM_SID": inherited}):
+            started = self.gone("worker")
+            self.assertNotEqual(started.sid, inherited)
+            self.assertEqual(str(uuid.UUID(started.sid)), started.sid)
+            resumed = self.crew.resume("worker")
+        self.assertEqual(resumed, started)
+        self.assertEqual(self.roster.entries()["worker"].sid, started.sid)
+
+    def test_null_or_mismatched_sid_keep_launch_lost(self):
+        cases = {
+            "null": replace(self.fake_record("null"), sid=None).to_line() + "\n",
+            "mismatch": self.fake_record("mismatch").to_line() + "\n",
+        }
+        for name, text in cases.items():
+            command = (sys.executable, "-c", f"import sys;sys.stdout.write({text!r})")
+            with self.subTest(name=name), self.assertRaises(RosterError):
+                self.crew.run(Spec(name, command))
+            entry = self.roster.entries()[name]
+            self.assertEqual(entry.state, State.LOST)
+            self.assertIsNone(entry.record)
+            self.assertIsNotNone(entry.receipt)
+            self.assertTrue(os.path.exists(os.path.join(self.directory, entry.receipt)))
+
+    def test_final_json_without_newline_commits_but_truncated_json_stays_lost(self):
+        for name, suffix in (("valid", ""), ("truncated", "[:-1]")):
+            record = self.fake_record(name)
+            code = "\n".join(
+                (
+                    "import json,os,sys",
+                    f"record=json.loads({record.to_line()!r})",
+                    "record['sid']=os.environ['AGENT_PM_SID']",
+                    f"sys.stdout.write(json.dumps(record){suffix})",
+                )
+            )
+            if suffix:
+                with self.assertRaises(RosterError):
+                    self.crew.run(Spec(name, (sys.executable, "-c", code)))
+                self.assertEqual(self.roster.entries()[name].state, State.LOST)
+            else:
+                started = self.crew.run(Spec(name, (sys.executable, "-c", code)))
+                self.assertEqual(started, replace(record, sid=self.roster.entries()[name].sid))
+                self.assertEqual(self.roster.entries()[name].state, State.LIVE)
+
+    def test_attach_reports_sid_ownership_conflicts_without_replacing_entries(self):
+        original = self.start("worker")
+        conflicting = replace(original, name="different-record")
+        error = io.StringIO()
+        with self.listed((conflicting,)), contextlib.redirect_stderr(error):
+            self.crew.attach()
+        self.assertIn("adopt different-record:", error.getvalue())
+        self.assertEqual(self.roster.entries()["worker"].record, original)
+        self.assertNotIn("different-record", self.roster.entries())
+
+    def test_resume_sid_mismatch_restores_gone_with_previous_identity(self):
+        original = self.gone("worker")
+        wrong = replace(original, sid=str(uuid.uuid4()))
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == original.resume:
+                options["stdout"].write((wrong.to_line() + "\n").encode())
+                options["stdout"].flush()
+                return subprocess.CompletedProcess(argv, 0, None, "")
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run), self.assertRaises(RosterError):
+            self.crew.resume("worker")
+        entry = self.roster.entries()["worker"]
+        self.assertEqual(
+            (entry.state, entry.record, entry.sid), (State.GONE, original, original.sid)
+        )
+
     def test_attach_batches_twenty_records_and_shows_only_displayable_live_entries(self):
         records = []
         for number in range(20):
@@ -144,8 +226,8 @@ class CrewTest(Case):
         self.assertEqual(
             len([call for call in run.call_args_list if tuple(call.args[0]) == HERE]), 1
         )
-        self.assertIn("role0\tfake\t-\tworking", table)
-        self.assertIn("role19\tfake\t-\tworking", table)
+        self.assertIn(f"role0\tfake\t{records[0].sid}\tworking", table)
+        self.assertIn(f"role19\tfake\t{records[19].sid}\tworking", table)
 
     def test_attach_renders_its_status_snapshot_during_a_concurrent_launch(self):
         self.start("old")
@@ -201,8 +283,8 @@ class CrewTest(Case):
         self.assertEqual(self.calls("resume"), [])
 
     def test_attach_times_out_old_starting_and_resuming_entries_but_leaves_young_ones(self):
-        self.roster.begin(Spec("old", (self.command, "start", "old")))
-        self.roster.begin(Spec("young", (self.command, "start", "young")))
+        self.roster.begin(Spec("old", (self.command, "start", "old")), sid=str(uuid.uuid4()))
+        self.roster.begin(Spec("young", (self.command, "start", "young")), sid=str(uuid.uuid4()))
         self.age("old")
         self.gone("resuming")
         self.roster.claim_resume("resuming")
@@ -213,19 +295,21 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["young"].state, State.STARTING)
         self.assertEqual(self.roster.entries()["resuming"].state, State.GONE)
 
-    def test_attach_adopts_orphan_records_and_retains_exact_name_lost_note(self):
-        self.roster.begin(Spec("worker", (self.command, "start", "worker"), "keep"))
-        self.age("worker")
-        orphan = self.fake_record("worker")
+    def test_attach_adopts_sid_matched_orphan_under_original_alias_and_note(self):
+        sid = str(uuid.uuid4())
+        self.roster.begin(Spec("alias", (self.command, "start", "actual-name"), "keep"), sid=sid)
+        self.age("alias")
+        orphan = self.fake_record("actual-name", sid=sid)
         extra = self.fake_record("extra")
-        ctl.set_session(self.ctl_dir, "worker", alive=True)
-        ctl.set_session(self.ctl_dir, "extra", alive=True)
+        ctl.set_session(self.ctl_dir, "actual-name", alive=True, sid=sid)
+        ctl.set_session(self.ctl_dir, "extra", alive=True, sid=extra.sid)
         with self.listed((orphan, orphan, extra)):
             self.crew.attach()
-        self.assertEqual(set(self.roster.entries()), {"worker", "extra"})
-        self.assertEqual(self.roster.entries()["worker"].note, "keep")
-        self.assertEqual(self.roster.entries()["worker"].record, orphan)
-        self.assertEqual(self.roster.entries()["worker"].state, State.LIVE)
+        self.assertEqual(set(self.roster.entries()), {"alias", "extra"})
+        self.assertEqual(self.roster.entries()["alias"].note, "keep")
+        self.assertEqual(self.roster.entries()["alias"].record, orphan)
+        self.assertEqual(self.roster.entries()["alias"].state, State.LIVE)
+        self.assertEqual(self.crew.status(("alias",))[0].name, "alias")
 
     def test_resume_replays_exact_argv_and_preserves_display(self):
         self.start("role", display="opaque")
@@ -237,6 +321,34 @@ class CrewTest(Case):
         self.assertEqual(record.display, "opaque")
         self.assertEqual(self.calls("resume"), [{"argv": ["resume", "role"], "names": ["role"]}])
         self.assertEqual(self.roster.entries()["role"].state, State.LIVE)
+
+    def test_attach_during_resume_retains_receipt_until_original_record_is_parsed(self):
+        original = self.gone("worker")
+        with self.listed((original,)):
+            real_run = subprocess.run
+            receipts = []
+
+            def run(argv, **options):
+                result = real_run(argv, **options)
+                if tuple(argv) == original.resume:
+                    other = Crew(Roster(self.directory))
+                    other.attach()
+                    entry = other.roster.entries()["worker"]
+                    self.assertEqual((entry.state, entry.record), (State.LIVE, original))
+                    self.assertIsNotNone(entry.receipt)
+                    path = os.path.join(self.directory, entry.receipt)
+                    self.assertTrue(os.path.exists(path))
+                    receipts.append(path)
+                return result
+
+            with mock.patch("subprocess.run", side_effect=run):
+                resumed = self.crew.resume("worker")
+        self.assertEqual(resumed, original)
+        self.assertEqual(self.roster.entries()["worker"].state, State.LIVE)
+        self.assertIsNone(self.roster.entries()["worker"].receipt)
+        self.assertEqual(len(receipts), 1)
+        self.assertFalse(os.path.exists(receipts[0]))
+        self.assertEqual(len(self.calls("resume")), 1)
 
     def test_resume_live_and_in_progress_start_nothing(self):
         record = self.start("live")
@@ -333,8 +445,9 @@ class CrewTest(Case):
             os.path.join(self.bin_dir, self.command), os.path.join(self.bin_dir, second)
         )
         os.chmod(os.path.join(self.bin_dir, second), 0o700)
-        self.roster.begin(Spec("two", (second, "start", "two")))
-        self.roster.commit("two", replace(self.fake_record("two"), ctl=(second,)))
+        record = self.fake_record("two")
+        self.roster.begin(Spec("two", (second, "start", "two")), sid=record.sid)
+        self.roster.commit("two", replace(record, ctl=(second,)))
         ctl.set_session(self.ctl_dir, "two", alive=True)
         statuses = self.crew.status()
         self.assertEqual([status.name for status in statuses], ["one", "two"])
@@ -360,7 +473,7 @@ class CrewTest(Case):
 
         def run(argv, **options):
             if tuple(argv) == original.resume:
-                return subprocess.CompletedProcess(argv, 1, "", "cannot resume")
+                return subprocess.CompletedProcess(argv, 1, None, "cannot resume")
             return real_run(argv, **options)
 
         with (
