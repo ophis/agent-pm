@@ -2934,6 +2934,14 @@ class GridLayoutTest(Case):
             [leaf.pane for leaf in tmux_host._leaves(root)],
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
+        self.assertEqual(
+            tmux_host._panes(root),
+            ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
+        )
+
+    def test_panes_require_leaf_pane(self):
+        with self.assertRaises(AssertionError):
+            tmux_host._panes(tmux_host.Cell(1, 1, 0, 0))
 
 
 class SwapsTest(Case):
