@@ -97,7 +97,17 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     rec = sessions.base(
         sid=a.sid, workdir=rd, runtime=a.runtime, started_at=now(), driver=cfg.driver
     )
-    ctx = writeback.from_request(cfg, role, gql, a, a.uuid)
+    ctx = writeback.context(
+        cfg,
+        role,
+        gql,
+        ident=a.issue,
+        issue_id=a.uuid,
+        sid=a.sid,
+        resume=a.mode == "resume",
+        project=a.project,
+        target=config.repo_slug(a.target) if a.target else None,
+    )
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):

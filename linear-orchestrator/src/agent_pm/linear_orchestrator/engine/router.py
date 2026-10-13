@@ -580,7 +580,17 @@ def outer(a, cfg, *, gql, run, keychain):
         issue = issues.read_issue(gql, a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
-    ctx = writeback.from_request(cfg, role, gql, a, issue.id)
+    ctx = writeback.context(
+        cfg,
+        role,
+        gql,
+        ident=a.issue,
+        issue_id=issue.id,
+        sid=a.sid,
+        resume=a.mode == "resume",
+        project=a.project,
+        target=None,
+    )
     if build:
         try:
             repo = target.check(

@@ -13,7 +13,7 @@ from datetime import datetime
 from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
-from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS, repo_slug
+from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.target import MAPPED
 from agent_pm.linear_orchestrator.engine.types import (
     FileError,
@@ -68,21 +68,6 @@ def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target=Non
         repos=cfg.project_repos,
         team=cfg.team,
         target=target,
-    )
-
-
-def from_request(cfg, role, gql, args, issue_id):
-    target = getattr(args, "target", None)
-    return context(
-        cfg,
-        role,
-        gql,
-        ident=args.issue,
-        issue_id=issue_id,
-        sid=args.sid,
-        resume=args.mode == "resume",
-        project=args.project,
-        target=repo_slug(target) if target else None,
     )
 
 
