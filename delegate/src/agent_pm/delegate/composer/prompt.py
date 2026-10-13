@@ -22,14 +22,13 @@ from agent_pm.delegate.composer.base import (
     OUTPUT,
     PAREN,
     SCHEME,
-    ConfigError,
     anchor,
     fill,
     outline,
     read_text,
 )
-from agent_pm.delegate.composer.run import RunConfig, RunParams
 from agent_pm.delegate.composer.teams import Team, index, tasks_path, team_or_default
+from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams
 from agent_pm.delegate.event import OUTCOME, PROGRESS
 from agent_pm.utils.markdown import unfenced
 

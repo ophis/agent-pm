@@ -9,7 +9,8 @@ import tempfile
 import unittest
 from dataclasses import replace
 
-from agent_pm.delegate.composer.base import METHOD, TEAM, ConfigError, outline
+from agent_pm.delegate.composer import ConfigError, RunParams
+from agent_pm.delegate.composer.base import METHOD, TEAM, outline
 from agent_pm.delegate.composer.prompt import (
     OUTCOME,
     PARAMETERS,
@@ -19,7 +20,7 @@ from agent_pm.delegate.composer.prompt import (
     reference_errors,
     render,
 )
-from agent_pm.delegate.composer.run import RunParams, resolve
+from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
 
 from delegate.tests.case import Case
