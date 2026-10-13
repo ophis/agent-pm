@@ -1474,7 +1474,8 @@ class EnvironmentTest(TuiBase):
         )
         self.refused(
             ConfigError,
-            "adapter 'broken' has no package adapters.broken",
+            "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
+            "agent_pm.session.adapters.broken: No module named 'agent_pm.session.adapters.broken'",
             lambda: self.tui(runtime="inner", name="w1"),
         )
         self.host.start.assert_not_called()

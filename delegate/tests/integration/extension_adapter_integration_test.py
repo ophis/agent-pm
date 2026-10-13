@@ -113,7 +113,11 @@ class ExtensionAdapterIntegration(Case):
 
     def test_a_table_without_its_package_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "adapters.absent:AbsentAdapter"\n')
-        self.refused("absent", "adapter 'absent' has no package adapters.absent")
+        self.refused(
+            "absent",
+            "adapter 'absent': agent_pm.session.adapters.absent:AbsentAdapter: cannot import "
+            "agent_pm.session.adapters.absent: No module named 'agent_pm.session.adapters.absent'",
+        )
 
     def test_a_package_without_its_table_fails_before_launch(self):
         self.package("untabled")

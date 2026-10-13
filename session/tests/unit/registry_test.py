@@ -27,6 +27,10 @@ from session.tests.case import HOSTS, Case, settings
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 UNCONFIGURED = "the session is not configured: call Session.configure first"
+MISSING = (
+    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
+    "No module named 'agent_pm.session.adapters.{n}'"
+)
 
 
 class OddAdapter:
@@ -296,17 +300,13 @@ class AdapterTest(Base):
 
     def test_refuses_a_missing_package(self):
         self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
-        self.refused(
-            "adapter 'nope' has no package adapters.nope", lambda: registry.adapter("nope")
-        )
+        self.refused(MISSING.format(n="nope", c="Nope"), lambda: registry.adapter("nope"))
 
     def test_refuses_a_missing_parent_package(self):
         self.configure(FAKE)
         with mock.patch.dict(sys.modules), mock.patch.object(agent_pm, "__path__", []):
             del sys.modules[Adapter.__module__.rpartition(".")[0]]
-            self.refused(
-                "adapter 'fake' has no package adapters.fake", lambda: registry.adapter("fake")
-            )
+            self.refused(MISSING.format(n="fake", c="Fake"), lambda: registry.adapter("fake"))
 
     def test_refuses_a_package_that_fails_to_import(self):
         self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
@@ -328,14 +328,21 @@ class AdapterTest(Base):
                 with self.assertRaises(ConfigError) as caught:
                     registry.adapter("broken")
                 self.assertTrue(
-                    str(caught.exception).startswith(f"cannot import adapter 'broken': {shown}"),
+                    str(caught.exception).startswith(
+                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
+                        f"agent_pm.session.adapters.broken: {shown}"
+                    ),
                     caught.exception,
                 )
 
     def test_refuses_a_missing_class(self):
         self.register(empty=package("empty"))
         self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
-        self.refused("adapters.empty has no EmptyAdapter", lambda: registry.adapter("empty"))
+        self.refused(
+            "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
+            "no EmptyAdapter",
+            lambda: registry.adapter("empty"),
+        )
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
         for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadless):
@@ -343,7 +350,7 @@ class AdapterTest(Base):
                 self.register(odd=package("odd", OddAdapter=value))
                 self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
                 self.refused(
-                    "adapters.odd:OddAdapter must be a concrete Adapter subclass",
+                    "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass",
                     lambda: registry.adapter("odd"),
                 )
 
