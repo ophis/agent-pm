@@ -8,12 +8,10 @@ import tempfile
 import unittest
 from dataclasses import fields, replace
 
-from agent_pm.delegate.composer.base import ConfigError
+from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
     Intent,
-    RunConfig,
-    RunParams,
     access,
     bind,
     check_old_keys,

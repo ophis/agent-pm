@@ -4,6 +4,7 @@ import os
 import re
 from collections.abc import Mapping
 
+from agent_pm.delegate.composer.types import ConfigError
 from agent_pm.delegate.engine.config import CONFIG as CONFIG
 from agent_pm.utils import markdown
 
@@ -21,10 +22,6 @@ LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
 FILE_REF = re.compile(r"`(?:<(tasks)>|<team>/(methods))/(<task>|[\w-]+)\.md`")
 PAREN = re.compile(r"\(([^()]*)\)")
 SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
-
-
-class ConfigError(Exception):
-    pass
 
 
 def fill(text: str, values: Mapping, where: str) -> str:

@@ -13,10 +13,10 @@ from agent_pm.delegate.composer.base import (
     METHOD,
     PLACEHOLDER,
     TEAM,
-    ConfigError,
     read_text,
     title_of,
 )
+from agent_pm.delegate.composer.types import ConfigError
 from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils.config_file import LOCAL, read_config, read_project
 from agent_pm.utils.markdown import unfenced

@@ -15,9 +15,9 @@ A role's index is checked whenever it is read, a team dir file whenever it is lo
 naming the file.
 """
 
-from agent_pm.delegate.composer.base import SCHEMA, TEAM, ConfigError
+from agent_pm.delegate.composer.base import SCHEMA, TEAM
 from agent_pm.delegate.composer.prompt import render
-from agent_pm.delegate.composer.run import RunConfig, RunParams, access, resolve, trusted_dirs
+from agent_pm.delegate.composer.run import access, resolve, trusted_dirs
 from agent_pm.delegate.composer.teams import (
     Team,
     catalog,
@@ -28,6 +28,7 @@ from agent_pm.delegate.composer.teams import (
     team_dirs,
     team_paths,
 )
+from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 
 __all__ = [
