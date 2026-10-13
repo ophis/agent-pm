@@ -1,4 +1,4 @@
-"""utils/config_file.py: merge, read_config."""
+"""utils/config_file.py: merge, read_config, read_project (levels, ownership, the one local file), unset."""
 
 import copy
 import os
@@ -8,11 +8,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils.config_file import merge, read_config
+from agent_pm.utils import config_file
+from agent_pm.utils.config_file import merge, read_config, read_project, unset
 
 from utils.tests.case import REPO, Case
 
-LOCAL = "~/.agent-pm/core-new.local.toml"
+LOCAL = "~/.agent-pm/local.toml"
 
 
 class ConfigFileTest(Case):
@@ -87,7 +88,7 @@ class Defaults(Case):
         with open(self.path, "w", encoding="utf-8") as f:
             f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
 
-    def local(self, text, name="core-new.local.toml"):
+    def local(self, text, name="local.toml"):
         """`text` as this test's ~/.agent-pm/<name>."""
         with open(os.path.join(self.agent_pm, name), "w", encoding="utf-8") as f:
             f.write(text)
@@ -101,8 +102,9 @@ class Defaults(Case):
             read_config(self.path, os.devnull), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
         )
 
-    def test_the_home_local_file_goes_on_top_and_the_old_cores_is_not_read(self):
-        self.local('users = ["old"]\n', "core.local.toml")
+    def test_the_home_local_file_goes_on_top_and_the_old_ones_are_not_read(self):
+        for old in ("core.local.toml", "core-new.local.toml"):
+            self.local('users = ["old"]\n', old)
         self.assertEqual(
             read_config(self.path, LOCAL), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
         )
@@ -110,6 +112,184 @@ class Defaults(Case):
         self.assertEqual(
             read_config(self.path, LOCAL), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
         )
+
+
+SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'
+DELEGATE = 'runtime = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
+ORCH = 'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = 3\n[core.roles.pm]\ngate = "g"\n'
+MANAGER = 'runtime = "m"\n'
+
+
+class Projects(Case):
+    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has none) and this
+    test's ~/.agent-pm/local.toml."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+        for project, text in (
+            ("session", SESSION),
+            ("delegate", DELEGATE),
+            ("linear-orchestrator", ORCH),
+            ("manager", MANAGER),
+        ):
+            self.write(project, text)
+
+    def write(self, project, text):
+        os.makedirs(os.path.join(self.root, project), exist_ok=True)
+        with open(os.path.join(self.root, project, "config.toml"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def local(self, text):
+        with open(os.path.join(self.agent_pm, "local.toml"), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def read(self, name, **kw):
+        return read_project(name, root=self.root, **kw)
+
+    def test_the_paths(self):
+        self.assertEqual(config_file.LOCAL, "~/.agent-pm/local.toml")
+        self.assertEqual(config_file.ROOT, REPO)
+        self.assertEqual(
+            config_file.LEVELS,
+            (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",)),
+        )
+
+    def test_each_project_reads_the_levels_at_or_below_it_a_higher_key_winning(self):
+        session = {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
+        delegate = {
+            **session,
+            "runtime": "a",
+            "show": "",
+            "team_dirs": [],
+            "roles": {"pm": {"tier": 2, "output": {"type": "local"}}},
+        }
+        orch = {
+            **delegate,
+            "team": "",
+            "work_dir": "~/w",
+            "roles": {"pm": {"tier": 2, "output": {"type": "local"}, "account": "", "max_runs": 3}},
+            "core": {"roles": {"pm": {"gate": "g"}}},
+        }
+        self.assertEqual(self.read("utils"), session)
+        self.assertEqual(self.read("session"), session)
+        self.assertEqual(self.read("delegate"), delegate)
+        self.assertEqual(self.read("linear-orchestrator"), orch)
+        self.assertEqual(self.read("manager"), {**orch, "runtime": "m"})
+
+    def test_local_goes_over_all_tables_merging_and_lists_replaced_whole(self):
+        self.local(
+            'runtime = "b"\nteam_dirs = ["~/t"]\nteam = "T"\n[hosts.tmux]\nstatus_line = true\n'
+            '[roles.pm]\ntier = 1\naccount = "pm@x"\n'
+        )
+        found = self.read("linear-orchestrator")
+        self.assertEqual(
+            (found["runtime"], found["team_dirs"], found["team"], found["hosts"]["tmux"]),
+            ("b", ["~/t"], "T", {"status_line": True}),
+        )
+        self.assertEqual(
+            found["roles"]["pm"],
+            {"tier": 1, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
+        )
+        self.assertEqual(self.read("manager")["runtime"], "b")
+
+    def test_a_project_takes_only_the_local_keys_owned_at_or_below_it(self):
+        self.local(
+            'team = "T"\nshow = "none"\n[hosts.tmux]\nstatus_line = true\n[core.roles.pm]\ncwd = "/c"\n'
+            '[roles.pm]\naccount = "pm@x"\ncwd = "/p"\n[roles.new]\naccount = "n@x"\nmax_runs = 2\ntier = 3\n'
+            '[roles.pm.output]\ntype = "github"\n'
+        )
+        session, delegate = self.read("session"), self.read("delegate")
+        self.assertEqual(session["hosts"]["tmux"], {"status_line": True})
+        self.assertEqual(set(session), {"hosts"})
+        self.assertEqual(
+            delegate["roles"],
+            {"pm": {"tier": 2, "output": {"type": "github"}, "cwd": "/p"}, "new": {"tier": 3}},
+        )
+        self.assertEqual(
+            (delegate["show"], "team" in delegate, "core" in delegate), ("none", False, False)
+        )
+        orch = self.read("linear-orchestrator")
+        self.assertEqual(orch["roles"]["new"], {"account": "n@x", "max_runs": 2, "tier": 3})
+        self.assertEqual(orch["core"]["roles"]["pm"], {"gate": "g", "cwd": "/c"})
+
+    def test_a_local_top_level_key_no_project_has_is_refused_at_run_time(self):
+        self.local('runtime = "b"\nbogus = 1\n')
+        for name in ("session", "delegate", "manager"):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(
+                    ValueError,
+                    r"^~/.agent-pm/local.toml: unknown key 'bogus': no project's config.toml has it$",
+                ),
+            ):
+                self.read(name)
+
+    def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
+        self.local('[hosts.other]\nimplementation = "a.b:C"\n[adapters]\n')
+        with self.assertRaisesRegex(ValueError, "unknown key 'adapters'"):
+            self.read("session")
+        self.local('[hosts.other]\nimplementation = "a.b:C"\n')
+        self.assertEqual(self.read("session")["hosts"]["other"], {"implementation": "a.b:C"})
+
+    def test_no_local_file_and_no_config_file_are_empty(self):
+        os.remove(os.path.join(self.root, "manager", "config.toml"))
+        self.assertEqual(self.read("manager"), self.read("linear-orchestrator"))
+        self.assertEqual(
+            self.read("utils"), {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
+        )
+
+    def test_a_name_that_is_not_a_project_is_refused(self):
+        for name in ("core", "tests", "", "linear_orchestrator", "../delegate"):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ValueError, f"project {name!r}: want one of"),
+            ):
+                self.read(name)
+
+    def test_a_key_in_two_same_level_projects_is_refused(self):
+        self.write("utils", "[hosts]\nx = 1\n")
+        with self.assertRaisesRegex(
+            ValueError, "session/config.toml: hosts is also a same-level project's"
+        ):
+            self.read("delegate")
+
+    def test_path_stands_in_for_the_projects_own_file(self):
+        other = os.path.join(self.root, "other.toml")
+        with open(other, "w", encoding="utf-8") as f:
+            f.write('runtime = "z"\nlanguage = "x"\n')
+        self.local('language = "y"\n')
+        found = self.read("delegate", path=other)
+        self.assertEqual((found["runtime"], found["language"], "roles" in found), ("z", "y", False))
+
+    def test_an_explicit_local_file(self):
+        local = os.path.join(self.root, "mine.toml")
+        with open(local, "w", encoding="utf-8") as f:
+            f.write('runtime = "q"\n')
+        self.assertEqual(self.read("delegate", local=local)["runtime"], "q")
+
+    def test_malformed_files_propagate(self):
+        self.local("x = [\n")
+        with self.assertRaises(tomllib.TOMLDecodeError):
+            self.read("delegate")
+
+
+class Unset(Case):
+    def test_missing_or_empty_required_keys_by_dotted_key_a_star_each_subtable(self):
+        cfg = {
+            "team": "",
+            "key": "k",
+            "states": {"a": "1", "b": ""},
+            "roles": {"x": {"account": ""}, "y": {}},
+        }
+        self.assertEqual(
+            unset(
+                cfg, ("team", "key", "gone", "states.a", "states.b", "states.c", "roles.*.account")
+            ),
+            ["team", "gone", "states.b", "states.c", "roles.x.account", "roles.y.account"],
+        )
+        self.assertEqual(unset({}, ("roles.*.account",)), [])
 
 
 if __name__ == "__main__":

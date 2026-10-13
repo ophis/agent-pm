@@ -6,7 +6,7 @@ layer_imports(repo)   imports go one way (README.md › Layout), a layer imports
                       name, nested, relative or import_module'd
 delegate_session(repo) delegate/ imports SESSION only by an __all__ name
 layer_commands(repo)  COMMAND_SRC's SPAWNS calls pass no str starting COMMAND, SESSION_SRC's but SESSION_COMMAND
-standalone(repo)      no file names LINEAR
+standalone(repo)      no file names LINEAR but CONFIG_LEVELS' LEVELS line (the config override order)
 runtime_names(repo)   no RUNTIME name outside session/adapters/ but a .toml's comments and Adapter lines
 old_core(repo)        no `core` import
 session_only(repo)    session/ imports only stdlib, session and utils, names none of SESSION_WORDS
@@ -27,6 +27,9 @@ orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session impo
 orchestrator_text(orch) no runtime name but CLAUDE.md, no string "tmux" or "adapters"; HANDOFF only in HANDOFF_HOME
 config_once(orch)     ONCE called only in main of ENTRIES; LOAD_HELPERS only in config.py
 test_layers(repo)     a <project>/tests/ file imports no root `tests` and no project after its own in TEST_ORDER
+config_levels(repo)   CONFIG_LEVELS' LEVELS, the config override order (TEST_ORDER flattens it), holds each project once
+explicit_keys(repo)   each `# local:` example key in a <project>/config.toml has a real line in one: the same dotted key,
+                      the same table, depth and last key, a suffix of it, or a key of an empty real table
 """
 
 import ast
@@ -35,6 +38,9 @@ import os
 import re
 import sys
 import tokenize
+import tomllib
+
+from agent_pm.utils.config_file import LEVELS
 
 GROUPS = ("session", "delegate", "manager")
 SESSION_API = "session.engine.api"
@@ -126,7 +132,9 @@ PROJECTS = {
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 TREES = (*PROJECTS, "tests")
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
-TEST_ORDER = ("utils", SESSION, "delegate", ORCH_PROJECT, "manager")
+TEST_ORDER = tuple(p for level in LEVELS for p in level)
+CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
+LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
@@ -240,6 +248,8 @@ def standalone(repo: str) -> list[str]:
                 rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
                 with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
                     for number, line in enumerate(f, 1):
+                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
+                            continue
                         found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
     return sorted(found)
 
@@ -709,6 +719,73 @@ def test_layers(repo: str) -> list[str]:
                 if top == "tests" or rank.get(top, -1) > rank[project]:
                     found.add(f"{rel}: imports {m}")
     return sorted(found)
+
+
+def config_levels(repo: str) -> list[str]:
+    with open(os.path.join(repo, CONFIG_LEVELS), encoding="utf-8") as f:
+        tree = ast.parse(f.read(), CONFIG_LEVELS)
+    found = [
+        n.value
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "LEVELS" for t in n.targets)
+    ]
+    if len(found) != 1:
+        return [f"{CONFIG_LEVELS}: want one LEVELS assignment"]
+    try:
+        named = [p for level in ast.literal_eval(found[0]) for p in level]
+    except (ValueError, TypeError):
+        return [f"{CONFIG_LEVELS}: LEVELS is not a literal tuple of tuples"]
+    return sorted(
+        {
+            f"{CONFIG_LEVELS}: LEVELS holds {p!r} {named.count(p)} times"
+            for p in {*PROJECTS, *named}
+            if named.count(p) != 1
+        }
+        | {
+            f"{CONFIG_LEVELS}: LEVELS holds {p!r}, not a project"
+            for p in named
+            if p not in PROJECTS
+        }
+    )
+
+
+def explicit_keys(repo: str) -> list[str]:
+    real, examples, found = set(), {}, set()
+    for project in PROJECTS:
+        rel = f"{project}/config.toml"
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        lines = [m[1] for line in text.splitlines() if (m := LOCAL_EXAMPLE.fullmatch(line))]
+        try:
+            real.update(_toml_leaves(tomllib.loads(text), ()))
+            examples[rel] = _toml_leaves(tomllib.loads("\n".join(lines)), ())
+        except tomllib.TOMLDecodeError as e:
+            found.add(f"{rel}: {e}")
+    keys = {k for k, empty in real}
+    empty = {k for k, is_empty in real if is_empty}
+    shapes = {(k[0], len(k), k[-1]) for k in keys}
+    for rel, leaves in examples.items():
+        for k, _ in leaves:
+            if not (
+                k in keys
+                or (k[0], len(k), k[-1]) in shapes
+                or any(k[i:] in keys for i in range(1, len(k)))
+                or k[:-1] in empty
+            ):
+                found.add(f"{rel}: `# local:` key {'.'.join(k)} has no real line")
+    return sorted(found)
+
+
+def _toml_leaves(table, at):
+    """(dotted key tuple, is an empty table) of each leaf."""
+    out = [(at, True)] if not table and at else []
+    for k, v in table.items():
+        out += _toml_leaves(v, (*at, k)) if isinstance(v, dict) else [((*at, k), False)]
+    return out
 
 
 def _private(name):

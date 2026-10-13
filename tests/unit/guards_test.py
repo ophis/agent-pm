@@ -79,6 +79,7 @@ class RealTree(Case):
             (guards.namespace_package, REPO),
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
+            (guards.config_levels, REPO),
             *((guard, ORCH) for guard in ORCH_GUARDS),
             *((guards.private_imports, src) for src in SRC.values()),
         ):
@@ -527,6 +528,7 @@ class Standalone(Sample):
                 "session/tests/a_test.py": "import agent_pm.linear_orchestrator\n",
                 "linear-orchestrator/b.py": "import agent_pm.linear_orchestrator\n",
                 "tests/c.py": "import agent_pm.linear_orchestrator\n",
+                guards.CONFIG_LEVELS: 'LEVELS = (("linear-orchestrator",),)\n# linear-orchestrator\n',
             }
         )
         self.assertEqual(
@@ -537,6 +539,7 @@ class Standalone(Sample):
                 f"{team}/roles/r.md:2: names linear_orchestrator",
                 f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
                 f"session/{PKG}/session/x.py:1: names linear_orchestrator",
+                f"{guards.CONFIG_LEVELS}:2: names linear-orchestrator",
                 f"utils/{PKG}/utils/y.py:1: names linear_orchestrator",
             ],
         )
@@ -1369,6 +1372,73 @@ class StatusLogFormat(Sample):
             }
         )
         self.assertEqual(guards.status_log_format(root), [])
+
+
+class ConfigLevels(Sample):
+    def levels(self, text):
+        return guards.config_levels(self.tree({guards.CONFIG_LEVELS: text}))
+
+    def test_the_order_is_one_constant_test_order_flattens(self):
+        self.assertEqual(
+            guards.TEST_ORDER, ("utils", "session", "delegate", guards.ORCH_PROJECT, "manager")
+        )
+        self.assertEqual(
+            self.levels(
+                'LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))\n'
+            ),
+            [],
+        )
+
+    def test_each_project_once_and_only_projects(self):
+        at = guards.CONFIG_LEVELS
+        self.assertEqual(
+            self.levels('LEVELS = (("utils", "session"), ("delegate", "x"), ("delegate",))\n'),
+            [
+                f"{at}: LEVELS holds 'delegate' 2 times",
+                f"{at}: LEVELS holds 'linear-orchestrator' 0 times",
+                f"{at}: LEVELS holds 'manager' 0 times",
+                f"{at}: LEVELS holds 'x', not a project",
+            ],
+        )
+        self.assertEqual(self.levels("X = 1\n"), [f"{at}: want one LEVELS assignment"])
+        self.assertEqual(
+            self.levels("LEVELS = tuple(x)\n"), [f"{at}: LEVELS is not a literal tuple of tuples"]
+        )
+
+
+class ExplicitKeys(Sample):
+    def test_an_example_with_a_real_line_its_shape_suffix_or_empty_table_passes(self):
+        root = self.tree(
+            {
+                "delegate/config.toml": 'cwd = ""\n# local: cwd = "/x"\n[output]\ntype = "local"\ndir = ""\n'
+                '[roles.a.output]\ntype = "x"\n# local: [roles.b]\n# local: cwd = "/y"\n'
+                '# local: [roles.b.output]\n# local: dir = "d"\n',
+                f"{guards.ORCH_PROJECT}/config.toml": '[labels]\n# local: [labels]\n# local: x = "1"\n'
+                '[roles.a]\nkey = ""\n# local: [roles.c]\n# local: key = "k"\n'
+                '# local: [core.roles.a]\n# local: cwd = "/z"\n',
+            }
+        )
+        self.assertEqual(guards.explicit_keys(root), [])
+
+    def test_a_commented_only_key_is_refused(self):
+        root = self.tree(
+            {
+                "session/config.toml": "[hosts.tmux]\nx = 1\n# local: [hosts.tmux]\n# local: status_line = true\n",
+                "delegate/config.toml": '# local: team_dirs = ["~/t"]\n[roles.a]\nt = 1\n# local: [roles.a]\n'
+                "# local: [roles.a.deep]\n# local: y = 2\n",
+                "manager/config.toml": "# local: [bad\n",
+            }
+        )
+        found = guards.explicit_keys(root)
+        self.assertEqual(
+            [f for f in found if not f.startswith("manager/")],
+            [
+                "delegate/config.toml: `# local:` key roles.a.deep.y has no real line",
+                "delegate/config.toml: `# local:` key team_dirs has no real line",
+                "session/config.toml: `# local:` key hosts.tmux.status_line has no real line",
+            ],
+        )
+        self.assertEqual(len([f for f in found if f.startswith("manager/config.toml: ")]), 1)
 
 
 if __name__ == "__main__":
