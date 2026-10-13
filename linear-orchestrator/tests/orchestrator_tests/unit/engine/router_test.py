@@ -2118,11 +2118,10 @@ class ScheduledTaskSelection(TickBase):
         )
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.group = {"isGroup": False}
-        with self.assertRaises(LinearError) as cm:
-            self.tick(fake)
-        self.assertEqual(
-            str(cm.exception),
-            f"linear-orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
+        self.assertEqual(self.tick(fake), 1)
+        self.assertIn(
+            f"config-error reason=linear-orchestrator/config.toml: task_label_group {TASK_GROUP} is not a label group",
+            self.said(),
         )
         self.assertEqual(
             (fake.queries, fake.mutations),

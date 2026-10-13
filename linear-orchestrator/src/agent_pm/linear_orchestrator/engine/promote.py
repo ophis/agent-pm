@@ -337,6 +337,8 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     try:
         promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
         promoter.run()
+    except LinearError as e:
+        return linear.config_error("promote", e, dry=dry)
     except Unavailable as e:
         return linear_error("promote", e, dry=dry)
     run_prune(gql, now, promoter, pruner)

@@ -455,9 +455,8 @@ class HandoffPromotion(Base):
     def test_bad_state_id_stops_before_changes(self):
         self.ready()
         self.fake.state_ids = [i for k, i in IDS_BY_KEY.items() if k != "done"]
-        with self.assertRaises(LinearError) as cm:
-            self.run_main()
-        self.assertIn("[states] not workflow states of team 'Team': done", str(str(cm.exception)))
+        self.assertEqual(self.run_main(), 1)
+        self.assertIn("[states] not workflow states of team 'Team': done", self.out)
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):

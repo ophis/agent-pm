@@ -858,6 +858,8 @@ def main(
         return tick(
             opts, cfg, gql, now=now, hour=datetime.now().hour if hour is None else hour, start=start
         )
+    except LinearError as e:
+        return linear.config_error("router", e, dry=opts["dry"])
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
 
