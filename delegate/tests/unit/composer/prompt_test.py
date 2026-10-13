@@ -1,6 +1,7 @@
-"""composer/prompt.py: render on a fake team (ported from the old composer's Prompt, Anchors, Parameters and
-Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral Return, the resume prefix, and
-reference_errors and the method files on the real team (its References and Methods tests)."""
+"""composer/prompt.py: render on a fake team (ported from the old composer's Prompt, Anchors,
+Parameters and Deliverable tests and the TeamDirs cases that render), RULE alone, the neutral
+Return, the resume prefix, and reference_errors and the method files on the real team (its
+References and Methods tests)."""
 
 import inspect
 import os

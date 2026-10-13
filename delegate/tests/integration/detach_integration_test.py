@@ -1,12 +1,14 @@
-"""delegate/cli.py --detach as a subprocess on a private tmux server (session/tests/live_tmux.py), a control-mode client on
-the manager, the session config's ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py: the Driver session, the TUI beside the
-caller or in no pane, the outcome line, a kill-session of the Driver session, an events path tmux would misread.
-Ports main's tests/integration/core/drive_tui_integration_test.py test_detach_from_the_manager. Not ported, as role
-entries are TASK-356: its test_detach_events_default (the manager directory's events file needs roster) and main's
-manager/tests/integration/crew_integration_test.py Roster role-run cases: test_killed_role_run_gone_then_recovered,
-test_stop_a_role_run_by_its_tui_session,
-test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume, the role parts of
-test_stop_all_stops_what_mgr_opened_and_only_that and
+"""delegate/cli.py --detach as a subprocess on a private tmux server (session/tests/live_tmux.py),
+a control-mode client on the manager, the session config's ClaudeAdapter running
+session/tests/integration/adapters/claude/fake_claude.py: the Driver session, the TUI beside the
+caller or in no pane, the outcome line, a kill-session of the Driver session, an events path
+tmux would misread. Ports main's tests/integration/core/drive_tui_integration_test.py
+test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
+test_detach_events_default (the manager directory's events file needs roster) and main's
+manager/tests/integration/crew_integration_test.py Roster role-run cases:
+test_killed_role_run_gone_then_recovered, test_stop_a_role_run_by_its_tui_session,
+test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume, the role parts
+of test_stop_all_stops_what_mgr_opened_and_only_that and
 test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker."""
 
 import json
@@ -100,8 +102,8 @@ class Detach(Case):
         return live_tmux.wait(poked, WAIT, what=what)
 
     def ended(self, turn_ends: int = 0) -> list[str]:
-        """The events file's lines, shaped, once they hold an outcome and turn_ends turn ends and the Driver session
-        is gone."""
+        """The events file's lines, shaped, once they hold an outcome and turn_ends turn ends and
+        the Driver session is gone."""
 
         def check():
             shaped = shape(live_tmux.events(self.events))

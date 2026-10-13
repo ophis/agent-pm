@@ -1,8 +1,9 @@
-"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>] table: a temp copy of
-session and utils, the fake adapter's package copied in as session's adapters/fake/ and its table
-appended to the copy's session/config.toml, nothing else changed, runs a headless session through
-session.engine.api.start in a child Python whose PYTHONPATH is only the copy's src/ dirs. A table without its
-package, or a package without its table, fails there before anything starts."""
+"""A new runtime is one package under src/agent_pm/session/adapters/ plus one [adapters.<name>]
+table: a temp copy of session and utils, the fake adapter's package copied in as session's
+adapters/fake/ and its table appended to the copy's session/config.toml, nothing else changed,
+runs a headless session through session.engine.api.start in a child Python whose PYTHONPATH is
+only the copy's src/ dirs. A table without its package, or a package without its table, fails
+there before anything starts."""
 
 import json
 import os
@@ -89,7 +90,8 @@ class ExtensionAdapterIntegration(Case):
         )
 
     def refused(self, runtime: str, error: str) -> None:
-        """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or process."""
+        """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or
+        process."""
         child = self.child(runtime)
         self.assertEqual((child.returncode, child.stdout), (1, ""), child.stderr)
         self.assertIn(f"ConfigError: {error}", child.stderr)

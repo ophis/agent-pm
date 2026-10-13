@@ -1,6 +1,7 @@
-"""delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and messages; main's
-drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode in_process over the in_process-only fake;
---detach over a fake driver, and the driver form with signal's calls recorded."""
+"""delegate/cli.py in process over the fake runtime: argv rules, --list, --dry-run, exit codes and
+messages; main's drive_test Main, RoleRuns and TeamRuns cases of its command line; --mode
+in_process over the in_process-only fake; --detach over a fake driver, and the driver form with
+signal's calls recorded."""
 
 import errno
 import io
@@ -82,7 +83,8 @@ class FakeApplication:
 
 
 class Base(Case):
-    """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work` (not made)."""
+    """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work`
+    (not made)."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -796,8 +798,8 @@ class DriverForm(Base):
         self.assertRegex(self.written(), rf"\A\d\d:\d\d:\d\d {DRIVER} outcome {status}\n\Z")
 
     def ran(self, result=DONE_RESULT, effect=None):
-        """the fake application: Begun, then `effect` (raised when an exception, else called) and `result`; noted in
-        self.calls."""
+        """the fake application: Begun, then `effect` (raised when an exception, else called) and
+        `result`; noted in self.calls."""
 
         def run(*args, on_event, **kw):
             self.calls.append(("run",))

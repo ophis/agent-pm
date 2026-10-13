@@ -30,8 +30,8 @@ def python(code: str) -> tuple[str, ...]:
 
 
 def spawning(then: str = "") -> str:
-    """Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as {"text"}, then runs
-    `then`."""
+    """Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as
+    {"text"}, then runs `then`."""
     return (
         "import json, subprocess, sys, time\n"
         f"grandchild = subprocess.Popen([sys.executable, '-I', '-c', {SLEEPER!r}])\n"

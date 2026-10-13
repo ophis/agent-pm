@@ -101,7 +101,8 @@ def _first(payload: dict, *keys: str) -> str:
 
 
 def _last_text(data: bytes) -> str:
-    """The text blocks of the last assistant message with text, over its records sharing one message.id."""
+    """The text blocks of the last assistant message with text, over its records sharing one
+    message.id."""
     last, texts = None, []
     for line in reversed(data.split(b"\n")):
         try:

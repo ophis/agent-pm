@@ -31,11 +31,10 @@ class HookTest(Base):
             {"session_id": "invalid"},
             {"hook_event_name": "PermissionRequest"},
         ):
-            with self.subTest(fields=fields):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertFalse(
-                        tui_hook.bind("Stop", self.payload(**fields), str(self.work), self.spec.sid)
-                    )
+            with self.subTest(fields=fields), contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(
+                    tui_hook.bind("Stop", self.payload(**fields), str(self.work), self.spec.sid)
+                )
         self.assertFalse(tui_hook.bind("unknown", self.payload(), str(self.work), self.spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
 

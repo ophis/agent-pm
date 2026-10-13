@@ -1,13 +1,16 @@
-"""roster.json, the roster in a manager's directory ~/.agent-pm/managers/<name>/, beside its `events` file; its format:
-TOP, FIELDS, _CHECKS. An entry is written by the script that starts the subordinate, at start, replacing one of the same
-name (record): crew.py start (a worker, under its name), the old core's drive.detach for drive.py --detach (a role) and
-router.py --tui (a pipeline), keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one with
-its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of the last `events` line handled
-(0: none); gen: the generation of `events`, + 1 per rotation (rotate): a line number means something only with its gen.
-Sessions are reached only through agent_pm.session (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
-default_runtime: `runtime` as read_project("manager") reads it (delegate/config.toml's, config.local.toml on top), which recovery gives a worker entry without --client. A worker entry runs
-crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming a crew.py or workers.py
-script, or the module agent_pm.crew, to that form."""
+"""roster.json, the roster in a manager's directory ~/.agent-pm/managers/<name>/, beside its
+`events` file; its format: TOP, FIELDS, _CHECKS. An entry is written by the script that starts
+the subordinate, at start, replacing one of the same name (record): crew.py start (a worker,
+under its name), the old core's drive.detach for drive.py --detach (a role) and router.py --tui
+(a pipeline), keyed by the driver session (the new core's: TASK-315). `crew.py stop` removes one
+with its sessions (stop), `crew.py forget` one whose sessions are gone. cursor: the number of
+the last `events` line handled (0: none); gen: the generation of `events`, + 1 per rotation
+(rotate): a line number means something only with its gen. Sessions are reached only through
+agent_pm.session (sessions, close). worker_dir: a worker's dir ~/.agent-pm/workers/<sid>/;
+default_runtime: `runtime` as read_project("manager") reads it (delegate/config.toml's,
+config.local.toml on top), which recovery gives a worker entry without --client. A worker entry
+runs crew as a module (CREW_MODULE; its PYTHONPATH: crew.py); recovery rewrites an entry naming
+a crew.py or workers.py script, or the module agent_pm.crew, to that form."""
 
 import contextlib
 import datetime

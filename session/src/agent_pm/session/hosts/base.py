@@ -1,4 +1,5 @@
-"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows them."""
+"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that
+shows them."""
 
 from __future__ import annotations
 
@@ -45,9 +46,10 @@ class Terminal(HostProcess):
 
 
 class Host(ABC):
-    """settings: its [hosts.<name>] table minus implementation. detach, terminal: env verbatim; on exit, events gets
-    `exited <rc>` / `dead`. attach: a Terminal for one, unknown → DriverError. list: sorted names matching display
-    ("" none). display: a value completed in the caller's process."""
+    """settings: its [hosts.<name>] table minus implementation. detach, terminal: env verbatim; on
+    exit, events gets `exited <rc>` / `dead`. attach: a Terminal for one, unknown → DriverError.
+    list: sorted names matching display ("" none). display: a value completed in the caller's
+    process."""
 
     def __init__(self, name: str, settings: Mapping | None = None) -> None:
         self.name = name
@@ -93,7 +95,8 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: api.layout's, split folded into display."""
+    """show: None once shown, else an attach command; layout: api.layout's, split folded into
+    display."""
 
     @abstractmethod
     def show(self, name: str, display: Display = None) -> str | None: ...

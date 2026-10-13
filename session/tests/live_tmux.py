@@ -1,5 +1,5 @@
-"""Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE, ITERM_SESSION_ID or
-TERM_PROGRAM. No tmux: the test skips."""
+"""Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE,
+ITERM_SESSION_ID or TERM_PROGRAM. No tmux: the test skips."""
 
 import os
 import resource
@@ -288,8 +288,8 @@ def _sessions(cell) -> list[str]:
 def assert_grid(
     case, server: Server, manager: str, columns: list, manager_width: int | None = None
 ) -> bool:
-    """Fails `case` unless manager's window is the grid `columns` gives (columns left to right, cells top down: a
-    session, (parent, [subs]) or [subs]); True when it holds."""
+    """Fails `case` unless manager's window is the grid `columns` gives (columns left to right,
+    cells top down: a session, (parent, [subs]) or [subs]); True when it holds."""
     window, width, stored = (
         server._out(
             "display-message",

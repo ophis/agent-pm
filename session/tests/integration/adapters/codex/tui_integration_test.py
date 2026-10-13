@@ -599,11 +599,13 @@ class TuiIntegrationTest(Live):
                 spec = dataclasses.replace(
                     self.spec, access=dataclasses.replace(self.spec.access, dirs=(root,))
                 )
-                with mock.patch(
-                    "subprocess.Popen", side_effect=AssertionError("spawned before guard")
+                with (
+                    mock.patch(
+                        "subprocess.Popen", side_effect=AssertionError("spawned before guard")
+                    ),
+                    self.assertRaisesRegex(ConfigError, "writable|rewrite"),
                 ):
-                    with self.assertRaisesRegex(ConfigError, "writable|rewrite"):
-                        self.start(sid=f"unsafe-{index}", spec=spec)
+                    self.start(sid=f"unsafe-{index}", spec=spec)
         (self.cwd / ".codex").mkdir()
         spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, project=False)
@@ -1018,9 +1020,9 @@ class HookTrustIntegrationTest(Live):
                     proc, timeout=min(timeout, 0.01) if timeout is not None else None
                 ),
             ),
+            self.assertRaisesRegex(tui_start.StartError, "no answer"),
         ):
-            with self.assertRaisesRegex(tui_start.StartError, "no answer"):
-                tui_start.hooks_list(data["argv"][0], data["hook_flags"], str(self.cwd), env)
+            tui_start.hooks_list(data["argv"][0], data["hook_flags"], str(self.cwd), env)
         self.assertLess(clock() - started, 3)
         (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))

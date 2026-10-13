@@ -1,5 +1,6 @@
-"""composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old composer's Index,
-TeamDirs and catalog tests) and the team dir checks (the old driver's TeamRuns)."""
+"""composer/teams.py: Team, team dirs, roles, task indexes and the catalog (ported from the old
+composer's Index, TeamDirs and catalog tests) and the team dir checks (the old driver's
+TeamRuns)."""
 
 import os
 import re
@@ -102,7 +103,8 @@ class Fake(Case):
         return str(cm.exception)
 
     def team_dir(self, files, name="team"):
-        """Writes {rel: text} under ~/.agent-pm/<name> (files 0o644, dirs 0o755) and returns its real path."""
+        """Writes {rel: text} under ~/.agent-pm/<name> (files 0o644, dirs 0o755) and returns its
+        real path."""
         top = os.path.realpath(os.path.join(self.agent_pm, name))
         for rel, text in files.items():
             path = os.path.join(top, rel)

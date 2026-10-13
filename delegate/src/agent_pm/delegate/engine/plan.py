@@ -1,5 +1,6 @@
-"""One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing; the caller configured
-the session (configure). A refusal is ConfigError, a Driver one keeping its message."""
+"""One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing; the
+caller configured the session (configure). A refusal is ConfigError, a Driver one keeping its
+message."""
 
 import contextlib
 import functools
@@ -173,8 +174,8 @@ def _check_team_dirs(
     resume: str | None,
     driver: Driver,
 ) -> None:
-    """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last; spec.access.reads,
-    read only, do not."""
+    """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
+    spec.access.reads, read only, do not."""
     if not team.dirs and not guarded:
         return
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]

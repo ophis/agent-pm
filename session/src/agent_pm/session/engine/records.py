@@ -1,6 +1,6 @@
 """Run records: <workdir>/run.jsonl, one JSON object {"ts", "kind", **fields} per line, through
-utils.files; a read returns what it can.
-The agent run can append to the file: what a read finds is a status hint, never an authorization or a recovery grant."""
+utils.files; a read returns what it can. The agent run can append to the file: what a read finds
+is a status hint, never an authorization or a recovery grant."""
 
 import json
 import os

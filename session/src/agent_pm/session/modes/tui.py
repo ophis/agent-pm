@@ -1,5 +1,5 @@
-"""The Driver's tui Mode: a Tui's command in a tmux session; events from the hook records tui_hook.py appends to its
-session dir, and from its pane."""
+"""The Driver's tui Mode: a Tui's command in a tmux session; events from the hook records
+tui_hook.py appends to its session dir, and from its pane."""
 
 import contextlib
 import fcntl
@@ -50,7 +50,8 @@ def read_state(name: str) -> dict:
 
 
 def close(name: str, *, host=tmux_host) -> None:
-    """Kills the session (absent is fine), then removes its dir if a real directory; under the name's lock."""
+    """Kills the session (absent is fine), then removes its dir if a real directory; under the
+    name's lock."""
     with lock(name):
         _close(name, host=host)
 
@@ -204,8 +205,8 @@ class TuiMode:
     def begin(
         self, argv: Sequence[str], *, cwd: str, env: Mapping[str, str], status_line: bool = False
     ) -> None:
-        """Starts argv tagged with the sid and runtime, then takes its pane; failing, ends it and removes the dir prepare
-        made."""
+        """Starts argv tagged with the sid and runtime, then takes its pane; failing, ends it and
+        removes the dir prepare made."""
         try:
             self.host.start(
                 self.name,
@@ -232,8 +233,8 @@ class TuiMode:
 
     @classmethod
     def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> "TuiMode":
-        """read_state's session, bound to the name's pane if tagged with its sid; reply: last TURN_END's; blocked: last
-        kind BLOCKED or @state blocked; events from its next record."""
+        """read_state's session, bound to the name's pane if tagged with its sid; reply: last
+        TURN_END's; blocked: last kind BLOCKED or @state blocked; events from its next record."""
         try:
             pane = host.pane(name)
             tagged = None if pane is None else host.option(pane, "@sid")
@@ -261,8 +262,8 @@ class TuiMode:
         return mode
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        """New records' events, else a pane scan, else a wait of `timeout` s; ended at once after stop() or once another
-        pane holds the name."""
+        """New records' events, else a pane scan, else a wait of `timeout` s; ended at once after
+        stop() or once another pane holds the name."""
         found = self._read()
         if not found and not self._gone:
             status = self.host.status(self.name)
@@ -329,7 +330,8 @@ class TuiMode:
         return found
 
     def _scan(self, screen: str) -> list[Event]:
-        """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit per appearance."""
+        """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
+        per appearance."""
         screen = " ".join(screen.split())
         shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
         found = (
@@ -391,8 +393,9 @@ class TuiMode:
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
-        """Under the name's lock, unless another pane holds the name, kills its pane's session (absent: none; tmux
-        failing: the name's) and removes the dir; then ends (returncode: the code seen, else -SIGHUP)."""
+        """Under the name's lock, unless another pane holds the name, kills its pane's session
+        (absent: none; tmux failing: the name's) and removes the dir; then ends (returncode: the
+        code seen, else -SIGHUP)."""
         if self._live:
             with lock(self.name):
                 holder = self._holder()

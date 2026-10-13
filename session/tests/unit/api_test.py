@@ -1,10 +1,12 @@
-"""session/engine/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
-session_status() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
-fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
-Driver construction. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is injected, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
-run; claude and codex refuse it. The Mode protocol, and a Handle over a scripted Mode on a
-fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show, layout, attach_command,
-detach) over tmux_host autospecced (no tmux runs)."""
+"""session/engine/api.py: start()'s checks, its session record, sid and Runtime note, a headless
+Handle's surface, usage(), session_status() and writable_dirs(), the session env (Access.env)
+reaching a session but not its usage probe, over the fake adapter and test adapters registered
+in-process (sys.modules) with [adapters.<name>] tables given to Driver construction. Wherever
+nothing may start, subprocess.Popen is patched to fail; usage()'s probe is injected, but for a
+spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during
+its run; claude and codex refuse it. The Mode protocol, and a Handle over a scripted Mode on a
+fake clock (time.monotonic patched). The tui paths (start, attach, sessions, close, show,
+layout, attach_command, detach) over tmux_host autospecced (no tmux runs)."""
 
 import contextlib
 import dataclasses
@@ -112,8 +114,9 @@ class CheckedRun(fake_adapter.FakeInProcess):
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is the 5-hour window's
-    percent (anything else raises), and a session status naming its sid and cwd."""
+    """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is
+    the 5-hour window's percent (anything else raises), and a session status naming its sid and
+    cwd."""
 
     keys = fake_adapter.FakeAdapter.keys | {"probe"}
 
@@ -131,8 +134,8 @@ LAUNCHED: list[Spec] = []
 
 
 class InnerAdapter(fake_adapter.FakeAdapter):
-    """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its spec in LAUNCHED,
-    unsets LAUNCH_DROP and sets spec.env, then LAUNCH_SET."""
+    """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its
+    spec in LAUNCHED, unsets LAUNCH_DROP and sets spec.env, then LAUNCH_SET."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -157,7 +160,8 @@ class OtherAdapter(fake_adapter.FakeAdapter):
 
 
 class EnvAdapter(ProbeAdapter):
-    """The probe adapter whose session launches carry spec.access.env and spec.env, as claude's and codex's do."""
+    """The probe adapter whose session launches carry spec.access.env and spec.env, as claude's and
+    codex's do."""
 
     def headless(self):
         return EnvRun(self)
@@ -223,8 +227,8 @@ class Base(Case):
             json.dump(list(steps), f)
 
     def configure(self, runtime="fake", settings=None, tables=None, **extra):
-        """A table per PACKAGES name, each with this test's scenario and log, plus `tables`; `extra` keys go into
-        runtime's; settings: the config's global keys."""
+        """A table per PACKAGES name, each with this test's scenario and log, plus `tables`;
+        `extra` keys go into runtime's; settings: the config's global keys."""
         tables = {
             **{
                 name: {
@@ -593,7 +597,8 @@ class InProcessTest(Base):
         self.configure(implementation="adapters.fake:InProcessFakeAdapter")
 
     def run_in_process(self, **kwargs) -> tuple[api.Handle, list]:
-        """An in_process session started and drained, each of SPAWNS failing meanwhile and never called."""
+        """An in_process session started and drained, each of SPAWNS failing meanwhile and never
+        called."""
         with contextlib.ExitStack() as stack:
             spawns = [
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
@@ -770,11 +775,13 @@ class InProcessTest(Base):
         self.assertEqual(found[-2:], [Reply("b"), Exited(0)])
 
     def test_a_failed_run_start_is_a_driver_error_after_the_session_record(self):
-        with mock.patch(
-            "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
+        with (
+            mock.patch(
+                "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
+            ),
+            self.assertRaises(DriverError) as caught,
         ):
-            with self.assertRaises(DriverError) as caught:
-                self.start(mode="in_process")
+            self.start(mode="in_process")
         self.assertEqual(
             str(caught.exception), "cannot start the in_process run: can't start new thread"
         )
@@ -809,9 +816,10 @@ class Clock:
 
 
 class StubMode:
-    """A Mode on a Clock: poll(timeout) gives the next script item (at, events, ended) once the clock reaches `at`,
-    else ([], False), moving the clock to `at` or on by timeout, whichever is sooner; past LATE s it raises, so a Handle
-    that never ends fails. returncode() gives `code`; every call is logged in `calls`."""
+    """A Mode on a Clock: poll(timeout) gives the next script item (at, events, ended) once the
+    clock reaches `at`, else ([], False), moving the clock to `at` or on by timeout, whichever
+    is sooner; past LATE s it raises, so a Handle that never ends fails. returncode() gives
+    `code`; every call is logged in `calls`."""
 
     LATE = 60
 
@@ -985,8 +993,8 @@ class HandleOverAModeTest(Case):
 
 class UsageTest(Base):
     def usage(self, out="42.5", **launch):
-        """self.driver.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x") unless given) and
-        headless.probe patched to give `out`; its result and the patch's mock."""
+        """self.driver.usage("probe"), its probe the Launch of `launch` (argv ("probe-cmd", "-x")
+        unless given) and headless.probe patched to give `out`; its result and the patch's mock."""
         self.configure("probe", probe={"argv": ("probe-cmd", "-x"), **launch})
         with mock.patch.object(self.driver, "probe", return_value=out) as probe:
             return self.driver.usage("probe"), probe
@@ -1169,8 +1177,9 @@ class WritableDirsTest(Base):
 
 
 def fake_host() -> mock.Mock:
-    """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real, PAUSE 0: status None
-    (absent), listing [], own_session None, option None, pane %1, tmux_path TMUX."""
+    """tmux_host autospecced, its constants, NAME, TuiError, attach_command and events_file real,
+    PAUSE 0: status None (absent), listing [], own_session None, option None, pane %1, tmux_path
+    TMUX."""
     host = mock.create_autospec(tmux_host)
     for name in ("RUNNING", "UNKNOWN", "NAME", "OPENER", "SPLITS", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -1503,8 +1512,8 @@ class SessionEnvTest(TuiBase):
 
 class AttachTest(TuiBase):
     def started(self, *hooked) -> None:
-        """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label, payload) in `hooked`,
-        its @sid SID; the host's calls cleared."""
+        """Tui session w1 started (sid SID) on pane %1, then a hooks.jsonl record per (label,
+        payload) in `hooked`, its @sid SID; the host's calls cleared."""
         self.tui(name="w1", sid=SID, events=self.events)
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "w") as f:
             f.writelines(

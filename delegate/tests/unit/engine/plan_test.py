@@ -1,6 +1,7 @@
-"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and prompt; main's team
-dir checks (TeamRuns), for a custom team and for the configured team dirs, Codex's own writable dirs included, read
-dirs (the tasks dir among them) never added nor counted."""
+"""delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid
+and prompt; main's team dir checks (TeamRuns), for a custom team and for the configured team
+dirs, Codex's own writable dirs included, read dirs (the tasks dir among them) never added nor
+counted."""
 
 import io
 import json
@@ -72,7 +73,8 @@ class Cwd(Base):
             os.makedirs(d)
 
     def placed(self, *trusted, cwd=None, key="", resume=None):
-        """(place's (cwd, project), stderr) for researcher with run key cwd `key` and trusted_dirs `trusted`."""
+        """(place's (cwd, project), stderr) for researcher with run key cwd `key` and trusted_dirs
+        `trusted`."""
         self.local(f"trusted_dirs = {json.dumps(list(trusted))}\n")
         err = io.StringIO()
         with redirect_stderr(err):
@@ -341,7 +343,8 @@ class Planned(Base):
 
 
 class ConfiguredTeamDirs(Base):
-    """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir) checked only for overlap."""
+    """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir)
+    checked only for overlap."""
 
     def setUp(self):
         super().setUp()
@@ -415,7 +418,8 @@ class ConfiguredTeamDirs(Base):
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CustomTeam(Base):
-    """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run can write."""
+    """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run
+    can write."""
 
     def setUp(self):
         super().setUp()
@@ -484,7 +488,8 @@ class CustomTeam(Base):
 
 
 class Policy(Base):
-    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's replacing the core's."""
+    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's
+    replacing the core's."""
 
     SHIPPED = {
         "claude": (

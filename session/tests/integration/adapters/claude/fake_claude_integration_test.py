@@ -1,6 +1,7 @@
-"""session/tests/integration/adapters/claude/fake_claude.py run as a process (its docstring: the format): a bad scenario exits 1 before any session
-file or output; print mode's stream-json lines, write and resume steps; a session's gate; interactive mode's turns,
-hooks and steps over a pipe, in a private tmux server's pane and under ClaudeTui's launch."""
+"""session/tests/integration/adapters/claude/fake_claude.py run as a process (its docstring: the
+format): a bad scenario exits 1 before any session file or output; print mode's stream-json
+lines, write and resume steps; a session's gate; interactive mode's turns, hooks and steps over
+a pipe, in a private tmux server's pane and under ClaudeTui's launch."""
 
 import glob
 import json

@@ -1,6 +1,7 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
-file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
+"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux
+runs here): start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option,
+pane, mark, the events file, the show and its placement, the grid's tile, the CLI, the pane
+wrapper (EXEC) and the file standing alone."""
 
 import ast
 import contextlib
@@ -135,9 +136,10 @@ def grid_read(pane):
 
 
 def grid_set(window, manager, n=3, hooks=True, retile="all"):
-    """The one tmux call setting a grid window's options, unsetting @grid-busy, then per grid hook in order: with
-    hooks, setting each of retile's MODE_HOOKS (each starts a no-wait tile unless @grid-busy is the window, under
-    open-close only when the pane set changed); unsetting each other one."""
+    """The one tmux call setting a grid window's options, unsetting @grid-busy, then per grid hook
+    in order: with hooks, setting each of retile's MODE_HOOKS (each starts a no-wait tile unless
+    @grid-busy is the window, under open-close only when the pane set changed); unsetting each
+    other one."""
     flags = "--no-wait --if-panes-changed" if retile == "open-close" else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{@grid-busy}},{window}}}' '' "
@@ -192,8 +194,8 @@ def environ(**values):
 
 
 def clock(test, on_sleep=lambda n: None):
-    """time.monotonic and time.sleep patched for test, the clock at 1000 s: a sleep advances it, then calls
-    on_sleep(sleeps so far). Returns the slept seconds."""
+    """time.monotonic and time.sleep patched for test, the clock at 1000 s: a sleep advances it,
+    then calls on_sleep(sleeps so far). Returns the slept seconds."""
     now, slept = [1000.0], []
 
     def sleep(seconds):
@@ -207,7 +209,8 @@ def clock(test, on_sleep=lambda n: None):
 
 
 def hold(test, path):
-    """Another holder of the flock on path till test ends (path created when missing). Returns its release."""
+    """Another holder of the flock on path till test ends (path created when missing). Returns its
+    release."""
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     test.addCleanup(os.close, fd)
     fcntl.flock(fd, fcntl.LOCK_EX)
@@ -216,7 +219,8 @@ def hold(test, path):
 
 @contextmanager
 def deadline(seconds=5):
-    """Fails a block still running after seconds (a blocked open is interrupted) instead of hanging."""
+    """Fails a block still running after seconds (a blocked open is interrupted) instead of
+    hanging."""
 
     def expire(*_):
         raise AssertionError(
@@ -283,11 +287,13 @@ def panes(*rows):
 
 
 class Tmux:
-    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after any -u) or another
-    program to its (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what
-    display-message prints (None: no server). On new-session it reads the handover file named in its argv (after EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
-    then per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang",
-    fd `writer`)."""
+    """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after
+    any -u) or another program to its (rc, stdout, stderr), an exception to raise, or a function
+    of the argv giving either. `pane` is what display-message prints (None: no server). On
+    new-session it reads the handover file named in its argv (after EXEC); unless `hand_over` is
+    False it plays the wrapper on the errpipe named next: opens it, unlinks the handover, then
+    per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or
+    keeps it open ("hang", fd `writer`)."""
 
     def __init__(self, pane=None, fail=(), hand_over=True, results=None, wrapper="exec"):
         self.pane, self.fail, self.hand_over, self.results = pane, fail, hand_over, results or {}
@@ -1057,7 +1063,8 @@ MARK_KW = {**TMUX_KW, "timeout": 5}
 
 
 class Mark(Case):
-    """The event protocol a hook writes: the pane's @state, and done or blocked lines in the events file."""
+    """The event protocol a hook writes: the pane's @state, and done or blocked lines in the events
+    file."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -2342,9 +2349,10 @@ def seq(*results):
 
 
 class Stack(Case):
-    """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal client (tty
-    /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the `live` pane ids (`hosts`, panes()
-    rows, for the tty format); pgrep finds no iTerm2 unless told; a tmux split prints %99."""
+    """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal
+    client (tty /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the
+    `live` pane ids (`hosts`, panes() rows, for the tty format); pgrep finds no iTerm2 unless
+    told; a tmux split prints %99."""
 
     NONE = (0, "no iTerm2 pane shows the anchor\n")
 
@@ -2714,9 +2722,10 @@ class Stack(Case):
 
 
 class Container(Case):
-    """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0), shown by a client on
-    /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode; else a plain docker exec -it tmux attach); no
-    iTerm2 and no iTerm2 variables. pgrep finds nothing: procps, busybox's usage error, or none installed."""
+    """In a Linux container on a Mac: the caller in tmux session `cmd`, pane %0 (tty /dev/pts/0),
+    shown by a client on /dev/pts/1 (iTerm2's tmux -CC through docker exec -it, control mode;
+    else a plain docker exec -it tmux attach); no iTerm2 and no iTerm2 variables. pgrep finds
+    nothing: procps, busybox's usage error, or none installed."""
 
     SOCK = "/tmp/tmux-0/default"
     ENV = {"TMUX": f"{SOCK},42,0", "TMUX_PANE": "%0", "PATH": "/usr/local/bin:/usr/bin:/bin"}
@@ -2805,10 +2814,10 @@ class Container(Case):
 
 
 class GridOpen(Case):
-    """Grid mode. The caller is in root session mgr (no @opener), pane %3, shown by a terminal client (tty
-    /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes rows (window, @grid-manager, pane,
-    width, height), a pane not in it is gone; list-panes -a prints nothing; iTerm2 runs; a split prints %20; tile
-    records its call in the fake's calls."""
+    """Grid mode. The caller is in root session mgr (no @opener), pane %3, shown by a terminal
+    client (tty /dev/ttys004, its pane %9); `windows` maps a pane to its window's list-panes
+    rows (window, @grid-manager, pane, width, height), a pane not in it is gone; list-panes -a
+    prints nothing; iTerm2 runs; a split prints %20; tile records its call in the fake's calls."""
 
     MGR = ("$1", "mgr", "", "")
     NEW = [("@1", "", "%3", "160", "48")]  # mgr's window, no grid yet
@@ -2861,11 +2870,13 @@ class GridOpen(Case):
             )
 
     def split(self, flag, pane, window="@1"):
-        """A grid split: the window's hooks muted first, so a previous mode's hook starts no tile; grid_set unmutes."""
+        """A grid split: the window's hooks muted first, so a previous mode's hook starts no tile;
+        grid_set unmutes."""
         return [mute(window), split_window(flag, pane)]
 
     def opened(self, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
-        """What follows a grid split: the records, the grid's options and hooks, then tile (none under off)."""
+        """What follows a grid split: the records, the grid's options and hooks, then tile (none
+        under off)."""
         return [
             *record(opener, "%20"),
             grid_set(window, manager, n, hooks, retile),
@@ -3351,7 +3362,8 @@ class GridLayout(Case):
         self.assertEqual(at - 1, cell.x + cell.w if across else cell.y + cell.h)
 
     def check(self, root, n, per_column, width=160, height=48):
-        """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights, each +-1."""
+        """FR-3: main cell i (pane %i+1) in column i // N, row i % N; equal widths and heights,
+        each +-1."""
         self.tiles(root)
         self.assertEqual(
             (root.kind, root.w, root.h, root.x, root.y), (tmux_host.LEFT_RIGHT, width, height, 0, 0)
@@ -3817,8 +3829,9 @@ class LayoutString(Case):
 
 
 class Tile(Case):
-    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The server's socket is in a
-    temp dir, @3's lock file beside it; the clock (clock()) at 1000 s, i.e. 1000000 ms."""
+    """Window @3, 160x48: manager %0 (session mgr) left, 79 wide; w<i>'s @pane is %<i>. The
+    server's socket is in a temp dir, @3's lock file beside it; the clock (clock()) at 1000 s,
+    i.e. 1000000 ms."""
 
     SOCKET = ["tmux", "display-message", "-p", "-t", "@3", "#{socket_path}"]
     READ = [
@@ -3929,9 +3942,9 @@ class Tile(Case):
         recorded=None,
         **results,
     ):
-        """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the result of another
-        display-message; rows: (session id, name, @opener, @pane) besides mgr's; recorded: @grid-panes (None: panes'
-        pane set, kept as self.set)."""
+        """A tmux printing these for @3, its socket `sock` (default self.sock), `message` the
+        result of another display-message; rows: (session id, name, @opener, @pane) besides
+        mgr's; recorded: @grid-panes (None: panes' pane set, kept as self.set)."""
         rows = [("$1", "mgr", "", ""), *rows]
         self.set = " ".join(sorted(panes, key=lambda p: int(p[1:])))
         recorded = self.set if recorded is None else recorded
@@ -3961,9 +3974,9 @@ class Tile(Case):
         return fake
 
     def applied(self, send, times="1000000"):
-        """The two tmux calls of a re-tile sending `send` (a tmux call of swap-panes, then select-layout): @grid-tiles
-        set to times, @grid-panes to the last fake's pane set and @grid-busy to @3 before it in one command, then
-        @grid-busy unset."""
+        """The two tmux calls of a re-tile sending `send` (a tmux call of swap-panes, then
+        select-layout): @grid-tiles set to times, @grid-panes to the last fake's pane set and
+        @grid-busy to @3 before it in one command, then @grid-busy unset."""
         return [
             [
                 "tmux",
@@ -4860,7 +4873,8 @@ class Exec(Case):
         self.addCleanup(os.close, self.reader)
 
     def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
-        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude` runs before it."""
+        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe;
+        `prelude` runs before it."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
         return subprocess.run(
@@ -4876,7 +4890,8 @@ class Exec(Case):
         return [sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path, self.fifo]
 
     def piped(self):
-        """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds it open."""
+        """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds
+        it open."""
         out = b""
         while chunk := os.read(self.reader, 64):
             out += chunk

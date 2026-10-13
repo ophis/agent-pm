@@ -1,5 +1,5 @@
-"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's reuse, send's errors
-and cleanup of a child an ended program left."""
+"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's
+reuse, send's errors and cleanup of a child an ended program left."""
 
 import os
 import sys

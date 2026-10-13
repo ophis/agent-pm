@@ -1,5 +1,6 @@
-"""delegate/cli.py as a subprocess: Integration over session/tests/integration/adapters/claude/fake_claude.py,
-CodexIntegration over session/tests/integration/adapters/codex/fake_codex.py, their outcomes."""
+"""delegate/cli.py as a subprocess: Integration over
+session/tests/integration/adapters/claude/fake_claude.py, CodexIntegration over
+session/tests/integration/adapters/codex/fake_codex.py, their outcomes."""
 
 import json
 import os
@@ -55,7 +56,8 @@ class Runs(Case):
 
 
 class Integration(Runs):
-    """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid SID."""
+    """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid
+    SID."""
 
     ROLE = "dummy-tester"
 

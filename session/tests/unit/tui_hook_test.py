@@ -1,7 +1,7 @@
-"""modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the payload on
-stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only a decoy tmux (no tmux runs
-here); in process for its one locked write, its check of that tmux and its load of tmux_host; and the file standing
-alone."""
+"""modes/tui_hook.py run as a runtime runs a hook: `<python> -I tui_hook.py <dir> <label>`, the
+payload on stdin, $TMUX_PANE set, session.json's tmux_path a stub that logs each call, PATH only
+a decoy tmux (no tmux runs here); in process for its one locked write, its check of that tmux
+and its load of tmux_host; and the file standing alone."""
 
 import ast
 import fcntl
@@ -101,8 +101,8 @@ class Hook(Case):
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):
-        """Runs the hook (env: changes to self.env, None drops a key); checks it exits 0 printing nothing on stdout;
-        returns its stderr."""
+        """Runs the hook (env: changes to self.env, None drops a key); checks it exits 0 printing
+        nothing on stdout; returns its stderr."""
         data = (
             payload
             if isinstance(payload, bytes)
@@ -459,8 +459,8 @@ class InProcess(Case):
         self.fake = types.SimpleNamespace(mark=unittest.mock.Mock(), TuiError=Exception)
 
     def faked(self, uid=None, mode=None, executable=True):
-        """main on a tool record, tmux_host the fake; os.stat and os.access of the tmux faked: owner uid, st_mode mode
-        (None: the real ones), whether executable."""
+        """main on a tool record, tmux_host the fake; os.stat and os.access of the tmux faked:
+        owner uid, st_mode mode (None: the real ones), whether executable."""
         real_stat, real_access = os.stat, os.access
 
         def fake_stat(path, *args, **kwargs):

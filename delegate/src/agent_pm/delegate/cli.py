@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""The Delegate's command line: one role's run in a Driver Mode (--mode: headless, the default, tui or in_process), its
-plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in one and the core config's team_dirs). All
-but --list first configure the session from the session config.
---task unset: the agent run picks one from its index. --out -: a valid outcome's deliverable goes to stdout, control
-characters dropped but newlines and tabs; --out PATH: stderr names it once it holds the deliverable. A run's stdout is
-otherwise empty. --detach --events FILE: the run goes on in Driver session `<role>-<sid8>-drive` as this CLI's driver
-form (--driver), which appends `HH:MM:SS <that session> outcome <status>` to FILE as it ends, `error` without a valid
-outcome. Exits 0 on a valid outcome, even when the client exited non-zero, or once detached; 1 on none, the client
-exiting 0 or its tui session left open; 2 on a config or usage error (nothing started, stdout empty); 3 when the client
-exited non-zero (an in_process run that raised: 1) or failed to start without a valid outcome, on a usage limit, or
-when the Driver session did not start; the driver form 128 + signum on a signal."""
+"""The Delegate's command line: one role's run in a Driver Mode (--mode: headless, the default, tui
+or in_process), its plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in
+one and the core config's team_dirs). All but --list first configure the session from the
+session config. --task unset: the agent run picks one from its index. --out -: a valid outcome's
+deliverable goes to stdout, control characters dropped but newlines and tabs; --out PATH: stderr
+names it once it holds the deliverable. A run's stdout is otherwise empty. --detach --events
+FILE: the run goes on in Driver session `<role>-<sid8>-drive` as this CLI's driver form
+(--driver), which appends `HH:MM:SS <that session> outcome <status>` to FILE as it ends, `error`
+without a valid outcome. Exits 0 on a valid outcome, even when the client exited non-zero, or
+once detached; 1 on none, the client exiting 0 or its tui session left open; 2 on a config or
+usage error (nothing started, stdout empty); 3 when the client exited non-zero (an in_process
+run that raised: 1) or failed to start without a valid outcome, on a usage limit, or when the
+Driver session did not start; the driver form 128 + signum on a signal."""
 
 import argparse
 import functools

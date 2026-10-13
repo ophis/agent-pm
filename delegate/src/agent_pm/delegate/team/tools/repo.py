@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's branch.
+"""Target repos for agent runs: one checkout per repo at DIR/<owner>/<name>-<SLUG>, on the run's
+branch.
 
-repo.py worktree --dir DIR --branch B [--name SLUG] [--base BASE] REPO
-    prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission is
-    no error
-repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO
-    after worktree with the same SLUG: {"pr", "base", "plan_docs", "since", "user", "others"}, `pr` being B's PR
-    {"number", "url", "state", "baseRefName"} or null, `base` the PR's baseRefName, else BASE, else the default branch,
-    `user` and `others` PR comments and reviews by the user (core config's `users`, else the gh login) and by anyone
-    else since the latest plan doc commit
-SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -.
-REPO is `owner/name`, `host/owner/name`, `https://host/owner/name` or a local clone's path (/ or ~), named by its origin
-and outside the temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other REPO a
-blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else tracking origin/B, else new from
-origin/BASE (origin/<default> when BASE is omitted).
-Each option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected elsewhere by a
-second `--dir`.
-Exits 2 when REPO, B or SLUG is invalid or unusable (B the default branch or checked out elsewhere), or BASE syntax
-is invalid. Exits 1 on other failures, including a missing origin/BASE.
-Errors mask URL userinfo.
-"""
+repo.py worktree --dir DIR --branch B [--name SLUG] [--base BASE] REPO     prints {"repo",
+"host", "default", "branch", "commit", "worktree", "permalink_base", "push"}; no push permission
+is     no error repo.py status --dir DIR --branch B [--name SLUG] [--base BASE] REPO     after
+worktree with the same SLUG: {"pr", "base", "plan_docs", "since", "user", "others"}, `pr` being
+B's PR     {"number", "url", "state", "baseRefName"} or null, `base` the PR's baseRefName, else
+BASE, else the default branch,     `user` and `others` PR comments and reviews by the user (core
+config's `users`, else the gh login) and by anyone     else since the latest plan doc commit
+SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
+`https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the
+temp dirs. A local clone gets a git worktree after a fetch that moves only `origin/*`; any other
+REPO a blobless clone. Symlinks: the core config's trusted_dirs comment. B: the local B, else
+tracking origin/B, else new from origin/BASE (origin/<default> when BASE is omitted). Each
+option may be given once, so a command pre-approved by its `--dir` prefix can't be redirected
+elsewhere by a second `--dir`. Exits 2 when REPO, B or SLUG is invalid or unusable (B the
+default branch or checked out elsewhere), or BASE syntax is invalid. Exits 1 on other failures,
+including a missing origin/BASE. Errors mask URL userinfo."""
 
 import argparse
 import json

@@ -1,7 +1,9 @@
-"""session.engine.api's tui mode with runtime claude end to end on a private tmux server, as tui_integration_test sets it up:
-the real ClaudeAdapter runs session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its hooks from --settings.
-Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit screen, deaths, resume, attach from another
-process, show (beside a detached session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
+"""session.engine.api's tui mode with runtime claude end to end on a private tmux server, as
+tui_integration_test sets it up: the real ClaudeAdapter runs
+session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively,
+its hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the
+usage-limit screen, deaths, resume, attach from another process, show (beside a detached
+session) and close. CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test."""
 
 import functools
 import json
@@ -86,7 +88,8 @@ class Live(tui_live.Live):
     def start(
         self, name: str, prompt: str = "hello", *, scenario: dict, sid=None, **kwargs
     ) -> api.Handle:
-        """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file self.events."""
+        """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file
+        self.events."""
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **scenario}, f)
         handle = self.driver.start(
@@ -101,7 +104,8 @@ class Live(tui_live.Live):
         return handle
 
     def stream(self, handle: api.Handle) -> Stream:
-        """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a later test's server."""
+        """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a
+        later test's server."""
         stream = Stream(handle)
         self.addCleanup(stream.thread.join, WAIT)
         self.addCleanup(handle.stop)

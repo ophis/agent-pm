@@ -1,5 +1,5 @@
-"""utils/tests/fakes/ctl.py: the installed fake-ctl, found on PATH, answers status, show and close for the Records on its
-stdin, prints a Record for start and resume, and logs each call."""
+"""utils/tests/fakes/ctl.py: the installed fake-ctl, found on PATH, answers status, show and close
+for the Records on its stdin, prints a Record for start and resume, and logs each call."""
 
 import os
 import subprocess

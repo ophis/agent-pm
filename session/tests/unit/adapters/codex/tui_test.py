@@ -219,12 +219,14 @@ class TuiTest(Base):
         for path in (self.cwd / "codex", self.extra / "driver.py"):
             spec = dataclasses.replace(self.spec, sid="unsafe-" + path.name)
             hook = HOOK if path.name == "codex" else (sys.executable, "-I", str(path))
-            with mock.patch(
-                "shutil.which",
-                return_value=str(path if path.name == "codex" else "/protected/codex"),
+            with (
+                mock.patch(
+                    "shutil.which",
+                    return_value=str(path if path.name == "codex" else "/protected/codex"),
+                ),
+                self.assertRaisesRegex(ConfigError, "rewrite|writable"),
             ):
-                with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                    self.adapter.tui().launch("hi", spec, False, hook)
+                self.adapter.tui().launch("hi", spec, False, hook)
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_writable_symlink_to_protected_driver_hook_is_rejected(self):

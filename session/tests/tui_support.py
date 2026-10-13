@@ -102,7 +102,8 @@ class Live(Case):
         self.driver = Driver(**self.config)
 
     def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
-        """Tui session `name` of the fake runtime running `steps`, its events file self.events unless given."""
+        """Tui session `name` of the fake runtime running `steps`, its events file self.events
+        unless given."""
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
         handle = self.driver.start(
@@ -116,8 +117,8 @@ class Live(Case):
         return handle
 
     def lines(self, *want: str, events: str | None = None) -> None:
-        """Waits until the events file's (self.events unless given) lines, times dropped, are `want`; pokes the server
-        meanwhile."""
+        """Waits until the events file's (self.events unless given) lines, times dropped, are
+        `want`; pokes the server meanwhile."""
 
         def check():
             self.poke()

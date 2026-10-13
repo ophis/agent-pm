@@ -1,4 +1,5 @@
-"""Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign check."""
+"""Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for its foreign
+check."""
 
 import os
 import sys

@@ -1,5 +1,5 @@
-"""Case, every session test's base; session settings (HOSTS, settings); child helpers (PY, child_env); this
-tree's import roots (REPO, SRC, ROOTS); SPAWNS, the calls that start a process."""
+"""Case, every session test's base; session settings (HOSTS, settings); child helpers (PY,
+child_env); this tree's import roots (REPO, SRC, ROOTS); SPAWNS, the calls that start a process."""
 
 import os
 import sys
@@ -21,14 +21,16 @@ HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
 def settings(adapters, tmux=None) -> dict:
-    """Driver's configuration arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default tmux."""
+    """Driver's configuration arguments: `adapters`, HOSTS with `tmux` in [hosts.tmux], default
+    tmux."""
     hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
     return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
 
 
 class Case(unittest.TestCase):
-    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp)
-    in a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session settings."""
+    """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session
+    settings."""
 
     def run(self, result=None):
         if foreign := _foreign():

@@ -1,5 +1,5 @@
-"""session/tests/live_tmux.py against a real tmux server: its env, control-mode client, readers, cleanup, grid assertion,
-wait, and the skip without tmux."""
+"""session/tests/live_tmux.py against a real tmux server: its env, control-mode client, readers,
+cleanup, grid assertion, wait, and the skip without tmux."""
 
 import os
 import shutil

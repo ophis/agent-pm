@@ -1,6 +1,8 @@
-"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp:
-a run's exit code, stderr, out and run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an
-interrupt, a usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and resume_integration_test.py, the Delegate's part."""
+"""delegate/cli.py as a subprocess over session/tests/integration/adapters/claude/fake_claude.py
+(on PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp: a run's exit code, stderr, out and
+run.jsonl; its fix resume, a resume, a draft kept through a kill and resume, an interrupt, a
+usage limit, config errors. Main's tests/integration/core/drive_integration_test.py and
+resume_integration_test.py, the Delegate's part."""
 
 import os
 import signal

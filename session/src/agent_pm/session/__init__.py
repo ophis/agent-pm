@@ -1,5 +1,5 @@
-"""The session layer: the Driver (engine/api.py, modes/) runs agent sessions through each runtime's Adapter
-(adapters/), behind the ABCs Session and Host; `__all__` is its public API."""
+"""The session layer: the Driver (engine/api.py, modes/) runs agent sessions through each runtime's
+Adapter (adapters/), behind the ABCs Session and Host; `__all__` is its public API."""
 
 from agent_pm.session.engine.api import (
     MODES,

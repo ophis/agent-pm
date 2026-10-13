@@ -1,5 +1,6 @@
-"""DelegateEvent v1, the callback line: one JSON line per harness event on a callback's stdin, holding only its kind's fields.
-A wire object: outcome and limit stay plain dicts (an Outcome's and a Limit's fields)."""
+"""DelegateEvent v1, the callback line: one JSON line per harness event on a callback's stdin,
+holding only its kind's fields. A wire object: outcome and limit stay plain dicts (an Outcome's
+and a Limit's fields)."""
 
 import json
 from dataclasses import dataclass, fields

@@ -1,8 +1,9 @@
-"""session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py), os.environ that server's env:
-the fake adapter's Tui (session/tests/fake_adapter/) started with no pane, its hook steps as events and events-file lines,
-send, the idle timer and its Blocked pause, attach from another process, stop, a runtime's own exit, close, sessions
-while tmux's state is unknown, an old Handle once its name is another session's, two starts of one name at once, and
-a start while another process closes the name."""
+"""session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
+os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with
+no pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked
+pause, attach from another process, stop, a runtime's own exit, close, sessions while tmux's
+state is unknown, an old Handle once its name is another session's, two starts of one name at
+once, and a start while another process closes the name."""
 
 import itertools
 import json
@@ -162,8 +163,9 @@ class SameNameTest(Live):
         return handle, events
 
     def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
-        """`name` started again showing DIALOG, with an events file of its own: old's events end, never scanning it;
-        old.stop() leaves it; the new Handle gets Blocked and the blocked line."""
+        """`name` started again showing DIALOG, with an events file of its own: old's events end,
+        never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked
+        line."""
         mine = os.path.join(self.dir, "events-new")
         new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
         live_tmux.wait(

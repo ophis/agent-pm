@@ -1,7 +1,7 @@
-"""On the real team root (composer.TEAM) and delegate/config.toml: every built-in role × task composes with no reference
-error, the neutral Return and Parameters, the FR-31 destinations, the package API, the schema left as on main, and the
-shipped text's rules (ported from the old composer's RealCore, Tickets and GenericNames tests, less the client-specific
-ones)."""
+"""On the real team root (composer.TEAM) and delegate/config.toml: every built-in role × task
+composes with no reference error, the neutral Return and Parameters, the FR-31 destinations, the
+package API, the schema left as on main, and the shipped text's rules (ported from the old
+composer's RealCore, Tickets and GenericNames tests, less the client-specific ones)."""
 
 import functools
 import glob
@@ -168,14 +168,16 @@ def generic_names(text):
 
 
 def expanded(prompt):
-    """`prompt` with each # Parameters name written as its value, as the rule says a run writes a command."""
+    """`prompt` with each # Parameters name written as its value, as the rule says a run writes a
+    command."""
     for name, value in parameters(prompt).items():
         prompt = prompt.replace(name, value.strip("`"))
     return prompt
 
 
 def words(prompt):
-    """`prompt` with this checkout's path, the machine's and not the team's text, written as <root>."""
+    """`prompt` with this checkout's path, the machine's and not the team's text, written as
+    <root>."""
     return prompt.replace(REPO, "<root>")
 
 
@@ -188,7 +190,8 @@ def parameter_names(role, task=None, **changes):
 
 
 def team_texts():
-    """{path relative to the team root: text} of each .md file of the real team root (its tools/ are code)."""
+    """{path relative to the team root: text} of each .md file of the real team root (its tools/
+    are code)."""
     out = {}
     for path in glob.glob(os.path.join(composer.TEAM, "**", "*.md"), recursive=True):
         with open(path) as f:

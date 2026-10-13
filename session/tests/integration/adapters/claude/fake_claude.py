@@ -1,23 +1,21 @@
-"""A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose` (print) or neither
-(interactive); install() puts it on PATH. An option src/agent_pm/session/adapters/claude/ never emits exits 2.
-Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs the next of [steps, *turns] between the
+"""A stand-in `claude` for the integration tests, `-p --output-format stream-json --verbose`
+(print) or neither (interactive); install() puts it on PATH. An option
+src/agent_pm/session/adapters/claude/ never emits exits 2. Interactive: PROMPT, else the first
+stdin line, is turn 1; each later line runs the next of [steps, *turns] between the
 UserPromptSubmit and Stop hooks. Stdin's end exits `exit`; orphaned or HANG_CAP s idle, 1.
 
-Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
-  steps       a string: assistant text; {"kind": "tool", "name": N}: a tool_use (interactive: then PostToolUse);
-              print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then LIMIT with error
-              "rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
-              interactive: {"kind": "limit"|"dialog", "text": S}: prints S, then ends the turn without Stop or reads a
-              line; {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}
-  turns       interactive: the steps of turn 2 on
-  background  interactive: background_tasks per Stop
-  resume      print: steps run instead of `steps` on --resume
-  rate_limit  print: a rate_limit_info, printed after init
-  exit        the exit code
-  hang        print: true: sleeps after the steps until orphaned or HANG_CAP s, then exits 1
-  log         a file each start appends {"pid", "argv", "cwd"} to
-  gate        a file a --session-id or --resume run waits for after its log line, as hang does
-"""
+Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):   steps       a string:
+assistant text; {"kind": "tool", "name": N}: a tool_use (interactive: then PostToolUse);
+print: {"kind": "limit", "resets_at": T}: a rejected rate_limit_event, then LIMIT with error
+"rate_limit"; {"kind": "write", "path": P, "text": T}: writes T to P (relative to the cwd);
+interactive: {"kind": "limit"|"dialog", "text": S}: prints S, then ends the turn without Stop or
+reads a               line; {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}
+turns       interactive: the steps of turn 2 on   background  interactive: background_tasks per
+Stop   resume      print: steps run instead of `steps` on --resume   rate_limit  print: a
+rate_limit_info, printed after init   exit        the exit code   hang        print: true:
+sleeps after the steps until orphaned or HANG_CAP s, then exits 1   log         a file each
+start appends {"pid", "argv", "cwd"} to   gate        a file a --session-id or --resume run
+waits for after its log line, as hang does"""
 
 import argparse
 import itertools

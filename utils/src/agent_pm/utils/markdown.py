@@ -1,5 +1,5 @@
-"""Markdown code fences: 3+ backticks or tildes, closed by a line of only that char, as many or more; an unclosed one
-runs to the end."""
+"""Markdown code fences: 3+ backticks or tildes, closed by a line of only that char, as many or
+more; an unclosed one runs to the end."""
 
 import re
 

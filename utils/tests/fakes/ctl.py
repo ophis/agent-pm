@@ -1,7 +1,8 @@
-"""fake-ctl, a fake Record's ctl and resume command, run as `python3 -P ctl.py <dir> <sub> …`: status, show (exit 1:
-one cannot display) and close answer for the Records on stdin (a bad line: exit 2) from <dir>/sessions.json (name →
-alive, state, outcome, displayable, display; an unknown name is gone); start NAME [--display D] and resume NAME print
-the Record, resume of a live one starting nothing. Each call goes to <dir>/calls.jsonl."""
+"""fake-ctl, a fake Record's ctl and resume command, run as `python3 -P ctl.py <dir> <sub> …`:
+status, show (exit 1: one cannot display) and close answer for the Records on stdin (a bad line:
+exit 2) from <dir>/sessions.json (name → alive, state, outcome, displayable, display; an unknown
+name is gone); start NAME [--display D] and resume NAME print the Record, resume of a live one
+starting nothing. Each call goes to <dir>/calls.jsonl."""
 
 import argparse
 import json

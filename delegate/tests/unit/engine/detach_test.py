@@ -1,5 +1,5 @@
-"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its refusals with nothing started
-and the Driver's errors; outcome's line and its write errors."""
+"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its
+refusals with nothing started and the Driver's errors; outcome's line and its write errors."""
 
 import errno
 import io

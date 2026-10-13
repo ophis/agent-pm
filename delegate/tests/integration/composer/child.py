@@ -1,6 +1,6 @@
-"""The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME (its
-~/.agent-pm/config.local.toml the only local config) and a temp cwd, printing one JSON value. COMPOSE composes one
-agent run as its caller (the Delegate) would."""
+"""The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME
+(its ~/.agent-pm/config.local.toml the only local config) and a temp cwd, printing one JSON
+value. COMPOSE composes one agent run as its caller (the Delegate) would."""
 
 import json
 import os

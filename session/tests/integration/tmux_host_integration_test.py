@@ -1,8 +1,9 @@
-"""session.engine.api.show and close on a private tmux server (session/tests/live_tmux.py), placing sessions as
-hosts/tmux/tmux_host.py lays them out: the grid (columns, name order, sub-sessions, an unshown session reopened), its
-settling and re-tiling modes, and a split outside it; ported from main's crew integration tests. Sessions are
-tmux_host.start's, shown from a session's pane (os.environ that pane's env) or from outside tmux; the iTerm2 path
-fails the test. Also start's dead line for a command ending at once."""
+"""session.engine.api.show and close on a private tmux server (session/tests/live_tmux.py), placing
+sessions as hosts/tmux/tmux_host.py lays them out: the grid (columns, name order, sub-sessions,
+an unshown session reopened), its settling and re-tiling modes, and a split outside it; ported
+from main's crew integration tests. Sessions are tmux_host.start's, shown from a session's pane
+(os.environ that pane's env) or from outside tmux; the iTerm2 path fails the test. Also start's
+dead line for a command ending at once."""
 
 import contextlib
 import functools

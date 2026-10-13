@@ -1,4 +1,5 @@
-"""session/engine/status_log.py: SessionStatusLog.line's format, clock and refusals; write's appends and refusals."""
+"""session/engine/status_log.py: SessionStatusLog.line's format, clock and refusals; write's
+appends and refusals."""
 
 import os
 import stat

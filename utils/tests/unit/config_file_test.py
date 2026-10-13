@@ -61,8 +61,8 @@ MANAGER = 'runtime = "m"\n'
 
 
 class Projects(Case):
-    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has none) and this
-    test's ~/.agent-pm/config.local.toml."""
+    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has
+    none) and this test's ~/.agent-pm/config.local.toml."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

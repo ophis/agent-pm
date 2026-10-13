@@ -1,7 +1,8 @@
-"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude] table given to
-Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through Driver.start, Driver.usage and
-Driver.session_status; one case runs the Driver in a caller process of its own (CALLER) to interrupt it. HOME and
-CLAUDE_CONFIG_DIR are temp dirs."""
+"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
+table given to Driver construction, runs
+session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) through
+Driver.start, Driver.usage and Driver.session_status; one case runs the Driver in a caller
+process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are temp dirs."""
 
 import json
 import os
@@ -126,8 +127,8 @@ class Base(Case):
         return handle
 
     def drain(self, handle, on=lambda event: None) -> list:
-        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping the handle, instead
-        of hanging past WAIT."""
+        """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
+        the handle, instead of hanging past WAIT."""
         found, errors = [], []
 
         def run():
@@ -361,7 +362,8 @@ class RunTest(Base):
 
 class InterruptTest(Base):
     def until(self, caller: subprocess.Popen, check, what: str) -> None:
-        """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s pass."""
+        """Returns once check() holds; fails naming `what` once the caller ends first or WAIT s
+        pass."""
         deadline = time.monotonic() + WAIT
         while not check():
             if caller.poll() is not None or time.monotonic() > deadline:

@@ -1,6 +1,6 @@
-"""FakeDelegate, a Delegate with one session that runs nothing: its state is <workdir>/delegate.json (0600), so a view
-from attach and the Delegate that wrote it agree. end(workdir) and finish(workdir) stand for its sessions ending,
-without and with an outcome."""
+"""FakeDelegate, a Delegate with one session that runs nothing: its state is
+<workdir>/delegate.json (0600), so a view from attach and the Delegate that wrote it agree.
+end(workdir) and finish(workdir) stand for its sessions ending, without and with an outcome."""
 
 import json
 import os

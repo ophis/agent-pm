@@ -1,6 +1,7 @@
-"""composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and Validate tests, less
-the client layer and the prompt), the opaque runtime key, run params, trusted_dirs, bind and the access intent (the old
-driver's access tests, less the report command)."""
+"""composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and
+Validate tests, less the client layer and the prompt), the opaque runtime key, run params,
+trusted_dirs, bind and the access intent (the old driver's access tests, less the report
+command)."""
 
 import inspect
 import os
@@ -504,7 +505,8 @@ class BadRead(Fake):
 
 
 class ExplicitPaths(Fake):
-    """resolve and trusted_dirs read only the config and local passed, never the HOME one (malformed here)."""
+    """resolve and trusted_dirs read only the config and local passed, never the HOME one
+    (malformed here)."""
 
     def setUp(self):
         super().setUp()

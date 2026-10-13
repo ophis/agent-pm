@@ -1,5 +1,6 @@
 """engine/types.py: spec types, sid_error, the frozen event set, Usage, Window and SessionStatus,
-adapters/base.py: Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub subclasses; nothing starts a process."""
+adapters/base.py: Adapter, Headless, Tui (hook kinds, labels, limit) and InProcess, through stub
+subclasses; nothing starts a process."""
 
 import dataclasses
 import inspect

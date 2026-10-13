@@ -1,6 +1,7 @@
-"""One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit ends the run, the
-deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy (POLICIES) starts the session, sends
-the fix and answers each turn end and IdleTimeout: go on (None), END or GiveUp."""
+"""One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit
+ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's
+policy (POLICIES) starts the session, sends the fix and answers each turn end and IdleTimeout:
+go on (None), END or GiveUp."""
 
 import os
 import sys
@@ -92,8 +93,9 @@ class Headless:
 
 
 class Tui(Headless):
-    """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a progress mark resets
-    that count; a turn end with work pending is ignored. FR-24: an IdleTimeout gives up. The session is left open."""
+    """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a
+    progress mark resets that count; a turn end with work pending is ignored. FR-24: an
+    IdleTimeout gives up. The session is left open."""
 
     def __init__(self, note: Callable[..., None]):
         super().__init__(note)
@@ -147,8 +149,8 @@ def run(
     on_event: Callable[[Event], None] | None = None,
     driver: Driver | None = None,
 ) -> Result:
-    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome; its exception stops
-    the session and propagates."""
+    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
+    its exception stops the session and propagates."""
     p = plan(run, spec, driver=driver)
     attempts = _Attempts(p, on_event or (lambda event: None))
     try:
@@ -250,7 +252,8 @@ class _Attempts:
         return True
 
     def drop_stale_out(self) -> str:
-        """Removes a new run's earlier `out`, only once the Driver took the run; returns why it could not, else ""."""
+        """Removes a new run's earlier `out`, only once the Driver took the run; returns why it
+        could not, else ""."""
         s = self.plan.spec
         if (
             s.out and not s.resume and not os.path.isdir(s.out)

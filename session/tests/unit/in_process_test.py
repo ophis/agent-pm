@@ -48,8 +48,8 @@ class Base(Case):
         self.addCleanup(self.mode.stop)
 
     def held(self):
-        """A script yielding Reply("one"), Stderr("two"), then Reply("late") once released; the Events reached,
-        release and closed (its finally ran). Released at cleanup."""
+        """A script yielding Reply("one"), Stderr("two"), then Reply("late") once released; the
+        Events reached, release and closed (its finally ran). Released at cleanup."""
         reached, release, closed = threading.Event(), threading.Event(), threading.Event()
         self.addCleanup(release.set)
 

@@ -1,4 +1,5 @@
-"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts' sibling loading."""
+"""Codex isolated startup trust, launch validation and process cleanup; both isolated scripts'
+sibling loading."""
 
 import ast
 import contextlib

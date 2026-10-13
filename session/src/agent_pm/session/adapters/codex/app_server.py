@@ -1,5 +1,6 @@
-"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path, it is the account
-probe: prints the account/rateLimits/read result, or null on any failure (--timeout S, 0 < S <= 10)."""
+"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path,
+it is the account probe: prints the account/rateLimits/read result, or null on any failure
+(--timeout S, 0 < S <= 10)."""
 
 from __future__ import annotations
 
@@ -38,8 +39,9 @@ def call(
     termination=None,
     exit_wait: float = EXIT_WAIT,
 ):
-    """`exe app-server *args` in its own process group: initialize, then `method`'s result within `wait` s and `limit`
-    buffered bytes; else Error, or Exited (its returncode) if it ends first. Its group is killed before returning."""
+    """`exe app-server *args` in its own process group: initialize, then `method`'s result within
+    `wait` s and `limit` buffered bytes; else Error, or Exited (its returncode) if it ends
+    first. Its group is killed before returning."""
     proc = None
     exited = False
     try:

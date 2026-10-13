@@ -1,10 +1,11 @@
-"""The Driver's API. start() checks everything, writes a session's `session` record to <workdir>/run.jsonl, then
-starts it in its Mode (headless, tui or in_process) and returns its Handle. Handle.events() streams its events, Stderr
-and IdleTimeout (none while Blocked; it stops nothing) up to the Driver's own Exited, recording `client_session` and
-`stderr`. usage(), session_status() and session_record() give a runtime's Usage, a session's SessionStatus and its
-record; note() appends a record, holds() checks a file's text; writable_dirs() the dirs a runtime grants itself write
-to under a Spec. attach(), sessions(), show() and close() reach a tui session by name; detach() runs a command in a
-tmux session of its own."""
+"""The Driver's API. start() checks everything, writes a session's `session` record to
+<workdir>/run.jsonl, then starts it in its Mode (headless, tui or in_process) and returns its
+Handle. Handle.events() streams its events, Stderr and IdleTimeout (none while Blocked; it stops
+nothing) up to the Driver's own Exited, recording `client_session` and `stderr`. usage(),
+session_status() and session_record() give a runtime's Usage, a session's SessionStatus and its
+record; note() appends a record, holds() checks a file's text; writable_dirs() the dirs a
+runtime grants itself write to under a Spec. attach(), sessions(), show() and close() reach a
+tui session by name; detach() runs a command in a tmux session of its own."""
 
 import contextlib
 import logging
@@ -68,14 +69,16 @@ LOG = logging.getLogger("driver")
 
 
 class Mode(Protocol):
-    """A running session as one mode hosts it; a Handle's only way to it. Its own failure raises from poll (headless:
-    its parse); the session's is its returncode (an in_process run that raised: 1)."""
+    """A running session as one mode hosts it; a Handle's only way to it. Its own failure raises
+    from poll (headless: its parse); the session's is its returncode (an in_process run that
+    raised: 1)."""
 
     def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
         """The events that came, waiting up to `timeout` s for one, and whether no more will come."""
 
     def returncode(self, timeout: float) -> int | None:
-        """The exit status, waiting at most `timeout` s; None while it runs; negative: killed by that signal."""
+        """The exit status, waiting at most `timeout` s; None while it runs; negative: killed by
+        that signal."""
 
     def state(self) -> str:
         """One of STATES."""
@@ -244,7 +247,8 @@ def _no_tui_fields(spec: Spec) -> Spec:
 
 
 class _LaunchSteps:
-    """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd for begin()."""
+    """A Mode starting the command its Adapter's launch gives; info() keeps that Launch and its cwd
+    for begin()."""
 
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
         self.command = launch = self.launch(prompt, spec, resumed)
@@ -506,9 +510,9 @@ class Driver:
         idle_timeout: float | None = None,
         events: str | None = None,
     ) -> Handle:
-        """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name, else
-        <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead lines; spec.protect gains the
-        hook paths."""
+        """spec.sid: the session's id (None: resume, else a new one); tui: tmux session spec.name,
+        else <runtime>-<sid[:8]>, refused when running; `events` gets its done, blocked and dead
+        lines; spec.protect gains the hook paths."""
         if mode not in MODES:
             raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
         _idle(idle_timeout)
@@ -553,7 +557,8 @@ class Driver:
         )
 
     def attach(self, name: str, idle_timeout: float | None = None) -> Handle:
-        """Tui session `name`'s Handle from any process: its reply the last turn's, its events from the next hook record."""
+        """Tui session `name`'s Handle from any process: its reply the last turn's, its events from
+        the next hook record."""
         _name(name)
         _idle(idle_timeout)
         state = tui.read_state(name)
@@ -598,8 +603,8 @@ class Driver:
         split_from: str | None = None,
         opener: str | None = None,
     ) -> str | None:
-        """Opens a pane on session `name` per the tui settings; None, else logs the reason and returns
-        attach_command(name)."""
+        """Opens a pane on session `name` per the tui settings; None, else logs the reason and
+        returns attach_command(name)."""
         _name(name)
         _placement(split, split_from, opener)
         settings = self.registry.tui()
@@ -619,7 +624,8 @@ class Driver:
         return self.host.attach_command(name)
 
     def usage(self, runtime: str) -> Usage | None:
-        """None only when the probe fails: no probe, a failed start or timeout, or no reading in its output."""
+        """None only when the probe fails: no probe, a failed start or timeout, or no reading in
+        its output."""
         adapter = self.registry.adapter(runtime)
         launch = adapter.usage_probe()
         if launch is None or not launch.argv:
@@ -653,7 +659,8 @@ class Driver:
             return SessionStatus("unknown", None, "")
 
     def writable_dirs(self, runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
-        """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails closed."""
+        """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails
+        closed."""
         if spec.sid is not None:
             raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
         if resume is not None and (error := sid_error(resume)):
@@ -665,7 +672,8 @@ class Driver:
             raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
 
     def sessions(self, match: str | None = None) -> list[SessionRow]:
-        """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is unknown."""
+        """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is
+        unknown."""
         if match is not None and not isinstance(match, str):
             raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
         try:
@@ -686,8 +694,8 @@ class Driver:
         tui.close(_name(name), host=self.host)
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
-        """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found; None only with
-        split_from."""
+        """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found;
+        None only with split_from."""
         _placement(split, split_from)
         if split_from is not None and self.host.status(split_from) is None:
             raise ConfigError(f"no tmux session {split_from}")
@@ -715,7 +723,8 @@ class Driver:
         *,
         opener: str | None = None,
     ) -> None:
-        """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns once argv has exec'd."""
+        """Runs argv in new tmux session `name`, SIGNALS blocked until argv unblocks them; returns
+        once argv has exec'd."""
         _name(name)
         if (
             not isinstance(argv, (list, tuple))

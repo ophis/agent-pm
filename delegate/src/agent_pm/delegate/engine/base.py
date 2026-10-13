@@ -13,9 +13,9 @@ from agent_pm.utils import Record, Status
 
 
 class Delegate(ABC):
-    """An implementation's constructor: (role, Spec, *, optional dependencies and placement), refusing with
-    ConfigError, writing nothing. run, detach run it; attach(record or workdir) views a started one. show,
-    attach_command: displayable sessions only, else NotDisplayable."""
+    """An implementation's constructor: (role, Spec, *, optional dependencies and placement),
+    refusing with ConfigError, writing nothing. run, detach run it; attach(record or workdir)
+    views a started one. show, attach_command: displayable sessions only, else NotDisplayable."""
 
     @classmethod
     @abstractmethod

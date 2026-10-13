@@ -1,4 +1,5 @@
-"""session/tests/fakes/session.py: FakeSession plays its script in the caller's process, with no Host to display on."""
+"""session/tests/fakes/session.py: FakeSession plays its script in the caller's process, with no
+Host to display on."""
 
 import unittest
 

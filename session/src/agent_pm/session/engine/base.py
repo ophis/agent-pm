@@ -79,7 +79,8 @@ class Session(ABC):
 
     @staticmethod
     def parse_hosts(table) -> Hosts:
-        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else ConfigError."""
+        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else
+        ConfigError."""
         try:
             return tables.parse(table)
         except ValueError as e:

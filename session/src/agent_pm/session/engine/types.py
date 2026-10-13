@@ -1,5 +1,6 @@
-"""The session layer's data types, used by two or more of its modules. Access.dirs are granted write, Access.reads
-only read; Spec.flags/env are caller-supplied for every Mode; times are epoch seconds."""
+"""The session layer's data types, used by two or more of its modules. Access.dirs are granted
+write, Access.reads only read; Spec.flags/env are caller-supplied for every Mode; times are
+epoch seconds."""
 
 import re
 from collections.abc import Mapping
@@ -251,7 +252,8 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None none."""
+    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None
+    none."""
 
     name: str
     sid: str | None

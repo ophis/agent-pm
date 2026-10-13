@@ -8,8 +8,8 @@ from pathlib import Path
 def read_regular(
     path: str | os.PathLike, *, offset: int = 0, limit: int | None = None, tail: bool = False
 ) -> bytes | None:
-    """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a symlink, no regular
-    file, an OSError. Never waits on a FIFO."""
+    """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a
+    symlink, no regular file, an OSError. Never waits on a FIFO."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
@@ -33,8 +33,8 @@ def read_regular(
 
 
 def append_line(path: str | Path, text: str, *, durable: bool = False, own: bool = False) -> None:
-    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it and its directory;
-    `own` also refuses one another user owns (EPERM)."""
+    """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it
+    and its directory; `own` also refuses one another user owns (EPERM)."""
     data = memoryview(text.encode(errors="replace"))
     fd = os.open(
         path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600

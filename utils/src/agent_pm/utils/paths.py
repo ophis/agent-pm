@@ -1,5 +1,5 @@
-"""The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and the projects' import
-roots."""
+"""The repo ROOT, the state root STATE, path normalization, containment, writable temp roots and
+the projects' import roots."""
 
 import os
 import subprocess

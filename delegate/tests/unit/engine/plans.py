@@ -16,7 +16,8 @@ SID = "11111111-2222-3333-4444-555555555555"
 
 
 class Base(Case):
-    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and fresh session settings: the core config's adapters and the fake runtime."""
+    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm)
+    and fresh session settings: the core config's adapters and the fake runtime."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -39,8 +40,9 @@ class Base(Case):
     def planned(
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
     ):
-        """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.", runtime "fake",
-        headless, out self.out, workdir self.work, the cwd the workdir, unless `kw` says otherwise."""
+        """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.",
+        runtime "fake", headless, out self.out, workdir self.work, the cwd the workdir, unless
+        `kw` says otherwise."""
         kw = {"runtime": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
         workdir = kw.pop("workdir", self.work)
         kw.setdefault("cwd", workdir)

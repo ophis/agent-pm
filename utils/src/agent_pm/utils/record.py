@@ -1,5 +1,6 @@
-"""Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume resumes it), and
-Status, the line `<ctl> status` prints per Record. Display is opaque: only the session layer interprets it."""
+"""Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
+resumes it), and Status, the line `<ctl> status` prints per Record. Display is opaque: only the
+session layer interprets it."""
 
 import json
 from dataclasses import asdict, dataclass, fields

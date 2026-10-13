@@ -1,6 +1,7 @@
-"""FakeHost's supervisor, run as `python3 -P supervisor.py <dir> <events or "">`, its process group's leader: runs
-meta.json's argv in its cwd with env.json verbatim (a terminal's stdin: the FIFO <dir>/input), output to <dir>/output;
-writes <dir>/pid, its own; when the program exits, the event (`exited <rc>` / `dead`) to <events>, then <dir>/rc."""
+"""FakeHost's supervisor, run as `python3 -P supervisor.py <dir> <events or "">`, its process
+group's leader: runs meta.json's argv in its cwd with env.json verbatim (a terminal's stdin: the
+FIFO <dir>/input), output to <dir>/output; writes <dir>/pid, its own; when the program exits,
+the event (`exited <rc>` / `dead`) to <events>, then <dir>/rc."""
 
 import json
 import os

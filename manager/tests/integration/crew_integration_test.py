@@ -1,8 +1,10 @@
-"""agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a manager runs it, on a private tmux
-server (session/tests/live_tmux.py) with a control-mode client on the manager. Workers are plain tui sessions of the real
-Adapters running session/tests/integration/adapters/claude/fake_claude.py and the Codex fake_tui.py (on PATH as `claude` and `codex`); follow-ups go
-through the Driver's tmux_host.py send. HOME and the server's root lie under AGENT_PM_TEST_TMP (else the repo root), outside
-the temp dirs a plain Codex session can write."""
+"""agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a
+manager runs it, on a private tmux server (session/tests/live_tmux.py) with a control-mode
+client on the manager. Workers are plain tui sessions of the real Adapters running
+session/tests/integration/adapters/claude/fake_claude.py and the Codex fake_tui.py (on PATH as
+`claude` and `codex`); follow-ups go through the Driver's tmux_host.py send. HOME and the
+server's root lie under AGENT_PM_TEST_TMP (else the repo root), outside the temp dirs a plain
+Codex session can write."""
 
 import contextlib
 import json
@@ -190,7 +192,8 @@ class Live(Case):
         return self.ok(self.server.tmux("kill-session", "-t", f"={name}"))
 
     def scene(self, name: str, steps: list | None = None, turns=(), **codex) -> dict[str, str]:
-        """Both fakes' scenario files for worker `name`, as the env a crew call passes on to its worker."""
+        """Both fakes' scenario files for worker `name`, as the env a crew call passes on to its
+        worker."""
         steps = [f"Hi from {name}."] if steps is None else steps
         claude, scenario = (
             os.path.join(self.root, f"{name}.{k}.json") for k in ("claude", "codex")
@@ -335,7 +338,8 @@ class Live(Case):
         self.server.attach(SECOND)
 
     def role(self, work: str, *sessions: str) -> dict:
-        """A role run's entry in the manager's roster, as drive.py --detach writes one, and its sessions."""
+        """A role run's entry in the manager's roster, as drive.py --detach writes one, and its
+        sessions."""
         for session in sessions:
             self.ok(self.server.tmux("new-session", "-d", "-s", session, *live_tmux.IDLE))
         resume = [sys.executable, os.path.join(self.root, "drive.py"), f"--role={ROLE}"]
