@@ -9,13 +9,13 @@ import re
 import stat
 import tempfile
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import asdict, replace
 from typing import BinaryIO
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agent_pm.manager.engine.events import Events
-from agent_pm.manager.engine.types import Entry, Held, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import Entry, Held, Lease, RosterError, Spec, Stale, State
 from agent_pm.utils import Record, printable, read_regular, save
 
 VERSION = 2
@@ -23,6 +23,7 @@ NOTE_MAX = 500
 ROSTER_MAX = 1 << 20
 LOCK_TIMEOUT = 30
 POLL = 0.1
+RECEIPT_FILE = re.compile(r"receipt-[a-z0-9_]+\.stdout")
 
 
 def _now() -> str:
@@ -41,7 +42,7 @@ def _note(note: str | None) -> None:
         raise RosterError(f"note: want null or printable text of at most {NOTE_MAX} characters")
 
 
-def _sid(value) -> bool:
+def _uuid4(value) -> bool:
     if not isinstance(value, str):
         return False
     try:
@@ -72,12 +73,12 @@ def _entry(data: dict) -> Entry:
         raise ValueError(f"{state}: missing Record")
     sid, receipt = data["sid"], data["receipt"]
     if receipt is not None and (
-        not isinstance(receipt, str) or re.fullmatch(r"receipt-[a-z0-9_]+\.stdout", receipt) is None
+        not isinstance(receipt, str) or RECEIPT_FILE.fullmatch(receipt) is None
     ):
         raise ValueError("receipt: want an allocated receipt filename")
     if record is not None and record.sid != sid:
         raise ValueError("sid: differs from Record.sid")
-    if state in {State.STARTING, State.LOST, State.RESUMING} and not _sid(sid):
+    if state in {State.STARTING, State.LOST, State.RESUMING} and not _uuid4(sid):
         raise ValueError("sid: want a canonical uuid4")
     return Entry(record, state, data["note"], data["started"], tuple(argv), sid, receipt)
 
@@ -87,8 +88,7 @@ class Roster:
         self.directory = os.path.abspath(directory)
         self.path = os.path.join(self.directory, "roster.json")
         self._events = Events(self.directory)
-        self._owner: str | None = None
-        self._alive: Callable[[str], bool] = lambda _: False
+        self._lease_token: Lease | None = None
 
     @property
     def events(self) -> str:
@@ -97,10 +97,12 @@ class Roster:
             self._events.ensure()
         return self._events.path
 
-    def bind(self, owner: str | None, alive: Callable[[str], bool]) -> None:
-        if owner is not None:
-            _name(owner)
-        self._owner, self._alive = owner, alive
+    def bind(self, lease: Lease | None) -> None:
+        if lease is not None and (
+            not _uuid4(lease.id) or type(lease.generation) is not int or lease.generation <= 0
+        ):
+            raise RosterError("lease: want a holder uuid4 and positive generation")
+        self._lease_token = lease
 
     def _ensure(self) -> None:
         parent = os.path.dirname(self.directory)
@@ -140,7 +142,9 @@ class Roster:
                 data = self._read()
                 before = json.dumps(data, sort_keys=True)
                 yield data
-                self._settle_receipts(data)
+                maintain = self._maintenance_allowed(data)
+                if maintain:
+                    self._settle_receipts(data)
                 if json.dumps(data, sort_keys=True) != before:
                     save(
                         self.path,
@@ -148,7 +152,8 @@ class Roster:
                         own=True,
                         durable=True,
                     )
-                self._cleanup_receipts(data)
+                if maintain:
+                    self._cleanup_receipts(data)
             finally:
                 os.close(fd)
         except OSError as error:
@@ -159,7 +164,14 @@ class Roster:
         if raw is None:
             if os.path.lexists(self.path):
                 raise RosterError(f"{self.path}: not a readable regular file owned by you")
-            return {"version": VERSION, "holder": None, "cursor": 0, "gen": 0, "entries": {}}
+            return {
+                "version": VERSION,
+                "holder": None,
+                "lease_gen": 0,
+                "cursor": 0,
+                "gen": 0,
+                "entries": {},
+            }
         if len(raw) > ROSTER_MAX:
             raise RosterError(f"{self.path}: over {ROSTER_MAX} bytes")
         try:
@@ -167,6 +179,7 @@ class Roster:
             if not isinstance(data, dict) or set(data) != {
                 "version",
                 "holder",
+                "lease_gen",
                 "cursor",
                 "gen",
                 "entries",
@@ -174,16 +187,17 @@ class Roster:
                 raise ValueError("want roster fields")
             if type(data["version"]) is not int or data["version"] != VERSION:
                 raise ValueError(f"version: want {VERSION}")
-            for field in ("cursor", "gen"):
+            for field in ("cursor", "gen", "lease_gen"):
                 if type(data[field]) is not int or data[field] < 0:
                     raise ValueError(f"{field}: want a nonnegative integer")
             holder = data["holder"]
             if holder is not None:
-                if not isinstance(holder, dict) or set(holder) != {"session", "since"}:
-                    raise ValueError("holder: want session and since")
-                _name(holder["session"])
-                if datetime.datetime.fromisoformat(holder["since"]).utcoffset() is None:
-                    raise ValueError("holder.since: want UTC offset")
+                if not isinstance(holder, dict) or set(holder) != {"id", "session"}:
+                    raise ValueError("holder: want id and display session")
+                if not _uuid4(holder["id"]) or data["lease_gen"] <= 0:
+                    raise ValueError("holder: want uuid4 and positive generation")
+                if holder["session"] is not None:
+                    _name(holder["session"])
             if not isinstance(data["entries"], dict):
                 raise ValueError("entries: want an object")
             for name, value in data["entries"].items():
@@ -195,25 +209,108 @@ class Roster:
             raise RosterError(f"{self.path}: {error}") from error
         return data
 
-    def _lease(self, data: dict) -> None:
-        holder = data["holder"]
-        if (
-            holder is not None
-            and holder["session"] != self._owner
-            and self._alive(holder["session"])
-        ):
-            raise Held(f"{self.directory}: held by {holder['session']} since {holder['since']}")
-        if self._owner is not None and (holder is None or holder["session"] != self._owner):
-            raise RosterError(f"{self.directory}: not attached; run crew attach first")
+    def _open_holder(self) -> int:
+        path = os.path.join(self.directory, "holder.lock")
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                raise RosterError(f"{path}: not a regular holder lock owned by you")
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
 
-    def hold(self, owner: str | None, alive: Callable[[str], bool]) -> None:
-        self.bind(owner, alive)
-        with self._locked() as data:
-            holder = data["holder"]
-            if holder is not None and holder["session"] != owner and alive(holder["session"]):
-                raise Held(f"{self.directory}: held by {holder['session']} since {holder['since']}")
-            if owner is not None and (holder is None or holder["session"] != owner):
-                data["holder"] = {"session": owner, "since": _now()}
+    def _replace_holder(self) -> int:
+        fd, path = tempfile.mkstemp(prefix=".holder-", dir=self.directory)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.replace(path, os.path.join(self.directory, "holder.lock"))
+        except BaseException:
+            os.close(fd)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+            raise
+        return fd
+
+    def _active_holder(self) -> bool:
+        fd = self._open_holder()
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            return False
+        finally:
+            os.close(fd)
+
+    def _lease(self, data: dict) -> None:
+        holder, lease = data["holder"], self._lease_token
+        if lease is None:
+            if self._active_holder():
+                label = (
+                    holder["session"] or holder["id"] if holder is not None else "another holder"
+                )
+                raise Held(f"{self.directory}: held by {label}")
+            return
+        if holder is None or holder["id"] != lease.id or data["lease_gen"] != lease.generation:
+            raise Stale(f"{self.directory}: stale holder generation; start a new manager holder")
+        if not self._active_holder():
+            raise Stale(f"{self.directory}: holder no longer alive")
+
+    def _maintenance_allowed(self, data: dict) -> bool:
+        if not any(entry["receipt"] is not None for entry in data["entries"].values()):
+            with os.scandir(self.directory) as files:
+                if not any(RECEIPT_FILE.fullmatch(item.name) for item in files):
+                    return False
+        try:
+            self._lease(data)
+        except (Held, Stale):
+            return False
+        return True
+
+    @contextlib.contextmanager
+    def hold(self, session: str | None, *, force: bool = False) -> Iterator[Lease]:
+        if session is not None:
+            _name(session)
+        previous = self._lease_token
+        fd = None
+        try:
+            with self._locked() as data:
+                fd = self._open_holder()
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    if not force:
+                        holder = data["holder"]
+                        label = (
+                            holder["session"] or holder["id"]
+                            if holder is not None
+                            else "another holder"
+                        )
+                        raise Held(f"{self.directory}: held by {label}") from None
+                    os.close(fd)
+                    fd = None
+                    fd = self._replace_holder()
+                lease = Lease(str(uuid4()), data["lease_gen"] + 1)
+                data["lease_gen"] = lease.generation
+                data["holder"] = {"id": lease.id, "session": session}
+            self.bind(lease)
+            try:
+                yield lease
+            finally:
+                with self._locked() as data:
+                    holder = data["holder"]
+                    if (
+                        holder is not None
+                        and holder["id"] == lease.id
+                        and data["lease_gen"] == lease.generation
+                    ):
+                        data["holder"] = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+            self.bind(previous)
 
     def check_lease(self) -> None:
         with self._locked() as data:
@@ -222,7 +319,11 @@ class Roster:
     def release(self) -> None:
         with self._locked() as data:
             self._lease(data)
-            data["holder"] = None
+            fd = self._replace_holder()
+            try:
+                data["holder"] = None
+            finally:
+                os.close(fd)
 
     def entries(self) -> dict[str, Entry]:
         with self._locked() as data:
@@ -239,10 +340,7 @@ class Roster:
     def _cleanup_receipts(self, data: dict) -> None:
         referenced = {entry["receipt"] for entry in data["entries"].values()}
         for item in os.scandir(self.directory):
-            if (
-                re.fullmatch(r"receipt-[a-z0-9_]+\.stdout", item.name) is None
-                or item.name in referenced
-            ):
+            if RECEIPT_FILE.fullmatch(item.name) is None or item.name in referenced:
                 continue
             info = item.stat(follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
@@ -252,7 +350,7 @@ class Roster:
     def begin(self, intent: Spec, *, sid: str) -> Entry:
         _name(intent.name)
         _note(intent.note)
-        if not _sid(sid):
+        if not _uuid4(sid):
             raise RosterError("sid: want a canonical uuid4")
         if (
             not intent.argv

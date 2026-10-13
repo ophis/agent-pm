@@ -454,12 +454,8 @@ class CrewTest(Case):
         self.assertEqual([call["names"] for call in self.calls("status")], [["one"], ["two"]])
 
     def test_a_live_holder_blocks_attach_and_launch_without_starting_a_process(self):
-        owner = self.fake_record("owner")
-        held = Crew(Roster(self.directory), owner="owner")
-        ctl.set_session(self.ctl_dir, "owner", alive=True)
-        with self.listed((owner,)):
-            held.attach()
-            other = Crew(Roster(self.directory), owner="other")
+        with Roster(self.directory).hold("owner"), self.listed():
+            other = Crew(Roster(self.directory))
             with self.assertRaises(Held):
                 other.attach()
             with self.assertRaises(Held):
@@ -496,7 +492,7 @@ class CrewTest(Case):
         self.crew.note("worker", "after")
         self.assertEqual(self.roster.entries()["worker"].note, "after")
         self.crew.release()
-        other = Crew(Roster(self.directory), owner="new")
+        other = Crew(Roster(self.directory))
         with self.listed():
             other.attach()
 
@@ -504,3 +500,23 @@ class CrewTest(Case):
         with open(self.roster.events, "a", encoding="utf-8") as stream:
             stream.write("12:00:00 worker outcome done\n")
         self.assertEqual(self.crew.next_event(after=0, gen=0), (1, "12:00:00 worker outcome done"))
+
+    def test_launch_does_not_pass_its_managers_lease_to_the_worker(self):
+        with self.roster.hold("owner") as lease:
+            crew = Crew(self.roster, lease=lease)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_MANAGER": "parent",
+                        "AGENT_PM_HOLDER_ID": lease.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
+                    },
+                ),
+                mock.patch("subprocess.run", wraps=subprocess.run) as run,
+            ):
+                record = crew.run(Spec("worker", (self.command, "start", "worker")))
+            env = run.call_args.kwargs["env"]
+            self.assertEqual(env["AGENT_PM_SID"], record.sid)
+            for key in ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"):
+                self.assertNotIn(key, env)

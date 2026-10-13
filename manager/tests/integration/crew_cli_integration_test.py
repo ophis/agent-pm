@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 from agent_pm.manager import Crew, Roster, Spec, State
 from agent_pm.utils import Record, Status
@@ -44,6 +45,7 @@ class Commands(Case):
         result = self.invoke("--help", clean=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         expected = {
+            "hold",
             "run",
             "attach",
             "status",
@@ -126,18 +128,44 @@ class Commands(Case):
         self.assertEqual(crew.roster.entries(), {})
 
     def test_orphans_are_adopted_once_and_release_supports_handoff(self):
-        owner = self.fake_record("first")
         orphan = self.fake_record("orphan")
-        for name in ("first", "orphan"):
-            ctl.set_session(self.ctl_dir, name, alive=True)
-        fake_session.set_records(self.sessions, [owner, orphan])
-        self.succeeded("attach", "--manager", "mgr", "--owner", "first")
-        result = self.invoke("attach", "--manager", "mgr", "--owner", "second")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("held by first", result.stderr)
-        self.succeeded("release", "--manager", "mgr", "--owner", "first")
-        self.succeeded("attach", "--manager", "mgr", "--owner", "second")
-        self.assertEqual(set(Roster(self.directory).entries()), {"first", "orphan"})
+        ctl.set_session(self.ctl_dir, "orphan", alive=True)
+        fake_session.set_records(self.sessions, [orphan])
+        original = Roster(self.directory)
+        with original.hold("first") as first:
+            result = self.invoke("attach", "--manager", "mgr")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("held by first", result.stderr)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "AGENT_PM_HOLDER_ID": first.id,
+                    "AGENT_PM_HOLDER_GENERATION": str(first.generation),
+                },
+            ):
+                self.succeeded("attach", "--manager", "mgr")
+                self.succeeded("release", "--manager", "mgr")
+            with Roster(self.directory).hold("second") as second:
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_HOLDER_ID": second.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(second.generation),
+                    },
+                ):
+                    self.succeeded("attach", "--manager", "mgr")
+                self.assertGreater(second.generation, first.generation)
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_HOLDER_ID": first.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(first.generation),
+                    },
+                ):
+                    result = self.invoke("note", "orphan", "stale write", "--manager", "mgr")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("stale holder generation", result.stderr)
+        self.assertEqual(set(Roster(self.directory).entries()), {"orphan"})
         listing = Path(self.sessions, "calls.jsonl").read_text().splitlines()
         self.assertTrue(all(json.loads(line) == ["ls", "--here", "--records"] for line in listing))
 

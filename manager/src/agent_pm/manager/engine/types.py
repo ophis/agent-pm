@@ -34,6 +34,12 @@ class Entry:
     receipt: str | None = None
 
 
+@dataclass(frozen=True)
+class Lease:
+    id: str
+    generation: int
+
+
 class RosterError(Exception):
     pass
 

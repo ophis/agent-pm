@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Entry, RosterError, Spec, State
+from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
@@ -22,14 +22,24 @@ BIN = str(Path(__file__).parents[5] / "bin")
 
 
 class Crew:
-    def __init__(self, roster: Roster, *, owner: str | None = None):
+    def __init__(self, roster: Roster, *, lease: Lease | None = None):
         self.roster = roster
-        self.owner = owner
         self._listed: list[Record] | None = None
-        roster.bind(owner, self._alive)
+        roster.bind(lease)
 
     def _env(self, *, events: bool) -> dict[str, str]:
-        env = {**os.environ, "PATH": os.pathsep.join((BIN, os.environ.get("PATH", os.defpath)))}
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "AGENT_PM_SID",
+                "AGENT_PM_MANAGER",
+                "AGENT_PM_HOLDER_ID",
+                "AGENT_PM_HOLDER_GENERATION",
+            }
+        }
+        env["PATH"] = os.pathsep.join((BIN, os.environ.get("PATH", os.defpath)))
         if events:
             env["AGENT_PM_EVENTS"] = self.roster.events
         return env
@@ -63,9 +73,6 @@ class Crew:
             except ValueError as error:
                 raise RuntimeError(f"{shlex.join(HERE)}: invalid Record: {error}") from error
         return self._listed
-
-    def _alive(self, owner: str) -> bool:
-        return any(owner == record.name or owner in record.sessions for record in self._here())
 
     def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
         env = {**self._env(events=True), "AGENT_PM_SID": sid}
@@ -155,7 +162,7 @@ class Crew:
     def attach(self, *, after: int | None = None, gen: int | None = None) -> str:
         self._listed = None
         here = self._here()
-        self.roster.hold(self.owner, self._alive)
+        self.roster.check_lease()
         if gen is not None:
             self.roster.advance(after, gen)
         instant = datetime.now(UTC)

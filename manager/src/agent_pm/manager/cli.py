@@ -5,10 +5,13 @@ import os
 import re
 import shlex
 import sys
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
+from agent_pm.manager.engine.holder import Holder
+from agent_pm.manager.engine.types import Lease
 from agent_pm.utils import STATE
 
 
@@ -26,13 +29,30 @@ def _after(value: str) -> int | None:
     return None if value == "end" else _number(value)
 
 
-def _crew(args) -> Crew:
+def _roster(args) -> Roster:
     manager = args.manager or os.environ.get("AGENT_PM_MANAGER")
     if not manager or not re.fullmatch(r"[A-Za-z0-9_-]+", manager):
         raise ValueError("give --manager NAME or set AGENT_PM_MANAGER to a manager name")
-    owner = args.owner or os.environ.get("AGENT_PM_MANAGER")
     directory = Path(os.path.expanduser(STATE)) / "managers" / manager
-    return Crew(Roster(str(directory)), owner=owner)
+    return Roster(str(directory))
+
+
+def _crew(args) -> Crew:
+    holder = os.environ.get("AGENT_PM_HOLDER_ID")
+    generation = os.environ.get("AGENT_PM_HOLDER_GENERATION")
+    lease = None
+    if holder is not None or generation is not None:
+        if not holder or generation is None or not re.fullmatch(r"[1-9][0-9]*", generation):
+            raise ValueError("AGENT_PM_HOLDER_ID and AGENT_PM_HOLDER_GENERATION must go together")
+        identity = uuid.UUID(holder)
+        if identity.version != 4 or str(identity) != holder:
+            raise ValueError("AGENT_PM_HOLDER_ID must be a canonical UUID4")
+        lease = Lease(holder, int(generation))
+    return Crew(_roster(args), lease=lease)
+
+
+def _hold(args) -> int:
+    return Holder(_roster(args)).run(args.command, session=args.session, force=args.force)
 
 
 def _run(args) -> int:
@@ -112,8 +132,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-pm-crew")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--manager", help="roster name; default: AGENT_PM_MANAGER")
-    common.add_argument("--owner", help="lease holder identity; default: AGENT_PM_MANAGER")
     subs = parser.add_subparsers(required=True)
+    hold = subs.add_parser("hold", parents=[common])
+    hold.add_argument("--session", help="holder's display label")
+    hold.add_argument("--force", action="store_true", help="take over and fence the old holder")
+    hold.set_defaults(func=_hold)
     run = subs.add_parser("run", parents=[common])
     run.add_argument("name")
     run.add_argument("--note")
@@ -156,12 +179,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments = arguments[:delimiter]
     parser = _parser()
     args = parser.parse_args(arguments)
-    if args.func is _run:
+    if args.func in {_run, _hold}:
         if not command:
-            parser.error("run requires -- followed by a command")
+            parser.error("run and hold require -- followed by a command")
         args.command = command
     elif command:
-        parser.error("only run accepts a command after --")
+        parser.error("only run and hold accept a command after --")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
     try:

@@ -15,7 +15,7 @@ from unittest import mock
 from uuid import uuid4
 
 from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import Held, Lease, RosterError, Spec, Stale, State
 from agent_pm.utils import Record, append_line
 
 from manager.tests.case import Case
@@ -182,57 +182,88 @@ class RosterTest(Case):
         self.assertIs(self.roster.entries()["x"].state, State.RESUMING)
 
     def test_hold_rejects_live_holder_then_takes_dead_holder(self):
-        alive = {"a"}
-        self.roster.hold("a", alive.__contains__)
         other = Roster(self.directory)
-        with self.assertRaises(Held):
-            other.hold("b", alive.__contains__)
-        alive.clear()
-        other.hold("b", alive.__contains__)
-        self.assertEqual(self.content()["holder"]["session"], "b")
-        with self.assertRaises(RosterError):
-            self.begin()
-        other.begin(Spec("x", ("fake",)), sid=self.record.sid)
+        with self.roster.hold("a") as first:
+            with self.assertRaises(Held), self.roster.hold("nested"):
+                self.fail("live holder replaced")
+            self.roster.check_lease()
+            with self.assertRaises(Held), other.hold("b"):
+                self.fail("live holder replaced")
+            with self.assertRaises(Held):
+                other.begin(Spec("x", ("fake",)), sid=self.record.sid)
+        with other.hold("b") as second:
+            self.assertGreater(second.generation, first.generation)
+            self.assertNotEqual(second.id, first.id)
+            self.assertEqual(self.content()["holder"]["session"], "b")
+            with self.assertRaises(Held):
+                self.begin()
+            other.begin(Spec("x", ("fake",)), sid=self.record.sid)
 
     def test_every_mutation_checks_current_lease(self):
-        self.roster.hold("a", lambda _: False)
-        self.live()
         other = Roster(self.directory)
-        other.hold("b", lambda _: False)
-        for operation in (
-            lambda: self.roster.begin(Spec("y", ("fake",)), sid=str(uuid4())),
-            lambda: self.roster.commit("x", self.record),
-            lambda: self.roster.mark("x", State.GONE),
-            lambda: self.roster.claim_resume("x"),
-            lambda: self.roster.remove("x"),
-            lambda: self.roster.note("x", "note"),
-            lambda: self.roster.adopt(self.record),
-            lambda: self.roster.advance(0, 0),
-            self.roster.rotate_events,
-            self.roster.release,
-            self.roster.check_lease,
-            lambda: self.roster.events,
-        ):
-            with self.subTest(operation=operation), self.assertRaises(RosterError):
-                operation()
+        with self.roster.hold("a"):
+            self.live()
+            with other.hold("b", force=True):
+                for operation in (
+                    lambda: self.roster.begin(Spec("y", ("fake",)), sid=str(uuid4())),
+                    lambda: self.roster.commit("x", self.record),
+                    lambda: self.roster.mark("x", State.GONE),
+                    lambda: self.roster.claim_resume("x"),
+                    lambda: self.roster.remove("x"),
+                    lambda: self.roster.note("x", "note"),
+                    lambda: self.roster.adopt(self.record),
+                    lambda: self.roster.advance(0, 0),
+                    self.roster.rotate_events,
+                    self.roster.release,
+                    self.roster.check_lease,
+                    lambda: self.roster.events,
+                ):
+                    with self.subTest(operation=operation), self.assertRaises(Stale):
+                        operation()
 
-    def test_bound_owner_requires_attach_and_release_clears_lease(self):
-        self.roster.bind("a", lambda _: False)
-        with self.assertRaisesRegex(RosterError, "not attached"):
+    def test_only_current_holder_can_settle_receipts_during_reads(self):
+        with self.roster.hold("owner") as lease:
+            self.begin(note="keep")
+            entry = self.roster.entries()["x"]
+            receipt = Path(self.directory, entry.receipt)
+            receipt.write_text(self.record.to_line() + "\n")
+            data = self.content()
+            data["entries"]["x"].update(
+                record=json.loads(self.record.to_line()), state="live", argv=[]
+            )
+            Path(self.roster.path).write_text(json.dumps(data))
+            before = Path(self.roster.path).read_bytes()
+            for token in (None, Lease(lease.id, lease.generation + 1)):
+                reader = Roster(self.directory)
+                reader.bind(token)
+                self.assertEqual(reader.entries()["x"].record, self.record)
+                self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                self.assertTrue(receipt.exists())
+            self.roster.entries()
+            self.assertFalse(receipt.exists())
+            self.assertIsNone(self.roster.entries()["x"].receipt)
+
+    def test_bound_owner_requires_live_generation_and_release_clears_lease(self):
+        self.roster.bind(Lease(str(uuid4()), 1))
+        with self.assertRaises(Stale):
             self.begin()
-        self.roster.hold("a", lambda _: False)
-        self.begin()
-        self.roster.release()
+        with self.roster.hold("a") as first:
+            self.begin()
+            self.roster.release()
+            self.assertIsNone(self.content()["holder"])
+            with self.assertRaises(Stale):
+                self.roster.check_lease()
+            with Roster(self.directory).hold("b") as second:
+                self.assertGreater(second.generation, first.generation)
         self.assertIsNone(self.content()["holder"])
-        with self.assertRaises(RosterError):
-            self.roster.check_lease()
 
-    def test_no_owner_retains_unleased_operations(self):
-        self.roster.hold(None, lambda _: False)
+    def test_no_owner_retains_unleased_operations_only_when_holder_lock_free(self):
         self.live()
         self.roster.check_lease()
         self.roster.release()
         self.assertIsNone(self.content()["holder"])
+        with Roster(self.directory).hold("owner"), self.assertRaises(Held):
+            self.roster.note("x", "forbidden")
 
     def test_private_directory_and_regular_files(self):
         self.live()
@@ -305,7 +336,9 @@ class RosterTest(Case):
         ):
             self.roster.note("x", "new")
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
-        self.assertEqual(sorted(os.listdir(self.directory)), ["roster.json", "roster.lock"])
+        self.assertEqual(
+            sorted(os.listdir(self.directory)), ["holder.lock", "roster.json", "roster.lock"]
+        )
 
     def test_directory_symlink_and_public_directory_are_refused(self):
         target = Path(self.home) / "target"
@@ -543,6 +576,56 @@ class RosterTest(Case):
                     self.fail("unsafe receipt opened")
                 path.unlink()
                 self.roster.remove("x")
+
+    def test_holder_lock_is_private_noninheritable_and_force_fences_old_generation(self):
+        with self.roster.hold("label") as old:
+            path = Path(self.directory, "holder.lock")
+            previous_inode = path.stat().st_ino
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                self.assertFalse(os.get_inheritable(fd))
+                self.assertEqual(stat.S_IMODE(os.fstat(fd).st_mode), 0o600)
+            finally:
+                os.close(fd)
+            other = Roster(self.directory)
+            with other.hold("replacement", force=True) as new:
+                self.assertGreater(new.generation, old.generation)
+                self.assertNotEqual(path.stat().st_ino, previous_inode)
+                self.assertEqual(self.content()["holder"]["id"], new.id)
+                with self.assertRaises(Stale):
+                    self.roster.check_lease()
+            self.assertIsNone(self.content()["holder"])
+
+    def test_holder_lock_symlink_fifo_and_other_lock_errors_refuse_even_force(self):
+        self.roster.entries()
+        path = Path(self.directory, "holder.lock")
+        for kind in ("symlink", "fifo"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    path.symlink_to(Path(self.home, "outside"))
+                else:
+                    os.mkfifo(path)
+                with self.assertRaises(RosterError), self.roster.hold("label", force=True):
+                    self.fail("unsafe lock acquired")
+                path.unlink()
+        real_flock = fcntl.flock
+        count = 0
+
+        def flock(fd, flags):
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise PermissionError("probe denied")
+            return real_flock(fd, flags)
+
+        with (
+            mock.patch("fcntl.flock", side_effect=flock),
+            self.assertRaisesRegex(RosterError, "probe denied"),
+            self.roster.hold("label", force=True),
+        ):
+            self.fail("probe error became takeover")
+        self.assertEqual(count, 2)
+        self.assertIsNone(self.content()["holder"] if Path(self.roster.path).exists() else None)
 
 
 if __name__ == "__main__":
