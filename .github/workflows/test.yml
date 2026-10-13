@@ -10,9 +10,11 @@ permissions:
 
 jobs:
   comment-budget:
-    name: Comment budget (Python 3.11)
+    name: Comment budget v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -24,52 +26,15 @@ jobs:
           python-version: "3.11"
       - name: Comment budget
         run: python3 .github/comment_budget.py
+      - name: Integration job assignment
+        run: python3 .github/integration_jobs.py --check
+      - name: .github tests
+        run: python3 -m unittest discover -v -s .github -p "*_test.py"
 
-  unittest:
-    name: Unit tests (Python 3.11)
+  ruff:
+    name: Ruff v2.0 (Python 3.11)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        id: python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Check tmux shard inventory
-        run: python3 .github/tmux_shards.py --check
-      - name: Unit tests
-        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
-        run: python3 -m unittest discover -s tests/unit -t . -p "*_test.py"
-
-  integration-core:
-    name: Core integration (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        id: python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Core integration tests
-        run: python3 -m unittest discover -v -s tests/integration/core -t . -p "*_test.py"
-
-  integration-orchestrator:
-    name: Orchestrator integration (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -79,21 +44,53 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux
-      - name: Orchestrator integration tests
-        run: python3 -m unittest discover -v -s tests/integration/orchestrator -t . -p "*_test.py"
+      - name: Install Ruff
+        id: ruff
+        run: pip install ruff==0.16.9
+      - name: Ruff check
+        run: ruff check --output-format=github
+      - name: Ruff format
+        if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
+        run: ruff format --check
 
-  integration-tmux:
-    name: Tmux integration (${{ matrix.shard }}, Python 3.11)
+  unit:
+    name: Unit ${{ matrix.project }} v2.0 (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: ["A", "B", "C", "D"]
+        include:
+          - {project: repo, tests: tests}
+          - {project: delegate, tests: delegate/tests}
+          - {project: session, tests: session/tests}
+          - {project: utils, tests: utils/tests}
+          - {project: manager, tests: manager/tests}
+          - {project: linear-orchestrator, tests: linear-orchestrator/tests}
+    env:
+      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Unit tests
+        run: python3 -X faulthandler .github/run_tests.py 'Unit ${{ matrix.project }}' '${{ matrix.tests }}/unit'
+
+  integration:
+    name: Integration ${{ matrix.job }} v2.0 (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ["session 1", "session 2", "delegate", "linear-orchestrator", "manager 1", "manager 2", "manager 3", "repo"]
+    env:
+      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
         uses: actions/checkout@v7
@@ -107,5 +104,5 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
-      - name: Tmux skill integration tests
-        run: python3 .github/tmux_shards.py '${{ matrix.shard }}'
+      - name: Integration tests
+        run: python3 -X faulthandler .github/integration_jobs.py '${{ matrix.job }}'

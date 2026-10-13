@@ -2,9 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. `core/` runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); `orchestrator/` runs it from the board (Setup). Developers: `CLAUDE.md`.
-
-For local headless Codex role runs, use the [core Codex operating guide](core/CLAUDE.md#codex-headless).
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `CLAUDE.md`.
 
 ```mermaid
 flowchart LR
@@ -13,89 +11,96 @@ flowchart LR
     T[router.py] -.->|claims Todo issues| R & P & E
 ```
 
-### Core architecture (planned)
+### Core architecture
 
-Being rebuilt under `new/`: the core ([TASK-314](https://linear.app/ophis-workgroup/issue/TASK-314)) and the orchestrator part ([TASK-315](https://linear.app/ophis-workgroup/issue/TASK-315)); terms: `CONTEXT.md`. Reads top to bottom: entry points, three layers (orchestration → role runs → sessions), then the agent runtimes. Not drawn: `utils/` (shared stdlib-only tools any layer may import; it imports no layer), the config files, and `agent_tools/` (run by the agent). `core/team/` is data the Composer reads into the prompt and the Delegate validates outcomes against. The Delegate hands a task to an agent through the Driver, or to the InstructionDriver for instructions only (act-as; it replaces the `print_prompt` adapter in [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356)). The orchestrator reaches the core only two ways: one role run through the Delegate (`run.py`) and session chores straight to the Driver; it never touches an adapter or tmux. Solid arrow: import or call, the only direction allowed; thick, double-headed: a call down plus what comes back up (events, replies, callbacks; the Driver passes its up uninterpreted). Each runtime is one concrete factory with a method per mode (`headless`, `tui`, `in_process`: inside the Delegate's process, no child process or tmux), so a new runtime is one more factory box. A factory method returning None means that runtime lacks the mode.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each calls only the next lower one and imports only lower layers' public packages; the rules and their exceptions: `CLAUDE.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
   subgraph EN[entry points]
     LD[launchd]
     HU[the user]
-    M["manager: /agent-pm:tmux"]
   end
-  subgraph L1[orchestration]
-    subgraph OR[orchestrator/]
-      R["router.py<br>pick · usage gate · detach"]
-      RU["run.py<br>one run · write-back"]
-      PP["promote.py → prune.py"]
-    end
-    W[crew.py]
+  subgraph MG[agent_pm.manager]
+    W[crew.py] --> RS[roster.py]
   end
-  subgraph L2["role runs (role · task)"]
-    D["delegate/<br>API · CLI · outcome check"]
+  subgraph LO[agent_pm.linear_orchestrator]
+    R["engine/router.py<br>pick · usage gate"]
+    RU["engine/run.py<br>one run · write-back"]
+    PP["engine/promote.py → prune.py"]
+    LC["engine/config.py<br>[core] overlay"]
+  end
+  subgraph DL[agent_pm.delegate]
+    D["API · CLI · run"]
     C["composer/<br>prompt · run spec"]
-    ID["InstructionDriver (TASK-356)<br>hands the prompt back"]
-    T["core/team/<br>roles · tasks · templates"]
-  end
-  subgraph L3[sessions]
-    DR["driver/<br>modes: headless · tui · in_process<br>tmux_host"]
-    subgraph AD[adapters/]
-      CL[Claude adapter]
-      CX[Codex adapter]
+    EV["event/<br>reply · outcome check · callback line"]
+    CF["engine/config.py<br>config paths"]
+    subgraph TM[team/]
+      T["roles · tasks · templates"]
+      AT[tools/]
     end
   end
+  subgraph SE[agent_pm.session]
+    DR["engine/: api · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: tmux_host"]
+    subgraph AD[adapters/]
+      CL[claude]
+      CX[codex]
+      PR[print_prompt]
+    end
+  end
+  U[agent_pm.utils]
   subgraph RT[agent runtimes]
     P1[Claude Code]
     P2[Codex CLI]
   end
-  EN --> R
-  EN --> D
-  LD --> PP
-  M --> W
-  W -->|"start · show · sessions"| DR
-  RU <==>|"delegate.run · events, outcome"| D
-  OR -->|"session chores"| DR
+  LD -.-> R & PP
+  HU -.->|"--issue"| R
+  HU -.->|"act-as · CLI"| D
+  HU -.-> W
+  R -.->|detached session| RU
+  RU -->|agent_pm.delegate| D
+  LC -->|agent_pm.delegate.composer| C
+  LO -->|"agent_pm.session, until TASK-372"| DR
+  MG -->|"agent_pm.session, until TASK-371"| DR
   D --> C
+  D -->|agent_pm.session| SE
   C -->|reads| T
-  D -->|instructions| ID
-  D <==>|"agent: start · events, replies"| DR
-  DR -->|loads| AD
-  CL --> P1
-  CX --> P2
-  R ~~~ RU
-  C ~~~ DR
+  DR --> AD
+  CL -.-> P1
+  CX -.-> P2
+  RT -.-> AT
+  classDef shared stroke-dasharray: 4 3
+  class EV,U,CF shared
 ```
+
+Solid arrow: an import, the only direction allowed, or a file read (`reads`); its label names the package imported, by its `__all__`. Dotted: runs a command or process. Dashed: shared modules, their imports not drawn.
 
 ## Install
 
-`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (the tmux skill, tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`core/config.toml`'s `cwd` and `trusted_dirs`).
+`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux`: start and direct other agent sessions (workers: Claude Code, Codex or another configured client) in iTerm2 or tmux panes, or run a core role in a pane or headless: `core/skills/tmux/SKILL.md`.
-- `/agent-pm:manage`: your guidelines for the commander session, the one you talk to, e.g. `ctmux`'s; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `core/skills/manage/SKILL.md`.
-- `ctmux <session>` in iTerm2: opens tmux session `<session>` (made in the current dir if missing) attached with `tmux -CC`, so worker panes are native iTerm2 splits in the same window; you start `claude` or `codex` in it yourself. Install: run the plugin's copy with `--install` (e.g. `~/.claude/plugins/marketplaces/agent-pm/core/skills/tmux/scripts/ctmux --install`), which copies it to `~/.agent-pm/bin/ctmux`, then add `alias ctmux=~/.agent-pm/bin/ctmux` to `~/.zshrc` (or `~/.bashrc`); rerun `--install` after a plugin update.
-- `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `core/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `core/config.toml`'s `team_dirs` comment; `core/src/drive.py --list` lists every role and task.
+- `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
+- `/agent-pm:manage`: your guidelines for the commander session, the one you talk to; run it there. Only you can invoke it, so a worker starting its own workers never gets it: `manager/skills/manage/SKILL.md`.
+- `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
+- Your own roles, tasks and templates, outside the plugin: `delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
 ## Setup
 
-Requires macOS, `/opt/homebrew/bin/python3`, Install's requirements and `gh` logged in as you. The orchestrator runs this checkout's scripts, not the plugin.
+Requires macOS, Install's requirements and `gh` logged in as you. The Linear orchestrator runs this checkout's scripts, not the plugin.
 
-1. Create `~/.agent-pm/orchestrator.local.toml` and `~/.agent-pm/core.local.toml` as each `config.toml`'s header says, core's with researcher's and pm's `[output]` (its Destination comment). `<work_dir>` below is the `work_dir` key.
+1. Create `~/.agent-pm/config.local.toml`, the one local file over every project's `config.toml` (layers, merge rules and key ownership: `utils/src/agent_pm/utils/config_file.py`'s docstring), from the `# local:` lines of `session/`, `delegate/` and `linear-orchestrator/config.toml`, with researcher's and pm's `[output]` (delegate's Destination comment); a required key left `""` stops router, run and promote. `<work_dir>` below is the `work_dir` key. Migrating: the old `~/.agent-pm/core-new.local.toml` and `~/.agent-pm/linear-new.local.toml` contents go into `config.local.toml` (a table both define, such as `[roles.<role>]`, once), `show = ""` becoming `show = "none"` (`show` is not used yet: a later change wires the display).
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 3. Agent runs need no `linear` skill and get no Linear key: router and promote act in Linear as the harness account `frank.agent.w@gmail.com`, each role's write-back as its `[roles.<role>]` `account`, its API key in the Keychain under `key`. Per role:
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
    2. Open the invite in a private window, choosing **Continue with email** (Google signs in as the harness account).
    3. As the role account, create a personal API key in its settings.
    4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `router.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` event in `<work_dir>/logs/orchestrator.jsonl`.
-4. The harness account's key, the logs dir and the schedules:
+4. The harness account's key:
    ```bash
-   security add-generic-password -a frank.agent.w -s linear-api-key -w   # the only item under orchestrator.local.toml's harness_key
-   mkdir -p ~/.agent-pm/logs                                             # the plists' log dir; launchd can't start a job without it
-   for job in router promote; do cp orchestrator/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist; done
+   security add-generic-password -a frank.agent.w -s linear-api-key -w   # the only item under config.local.toml's harness_key
    ```
 
-The plists log to `/Users/francis/.agent-pm/logs/` (launchd doesn't expand `~`): with another `work_dir`, edit their log paths. The router plist passes `--now`, which skips `router.py`'s 01:00–06:59 hours check: drop it to run only at night. To change a schedule, edit the plist in `orchestrator/`, copy it again, `launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>` and bootstrap it again; to stop a job, `bootout` it and delete its plist from `~/Library/LaunchAgents/`.
+launchd scheduling of router and promote returns with [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379).
 
 ## Using the board
 
@@ -121,27 +126,23 @@ flowchart LR
 
 ### Task labels
 
-The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`core/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
+The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`delegate/src/agent_pm/delegate/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
 
-**Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `core.local.toml`'s `[roles.<role>.tasks.<task>]` to `[roles.<role>]` and of its `[clients.<name>.roles.<role>.tasks.<task>]` to `[clients.<name>.roles.<role>]` (e.g. `[clients.skill.roles.<role>.output]`), of `orchestrator.local.toml`'s `[core.roles.<role>.tasks.<task>]` to `[core.roles.<role>]`. Then do Operating's Upgrade too.
+**Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `config.local.toml`'s `[roles.<role>.tasks.<task>]` to `[roles.<role>]` and of its `[clients.<name>.roles.<role>.tasks.<task>]` to `[clients.<name>.roles.<role>]` (e.g. `[clients.skill.roles.<role>.output]`), of its `[core.roles.<role>.tasks.<task>]` to `[core.roles.<role>]`. Then do Operating's Upgrade too.
 
 ## Operating
 
 ```mermaid
 flowchart LR
     L[launchd] -->|every 30 min| R["router.py: claim or resume, render the input"] -->|"tmux, input as text"| I[run.py]
-    Y[you] -->|"--issue, --tui"| R
-    I --> D["drive.py: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
+    Y[you] -->|"--issue"| R
+    I --> D["Delegate: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
     L -->|every 5 min| P[promote.py] --> X[prune.py]
 ```
 
+The router's and promote's commands: `PYTHONPATH=<the five src dirs> python3 -P -m agent_pm.linear_orchestrator.engine.router|promote …`; the router's options: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py`'s docstring.
+
 ```bash
-python3 orchestrator/src/router.py --now --dry-run           # the next tick's plan and usage probe; changes nothing
-python3 orchestrator/src/router.py --now                     # a tick now, outside the schedule
-python3 orchestrator/src/router.py --issue TASK-12           # start that Todo issue or resume that In Progress one now
-python3 orchestrator/src/router.py --issue TASK-12 --dry-run # what --issue would do; changes nothing
-python3 orchestrator/src/promote.py --dry-run                # what Handoff and prune would do
-python3 orchestrator/src/promote.py --now                    # Handoff now, skipping the 10-minute undo window
 tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
 tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent run; = matches the exact name
 ```
@@ -150,12 +151,12 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 
 | Log | Contents |
 |---|---|
-| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day. launchd's crash output may add non-JSON lines |
+| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
 | `<work_dir>/logs/runs.jsonl` | Agent run start/resume lines of the last 7 days: keep it, resume and Recover read it |
 
-An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs; moving `<work_dir>` or the repo breaks the installed plists.
+An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 
-**Upgrade** to `orchestrator.jsonl` and `runs.jsonl`: deploy with no issue In Progress (nothing reads the old `runs.log`, so Recover would send such an issue back to Todo for a new session); reinstall both plists, whose log path changed, as for a schedule change (Setup); delete the old logs, no archive (another `<work_dir>`: its `logs/`):
+**Upgrade** to `orchestrator.jsonl` and `runs.jsonl`: deploy with no issue In Progress (nothing reads the old `runs.log`, so Recover would send such an issue back to Todo for a new session); delete the old logs, no archive (another `<work_dir>`: its `logs/`):
 
 ```bash
 rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui
@@ -163,9 +164,42 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-```bash
-python3 orchestrator/src/router.py --issue TASK-12 --tui [--split right|below] [--split-from <session>] [--events <file>] [--manager <name>]
-python3 orchestrator/src/router.py --now --tui [--split right|below] [--split-from <session>] [--events <file>] [--manager <name>]   # a tick
+The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
+
+## Layout
+
+```text
+delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
+session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
+utils/                shared utilities
+manager/              crew: a manager's workers and roster
+linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
+tests/                repo-wide checks: guards.py (the repo's rules)
+.github/              CI workflows and their helpers
 ```
 
-Watch an agent run in a TUI pane and step in: the same claim, input, write-back, session comment and log lines; launchd never passes `--tui`. `--tui` attends the agent run `--issue` (Operating) or a tick starts or resumes, and prints to stderr how to attach to the driver session `agent-pm-<role>-<ID>` (always detached) and the TUI session `<role>-<ID>-<sid[:8]>` (live run and `max_runs` slot: `CLAUDE.md` › Architecture), whose pane opens as a worker's does (`core/skills/tmux/SKILL.md` › Start), you the opener, or, outside a tmux grid, where `--split`/`--split-from` say. No pane to split (pass `--split-from`) or a bad manager directory or events file → nothing claimed, exit 2. The events file (`--events`, else the manager directory's: `core/skills/tmux/SKILL.md` › Start 1; outside tmux with neither: none, with a stderr hint) gets `HH:MM:SS <session> done|blocked|dead` lines. `tmux kill-session -t '=agent-pm-<role>-<ID>'` ends the agent run and its TUI session (in a manager's roster: `core/skills/tmux/SKILL.md` › Direct › Stop); the issue stays In Progress and Recover resumes it (`--issue`: at once). After the outcome or a give-up the TUI session stays open, nothing in it written back, until the issue's next agent run or `prune.py` (24 hours after Done or Canceled) closes it by name: give no other tmux session a `<role>-<ID>-<8 hex>` name.
+Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots), `tests/` and `config.toml`. Each module's docstring states its behaviour.
+
+## Runtime policy
+
+Delegate reads `[policy.<runtime>]` `flags` (an argv list) and `env` (a string table) from core config with the local overlay, then supplies them as `Spec.flags/env`. Crew workers get no `[policy.*]`: their `Spec.flags/env` are their own. Every session then takes the same path: Adapters add runtime dialogue options, `[adapters.<runtime>]` keys and Access grants (crew workers included; a Claude worker's Access gives it `--setting-sources user,project,local`, Claude's default); Driver owns session selection and the child env: the caller's, minus every Adapter's identity markers, and minus an Adapter's injected defaults (Codex: `NO_COLOR`, `CODEX_CI`, `PAGER`, `GIT_PAGER`, `GH_PAGER`) only inside that runtime and at the injected value (`session/src/agent_pm/session/engine/api.py` `_identity_drop`), under the Launch env.
+
+The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` and a `--settings` turning this core's plugin off (the tui hooks merge into it), and Codex `-s danger-full-access`, `approval_policy="on-request"`, `approvals_reviewer="auto_review"`. To use Codex `workspace-write`, replace its policy flags with `-s workspace-write`, the approval options, `-c sandbox_workspace_write.network_access=false`, and `-c sandbox_workspace_write.writable_roots=[]`. Full access does not enforce writable-root or team-dir boundaries.
+
+For existing `~/.agent-pm/config.local.toml` overrides, remove `[adapters.codex]` `sandbox` and `shell_network`: those keys now fail validation. Express them in `[policy.codex].flags` using the options above. Move Claude `--permission-mode` and `--strict-mcp-config` from `[adapters.claude].flags` into `[policy.claude].flags`; keep there only flags every session, crew workers included, should get. Policy flag lists replace the defaults wholesale, so repeat every option you intend to keep.
+
+Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
+
+## Access
+
+A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/config.toml`'s `read` comment.
+
+## Tests
+
+```bash
+export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src   # from the repo root
+```
+
+Commands and where a test goes: `CLAUDE.md` › Tests.
+
+CI (`.github/workflows/test.yml`) runs Comment budget, Ruff over the whole repo, `Unit <project>` per project (`repo`: the root `tests/`) and `Integration <project> [shard]` per `.github/integration_jobs.py` `JOBS` entry (`--check` validates assignment), both through `.github/run_tests.py`, which annotates each failing test and a crash by test id.
