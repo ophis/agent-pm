@@ -20,24 +20,6 @@ Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > 
 
 Repository design rules live in `tests/guards.py`: namespace and subsystem placement, shared types, runtime ownership, configuration and import side effects. Shared classes used across their layer live in a `types.py` module. Standalone hooks use only the standard library.
 
-## Tests
-
-Tests of the whole repository's source go in the root `tests/`; tests of a `.github/` script go next to it in `.github/`. Project tests go in `<project>/tests/unit/` or `integration/`, with shared helpers in non-test modules beside their owner. The orchestrator uses `linear-orchestrator/tests/orchestrator_tests/{unit,integration,case.py}` so imports have a normal Python package name; other projects use `tests/case.py` for their `Case`. Never import a `*_test` module or patch shipped code; construct fresh dependencies and patch only standard-library boundaries or lower-layer fakes.
-
-Use the Mac's own `python3` (3.14) locally; GitHub CI uses Python 3.11 on Ubuntu. From the repository root, set `PYTHONPATH` as in README › Tests, then run only the affected tests while working and one full pass at completion:
-
-```bash
-python3 .github/run_tests.py 'Unit session' session/tests/unit
-python3 .github/run_tests.py 'Unit orchestrator' linear-orchestrator/tests/orchestrator_tests/unit
-python3 .github/run_tests.py Unit --unit
-python3 .github/run_tests.py 'Repository guards' tests/unit
-python3 .github/run_tests.py '.github scripts' .github
-python3 .github/integration_jobs.py 1
-python3 .github/integration_jobs.py --check
-```
-
-CI's Lint job runs comment budget, Ruff, Pyright, import-linter, vulture, pylint's cyclic-import and duplicate-code checks, actionlint's native workflow checks, typos and `python3 -m tests.checks` (repository design, file length and test-boundary AST checks). Unit runs every unit suite and `.github/` tests through `.github/run_tests.py`; Integration distributes individual tests across eight numbered shards using `.github/integration_durations.json`; new tests use the median recorded duration. Set `RUN_TESTS_DURATIONS` to a file outside the checkout to collect timings. Test jobs make source read-only and fail on a changed Git tree. The aggregate `CI` job requires every check and test job to succeed.
-
 ## Domain docs
 
 Single-context: root `CONTEXT.md`. `docs/` (ADRs, agent notes) is gitignored: local only.
