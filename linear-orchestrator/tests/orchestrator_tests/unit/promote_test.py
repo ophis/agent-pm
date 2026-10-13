@@ -120,7 +120,10 @@ class TestPromote(Base):
         self.run_main()
         some, only = (c["description"] for c in self.fake.children.values())
         self.assertIn(
-            "## Source\n- Report: https://gh/r.md\n- Run rate analysis: https://gh/rate.md\n\n## Instructions\n",
+            (
+                "## Source\n- Report: https://gh/r.md\n- Run rate analysis: "
+                "https://gh/rate.md\n\n## Instructions\n"
+            ),
             some,
         )
         self.assertNotIn("s-1", some)
@@ -364,4 +367,3 @@ class TestScopeAndConfig(Base):
 
     def test_unknown_flag(self):
         self.assertEqual(self.run_main("--nope"), 2)
-

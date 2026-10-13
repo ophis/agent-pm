@@ -292,9 +292,7 @@ class Bounce(Base):
     def test_signal_exit_raises(self):
         for name in ("unarchive", "subscribe"):
             with self.subTest(name=name):
-                gql = Gql(
-                    issue=self.src(), fail=lambda n, v: Stopped(129) if n == name else None
-                )
+                gql = Gql(issue=self.src(), fail=lambda n, v: Stopped(129) if n == name else None)
                 with self.assertRaises(Stopped):
                     writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
                 self.assertEqual(gql.calls[-1][0], name)
@@ -382,4 +380,3 @@ class RunsNote(Case):
                 },
             ],
         )
-

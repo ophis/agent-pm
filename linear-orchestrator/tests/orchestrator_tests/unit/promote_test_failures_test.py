@@ -206,7 +206,10 @@ class TestConfigError(Base):
         self.assertEqual(self.run_main(), 1)
         self.assertEqual(
             self.err,
-            "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+            (
+                "linear-orchestrator/config.toml: work_dir must be a printable absolute"
+                " or ~ path: 'w'\n"
+            ),
         )
         self.assertEqual((self.fake.calls, FakePruner.calls), ([], []))
         self.assertFalse(os.path.exists(self.logs))
@@ -352,4 +355,3 @@ class TestPruneHook(Base):
                     self.out.splitlines()[1],
                     r"^prune-error error=RuntimeError: boom",
                 )
-

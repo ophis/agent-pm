@@ -362,4 +362,3 @@ class Gather(Case):
             [d.path for d in src.docs], ["Product Design/2026-09-01-PM-9-x.md", "Research/r.md"]
         )
         self.assertEqual(len(gh.calls), 2)
-

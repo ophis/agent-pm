@@ -183,7 +183,10 @@ class Entry(OuterBase):
         self.assertEqual(
             (self.err, self.said()),
             (
-                "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+                (
+                    "linear-orchestrator/config.toml: work_dir must be a printable absolute"
+                    " or ~ path: 'w'\n"
+                ),
                 [],
             ),
         )
@@ -301,4 +304,3 @@ class Brake(Base):
         self.api.usages = {"a": reading(70)}
         self.assertEqual(self.brake("researcher"), (0, "five_hour=70% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["a"])
-

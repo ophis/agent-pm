@@ -89,7 +89,10 @@ class Limits(Case):
             [
                 f"run end TASK-7 sid={SID} exit=-9",
                 f"writeback step TASK-7 sid={SID} step=limit",
-                f"run run-error TASK-7 error=IsADirectoryError: [Errno 21] Is a directory: '{self.runs}'",
+                (
+                    f"run run-error TASK-7 error=IsADirectoryError: [Errno 21] Is a directory: '"
+                    f"{self.runs}'"
+                ),
             ],
         )
         self.assertEqual(self.gql.calls[-2:], [*updated(ended("limit", -9)), REPAIR])
@@ -173,4 +176,3 @@ class Cli(Case):
                 self.assertEqual(self.main(runtime=runtime), 2)
                 self.assertEqual(self.err, f"run.py: bad runtime: {runtime!r}\n")
         self.nothing_ran()
-

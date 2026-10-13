@@ -60,11 +60,17 @@ class SayAndApprove(Base):
     def test_queries_verbatim(self):
         self.assertEqual(
             writeback.M_TITLE,
-            "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }",
+            (
+                "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { "
+                "title: $t }) { success } }"
+            ),
         )
         self.assertEqual(
             writeback.M_ATTACH,
-            "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }",
+            (
+                "mutation($i: String!, $u: String!, $t: String) { "
+                "attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+            ),
         )
         self.assertEqual(
             writeback.M_UNARCHIVE, "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
@@ -422,4 +428,3 @@ class CommentIds(Base):
                 self.assertEqual(gql.calls, [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment")])
                 self.assertEqual(self.lines()[-1], f"step-error {ID} step=comment error={error}")
                 self.no_ledger(ctx)
-

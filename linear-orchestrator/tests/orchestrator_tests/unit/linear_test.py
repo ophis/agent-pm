@@ -38,7 +38,10 @@ class RoleIds(Case):
             )
         self.assertEqual(
             str(cm.exception),
-            "linear-orchestrator/config.toml [roles.engineer]: account 'engineer@agents.test' not found in Linear",
+            (
+                "linear-orchestrator/config.toml [roles.engineer]: account "
+                "'engineer@agents.test' not found in Linear"
+            ),
         )
 
 
@@ -80,9 +83,10 @@ class TeamCheck(Case):
         other = [i for k, i in STATES.items() if k not in ("handoff", "done")]
         cases = {
             f"team {TEAM} not found in Linear": [],
-            f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}, done {STATES['done']}": [
-                team_node(other)
-            ],
+            (
+                f"[states] not workflow states of team 'Team': handoff {STATES['handoff']}"
+                f", done {STATES['done']}"
+            ): [team_node(other)],
         }
         for message, nodes in cases.items():
             with self.subTest(message):
@@ -399,4 +403,3 @@ class Helpers(Case):
 
     def test_stamp_is_local_time_in_seconds(self):
         self.assertRegex(linear.stamp(), r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\Z")
-

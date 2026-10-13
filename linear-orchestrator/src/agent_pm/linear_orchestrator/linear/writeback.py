@@ -33,7 +33,10 @@ from agent_pm.utils import save
 M_TITLE = (
     "mutation($i: String!, $t: String!) { issueUpdate(id: $i, input: { title: $t }) { success } }"
 )
-M_ATTACH = "mutation($i: String!, $u: String!, $t: String) { attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+M_ATTACH = (
+    "mutation($i: String!, $u: String!, $t: String) { "
+    "attachmentLinkURL(issueId: $i, url: $u, title: $t) { success } }"
+)
 M_UNARCHIVE = "mutation($i: String!) { issueUnarchive(id: $i) { success } }"
 Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { nodes { url } } } }"
 Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
@@ -94,10 +97,14 @@ def say(lead, text):
 
 def approve_line(repo):
     if repo is None:
-        return "**🔴 To approve, move this issue to Handoff with a comment `Repo: <owner>/<name>` naming the target repo.**"
+        return (
+            "**🔴 To approve, move this issue to Handoff with a comment `Repo: "
+            "<owner>/<name>` naming the target repo.**"
+        )
     return (
-        f"**🔴 Target repo:** `{repo}` **(from the project mapping). To approve, move this issue to Handoff; "
-        "to use another repo, comment** `Repo: <owner>/<name>` **first.**"
+        f"**🔴 Target repo:** `{repo}"
+        f"` **(from the project mapping). To approve, move this issue to "
+        f"Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**"
     )
 
 
@@ -328,10 +335,10 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
     src = gql(Q_ID, i=h.source)["issue"] if h else None
     if src and src["team"]["id"] == ctx.team:
         text = (
-            f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
-            "`Repo: <owner>/<name>` naming the target repo."
-            + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
-        )
+            f"Repo check failed: {reason}. To build it, move {h.source}"
+            f" to Handoff again with a comment `Repo: <owner>/<name>` naming the "
+            f"target repo."
+        ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
         try:
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         except (Exception, LinearError):

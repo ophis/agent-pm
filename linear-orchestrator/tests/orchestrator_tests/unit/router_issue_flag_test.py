@@ -49,9 +49,15 @@ class IssueFlag(TickBase):
                 "role",
                 issue("TASK-1", "In Progress", "researcher"),
                 lambda: self.resumable("TASK-1", "a", 60, "engineer"),
-                "recover TASK-1 to=in_review reason=role (engineer) is not the assignee's (researcher)",
+                (
+                    "recover TASK-1 to=in_review reason=role (engineer) is not the "
+                    "assignee's (researcher)"
+                ),
                 "In Review",
-                "The interrupted agent run's role (engineer) is not the assignee's (researcher); needs a look.",
+                (
+                    "The interrupted agent run's role (engineer) is not the assignee's "
+                    "(researcher); needs a look."
+                ),
             ),
             (
                 "not resumable",
@@ -379,4 +385,3 @@ class Outage(TickBase):
                     ],
                 )
                 self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
-

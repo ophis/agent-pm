@@ -70,9 +70,7 @@ class PruneACloneAnAgentRun(PruneScenario):
         self.assertEqual(code, 3)
         self.assertEqual(out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree")
         self.assertTrue(
-            out.splitlines()[1].startswith(
-                "prune-error TASK-49 error=GitError: git --git-dir="
-            ),
+            out.splitlines()[1].startswith("prune-error TASK-49 error=GitError: git --git-dir="),
             out,
         )
         self.assertTrue(out.splitlines()[1].endswith("worktree prune: fatal: boom"), out)
@@ -91,7 +89,10 @@ class PruneACloneAnAgentRun(PruneScenario):
                 0,
                 [
                     "prune-plan entry=TASK-49/src/o/n what=delete the worktree",
-                    f"prune-plan TASK-49 what=prune {clone}'s worktree records and pushed TASK-49-* branches",
+                    (
+                        f"prune-plan TASK-49 what=prune {clone}"
+                        f"'s worktree records and pushed TASK-49-* branches"
+                    ),
                 ],
             ),
         )
@@ -360,4 +361,3 @@ class PruneACloneAnAgentRun(PruneScenario):
 class Imports(Case):
     def test_clones_are_configs(self):
         self.assertIs(prune.CLONES, config.CLONES)
-

@@ -408,4 +408,3 @@ class PlanOneHistoryFetchPerIssue(Base):
         self.plan(lambda q, **v: queries.append(q) or fake(q, **v))
         self.assertEqual(sum("history" in q for q in queries), 1)
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-

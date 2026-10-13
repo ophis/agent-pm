@@ -104,4 +104,3 @@ class Table(Case):
         ):
             with self.subTest(t):
                 self.assertEqual(fake_linear.stamp(t), "2026-10-09T07:30:41.062Z")
-

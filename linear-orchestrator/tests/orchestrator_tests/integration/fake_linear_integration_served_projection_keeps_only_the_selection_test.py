@@ -400,4 +400,3 @@ class ServedProjectionKeepsOnlyTheSelection(ServedScenario):
                 }
             ],
         )
-

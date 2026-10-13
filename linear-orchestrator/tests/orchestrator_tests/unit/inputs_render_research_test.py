@@ -129,7 +129,10 @@ class RenderResearch(Case):
             docs=DOCS,
         )
         self.assertIn(
-            "## The user's comments\n\nANN@example.com, 2026-09-02T00:00:00.000Z:\nHi\n\nBob, 2026-09-03T00:00:00.000Z:\nBye",
+            (
+                "## The user's comments\n\nANN@example.com, 2026-09-02T00:00:00.000Z:\n"
+                "Hi\n\nBob, 2026-09-03T00:00:00.000Z:\nBye"
+            ),
             got,
         )
         self.assertNotIn("## Other comments", got)
@@ -326,4 +329,3 @@ class RenderDesign(Case):
         )
         self.assertNotIn("## Comments on", got)
         self.assertIn("## Brief\n\nCompare queues\n\nAnn, t:\nGo.", got)
-

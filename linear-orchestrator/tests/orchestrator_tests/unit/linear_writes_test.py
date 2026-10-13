@@ -18,11 +18,17 @@ class Writes(Case):
     def test_queries_verbatim(self):
         self.assertEqual(
             linear.M_SUBSCRIBE,
-            "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail: $e) { success } }",
+            (
+                "mutation($i: String!, $e: String!) { issueSubscribe(id: $i, userEmail:"
+                " $e) { success } }"
+            ),
         )
         self.assertEqual(
             linear.M_COMMENT,
-            "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }",
+            (
+                "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: "
+                "$i, body: $b }) { success } }"
+            ),
         )
         self.assertEqual(
             linear.M_COMMENT_ID,
@@ -36,14 +42,20 @@ class Writes(Case):
         self.assertEqual(linear.NOT_FOUND, "Entity not found")
         self.assertEqual(
             linear.M_STATE,
-            "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { stateId: $s }) { success } }",
+            (
+                "mutation($i: String!, $s: String!) { issueUpdate(id: $i, input: { "
+                "stateId: $s }) { success } }"
+            ),
         )
         self.assertEqual(
             linear.Q_ISSUE_STATE, "query($i: String!) { issue(id: $i) { state { id } } }"
         )
         self.assertEqual(
             linear.HISTORY,
-            "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId fromStateId toStateId } }",
+            (
+                "history(first: 250, orderBy: createdAt) { nodes { createdAt actorId "
+                "fromStateId toStateId } }"
+            ),
         )
 
     def test_call_returns_the_field_and_raises_on_success_false(self):
@@ -246,4 +258,3 @@ class LastMove(Case):
         ):
             with self.subTest(states=states, actors=actors, nodes=len(nodes)):
                 self.assertEqual(linear.last_move(nodes, states, actors), want)
-

@@ -401,4 +401,3 @@ class TickHoursBoundaries(TickScenario):
             self.assertEqual(len(fake.reads()), 1, argv)
             self.assertEqual("plan mode=new queue=2" in self.said(), not argv, argv)
             self.assertEqual(self.said().count('blocked TASK-1 by=["TASK-7"]'), 1, argv)
-

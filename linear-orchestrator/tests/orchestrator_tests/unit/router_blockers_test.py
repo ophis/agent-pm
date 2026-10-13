@@ -169,7 +169,10 @@ class Blockers(Base):
             reads = {s: fake.reads(s) for s in ("Todo", "In Progress")}
             self.assertEqual(len(reads["Todo"]), 1, argv)
             self.assertIn(
-                "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }",
+                (
+                    "inverseRelations(first: 50) { nodes { type issue { identifier state { "
+                    "type } } } }"
+                ),
                 reads["Todo"][0],
                 argv,
             )
@@ -202,4 +205,3 @@ class Blockers(Base):
             )
             self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7", "TASK-8"]', *last], argv)
             self.assertEqual(fake.mutations, [], argv)
-

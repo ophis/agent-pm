@@ -140,4 +140,3 @@ class Begin(Base):
             ],
         )
         self.assertEqual([e.kind for e in runs.parse_log(path)], ["start", "resume"])
-

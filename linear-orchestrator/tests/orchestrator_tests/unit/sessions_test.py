@@ -415,4 +415,3 @@ class Repair(Case):
             self.repair(lambda q, **v: release.wait(30), limit=0.1), "timed out after 0.1s"
         )
         self.assertLess(time.monotonic() - t, 5)
-

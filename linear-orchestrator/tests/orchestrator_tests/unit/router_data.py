@@ -74,7 +74,10 @@ LIGHT, DEEP, STRAY, ORPHAN_LABEL = (
     f"00000000-0000-4000-8000-0000000000{n}" for n in (21, 22, 23, 24)
 )
 
-TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
+TASK_LABELS = (
+    f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}'
+    f'"\nproduct-design = "{ORPHAN_LABEL}"\n'
+)
 
 RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
@@ -83,11 +86,14 @@ RECHECK = (
 
 NO = SessionStatus("no", None, "")
 
+
 def ago(**kw):
     return (NOW - timedelta(**kw)).isoformat().replace("+00:00", "Z")
 
+
 def who(role):
     return None if role is None else {"id": f"u-{role}", "email": ROLE.get(role, f"{role}@x.com")}
+
 
 def reading(five=10.0, weekly=10.0):
     return SessionUsage(
@@ -95,8 +101,10 @@ def reading(five=10.0, weekly=10.0):
         None if weekly is None else Window(weekly, None),
     )
 
+
 def op(query):
     return re.search(r"\{ (\w+)\(", query).group(1)
+
 
 def writes(fake):
     return [
@@ -104,6 +112,7 @@ def writes(fake):
         for q, v in fake.queries
         if q == linear.Q_ISSUE_STATE or "mutation" in q
     ]
+
 
 def issue(
     ident,
@@ -131,11 +140,14 @@ def issue(
         "labels": list(labels),
     }
 
+
 def blocker(ident, state="started", kind="blocks"):
     return {"type": kind, "issue": ident and {"identifier": ident, "state": {"type": state}}}
 
+
 def label(name, id, group=TASK_GROUP):
     return {"id": id, "name": name, "parent": group and {"id": group}}
+
 
 def outer_args(ident, project, assignee, sid, task, mode, runtime):
     return argparse.Namespace(
@@ -148,6 +160,7 @@ def outer_args(ident, project, assignee, sid, task, mode, runtime):
         runtime=runtime,
     )
 
+
 @contextlib.contextmanager
 def other_router(path):
     # flock conflicts across open files in one process too
@@ -155,6 +168,7 @@ def other_router(path):
     with open(os.path.join(os.path.dirname(path), "router.lock"), "a") as f:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
+
 
 LS_REMOTE = (
     "git",
@@ -208,6 +222,7 @@ Add a session registry.
 
 None linked."""
 
+
 def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
     return [
         f"--issue={ID}",
@@ -218,6 +233,7 @@ def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
         f"--mode={mode}",
         f"--runtime={runtime}",
     ]
+
 
 def inner(*args, text=INPUT):
     return [

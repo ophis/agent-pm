@@ -166,10 +166,22 @@ class PruneEntriesThatAreNoClone(PruneScenario):
         self.assertEqual(
             out.splitlines(),
             [
-                "prune-skip entry=TASK-48/src/o/repo reason=not a real directory inside TASK-48/src/o/, refusing to touch",
-                "prune-skip entry=TASK-49/src/file reason=not a real directory inside TASK-49/src/, refusing to touch",
-                "prune-skip entry=TASK-49/src/link reason=not a real directory inside TASK-49/src/, refusing to touch",
-                "prune-skip entry=TASK-49/publish reason=not a real directory inside TASK-49/, refusing to touch",
+                (
+                    "prune-skip entry=TASK-48/src/o/repo reason=not a real directory inside"
+                    " TASK-48/src/o/, refusing to touch"
+                ),
+                (
+                    "prune-skip entry=TASK-49/src/file reason=not a real directory inside "
+                    "TASK-49/src/, refusing to touch"
+                ),
+                (
+                    "prune-skip entry=TASK-49/src/link reason=not a real directory inside "
+                    "TASK-49/src/, refusing to touch"
+                ),
+                (
+                    "prune-skip entry=TASK-49/publish reason=not a real directory inside "
+                    "TASK-49/, refusing to touch"
+                ),
             ],
         )
         self.assertTrue(os.path.isdir(os.path.join(victim, ".git")))
@@ -231,9 +243,18 @@ class PruneEntriesThatAreNoClone(PruneScenario):
         self.assertEqual(
             out.splitlines(),
             [
-                "prune-skip entry=TASK-48/src/o/file reason=not a real directory inside TASK-48/src/o/, refusing to touch",
-                "prune-skip entry=TASK-48/src/o/n reason=not a real directory inside TASK-48/src/o/, refusing to touch",
-                "prune-skip entry=TASK-49/src/o reason=not a real directory inside TASK-49/src/, refusing to touch",
+                (
+                    "prune-skip entry=TASK-48/src/o/file reason=not a real directory inside"
+                    " TASK-48/src/o/, refusing to touch"
+                ),
+                (
+                    "prune-skip entry=TASK-48/src/o/n reason=not a real directory inside "
+                    "TASK-48/src/o/, refusing to touch"
+                ),
+                (
+                    "prune-skip entry=TASK-49/src/o reason=not a real directory inside "
+                    "TASK-49/src/, refusing to touch"
+                ),
             ],
         )
         self.assertTrue(os.path.isfile(os.path.join(victim, ".git")))
@@ -284,7 +305,10 @@ class PruneEntriesThatAreNoClone(PruneScenario):
             (
                 0,
                 [
-                    "prune-skip entry=TASK-49/tmp reason=not a real directory inside TASK-49/, refusing to touch"
+                    (
+                        "prune-skip entry=TASK-49/tmp reason=not a real directory inside "
+                        "TASK-49/, refusing to touch"
+                    )
                 ],
             ),
         )
@@ -366,4 +390,3 @@ class PruneEntriesThatAreNoClone(PruneScenario):
                 all(c[5:8] == ["-C", clone, f"--git-dir={clone}/.git"] for c in run.calls),
                 run.calls,
             )
-

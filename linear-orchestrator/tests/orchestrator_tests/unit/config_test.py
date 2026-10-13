@@ -115,8 +115,8 @@ class Config(ConfigFile, Case):
             (
                 body,
                 missing(
-                    "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, "
-                    "states.handoff, states.done, states.canceled"
+                    "team, harness_key, task_label_group, states.todo, states.in_progress, "
+                    "states.in_review, states.handoff, states.done, states.canceled"
                 ),
             ),
             (
@@ -169,7 +169,10 @@ class Config(ConfigFile, Case):
             ],
             (
                 label + f'other = "{LABEL2}"\ndeep-research = "{LABEL1}"\n',
-                f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}",
+                (
+                    f"task_labels.light-research and task_labels.deep-research have the same"
+                    f" label id {LABEL1}"
+                ),
             ),
             ('logs_dir = "/x"\n' + BASE, "unknown keys: logs_dir"),
             (
@@ -350,7 +353,8 @@ class Config(ConfigFile, Case):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
         code = (
             "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
+            "try:\n    config.load()\nexcept config.ConfigError as e:\n    "
+            "print(json.dumps([e.msg, e.logs_dir]))"
         )
         res = subprocess.run(
             [*PY, "-c", code],
@@ -364,4 +368,3 @@ class Config(ConfigFile, Case):
         msg, logs = json.loads(res.stdout)
         self.assertTrue(msg.startswith("linear-orchestrator/config.toml: "), msg)
         self.assertIsNone(logs)
-

@@ -41,7 +41,7 @@ CONFIG = (
 PM_NEXT = CONFIG.replace(
     role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false")
 )
-CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"  # child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z") before the port
+CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"
 
 
 def ago(minutes):

@@ -112,4 +112,3 @@ class ResearchRepo(Case):
         ):
             with self.subTest(desc=desc, project=project, repos=repos):
                 self.assertEqual(target.research_repo(issue(desc, project=project), repos), want)
-

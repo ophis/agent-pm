@@ -30,6 +30,7 @@ class ConfigFile:
         self.assertEqual(str(cm.exception), message)
         return cm.exception
 
+
 class Clones(ConfigFile, Case):
     def setUp(self):
         super().setUp()

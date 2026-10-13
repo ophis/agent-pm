@@ -20,19 +20,25 @@ RAW = ["gh", "api", "-H", "Accept: application/vnd.github.raw+json"]
 
 FENCE = "```"
 
+
 def ok(stdout="", code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
+
 
 def endpoint(path, ref="main"):
     return f"repos/ophis/private_docs/contents/{path}?ref={ref}"
 
+
 def listing(*names):
     return ok(json.dumps([{"name": n, "type": "file"} for n in names]))
 
+
 NOT_FOUND = ok(code=1, stderr="gh: Not Found (HTTP 404)")
+
 
 def note(body, at, who=AGENT):
     return issues.Note(body, at, who[0] if who else None, who[1] if who else None)
+
 
 def issue(
     description="",
@@ -57,11 +63,14 @@ def issue(
         tuple(linked),
     )
 
+
 def lines(*ls):
     return "\n".join(ls)
 
+
 def fenced(text, fence=FENCE):
     return f"{fence}markdown\n{text}\n{fence}"
+
 
 def research_issue():
     desc = f"Which queue fits?\nBackground: {BASE}Research/2026-08-01-RES-2-queues.md"
@@ -71,6 +80,7 @@ def research_issue():
         note("Deploy ok", "2026-09-01T11:00:00.000Z", (None, None)),
     )
     return issue(desc, notes=sorted(ns, key=lambda n: n.at))
+
 
 RESEARCH_PRECEDENCE = (
     "Precedence: the user's comments > the question > other comments; within each, newer > older. "

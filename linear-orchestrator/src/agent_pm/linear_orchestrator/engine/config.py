@@ -262,7 +262,8 @@ def _work_dir(cfg, root, clones=None):
     for k, clone in (clones or {}).items():
         if _overlap(path, clone):
             raise ConfigError(
-                f"linear-orchestrator/config.toml: work_dir must neither lie in nor contain local_clones.{k} {clone}: {v!r}"
+                f"linear-orchestrator/config.toml: work_dir must neither lie in nor "
+                f"contain local_clones.{k} {clone}: {v!r}"
             )
     return path
 

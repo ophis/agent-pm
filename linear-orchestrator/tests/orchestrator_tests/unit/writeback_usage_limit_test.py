@@ -86,8 +86,10 @@ class UsageLimit(Base):
             gql.calls[2],
             post(
                 "limit",
-                "Usage limit, reset time unknown."
-                "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false",
+                (
+                    "Usage limit, reset time unknown.\n\nCould not subscribe "
+                    "ann@example.com: LinearError: issueSubscribe: success: false"
+                ),
             ),
         )
 
@@ -225,7 +227,10 @@ class FinishSteps(Base):
         self.assertTrue(
             writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR, files=[spec, plan]))
         )
-        body = "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: LinearError: linear api error: body too long"
+        body = (
+            "Build ready: Ready.\n\nCould not post the Spec `ENG-7-spec.md`: "
+            "LinearError: linear api error: body too long"
+        )
         self.assertEqual(
             gql.calls,
             expect(
@@ -237,7 +242,10 @@ class FinishSteps(Base):
             ),
         )
         self.assertIn(
-            f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)} error=LinearError: linear api error: body too long",
+            (
+                f"step-error {ID} step=file:ENG-7-spec.md:{sha(SPEC_TEXT)}"
+                f" error=LinearError: linear api error: body too long"
+            ),
             self.lines(),
         )
 
@@ -299,7 +307,10 @@ class FileRecheck(Base):
                 self.assertEqual(
                     [c for c in gql.calls if c[0] == "comment"], [post("comment", body)]
                 )
-                note = f"Build failed: push not permitted\n\nCould not post the file `{os.path.basename(path)}`: {reason}"
+                note = (
+                    f"Build failed: push not permitted\n\nCould not post the file `"
+                    f"{os.path.basename(path)}`: {reason}"
+                )
                 self.assertTrue(
                     body.startswith(note) if reason == "OSError: " else body == note, body
                 )
@@ -373,4 +384,3 @@ class UrlCheck(Base):
                     [line for line in self.lines()[before:] if line.startswith("skip ")],
                     [skip] if skip else [],
                 )
-

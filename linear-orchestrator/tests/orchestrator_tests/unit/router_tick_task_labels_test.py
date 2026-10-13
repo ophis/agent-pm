@@ -78,7 +78,9 @@ class TickTaskLabels(TickBase):
                 )
                 self.assertEqual(self.tick(fake, *argv), rc)
                 t = fake.issues["TASK-1"]
-                self.assertEqual((t["state"], t["comments"]), ("In Review", [TaskLabelsScenario.ORPHAN]))
+                self.assertEqual(
+                    (t["state"], t["comments"]), ("In Review", [TaskLabelsScenario.ORPHAN])
+                )
                 self.assertEqual(
                     self.said(),
                     plan
@@ -135,7 +137,10 @@ class TickTaskLabels(TickBase):
         self.assertEqual(
             self.said(),
             [
-                "recover TASK-1 to=in_review reason=role (researcher) is not the assignee's (engineer)"
+                (
+                    "recover TASK-1 to=in_review reason=role (researcher) is not the "
+                    "assignee's (engineer)"
+                )
             ],
         )
         self.assertEqual((self.start.launches, self.state), ([], before))
@@ -153,4 +158,3 @@ class TickTaskLabels(TickBase):
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
         self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
-

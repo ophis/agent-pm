@@ -69,7 +69,10 @@ class RenderBuild(Case):
                 "",
                 "## The user's requirements since the last build",
                 "",
-                "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\nBob, 2026-09-08T00:00:00.000Z:\nBob says more",
+                (
+                    "Ann, 2026-09-06T00:00:00.000Z:\nUse Redis.\n\nBob, "
+                    "2026-09-08T00:00:00.000Z:\nBob says more"
+                ),
                 "",
                 "## The user's instructions",
                 "",
@@ -244,11 +247,17 @@ class RenderBuild(Case):
             docs=DOCS,
         )
         self.assertIn(
-            "## The user's requirements since the last build\n\nAnn, 2026-09-02T00:00:00.000Z:\none",
+            (
+                "## The user's requirements since the last build\n\nAnn, "
+                "2026-09-02T00:00:00.000Z:\none"
+            ),
             got,
         )
         self.assertIn(
-            "## Earlier comments (context; the user's ones are already built)\n\n- Ann, 2026-08-30T00:00:00.000Z:\n  > old",
+            (
+                "## Earlier comments (context; the user's ones are already built)\n\n- "
+                "Ann, 2026-08-30T00:00:00.000Z:\n  > old"
+            ),
             got,
         )
 
@@ -306,14 +315,18 @@ class Checkout(Case):
                 prompt = delegate.plan(run, spec).prompt
                 self.assertIn(f"\nCheckout: {name}\n", prompt)
                 self.assertIn(
-                    "`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>` the input's "
-                    "`Checkout:`",
+                    (
+                        "`[--name <checkout>]` in a command → `--name <checkout>`, `<checkout>`"
+                        " the input's `Checkout:`"
+                    ),
                     prompt,
                 )
                 for cmd in ("worktree", "status"):
                     self.assertIn(
-                        f"python3 -P <team>/tools/repo.py {cmd} --dir <Workdir>/src --branch <branch> "
-                        "[--name <checkout>] [--base <Base:>] <repo>`",
+                        (
+                            f"python3 -P <team>/tools/repo.py {cmd}"
+                            f" --dir <Workdir>/src --branch <branch> [--name <checkout>] [--base "
+                            f"<Base:>] <repo>`"
+                        ),
                         prompt,
                     )
-

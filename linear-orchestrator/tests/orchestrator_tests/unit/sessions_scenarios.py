@@ -30,6 +30,7 @@ class Late:
         finally:
             self.landed.set()
 
+
 class Case(case.Case):
     def setUp(self):
         self.api = FakeApi()

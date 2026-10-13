@@ -188,7 +188,8 @@ class Check(Case):
             (
                 {"local": ok("TASK-26-" + "a" * 41 + "\n")},
                 target.Invalid(
-                    f"existing branch name {'TASK-26-' + 'a' * 41!r} is not TASK-26-<lowercase slug>"
+                    f"existing branch name {'TASK-26-' + 'a' * 41!r}"
+                    f" is not TASK-26-<lowercase slug>"
                 ),
             ),
             (
@@ -365,4 +366,3 @@ class Check(Case):
         self.assertEqual(
             self.argvs()[-1][-2:], ("https://github.com/Ophis/Agent-PM-2.git", "TASK-26-*")
         )
-

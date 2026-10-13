@@ -40,7 +40,10 @@ class TaskLabels(TaskLabelsScenario):
             ORPHAN_LABEL: "product-design",
         }
         fix = "Fix the label or the assignee, then move the issue back to Todo."
-        absent = "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the label, then move the issue back to Todo."
+        absent = (
+            "is not in ~/.agent-pm/config.local.toml's [task_labels]. Fix the "
+            "label, then move the issue back to Todo."
+        )
         cases = (
             ([], (None, None)),
             (outside, (None, None)),
@@ -54,14 +57,20 @@ class TaskLabels(TaskLabelsScenario):
                 [label("Orphan", ORPHAN_LABEL)],
                 (
                     None,
-                    f'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). {fix}',
+                    (
+                        f"""Task label "Orphan" is not one of researcher's tasks (deep-research, """
+                        f"light-research). {fix}"
+                    ),
                 ),
             ),
             (
                 [label("Light Research", LIGHT), outside[0], label("Deep Research", DEEP)],
                 (
                     None,
-                    "Several task labels (Light Research, Deep Research); keep one, then move the issue back to Todo.",
+                    (
+                        "Several task labels (Light Research, Deep Research); keep one, then "
+                        "move the issue back to Todo."
+                    ),
                 ),
             ),
         )
@@ -399,4 +408,3 @@ class UsageGate(Base):
         self.assertEqual(self.taken[1:], (None, "pm", "b"))
         self.assertEqual((fake.mutations, self.api.usage_calls), ([], ["b"]))
         self.assertNotIn(RECHECK, [q for q, _ in fake.queries])
-

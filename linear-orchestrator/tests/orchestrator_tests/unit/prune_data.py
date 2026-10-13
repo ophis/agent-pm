@@ -28,6 +28,7 @@ TEAM_OBJ = linear.Team(TEAM, "Team", dict(IDS_BY_KEY))
 
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 
+
 def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
     owners = owners or {}
 
@@ -78,9 +79,11 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
     gql.calls, gql.finished, gql.archived, gql.gone = [], [], [], set()
     return gql
 
+
 def write(path, text):
     with open(path, "w") as f:
         f.write(text)
+
 
 def git(*argv):
     return subprocess.run(

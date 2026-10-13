@@ -15,10 +15,12 @@ SECRET = "lin_api_SECRET"
 
 VIEWER = "query { viewer { id } }"
 
+
 def respond(body=b'{"data": {}}'):
     resp = mock.MagicMock()
     resp.__enter__.return_value = io.BytesIO(body)
     return resp
+
 
 def refused(case, call):
     with (
@@ -32,13 +34,16 @@ def refused(case, call):
     case.assertIsInstance(str(cm.exception), str)
     return str(cm.exception)
 
+
 def http_error(code, body=b""):
     return urllib.error.HTTPError(linear.URL, code, "Error", {}, io.BytesIO(body))
+
 
 def errors(*codes):
     return json.dumps(
         {"errors": [{"message": "m", "extensions": {"code": c}} for c in codes]}
     ).encode()
+
 
 IN_PROGRESS, IN_REVIEW, TODO = STATES["in_progress"], STATES["in_review"], STATES["todo"]
 
@@ -57,9 +62,10 @@ FIELDS = {
     "comment_id": "commentCreate",
 }
 
-CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"  # promote's child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z") today
+CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"
 
 ISSUE = "issue-uuid"
+
 
 def comment_gql(node=None, error=None):
     calls = []
@@ -72,6 +78,7 @@ def comment_gql(node=None, error=None):
 
     gql.calls = calls
     return gql
+
 
 def node(body="Run x", issue=ISSUE, me=True):
     return {"id": "c-1", "body": body, "issue": {"id": issue}, "user": {"isMe": me}}

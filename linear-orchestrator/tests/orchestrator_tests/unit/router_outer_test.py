@@ -257,8 +257,11 @@ class Outer(OuterBase):
                             KEY,
                             {
                                 "i": UUID,
-                                "b": f"Question: repo check failed: {reason}. Fix the description's "
-                                "`Repo:` line, then move this issue back to Todo.",
+                                "b": (
+                                    f"Question: repo check failed: {reason}"
+                                    f". Fix the description's `Repo:` line, then move this"
+                                    f" issue back to Todo."
+                                ),
                             },
                         ),
                         ("reread", KEY, {"i": UUID}),
@@ -323,7 +326,10 @@ class Outer(OuterBase):
             (self.said(), self.err, self.api.detached),
             (
                 [
-                    f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"
+                    (
+                        f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] "
+                        f"File exists: '{self.rd}'"
+                    )
                 ],
                 "",
                 [],
@@ -343,4 +349,3 @@ class Outer(OuterBase):
                     ([f"launch-error TASK-7 error={type(error).__name__}: {error}"], ""),
                 )
         self.assertEqual(self.input(), INPUT)
-

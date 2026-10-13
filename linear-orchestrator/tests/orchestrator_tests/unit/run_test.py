@@ -232,8 +232,11 @@ class Inner(Case):
             (
                 bad_config,
                 {},
-                "linear-orchestrator/config.toml: required, unset: harness_key: set them in "
-                "~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's `# local:` lines)",
+                (
+                    "linear-orchestrator/config.toml: required, unset: harness_key: set "
+                    "them in ~/.agent-pm/config.local.toml "
+                    "(linear-orchestrator/config.toml's `# local:` lines)"
+                ),
             ),
         ]  # last: it changes the config
         for setup, kw, reason in cases:
@@ -260,7 +263,10 @@ class Inner(Case):
         self.assertEqual(self.main(), 1)
         self.assertEqual(
             self.err,
-            "linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: 'w'\n",
+            (
+                "linear-orchestrator/config.toml: work_dir must be a printable absolute"
+                " or ~ path: 'w'\n"
+            ),
         )
         self.nothing_ran()
 
@@ -368,4 +374,3 @@ class Identity(Case):
         self.assertEqual(by, {True: {(HARNESS, sessions.LIMIT)}, False: {(KEY, 30)}})
         for step in ("start", "comment"):
             self.assertIn(("find", KEY, {"c": cid(step)}), self.gql.calls)
-

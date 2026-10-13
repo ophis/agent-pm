@@ -31,6 +31,7 @@ class ProcFcntl:
     def fcntl(fd, cmd, arg):
         return os.fsencode(os.readlink(f"/proc/self/fd/{fd}"))
 
+
 class Base(Case):
     def setUp(self):
         if not hasattr(fcntl, "F_GETPATH"):

@@ -202,4 +202,3 @@ class ServedTheTeamListsBacklogBeside(ServedScenario):
             linear.last_move(finished["history"]["nodes"], {STATES["done"]}),
             linear.parse_time(done),
         )
-

@@ -264,4 +264,3 @@ class ApiErrors(Logs):
                     (1, self.json("router", "linear-error", op="teams", status=503)),
                 )
         self.assertFalse(os.path.exists(self.logs))
-

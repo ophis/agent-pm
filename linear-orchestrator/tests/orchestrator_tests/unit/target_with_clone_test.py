@@ -146,4 +146,3 @@ class WithClone(Case):
                 os.symlink(dest, self.fresh())
                 self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
                 self.assertEqual(self.run_({}), self.want(""))
-

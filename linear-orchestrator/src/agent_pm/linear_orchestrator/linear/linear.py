@@ -197,10 +197,13 @@ def parse_time(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-M_COMMENT = "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: $i, body: $b }) { success } }"
+M_COMMENT = (
+    "mutation($i: String!, $b: String!) { commentCreate(input: { issueId: "
+    "$i, body: $b }) { success } }"
+)
 M_COMMENT_ID = (
-    "mutation($c: String!, $i: String!, $b: String!) { commentCreate(input: { id: $c, issueId: $i, body: $b }) "
-    "{ success } }"
+    "mutation($c: String!, $i: String!, $b: String!) { commentCreate(input:"
+    " { id: $c, issueId: $i, body: $b }) { success } }"
 )
 Q_COMMENT = "query($c: String!) { comment(id: $c) { id body issue { id } user { isMe } } }"
 M_STATE = (

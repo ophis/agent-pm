@@ -61,4 +61,3 @@ class TuiNames(Case):
         for name, want in [*found.items(), *((o, None) for o in others)]:
             with self.subTest(name):
                 self.assertEqual(config.tui_issue(name), want)
-

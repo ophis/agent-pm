@@ -11,19 +11,22 @@ class ConfigError(Exception):
     @classmethod
     def invalid_work_path(cls, v):
         return cls(
-            f"linear-orchestrator/config.toml: work_dir must be a printable absolute or ~ path: {v!r}"
+            f"linear-orchestrator/config.toml: work_dir must be a printable absolute"
+            f" or ~ path: {v!r}"
         )
 
     @classmethod
     def work_overlaps_repo(cls, real, v):
         return cls(
-            f"linear-orchestrator/config.toml: work_dir must neither lie in nor contain the repo {real}: {v!r}"
+            f"linear-orchestrator/config.toml: work_dir must neither lie in nor "
+            f"contain the repo {real}: {v!r}"
         )
 
     @classmethod
     def invalid_team_id(cls, cfg_get_team):
         return cls(
-            f"linear-orchestrator/config.toml: team must be a Linear team id (UUID): {cfg_get_team!r}"
+            f"linear-orchestrator/config.toml: team must be a Linear team id (UUID): "
+            f"{cfg_get_team!r}"
         )
 
     @classmethod
@@ -33,13 +36,15 @@ class ConfigError(Exception):
     @classmethod
     def invalid_label_group_id(cls, cfg_get_task_label_group):
         return cls(
-            f"linear-orchestrator/config.toml: task_label_group must be a Linear label group id (UUID): {cfg_get_task_label_group!r}"
+            f"linear-orchestrator/config.toml: task_label_group must be a Linear "
+            f"label group id (UUID): {cfg_get_task_label_group!r}"
         )
 
     @classmethod
     def missing_keys(cls, join_missing, local):
         return cls(
-            f"linear-orchestrator/config.toml: required, unset: {join_missing}: set them in {local} (linear-orchestrator/config.toml's `# local:` lines)"
+            f"linear-orchestrator/config.toml: required, unset: {join_missing}"
+            f": set them in {local} (linear-orchestrator/config.toml's `# local:` lines)"
         )
 
     @classmethod
@@ -55,25 +60,29 @@ class ConfigError(Exception):
     @classmethod
     def invalid_projects_table(cls):
         return cls(
-            'linear-orchestrator/config.toml: project_repos must be a table of "<Linear project id>" = "<owner>/<name>"'
+            "linear-orchestrator/config.toml: project_repos must be a table of "
+            '"<Linear project id>" = "<owner>/<name>"'
         )
 
     @classmethod
     def invalid_clones_table(cls):
         return cls(
-            'linear-orchestrator/config.toml: local_clones must be a table of "<owner>/<name>" = "<path>"'
+            "linear-orchestrator/config.toml: local_clones must be a table of "
+            '"<owner>/<name>" = "<path>"'
         )
 
     @classmethod
     def invalid_labels_table(cls):
         return cls(
-            'linear-orchestrator/config.toml: task_labels must be a table of <task> = "<Linear label id>"'
+            "linear-orchestrator/config.toml: task_labels must be a table of <task>"
+            ' = "<Linear label id>"'
         )
 
     @classmethod
     def inconsistent_docs_destination(cls, local):
         return cls(
-            f"core: document roles must publish to one github.com repo and branch (their [output] in {local})"
+            f"core: document roles must publish to one github.com repo and branch "
+            f"(their [output] in {local})"
         )
 
     @classmethod
@@ -87,7 +96,8 @@ class ConfigError(Exception):
     @classmethod
     def invalid_state_id(cls, k, states_k):
         return cls(
-            f"linear-orchestrator/config.toml: states.{k} must be a Linear workflow state id (UUID): {states_k!r}"
+            f"linear-orchestrator/config.toml: states.{k}"
+            f" must be a Linear workflow state id (UUID): {states_k!r}"
         )
 
     @classmethod
@@ -99,37 +109,43 @@ class ConfigError(Exception):
     @classmethod
     def invalid_max_runs(cls, name, n):
         return cls(
-            f"linear-orchestrator/config.toml: [roles.{name}] max_runs must be a whole number >= 1: {n!r}"
+            f"linear-orchestrator/config.toml: [roles.{name}"
+            f"] max_runs must be a whole number >= 1: {n!r}"
         )
 
     @classmethod
     def invalid_project_repo(cls, k, v):
         return cls(
-            f"linear-orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
+            f"linear-orchestrator/config.toml: project_repos.{k}"
+            f" must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
         )
 
     @classmethod
     def invalid_local_clone(cls, k, v):
         return cls(
-            f"linear-orchestrator/config.toml: local_clones.{k} must map <owner>/<name> to a printable path starting with / or ~: {v!r}"
+            f"linear-orchestrator/config.toml: local_clones.{k}"
+            f" must map <owner>/<name> to a printable path starting with / or ~: {v!r}"
         )
 
     @classmethod
     def duplicate_clone(cls, seen_k_lower, k):
         return cls(
-            f"linear-orchestrator/config.toml: local_clones.{seen_k_lower} and local_clones.{k} are the same repo"
+            f"linear-orchestrator/config.toml: local_clones.{seen_k_lower}"
+            f" and local_clones.{k} are the same repo"
         )
 
     @classmethod
     def invalid_task_label(cls, k, v):
         return cls(
-            f"linear-orchestrator/config.toml: task_labels.{k} must be a Linear label id (UUID): {v!r}"
+            f"linear-orchestrator/config.toml: task_labels.{k}"
+            f" must be a Linear label id (UUID): {v!r}"
         )
 
     @classmethod
     def duplicate_label(cls, seen_v, k, v):
         return cls(
-            f"linear-orchestrator/config.toml: task_labels.{seen_v} and task_labels.{k} have the same label id {v}"
+            f"linear-orchestrator/config.toml: task_labels.{seen_v} and task_labels.{k}"
+            f" have the same label id {v}"
         )
 
     @classmethod
@@ -151,7 +167,8 @@ class ConfigError(Exception):
     @classmethod
     def shared_role_key(cls, name, r_key, owner_r_key):
         return cls(
-            f"linear-orchestrator/config.toml: [roles.{name}] key {r_key!r} is also [roles.{owner_r_key}]'s"
+            f"linear-orchestrator/config.toml: [roles.{name}] key {r_key!r} is also [roles."
+            f"{owner_r_key}]'s"
         )
 
     @classmethod
@@ -163,13 +180,15 @@ class ConfigError(Exception):
     @classmethod
     def next_without_prefix(cls, name, r_next):
         return cls(
-            f"linear-orchestrator/config.toml: next of {name!r} is role {r_next!r}, whose config.TASKS entry has no prefix"
+            f"linear-orchestrator/config.toml: next of {name!r} is role {r_next!r}"
+            f", whose config.TASKS entry has no prefix"
         )
 
     @classmethod
     def undefined_task(cls, task):
         return cls(
-            f"linear-orchestrator/config.toml: task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
+            f"linear-orchestrator/config.toml: task_labels.{task}"
+            f" is not a task of a role in linear-orchestrator/config.toml"
         )
 
     @classmethod
@@ -217,7 +236,8 @@ class LinearError(Exception):
     @classmethod
     def states_not_workflow_states_of_team(cls, t_name, join_bad):
         return cls(
-            f"linear-orchestrator/config.toml: [states] not workflow states of team {t_name!r}: {join_bad}"
+            f"linear-orchestrator/config.toml: [states] not workflow states of team "
+            f"{t_name!r}: {join_bad}"
         )
 
     @classmethod
@@ -229,13 +249,15 @@ class LinearError(Exception):
     @classmethod
     def task_labels_not_labels_of_task_label(cls, group, join_bad):
         return cls(
-            f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {group}: {join_bad}"
+            f"linear-orchestrator/config.toml: [task_labels] not labels of "
+            f"task_label_group {group}: {join_bad}"
         )
 
     @classmethod
     def roles_account_not_found_in_linear(cls, name, role_account):
         return cls(
-            f"linear-orchestrator/config.toml [roles.{name}]: account {role_account!r} not found in Linear"
+            f"linear-orchestrator/config.toml [roles.{name}]: account {role_account!r}"
+            f" not found in Linear"
         )
 
     @classmethod

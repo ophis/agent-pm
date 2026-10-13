@@ -67,7 +67,10 @@ MAX_WEEK = 100
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
+USAGE = (
+    "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router "
+    "[--now] [--dry-run] [--issue ID] | --brake ROLE"
+)
 FLAGS = {"--dry-run": "dry", "--now": "now"}
 RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
 SESSIONS = "agent-pm-"
@@ -189,14 +192,20 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     if len(found) > 1:
         return (
             None,
-            f"Several task labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo.",
+            (
+                f"Several task labels ({', '.join(n['name'] for n in found)}"
+                f"); keep one, then move the issue back to Todo."
+            ),
         )
     name = found[0]["name"]
     task = label_tasks.get(found[0]["id"])
     if task is None:
         return (
             None,
-            f'Task label "{name}" is not in {config.LOCAL}\'s [task_labels]. Fix the label, then move the issue back to Todo.',
+            (
+                f'Task label "{name}" is not in {config.LOCAL}'
+                f"'s [task_labels]. Fix the label, then move the issue back to Todo."
+            ),
         )
     if task not in role_tasks:
         return None, (
@@ -208,8 +217,13 @@ def task_for(labels, group, role, role_tasks, label_tasks):
 
 def q_issues(fields=""):
     return (
-        "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id identifier url priority createdAt "
-        "updatedAt project { id name } assignee { id email } " + fields + " } } }"
+        (
+            "query($f: IssueFilter) { issues(filter: $f, first: 100) { nodes { id "
+            "identifier url priority createdAt updatedAt project { id name } "
+            "assignee { id email } "
+        )
+        + fields
+        + " } } }"
     )
 
 

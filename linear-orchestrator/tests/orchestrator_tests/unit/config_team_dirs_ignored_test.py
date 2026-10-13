@@ -37,8 +37,9 @@ class TeamDirsIgnored(ConfigFile, Case):
         super().setUp()
         self.team = os.path.realpath(os.path.join(self.agent_pm, "team"))
         writer = (
-            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
-            "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
+            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits "
+            "the input; unsure → `one-pager` (`<tasks>/one-pager.md`).\n\n- "
+            "`one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
         )
         for rel, text in (
             ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
@@ -110,8 +111,9 @@ class RealConfig(Case):
             str(cm.exception),
             "linear-orchestrator/config.toml: "
             + missing(
-                "team, harness_key, task_label_group, states.todo, states.in_progress, states.in_review, states.handoff, "
-                "states.done, states.canceled, roles.researcher.account, roles.pm.account, roles.engineer.account, "
+                "team, harness_key, task_label_group, states.todo, states.in_progress, "
+                "states.in_review, states.handoff, states.done, states.canceled, "
+                "roles.researcher.account, roles.pm.account, roles.engineer.account, "
                 "roles.researcher.key, roles.pm.key, roles.engineer.key"
             ),
         )
@@ -382,7 +384,10 @@ class PathSeam(Case):
                 {
                     "read": [],
                     "kept": [],
-                    "path": "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/bin:/bin",
+                    "path": (
+                        "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/"
+                        "bin:/bin"
+                    ),
                 },
             )
             self.assertEqual(os.listdir(home), [])
@@ -405,4 +410,3 @@ class Shell(Case):
             env=env,
         )
         self.assertEqual(env["KEEP"], "1")
-

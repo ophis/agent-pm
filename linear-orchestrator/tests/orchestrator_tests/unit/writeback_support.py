@@ -7,6 +7,7 @@ PRD = "https://github.com/ophis/private_docs/blob/main/Product%20Design/PRD-3-re
 PR = "https://github.com/ophis/agent-pm/pull/7"
 
 APPROVE_MAPPED = (
-    "**🔴 Target repo:** `ophis/agent-pm` **(from the project mapping). To approve, move this issue to "
-    "Handoff; to use another repo, comment** `Repo: <owner>/<name>` **first.**"
+    "**🔴 Target repo:** `ophis/agent-pm` **(from the project mapping). To "
+    "approve, move this issue to Handoff; to use another repo, comment** "
+    "`Repo: <owner>/<name>` **first.**"
 )

@@ -1,4 +1,3 @@
-
 class Gh:
     def __init__(self, table):
         self.table, self.calls = table, []

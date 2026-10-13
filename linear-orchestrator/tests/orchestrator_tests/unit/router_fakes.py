@@ -108,6 +108,7 @@ class FakeLinear:
             if "issues(filter" in q and v["f"].get("state") == {"id": {"eq": STATES[state]}}
         ]
 
+
 class Moved(FakeLinear):
     def __init__(self, issues, to):
         super().__init__(issues)
@@ -119,6 +120,7 @@ class Moved(FakeLinear):
             for i in self.issues.values():
                 i["state"] = self.to
         return out
+
 
 class Changed(FakeLinear):
     """Each list read is followed by `after`'s edits ({ident: fields}): a change before the claim's
@@ -136,6 +138,7 @@ class Changed(FakeLinear):
                 self.issues[ident].update(fields)
         return out
 
+
 class LostClaim(FakeLinear):
     def __init__(self, issues):
         super().__init__(issues)
@@ -149,6 +152,7 @@ class LostClaim(FakeLinear):
             raise linear.Unavailable("issueUpdate", reason="TimeoutError: timed out")
         return out
 
+
 class ClaimLinear(FakeLinear):
     """FakeLinear plus the outer's issue read, answered with `node`."""
 
@@ -161,6 +165,7 @@ class ClaimLinear(FakeLinear):
             self.queries.append((query, v))
             return {"issue": self.node}
         return super().__call__(query, **v)
+
 
 def two():
     return FakeLinear(

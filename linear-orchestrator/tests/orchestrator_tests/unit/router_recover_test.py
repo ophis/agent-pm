@@ -393,4 +393,3 @@ class Recheck(Base):
             ],
         )
         self.assertEqual((fake.mutations, fake.issues["TASK-1"]["state"]), ([], "Todo"))
-

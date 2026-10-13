@@ -185,6 +185,7 @@ class Base(run_fixtures.Base):
         self.assertEqual({e["src"] for e in events} - {"router"}, set())
         return [self.unmap(show(e)) for e in events]
 
+
 class Start:
     """The injected start: records each launch Namespace; per issue an exit code (`exits`) or an
     exception to raise.
@@ -198,6 +199,7 @@ class Start:
         if a.issue in self.raises:
             raise self.raises[a.issue]
         return self.exits.get(a.issue, 0)
+
 
 class TickBase(Base):
     def tick(
@@ -245,6 +247,7 @@ class TickBase(Base):
     def launched_runs(self):
         return [(a.issue, a.mode) for a in self.start.launches]
 
+
 class OuterBase(TickBase):
     def setUp(self):
         super().setUp()
@@ -275,7 +278,20 @@ class OuterBase(TickBase):
     def detached(self, role="engineer"):
         name, argv, cwd, env = self.api.detached[-1]
         self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
-        expected = {**os.environ, "PATH": config.path(), "PYTHONPATH": os.pathsep.join(dict.fromkeys(os.path.abspath(p) for p in [*PYTHONPATH.split(os.pathsep), *os.environ.get("PYTHONPATH", "").split(os.pathsep)] if p))}
+        expected = {
+            **os.environ,
+            "PATH": config.path(),
+            "PYTHONPATH": os.pathsep.join(
+                dict.fromkeys(
+                    os.path.abspath(p)
+                    for p in [
+                        *PYTHONPATH.split(os.pathsep),
+                        *os.environ.get("PYTHONPATH", "").split(os.pathsep),
+                    ]
+                    if p
+                )
+            ),
+        }
         self.assertEqual(set(env), set(expected))
         for key, value in expected.items():
             self.assertTrue(env[key] == value, key)
@@ -286,12 +302,18 @@ class OuterBase(TickBase):
         self.assertTrue(last.startswith("--input="), last[:40])
         return last.removeprefix("--input=")
 
+
 class TaskLabelsScenario(Base):
-    ORPHAN = 'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). Fix the label or the assignee, then move the issue back to Todo.'
+    ORPHAN = (
+        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, '
+        "light-research). Fix the label or the assignee, then move the issue "
+        "back to Todo."
+    )
 
     def setUp(self):
         super().setUp()
         self.write_config(HUMANS + CONFIG + TASK_LABELS)
+
 
 class TickScenario(TickBase):
     pass

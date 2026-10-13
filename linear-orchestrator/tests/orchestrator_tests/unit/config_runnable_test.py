@@ -80,7 +80,10 @@ class Runnable(ConfigFile, Case):
             *[
                 (
                     text + f'[task_labels]\n{task} = "{LABEL1}"\n',
-                    f"task_labels.{task} is not a task of a role in linear-orchestrator/config.toml",
+                    (
+                        f"task_labels.{task}"
+                        f" is not a task of a role in linear-orchestrator/config.toml"
+                    ),
                 )
                 for task, text in (
                     ("echo", PIPELINE),
@@ -217,8 +220,12 @@ class OtherRoot(ConfigFile, Case):
 
     def test_overlay_fills_root(self):
         cfg = self.load(
-            PIPELINE + '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
-            '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n[core.roles.pm]\nlanguage = "French"\n'
+            PIPELINE
+            + (
+                '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
+                '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n'
+                '[core.roles.pm]\nlanguage = "French"\n'
+            )
         )
         q = shlex.quote(self.root)
         self.assertTrue(q.startswith("'"), q)
@@ -243,7 +250,10 @@ class OtherRoot(ConfigFile, Case):
     def test_load_configures_the_session_from_the_session_config(self):
         write(
             os.path.join(self.agent_pm, "config.local.toml"),
-            '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n',
+            (
+                '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\n'
+                "status_line = true\n"
+            ),
         )
         cfg = self.load(PIPELINE)
         self.assertEqual(cfg.driver.registry.configured(), ["a", "claude", "codex", "print_prompt"])
@@ -343,8 +353,8 @@ class OtherRoot(ConfigFile, Case):
 
     def test_docs_mismatch(self):
         message = (
-            "core: document roles must publish to one github.com repo and branch (their [output] in "
-            "~/.agent-pm/config.local.toml)"
+            "core: document roles must publish to one github.com repo and branch "
+            "(their [output] in ~/.agent-pm/config.local.toml)"
         )
         for design in (
             DESIGN.replace("acme/notes", "acme/other"),
@@ -368,8 +378,9 @@ class Local(ConfigFile, Case):
             + f'[project_repos]\n"{P2}" = "ophis/y"\n'
         )
         cfg = self.load(
-            'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = "pm"\nmax_runs = 3\n'
-            f'[project_repos]\n"{P1}" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
+            f'human_members = ["a@x.com", "c@x.com"]\n[roles.researcher]\nnext = '
+            f'"pm"\nmax_runs = 3\n[project_repos]\n"{P1}'
+            f'" = "ophis/x"\n[core.roles.pm]\ntier = 1\n'
         )
         self.assertEqual((cfg.team, cfg.states, cfg.human_members), (TEAM, STATES, ("b@x.com",)))
         self.assertEqual(
@@ -407,7 +418,9 @@ class Local(ConfigFile, Case):
     def test_a_bad_local_value_is_rejected(self):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
         self.fails(
-            "linear-orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
+            (
+                "linear-orchestrator/config.toml: states.done must be a Linear workflow"
+                " state id (UUID): 'Done'"
+            ),
             BASE,
         )
-

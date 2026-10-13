@@ -279,4 +279,3 @@ class TickGate(TickBase):
                     (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
                     ([], [], before, calls),
                 )
-

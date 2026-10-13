@@ -13,6 +13,7 @@ NO_LINE = target.Invalid("no Repo: line in the description or its ## Instruction
 
 LOCAL = ("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C")
 
+
 def roles():
     """Each role's tasks: the committed core config's index (no local file)."""
     return {
@@ -21,6 +22,7 @@ def roles():
         )
         for r in config.TASKS
     }
+
 
 def issue(description, title="ENG: Session Registry", ident="TASK-26", project=None):
     return issues.Issue(
@@ -35,6 +37,7 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
         links=(),
         linked=(),
     )
+
 
 def git(*args):
     subprocess.run(

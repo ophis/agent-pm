@@ -53,21 +53,26 @@ CORE = delegate.CONFIG
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
+
 def missing(keys):
     return (
-        f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml (linear-orchestrator/config.toml's "
-        "`# local:` lines)"
+        f"required, unset: {keys}: set them in ~/.agent-pm/config.local.toml "
+        f"(linear-orchestrator/config.toml's `# local:` lines)"
     )
+
 
 def old_key(key):
     return (
-        f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
-        "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
+        f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}"
+        f": task-level config and default_task are gone; set run keys in "
+        f"[core.roles.researcher] (a run without a task picks one)"
     )
+
 
 def write(path, text):
     with open(path, "w") as f:
         f.write(text)
+
 
 ROLES = {
     "researcher": (
@@ -87,8 +92,10 @@ ROLES = {
     ),
 }
 
+
 def fields(roles):
     return {r: (x.account, x.key, x.tasks, x.max_runs, x.next) for r, x in roles.items()}
+
 
 CORE_TOML = """tier = 2
 effort = "high"
@@ -122,28 +129,28 @@ DEPLOYMENT = {
 }
 
 STEPS = (
-    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
-    "## Resume\n\nRedo step 2.\n"
+    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] "
+    "the topic\n2. **Write.** Write it.\n\n## Resume\n\nRedo step 2.\n"
 )
+
 
 def git(*args):
     subprocess.run(
         ["git", *GUARD, *args], check=True, capture_output=True, stdin=subprocess.DEVNULL
     )
 
-IMPORT_ALONE = """import json, os, sys
-opened = []
-sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm.linear_orchestrator.engine import config
-import agent_pm.session
-home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
-os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
-print(json.dumps({
-    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
-    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
-    "path": config.path(),
-}))
-"""
+
+IMPORT_ALONE = (
+    "import json, os, sys\nopened = []\nsys.addaudithook(lambda event, "
+    'args: event == "open" and opened.append(str(args[0])))\nfrom '
+    "agent_pm.linear_orchestrator.engine import config\nimport "
+    'agent_pm.session\nhome, front = os.environ["HOME"], '
+    'os.environ["AGENT_PM_PATH"]\nos.environ.update(HOME="/later", '
+    'AGENT_PM_PATH="/later/bin")\nprint(json.dumps({\n    "read": [p for p '
+    'in opened if p.endswith(".toml") or p.startswith(home)],\n    "kept": '
+    "sorted(k for k, v in vars(config).items() if isinstance(v, str) and "
+    '(home in v or front in v)),\n    "path": config.path(),\n}))\n'
+)
 
 ID = "TASK-12"
 

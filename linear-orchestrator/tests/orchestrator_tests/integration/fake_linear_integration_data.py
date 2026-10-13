@@ -1,4 +1,3 @@
-
 HARNESS, ENGINEER = "linear-api-key", "linear-api-key-engineer"
 
 HARNESS_EMAIL, ENGINEER_EMAIL = "harness@agents.test", "engineer@agents.test"
