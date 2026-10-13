@@ -1,7 +1,4 @@
-"""agent_pm.manager.engine.roster, the old core's roster_test ported onto a fake session.engine.api
-(Tmux): LEGACY_CLIENT's cases became FR-28's default runtime; worker_dir, default_runtime and the
-crew module's entries are new.
-"""
+"""Roster files, leases and session lifecycle with tmux protocol output through Popen."""
 
 import contextlib
 import datetime
@@ -22,12 +19,12 @@ import unittest
 import unittest.mock
 from unittest import mock
 
-from agent_pm import session
 from agent_pm.manager.engine import roster
 from agent_pm.session import DriverError, SessionRow, SessionStatusLog
 from agent_pm.utils import LOCAL, read_project
 
 from manager.tests.case import PY, REPO, SRC, Case, child_env
+from manager.tests.tmux import process
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
@@ -64,6 +61,31 @@ def row(name, *, own=False):
 class Tmux:
     def __init__(self):
         self.alive, self.stuck, self.own, self.error, self.calls = set(), set(), None, None, []
+        self.popen = subprocess.Popen
+
+    def spawn(self, argv, **kw):
+        if argv[0] != "tmux":
+            return self.popen(argv, **kw)
+        if "list-sessions" in argv:
+            os.environ["TMUX"] = "fixture" if self.own else ""
+            try:
+                rows = self.sessions()
+            except DriverError:
+                return process(stderr="tmux failed", returncode=1)
+            return process("\n".join(f"{r.name}\t0\t\t\tworking\t\t" for r in rows))
+        if "list-clients" in argv:
+            return process()
+        if "kill-session" in argv:
+            try:
+                self.close(argv[argv.index("-t") + 1].strip("=:"))
+            except DriverError:
+                return process(stderr="busy", returncode=1)
+            return process()
+        if "display-message" in argv:
+            if argv[-1] == "#{session_name}":
+                return process(self.own or "")
+            return process("0  " if argv[argv.index("-t") + 1].strip("=:") in self.alive else "  ")
+        raise AssertionError(argv)
 
     def sessions(self, match=None):
         self.calls.append(("sessions", match))
@@ -86,8 +108,8 @@ class Base(Case):
         self.managers = os.path.join(self.agent_pm, "managers")
         self.dir = os.path.join(self.managers, "m1")
         self.tmux = Tmux()
-        self.enterContext(mock.patch.object(session, "sessions", side_effect=self.tmux.sessions))
-        self.enterContext(mock.patch.object(session, "close", side_effect=self.tmux.close))
+        self.enterContext(mock.patch.object(subprocess, "Popen", side_effect=self.tmux.spawn))
+        self.enterContext(mock.patch.dict(os.environ, {"TMUX": "", "TMUX_PANE": "%0"}))
 
     def umask(self, mask):
         self.addCleanup(os.umask, os.umask(mask))
@@ -137,7 +159,8 @@ class ManagerTest(Base):
         self.assertEqual(self.tmux.calls, [])
 
     def test_unknown_sessions_name_the_manager_option(self):
-        self.tmux.error = DriverError("tmux sessions unknown: bad $TMUX_PANE '%3;'")
+        self.tmux.own = "m1"
+        self.enterContext(mock.patch.dict(os.environ, {"TMUX_PANE": "%3;"}))
         for call, resolve in (
             ("directory", roster.directory),
             ("home", lambda: roster.home(None, None)),
@@ -325,16 +348,26 @@ for i in range(15):
     roster.put(sys.argv[1], sys.argv[2] + str(i), value)
 """
 LEASE_CHILD = """
+import subprocess
 import sys
-from unittest.mock import patch
-from agent_pm import session
+from unittest.mock import MagicMock, patch
 from agent_pm.manager.engine import roster
-from agent_pm.session import SessionRow
 d, own = sys.argv[1], sys.argv[2]
-live = [SessionRow("held", None, None, "working", None, None, None, None, False)]
+def process(stdout=""):
+    child = MagicMock()
+    child.__enter__.return_value = child
+    child.communicate.return_value = (stdout, "")
+    child.poll.return_value = child.returncode = 0
+    return child
+def spawn(argv, **_kwargs):
+    if "list-sessions" in argv:
+        return process("a\\t0\\t\\t\\tworking\\t\\t\\nb\\t0\\t\\t\\tworking\\t\\t")
+    if "list-clients" in argv:
+        return process()
+    raise AssertionError(argv)
 sys.stdin.readline()
 try:
-    with patch.object(session, "sessions", return_value=live), roster.locked(d) as r:
+    with patch.object(subprocess, "Popen", side_effect=spawn), roster.locked(d) as r:
         roster.take(r, d, own)
 except roster.Held as e:
     print(e)
@@ -698,7 +731,7 @@ class LeaseTest(Base):
                     else:
                         run()
                         self.assertEqual(r, self.doc(holder if want is KEPT else want))
-                    self.assertEqual(self.tmux.calls, [("sessions", re.escape(s)) for s in asked])
+                    self.assertEqual(self.tmux.calls, [("sessions", None) for _ in asked])
 
     def test_take_under_roster_writes_the_holder_and_a_refusal_writes_nothing(self):
         with roster.locked(self.dir) as r:
@@ -751,7 +784,7 @@ class LeaseTest(Base):
 
 
 def kills(*sessions):
-    return [step for s in sessions for step in (("close", s), ("sessions", re.escape(s)))]
+    return [step for s in sessions for step in (("close", s), ("sessions", None))]
 
 
 class StopTest(Base):

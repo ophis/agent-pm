@@ -1,7 +1,4 @@
-"""agent_pm.manager.engine.crew, the old core's crew_test ported onto a fake session.engine.api
-(Api): argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces the
-session options.
-"""
+"""Crew commands with a caller-owned runtime Driver and tmux protocol output through Popen."""
 
 import contextlib
 import dataclasses
@@ -25,7 +22,6 @@ import uuid
 from dataclasses import dataclass
 from unittest import mock
 
-from agent_pm import session
 from agent_pm.manager.engine import crew, roster
 from agent_pm.manager.engine.crew import NotAWorker
 from agent_pm.manager.engine.types import Spec
@@ -44,6 +40,7 @@ from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, save
 
 from manager.tests.case import PYTHONPATH, SRC, Case
+from manager.tests.tmux import process
 
 CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "engine", "crew.py")
 MODULE = ["-P", "-m", "agent_pm.manager.engine.crew"]
@@ -255,7 +252,7 @@ class Runs:
 
 class CrewCase(Case):
     """
-    A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured.
+    A caller-owned runtime Driver, tmux Popen output, sleep patched and stderr captured.
     """
 
     def setUp(self):
@@ -263,23 +260,68 @@ class CrewCase(Case):
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
         self.api = Api(own=None)
-        self.real_sessions, self.real_close = session.sessions, session.close
-        self.enterContext(
-            mock.patch.object(
-                session, "sessions", side_effect=functools.partial(self.call, "sessions")
-            )
-        )
-        self.enterContext(
-            mock.patch.object(session, "close", side_effect=functools.partial(self.call, "close"))
-        )
+        self.popen = subprocess.Popen
+        self.enterContext(mock.patch.object(subprocess, "Popen", side_effect=self.spawn))
+        self.enterContext(mock.patch.dict(os.environ, {"TMUX": "", "TMUX_PANE": "%0"}))
         self.event_source = types.SimpleNamespace(next=crew.next_event)
         self.sleep = self.enterContext(mock.patch.object(time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": PYTHONPATH}))
         self.local('runtime = "rt0"\n')
 
-    def call(self, fn, /, *args, **kw):
-        return getattr(self.api, fn)(*args, **kw)
+    def spawn(self, argv, **kw):
+        if argv[0] != "tmux":
+            return self.popen(argv, **kw)
+        if "list-sessions" in argv:
+            os.environ["TMUX"] = "fixture" if self.api.own else ""
+            try:
+                rows = self.api.sessions()
+            except DriverError:
+                return process(stderr="tmux failed", returncode=1)
+            return process(
+                "\n".join(
+                    "\t".join(
+                        (
+                            r.name,
+                            "1" if r.state == "dead" else "0",
+                            r.sid or "",
+                            r.runtime or "",
+                            r.state,
+                            r.pane or "",
+                            r.opener or "",
+                        )
+                    )
+                    for r in rows
+                )
+            )
+        if "list-clients" in argv:
+            return process(
+                "\n".join(
+                    f"1\t/dev/{r.name}\t{r.name}"
+                    for r in self.api.rows.values()
+                    if r.shown is not None
+                )
+            )
+        if "list-panes" in argv:
+            return process(
+                "\n".join(f"0\t/dev/{r.name}\t{r.shown}" for r in self.api.rows.values() if r.shown)
+            )
+        if "capture-pane" in argv:
+            return process(self.api.rows[argv[argv.index("-t") + 1].strip("=:")].last_lines or "")
+        if "kill-session" in argv:
+            name = argv[argv.index("-t") + 1].strip("=:")
+            try:
+                self.api.close(name)
+            except DriverError:
+                return process(stderr="boom", returncode=1)
+            return process()
+        if "display-message" in argv:
+            if argv[-1] == "#{session_name}":
+                return process(self.api.own or "")
+            return process(
+                "0  " if argv[argv.index("-t") + 1].strip("=:") in self.api.rows else "  "
+            )
+        raise AssertionError(argv)
 
     def local(self, text):
         with open(os.path.join(self.agent_pm, LOCAL), "w") as f:
@@ -584,7 +626,7 @@ class EarlyWatchTest(WorkerCase):
                     self.api = Api(own=None)
                     self.assertEqual(self.fails(run, setup), msg)
                     self.assertEqual(self.api.ran("close"), ["w1"] if run == "restart" else [])
-                    self.assertEqual(self.api.calls[-1], ("sessions", "w1"))
+                    self.assertEqual(self.api.calls[-1], ("sessions", None))
 
     def test_a_dialog_ends_the_watch_on_its_stderr_line(self):
         for run in self.RUNS:
@@ -599,7 +641,10 @@ class EarlyWatchTest(WorkerCase):
 
     def test_a_failure_while_watching_raises(self):
         def unknown():
-            self.api.error, self.api.error_after = DriverError("tmux sessions unknown: x"), 0
+            self.api.error, self.api.error_after = (
+                DriverError("tmux sessions unknown: tmux failed"),
+                0,
+            )
             yield Exited(1)
 
         for why, setup, msg in (
@@ -608,7 +653,11 @@ class EarlyWatchTest(WorkerCase):
                 self.scripted(DriverError("tui session w1: boom")),
                 "tui session w1: boom",
             ),
-            ("its row", lambda: setattr(self.api, "events", unknown), "tmux sessions unknown: x"),
+            (
+                "its row",
+                lambda: setattr(self.api, "events", unknown),
+                "tmux sessions unknown: tmux failed",
+            ),
         ):
             for run in self.RUNS:
                 with self.subTest(why, run=run):
@@ -1117,8 +1166,6 @@ class MainTest(WorkerCase):
                         file.write(event + "\n")
                     out, err = io.StringIO(), io.StringIO()
                     with (
-                        mock.patch.object(session, "sessions", self.real_sessions),
-                        mock.patch.object(session, "close", self.real_close),
                         mock.patch.object(subprocess, "Popen", return_value=process),
                         contextlib.redirect_stdout(out),
                         contextlib.redirect_stderr(err),
@@ -1211,7 +1258,7 @@ class ManagerDirTest(CrewCase):
 
         def failing():
             fake = Api("mgr")
-            fake.error = DriverError(unknown)
+            os.environ["TMUX_PANE"] = "%3;"
             return fake
 
         cases = (
@@ -1516,7 +1563,6 @@ class NextEventContentTest(CrewCase):
                     file.write(event + "\n")
                 out, err = io.StringIO(), io.StringIO()
                 with (
-                    mock.patch.object(session, "sessions", self.real_sessions),
                     mock.patch.object(subprocess, "Popen", return_value=process),
                     contextlib.redirect_stdout(out),
                     contextlib.redirect_stderr(err),
@@ -1551,7 +1597,6 @@ class NextEventContentTest(CrewCase):
 
                     out, err = io.StringIO(), io.StringIO()
                     with (
-                        mock.patch.object(session, "sessions", self.real_sessions),
                         mock.patch.object(subprocess, "Popen", side_effect=spawn),
                         mock.patch.dict(os.environ, {"TMUX": ""}),
                         contextlib.redirect_stdout(out),
@@ -1578,7 +1623,6 @@ class NextEventContentTest(CrewCase):
                     file.write(event + "\n")
                 out, err = io.StringIO(), io.StringIO()
                 with (
-                    mock.patch.object(session, "sessions", self.real_sessions),
                     mock.patch.object(subprocess, "Popen", return_value=process),
                     contextlib.redirect_stdout(out),
                     contextlib.redirect_stderr(err),
@@ -1966,7 +2010,7 @@ class AttachTest(RosterCase):
                 fake = self.server(own, [row("other")])
                 self.assertEqual(self.attach(fake, "--manager", "mgr"), (1, "", self.held()))
                 self.assertEqual(self.bytes(), before)
-                self.assertEqual(fake.ran("sessions"), [None, "other"])
+                self.assertEqual(fake.ran("sessions"), [None, None])
 
     def test_outside_tmux_prints_the_notice_and_leaves_the_holder(self):
         notice = f"workers: not in tmux: no lease on {self.mdir}; another manager may attach\n"
