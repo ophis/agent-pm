@@ -209,7 +209,7 @@ def native_id(value) -> bool:
         return False
 
 
-def hook_identity(value, cwd=None):
+def hook_identity(value):
     identifier, path = value.get("session_id"), value.get("cwd")
     if (
         value.get("agent_id") is not None
@@ -217,11 +217,13 @@ def hook_identity(value, cwd=None):
         or not isinstance(path, str)
         or not os.path.isabs(path)
         or "\0" in path
-        or cwd is not None
-        and os.path.realpath(path) != cwd
     ):
         return ""
     return identifier
+
+
+def hook_cwd_matches(value, cwd: str) -> bool:
+    return os.path.realpath(value["cwd"]) == cwd
 
 
 _SESSION_VERSION = 1

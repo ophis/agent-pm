@@ -201,6 +201,13 @@ class TuiTest(Base):
         self.assertEqual(run.session_id(self.payload(session_id=CHILD, cwd=str(alias))), "")
         self.assertEqual(run.native, NATIVE)
 
+    def test_native_mismatch_is_rejected_before_canonical_cwd_check(self):
+        run, _, _ = self.launch()
+        self.assertEqual(run.session_id(self.payload()), NATIVE)
+        with mock.patch("os.path.realpath", side_effect=RuntimeError("unexpected cwd check")):
+            self.assertEqual(run.session_id(self.payload(session_id=CHILD)), "")
+        self.assertEqual(run.native, NATIVE)
+
     def test_invalid_identity_does_not_bind_or_update_the_reply(self):
         run = self.adapter.tui()
         for fields in (

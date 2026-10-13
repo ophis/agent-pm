@@ -148,7 +148,7 @@ class CodexTui(Tui):
             or self.native
             and native != self.native
             or self.state
-            and not sessions.hook_identity(payload, self.state.snapshot["cwd"])
+            and not sessions.hook_cwd_matches(payload, self.state.snapshot["cwd"])
         ):
             return ""
         self.native = native

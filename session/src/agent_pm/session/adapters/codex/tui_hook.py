@@ -22,7 +22,7 @@ def bind(label, value, workdir, sid, *, root=None):
         state = store.load(workdir, sid)
         if state is None:
             raise sessions.RecoveryError("missing Codex recovery state")
-        if not sessions.hook_identity(value, state.snapshot["cwd"]):
+        if not sessions.hook_cwd_matches(value, state.snapshot["cwd"]):
             return False
         store.bind(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
     except (sessions.RecoveryError, OSError, ValueError) as exc:
