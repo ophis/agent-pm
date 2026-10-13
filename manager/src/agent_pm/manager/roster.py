@@ -26,9 +26,10 @@ from datetime import UTC, datetime
 from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import api
 from agent_pm.utils.config_file import LOCAL, read_project
+from agent_pm.utils.paths import STATE
 
-ROOT = "~/.agent-pm/managers"
-WORKERS = "~/.agent-pm/workers"
+ROOT = f"{STATE}/managers"
+WORKERS = f"{STATE}/workers"
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 VERSION = 1

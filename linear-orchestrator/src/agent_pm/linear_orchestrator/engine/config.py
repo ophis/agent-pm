@@ -18,7 +18,7 @@ from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.git import GUARD
-from agent_pm.utils.paths import import_roots, temp_dirs, under
+from agent_pm.utils.paths import STATE, import_roots, temp_dirs, under
 from agent_pm.utils.repos import NAME, OWNER
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 5))
@@ -264,7 +264,7 @@ def _overlap(a, b):
 
 def _work_dir(cfg, root, clones=None):
     real = os.path.realpath(root)
-    v = cfg.get("work_dir", "~/.agent-pm")
+    v = cfg.get("work_dir", STATE)
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
         raise ConfigError(

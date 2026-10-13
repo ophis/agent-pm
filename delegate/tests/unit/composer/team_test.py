@@ -115,7 +115,7 @@ class Fake(Case):
             f.write(text)
 
     def cfg(self):
-        return config_file.read_config(self.config, self.local_file)
+        return config_file.read_project("delegate", path=self.config, local=self.local_file)
 
     def tasks_of(self, role, found=None):
         """`role`'s index in `found`, else in a fresh scan of the team root, with the temp config."""

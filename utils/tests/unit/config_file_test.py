@@ -1,4 +1,4 @@
-"""utils/config_file.py: merge, read_config, read_project (levels, ownership, the one local file), unset."""
+"""utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset."""
 
 import copy
 import os
@@ -6,14 +6,11 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from agent_pm.utils import config_file
-from agent_pm.utils.config_file import merge, read_config, read_project, unset
+from agent_pm.utils.config_file import load, merge, read_project, unset
 
 from utils.tests.case import REPO, Case
-
-LOCAL = "~/.agent-pm/config.local.toml"
 
 
 class ConfigFileTest(Case):
@@ -22,7 +19,6 @@ class ConfigFileTest(Case):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
         self.path = self.root / "config.toml"
-        self.local = self.root / "config.local.toml"
 
     def test_merge_nested_tables_and_replace_other_values_without_changing_inputs(self):
         base = {"table": {"keep": 1, "change": {"x": 1}, "list": [1]}, "value": 1}
@@ -48,70 +44,14 @@ class ConfigFileTest(Case):
             },
         )
 
-    def test_read_merges_an_explicit_overlay(self):
-        self.path.write_text('value = 1\n[table]\nkeep = "base"\nchange = "base"\n')
-        self.local.write_text('value = 2\n[table]\nchange = "local"\n')
-        self.assertEqual(
-            read_config(str(self.path), str(self.local)),
-            {"value": 2, "table": {"keep": "base", "change": "local"}},
-        )
-
-    def test_read_expands_overlay_home_without_reading_user_config(self):
-        self.path.write_text("value = 1\n")
-        self.local.write_text("value = 2\n")
-        with mock.patch.dict(os.environ, {"HOME": str(self.root)}):
-            self.assertEqual(read_config(str(self.path), "~/config.local.toml"), {"value": 2})
-
-    def test_absent_or_directory_overlay_is_ignored(self):
-        self.path.write_text("value = 1\n")
-        for overlay in (self.local, self.root):
-            with self.subTest(overlay=overlay):
-                self.assertEqual(read_config(str(self.path), str(overlay)), {"value": 1})
-
-    def test_missing_base_and_malformed_files_propagate(self):
+    def test_load_reads_one_file_and_a_missing_or_malformed_one_raises(self):
         with self.assertRaises(FileNotFoundError):
-            read_config(str(self.path), str(self.local))
+            load(str(self.path))
+        self.path.write_text('value = 1\n[table]\nkeep = "base"\n')
+        self.assertEqual(load(str(self.path)), {"value": 1, "table": {"keep": "base"}})
         self.path.write_text("malformed = [\n")
         with self.assertRaises(tomllib.TOMLDecodeError):
-            read_config(str(self.path), str(self.local))
-        self.path.write_text("value = 1\n")
-        self.local.write_text("malformed = [\n")
-        with self.assertRaises(tomllib.TOMLDecodeError):
-            read_config(str(self.path), str(self.local))
-
-
-class Defaults(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.path = os.path.join(tmp.name, "config.toml")
-        with open(self.path, "w", encoding="utf-8") as f:
-            f.write('users = ["a", "b"]\n[t]\nx = 1\ny = 1\n')
-
-    def local(self, text, name="config.local.toml"):
-        """`text` as this test's ~/.agent-pm/<name>."""
-        with open(os.path.join(self.agent_pm, name), "w", encoding="utf-8") as f:
-            f.write(text)
-
-    def test_both_paths_are_required_and_devnull_merges_nothing(self):
-        self.local('extra = "x"\n')
-        for args in ((), (self.path,)):
-            with self.subTest(args=args), self.assertRaises(TypeError):
-                read_config(*args)
-        self.assertEqual(
-            read_config(self.path, os.devnull), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
-        )
-
-    def test_the_home_local_file_goes_on_top_and_the_old_ones_are_not_read(self):
-        for old in ("local.toml", *(f"{n}.local.toml" for n in ("core", "core-new", "linear-new"))):
-            self.local('users = ["old"]\n', old)
-        self.assertEqual(
-            read_config(self.path, LOCAL), {"users": ["a", "b"], "t": {"x": 1, "y": 1}}
-        )
-        self.local('users = ["c"]\n[t]\ny = 2\n[t.n]\nz = 3\n')
-        self.assertEqual(
-            read_config(self.path, LOCAL), {"users": ["c"], "t": {"x": 1, "y": 2, "n": {"z": 3}}}
-        )
+            load(str(self.path))
 
 
 SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'

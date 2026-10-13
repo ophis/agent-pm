@@ -50,7 +50,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.utils.paths import printable_abs
+from agent_pm.utils.paths import STATE, printable_abs
 
 __all__ = [
     "Access",
@@ -99,7 +99,7 @@ __all__ = [
 MODES = ("headless", "tui", "in_process")
 STATES = ("live", "absent", "unknown")
 POLL = 0.5
-PROBE_DIR = "~/.agent-pm/probe"
+PROBE_DIR = f"{STATE}/probe"
 PROBE_TIMEOUT = 120
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 LOG = logging.getLogger("driver")
