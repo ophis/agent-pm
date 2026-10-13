@@ -69,7 +69,9 @@ class PolicyTest(Base):
     def test_recovery_helpers_use_driver_selection_without_literal_builders(self):
         root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
         for runtime in ("claude", "codex"):
-            source = (root / runtime / "common.py").read_text()
+            common = root / runtime / "common.py"
+            paths = [common] if common.is_file() else (root / runtime / "common").rglob("*.py")
+            source = "\n".join(path.read_text() for path in paths)
             with self.subTest(runtime=runtime):
                 self.assertNotIn("--resume", source)
                 self.assertNotIn('"resume"', source)

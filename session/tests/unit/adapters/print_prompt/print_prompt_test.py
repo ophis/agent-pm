@@ -133,9 +133,11 @@ class Run(Case):
         self.assertEqual(len(os.listdir(os.path.join(self.workdir, "tmp"))), 2)
 
     def test_a_failed_file_create_raises(self):
-        with mock.patch("tempfile.mkstemp", side_effect=OSError(28, "No space left on device")):
-            with self.assertRaises(OSError):
-                list(self.session.run(PROMPT, SessionRequest(self.spec, resumed=False)))
+        with (
+            mock.patch("tempfile.mkstemp", side_effect=OSError(28, "No space left on device")),
+            self.assertRaises(OSError),
+        ):
+            list(self.session.run(PROMPT, SessionRequest(self.spec, resumed=False)))
 
 
 if __name__ == "__main__":

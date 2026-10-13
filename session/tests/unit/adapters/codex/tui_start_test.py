@@ -185,7 +185,7 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
         self.assertEqual(exe, "/protected/codex")
         self.assertEqual(argv[-4:], ["-c", "hooks.state={exact}", "--", "prompt"])
         self.assertEqual(env["CODEX_HOME"], str(self.codex_home))
-        self.assertEqual(trust.call_args.args[2], str(self.cwd))
+        self.assertEqual(trust.call_args.args[0].cwd, str(self.cwd))
         self.assertEqual(
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
@@ -247,10 +247,12 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
         ):
             self.assertTrue(
                 tui_start.hook_trust(
-                    "fake",
-                    [],
-                    str(self.cwd),
-                    {"CODEX_HOME": str(self.codex_home)},
+                    tui_start.app_server.ProcessRequest(
+                        exe="fake",
+                        args=[],
+                        cwd=str(self.cwd),
+                        env={"CODEX_HOME": str(self.codex_home)},
+                    ),
                     commands,
                     listing=listing,
                 ).startswith("hooks.state=")
@@ -259,11 +261,14 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
         with (
             mock.patch("fcntl.flock", side_effect=BlockingIOError),
             mock.patch("time.monotonic", side_effect=[0, 31]),
+            self.assertRaisesRegex(tui_start.StartError, "held"),
         ):
-            with self.assertRaisesRegex(tui_start.StartError, "held"):
-                tui_start.hook_trust(
-                    "fake", [], str(self.cwd), {"CODEX_HOME": str(self.codex_home)}, commands
-                )
+            tui_start.hook_trust(
+                tui_start.app_server.ProcessRequest(
+                    exe="fake", args=[], cwd=str(self.cwd), env={"CODEX_HOME": str(self.codex_home)}
+                ),
+                commands,
+            )
 
     def test_missing_duplicate_foreign_hook_rows_and_disabled_user_hooks(self):
         result, commands = self.catalog()
@@ -308,7 +313,7 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
                 proc.wait.return_value = 0
                 original = tui_start.signal.getsignal(signum)
 
-                def spawn(*args, proc=proc, signum=signum, **kwargs):
+                def spawn(*_args, proc=proc, signum=signum, **_kwargs):
                     tui_start.signal.raise_signal(signum)
                     return proc
 
@@ -316,7 +321,7 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
                     mock.patch("subprocess.Popen", side_effect=spawn) as popen,
                     mock.patch("os.killpg") as kill,
                     mock.patch("os.execve") as execute,
-                    self.assertRaises(tui_start._Terminated),
+                    self.assertRaises(tui_start.Stopped),
                 ):
                     tui_start.main([launch.argv[-1]])
                 self.assertEqual(popen.call_count, 1)
@@ -439,6 +444,6 @@ class ProtectTest(Base):
         self.assertEqual(argv[start : start + len(flags)], list(flags))
         hook_flags = [word for word in json.loads(data)["hook_flags"]][:-4]
         self.assertEqual(
-            trust.call_args.args[1],
+            trust.call_args.args[0].args,
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],
         )

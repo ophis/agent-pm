@@ -1,4 +1,4 @@
-"""adapters/codex/sessions.py: the recovery snapshot's session env, by the same rule as Access.env."""
+"""Codex recovery snapshots validate session environment by the Access.env rule."""
 
 from agent_pm.session.adapters.codex.sessions import RecoveryError, validate_snapshot
 from agent_pm.session.engine.types import SessionRequest, env_ok

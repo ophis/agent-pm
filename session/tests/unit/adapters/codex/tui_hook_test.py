@@ -182,8 +182,7 @@ class HookTest(Base):
                 "explicit-store",
                 state.snapshot,
                 state.writable_roots,
-                persist=False,
-                root=store,
+                options=sessions.CreationOptions(persist=False, root=store),
             )
             self.assertEqual(sessions.save_session(fresh, root=store), fresh)
             self.assertEqual(sessions.load_session(str(self.work), fresh.sid, root=store), fresh)
@@ -206,7 +205,11 @@ class HookTest(Base):
             lambda: sessions.load_session(str(self.work), self.spec.sid, root=root),
             lambda: sessions.bind_session(str(self.work), self.spec.sid, NATIVE, root=root),
             lambda: sessions.create_session(
-                str(self.work), "unsafe-store", state.snapshot, state.writable_roots, root=root
+                str(self.work),
+                "unsafe-store",
+                state.snapshot,
+                state.writable_roots,
+                options=sessions.CreationOptions(root=root),
             ),
             lambda: sessions.save_session(state, root=root),
         )

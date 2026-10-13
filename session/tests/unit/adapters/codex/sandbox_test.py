@@ -14,7 +14,7 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
 
 class SandboxTest(Base):
-    def argv(self, adapter, mode, spec, resume=False):
+    def argv(self, adapter, mode, spec, *, resume=False):
         if mode == "headless":
             return list(adapter.headless().launch("hi", SessionRequest(spec, resumed=resume)).argv)
         with mock.patch("shutil.which", return_value="/protected/codex"):
@@ -46,7 +46,7 @@ class SandboxTest(Base):
                     self.common.bind(str(self.work), spec.sid, NATIVE)
                     self.rollout()
                     changed = dataclasses.replace(spec, flags=("-s", current), env={"K": "changed"})
-                    second = self.argv(self.adapter, mode, changed, True)
+                    second = self.argv(self.adapter, mode, changed, resume=True)
                     self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
                     self.assertEqual(
                         self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
@@ -73,7 +73,7 @@ class SandboxTest(Base):
                 self.common.bind(str(self.work), spec.sid, NATIVE)
                 self.rollout()
                 changed = dataclasses.replace(spec, flags=("--", "changed"))
-                second = self.argv(self.adapter, mode, changed, True)
+                second = self.argv(self.adapter, mode, changed, resume=True)
                 for argv in (first, second):
                     boundary = argv.index("--")
                     self.assertEqual(argv[boundary:], ["--", "literal", "--last", "hi"])

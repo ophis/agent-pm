@@ -30,7 +30,7 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
 
 class TuiTest(Base):
-    def launch(self, resume=False, adapter=None):
+    def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
             mock.patch("shutil.which", return_value="/protected/codex"),
@@ -82,7 +82,7 @@ class TuiTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         other = CodexAdapter({"env": {"CODEX_HOME": str(self.extra)}})
-        run, launch, data = self.launch(True, other)
+        run, launch, data = self.launch(resume=True, adapter=other)
         self.assertEqual(data["argv"][:3], ["/protected/codex", "resume", NATIVE])
         self.assertIn("gpt-test", data["argv"])
         self.assertIn("sandbox_workspace_write.network_access=false", data["argv"])
@@ -98,7 +98,7 @@ class TuiTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
-        _, resumed, _ = self.launch(True, adapter)
+        _, resumed, _ = self.launch(resume=True, adapter=adapter)
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
         self.assertEqual(shlex.split(resumed.resume)[4], "PYTHONPATH=/a b;c")
 
@@ -237,19 +237,24 @@ class TuiTest(Base):
     def test_writable_symlink_to_protected_driver_hook_is_rejected(self):
         link = self.cwd / "driver-link.py"
         link.symlink_to("/protected/driver_hook.py")
-        with mock.patch("shutil.which", return_value="/protected/codex"):
-            with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                self.adapter.tui().launch(
-                    "hi",
-                    SessionRequest(self.spec, resumed=False),
-                    (sys.executable, "-I", str(link)),
-                )
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaisesRegex(ConfigError, "rewrite|writable"),
+        ):
+            self.adapter.tui().launch(
+                "hi",
+                SessionRequest(self.spec, resumed=False),
+                (sys.executable, "-I", str(link)),
+            )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        screen = "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› "
+        screen = (
+            "■ You hit your spend cap set by the owner\n  of your workspace. Try "
+            "again at Jan\n  2nd, 2027 3:04 AM.\n› "
+        )
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
 
     def test_dialogs_preserve_main_worker_cases(self):
@@ -270,7 +275,10 @@ class TuiTest(Base):
     def test_assistant_bullets_and_quoted_limit_text_are_not_native_errors(self):
         run = self.adapter.tui()
         for screen in (
-            "Codex > gpt-test • You have asked me to quote this error. • You've hit your usage limit. is a quoted example › ",
+            (
+                "Codex > gpt-test • You have asked me to quote this error. • You've hit"
+                " your usage limit. is a quoted example › "
+            ),
             "• You've hit your usage limit. is a quoted example\n› ",
             "You've hit your usage limit. is a quoted example",
             "! You've hit your usage limit. is a quoted example",
@@ -298,13 +306,15 @@ class TuiTest(Base):
                             )
                             self.assertNotIn("TMPDIR", launch.env)
                         continue
-                    with mock.patch("shutil.which", return_value="/protected/codex"):
-                        with self.assertRaisesRegex(ConfigError, "rewrite|writable"):
-                            adapter.tui().launch(
-                                "hi",
-                                SessionRequest(spec, resumed=resume),
-                                (sys.executable, "-I", "/driver-only/hook.py"),
-                            )
+                    with (
+                        mock.patch("shutil.which", return_value="/protected/codex"),
+                        self.assertRaisesRegex(ConfigError, "rewrite|writable"),
+                    ):
+                        adapter.tui().launch(
+                            "hi",
+                            SessionRequest(spec, resumed=resume),
+                            (sys.executable, "-I", "/driver-only/hook.py"),
+                        )
                     if not resume:
                         self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
