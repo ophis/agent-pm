@@ -33,107 +33,6 @@ ANSWER_MAX = 64 << 20
 
 
 class StartError(Exception):
-    @classmethod
-    def missing_store(cls) -> StartError:
-        return cls("codex hooks/list: missing session store")
-
-    @classmethod
-    def lock_access(cls, path: str, cause: OSError) -> StartError:
-        return cls(f"codex hooks/list: {path}: {cause.strerror}")
-
-    @classmethod
-    def unsafe_lock(cls) -> StartError:
-        return cls("codex hooks/list: unsafe startup lock")
-
-    @classmethod
-    def held_lock(cls, path: str, seconds: float) -> StartError:
-        return cls(f"codex hooks/list: another Codex worker's start held {path} for {seconds} s")
-
-    @classmethod
-    def early_exit(cls, cause: Exception) -> StartError:
-        return cls(f"codex hooks/list: app-server exited {cause} before answering")
-
-    @classmethod
-    def listing_failed(cls, cause: Exception) -> StartError:
-        return cls(f"codex hooks/list: {cause}")
-
-    @classmethod
-    def answer_count(cls, cwd: str, count: int) -> StartError:
-        return cls(f"codex hooks/list: want one answer for {cwd}, got {count}")
-
-    @classmethod
-    def listing_errors(cls, cwd: str, errors: object) -> StartError:
-        return cls(f"codex hooks/list: errors for {cwd}: {json.dumps(errors, ensure_ascii=False)}")
-
-    @classmethod
-    def malformed_hooks(cls, cwd: str) -> StartError:
-        return cls(f"codex hooks/list: malformed hooks for {cwd}")
-
-    @classmethod
-    def disabled_hooks(cls) -> StartError:
-        return cls(
-            "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
-        )
-
-    @classmethod
-    def hook_count(cls, name: str, count: int) -> StartError:
-        return cls(
-            f"codex hooks/list: {count or 'no'} session-flags {name} hook{'s' if count > 1 else ''}"
-        )
-
-    @classmethod
-    def invalid_hook(cls, name: str, hook: dict, command: str) -> StartError:
-        return cls(
-            f"codex hooks/list: the session-flags {name} hook {cls._hook_problem(hook, command)}"
-        )
-
-    @classmethod
-    def foreign_hook(cls, key: object) -> StartError:
-        return cls(f"codex hooks/list: a session-flags hook not ours: {key}")
-
-    @classmethod
-    def unreviewed_hook(cls, key: object, status: str) -> StartError:
-        return cls(
-            f"codex hooks/list: your hook "
-            f"{key}"
-            f" is "
-            f"{status}"
-            f": review it in your own Codex session (/hooks) "
-            f"first"
-        )
-
-    @classmethod
-    def oversized_launch(cls) -> StartError:
-        return cls("Codex tui launch: expected bounded launch data")
-
-    @classmethod
-    def malformed_launch(cls) -> StartError:
-        return cls("Codex tui launch: malformed launch data")
-
-    @classmethod
-    def launch_fields(cls) -> StartError:
-        return cls("Codex tui launch: invalid launch fields")
-
-    @classmethod
-    def launch_command(cls) -> StartError:
-        return cls("Codex tui launch: invalid command")
-
-    @classmethod
-    def relative_executables(cls) -> StartError:
-        return cls("Codex tui launch: expected absolute executables")
-
-    @classmethod
-    def hook_commands(cls) -> StartError:
-        return cls("Codex tui launch: invalid hook commands")
-
-    @classmethod
-    def launch_paths(cls, field: str) -> StartError:
-        return cls(f"Codex tui launch: invalid {field} paths")
-
-    @classmethod
-    def missing_state(cls) -> StartError:
-        return cls("Codex tui launch: missing recovery state")
-
     @staticmethod
     def _hook_problem(hook: dict, command: str) -> str:
         if hook.get("enabled") is not True:
@@ -192,18 +91,18 @@ def hook_trust(
     listing = hooks_list if listing is None else listing
     root = sessions.store_directory(create=False, root=root)
     if root is None:
-        raise StartError.missing_store()
+        raise StartError("codex hooks/list: missing session store")
     lock = os.path.join(
         root, hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest() + ".start.lock"
     )
     try:
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     except OSError as e:
-        raise StartError.lock_access(lock, e) from e
+        raise StartError(f"codex hooks/list: {lock}: {e.strerror}") from e
     try:
         info = os.fstat(fd)
         if not sessions.private_file(info):
-            raise StartError.unsafe_lock()
+            raise StartError("codex hooks/list: unsafe startup lock")
         _acquire_lock(fd, lock, termination)
         try:
             result = listing(exe, args, cwd, env, termination=termination)
@@ -213,7 +112,7 @@ def hook_trust(
                 termination.check()
             result = listing(exe, args, cwd, env, termination=termination)
     except app_server.Exited as e:
-        raise StartError.early_exit(e) from None
+        raise StartError(f"codex hooks/list: app-server exited {e} before answering") from None
     finally:
         os.close(fd)
     return trusted(result, cwd, commands)
@@ -231,7 +130,7 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
             ),
         )
     except app_server.Error as e:
-        raise StartError.listing_failed(e) from None
+        raise StartError(f"codex hooks/list: {e}") from None
 
 
 def trusted(result, cwd: str, commands: dict[str, str]) -> str:
@@ -242,14 +141,19 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
         command = commands[event]
         rows = [h for h in ours if h.get("eventName") == name]
         if len(rows) != 1:
-            raise StartError.hook_count(name, len(rows))
+            count = len(rows)
+            raise StartError(
+                f"codex hooks/list: {count or 'no'} session-flags {name} hook{('s' if count > 1 else '')}"
+            )
         h = rows[0]
         if StartError._hook_problem(h, command):
-            raise StartError.invalid_hook(name, h, command)
+            raise StartError(
+                f"codex hooks/list: the session-flags {name} hook {StartError._hook_problem(h, command)}"
+            )
         trusted.append(h)
     for h in ours:
         if not any(h is t for t in trusted):
-            raise StartError.foreign_hook(h.get("key"))
+            raise StartError(f"codex hooks/list: a session-flags hook not ours: {h.get('key')}")
     for h in hooks:
         if (
             h.get("source") != "sessionFlags"
@@ -257,7 +161,11 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
             and h.get("isManaged") is not True
             and h.get("trustStatus") in ("untrusted", "modified")
         ):
-            raise StartError.unreviewed_hook(h.get("key"), h["trustStatus"])
+            key = h.get("key")
+            status = h["trustStatus"]
+            raise StartError(
+                f"codex hooks/list: your hook {key} is {status}: review it in your own Codex session (/hooks) first"
+            )
     return (
         "hooks.state={"
         + ",".join(
@@ -280,7 +188,7 @@ def _start(argv, termination, trust):
     sessions.absolute_path(data["store"], "store")
     state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
     if state is None:
-        raise StartError.missing_state()
+        raise StartError("Codex tui launch: missing recovery state")
     env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}
     sessions.protect(
         state,
@@ -322,7 +230,9 @@ def _acquire_lock(fd, lock, termination):
             break
         except BlockingIOError:
             if time.monotonic() > deadline:
-                raise StartError.held_lock(lock, LOCK_WAIT) from None
+                raise StartError(
+                    f"codex hooks/list: another Codex worker's start held {lock} for {LOCK_WAIT} s"
+                ) from None
             time.sleep(POLL)
 
 
@@ -330,25 +240,29 @@ def _listed_hooks(result, cwd):
     data = result.get("data") if isinstance(result, dict) else None
     data = data if isinstance(data, list) else []
     if len(data) != 1:
-        raise StartError.answer_count(cwd, len(data))
+        raise StartError(f"codex hooks/list: want one answer for {cwd}, got {len(data)}")
     entry = data[0] if isinstance(data[0], dict) else {}
     if entry.get("errors"):
-        raise StartError.listing_errors(cwd, entry["errors"])
+        raise StartError(
+            f"codex hooks/list: errors for {cwd}: {json.dumps(entry['errors'], ensure_ascii=False)}"
+        )
     hooks = entry.get("hooks")
     if not isinstance(hooks, list) or not all(isinstance(h, dict) for h in hooks):
-        raise StartError.malformed_hooks(cwd)
+        raise StartError(f"codex hooks/list: malformed hooks for {cwd}")
     if not hooks:
-        raise StartError.disabled_hooks()
+        raise StartError(
+            "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
+        )
     return hooks
 
 
 def _launch_data(argv):
     if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
-        raise StartError.oversized_launch()
+        raise StartError("Codex tui launch: expected bounded launch data")
     try:
         data = json.loads(argv[0])
     except (ValueError, RecursionError) as exc:
-        raise StartError.malformed_launch() from exc
+        raise StartError("Codex tui launch: malformed launch data") from exc
     if not isinstance(data, dict) or set(data) != {
         "argv",
         "hook",
@@ -360,29 +274,29 @@ def _launch_data(argv):
         "protect",
         "add_dirs",
     }:
-        raise StartError.launch_fields()
+        raise StartError("Codex tui launch: invalid launch fields")
     for key in ("argv", "hook", "hook_flags"):
         if (
             not isinstance(data[key], list)
             or not data[key]
             or any(not isinstance(w, str) or "\0" in w for w in data[key])
         ):
-            raise StartError.launch_command()
+            raise StartError("Codex tui launch: invalid command")
     if not os.path.isabs(data["argv"][0]) or not os.path.isabs(data["hook"][0]):
-        raise StartError.relative_executables()
+        raise StartError("Codex tui launch: expected absolute executables")
     commands = data["commands"]
     if (
         not isinstance(commands, dict)
         or set(commands) != {event for event, name, _ in HOOKS}
         or any(not isinstance(word, str) or not word for word in commands.values())
     ):
-        raise StartError.hook_commands()
+        raise StartError("Codex tui launch: invalid hook commands")
     for key in ("protect", "add_dirs"):
         if not isinstance(data[key], list) or any(
             not isinstance(path, str) or "\0" in path or not os.path.isabs(path)
             for path in data[key]
         ):
-            raise StartError.launch_paths(key)
+            raise StartError(f"Codex tui launch: invalid {key} paths")
     return data
 
 

@@ -121,10 +121,10 @@ class HeadlessMode:
         return "live" if self.proc is not None and self.proc.poll() is None else "absent"
 
     def send(self, _text: str, /) -> None:
-        raise DriverError.tui_only("send")
+        raise DriverError(f"{'send'}: tui mode only")
 
     def screen(self, _lines: int | None = None, /) -> str:
-        raise DriverError.tui_only("screen")
+        raise DriverError(f"{'screen'}: tui mode only")
 
     def stop(self) -> None:
         if self.proc is not None:

@@ -710,7 +710,7 @@ class FakeLinear(Operations):
                 io.BytesIO(json.dumps(body).encode()),
             )
         if body.get("errors"):
-            raise LinearError.api(body["errors"])
+            raise LinearError(f"linear api error: {body['errors']}")
         return body["data"]
 
     def _log(self, request: Request, reply: HttpReply):

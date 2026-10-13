@@ -86,7 +86,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     }
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
     if not (charter := teams.charter(team, run.role)):
-        raise ConfigError.missing_role_file(run.role)
+        raise ConfigError(f"missing file roles/{run.role}.md")
     role, rel = charter
     guide, principles = (
         read_text(os.path.join(team.root, f)) for f in ("guide.md", "principles.md")
@@ -105,7 +105,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
         parts.append((label, f"# Template: `templates/{name}.md`\n\n{f}markdown\n{body}{f}\n"))
     output, dest = os.path.join(team.root, OUTPUT), f"destinations/{run.output['type']}.md"
     if not os.path.isfile(os.path.join(output, dest)):
-        raise ConfigError.destination(run.output["type"], OUTPUT, dest)
+        raise ConfigError(f"no destination {run.output['type']!r} ({OUTPUT}/{dest})")
     inside = os.path.relpath(os.path.realpath(params.deliverable), os.path.realpath(params.workdir))
     texts |= {
         "output.md": fill(read_text(os.path.join(output, "output.md")), {}, "output.md"),
@@ -250,7 +250,7 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
             ),
             blame,
         )
-    raise ConfigError.broken_reference(blame, error)
+    raise ConfigError(f"{blame}: breaks a reference in {error}")
 
 
 def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], team: Team) -> str:
@@ -277,7 +277,9 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
     for name, source in PARAMETERS.items():
         where = next((label for label, t in texts.items() if name in t), None)
         if where and source not in values:
-            raise ConfigError.undefined_parameter(name, where, source)
+            raise ConfigError(
+                f"{name} is used in {where} but Parameters doesn't define it ({source} is not set)"
+            )
         if where or name in ("<Workdir>", "<tasks>"):
             lines.append(f"- `{name}`: {values[source]}\n")
     return f"# Parameters\n\n{RULE}\n\n" + "".join(lines)

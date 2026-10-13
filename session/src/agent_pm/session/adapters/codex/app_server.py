@@ -39,22 +39,7 @@ class RpcOptions:
 
 
 class Error(Exception):
-    @classmethod
-    def unavailable(cls, exe: str, cause: OSError) -> Error:
-        return cls(f"{exe}: {cause.strerror}")
-
-    @classmethod
-    def timeout(cls, seconds: float) -> Error:
-        return cls(f"no answer in {seconds} s")
-
-    @classmethod
-    def oversized_answer(cls, limit: int) -> Error:
-        return cls(f"an answer over {limit} bytes")
-
-    @classmethod
-    def failed_answer(cls, method: str, error: object) -> Error:
-        detail = error.get("message") if isinstance(error, dict) else error
-        return cls(f"{method} failed: {detail}")
+    pass
 
 
 class Exited(Exception):
@@ -98,7 +83,7 @@ def call(
                 start_new_session=True,
             )
         except OSError as e:
-            raise Error.unavailable(exe, e) from e
+            raise Error(f"{exe}: {e.strerror}") from e
         if options.termination is not None:
             options.termination.check()
         assert proc.stdout is not None
@@ -152,14 +137,14 @@ class Lines:
             self.seen = len(self.buf)
             left = self.deadline - time.monotonic()
             if left <= 0:
-                raise Error.timeout(self.options.wait)
+                raise Error(f"no answer in {self.options.wait} s")
             if not select.select([self.fd], [], [], min(left, POLL))[0]:
                 continue
             chunk = os.read(self.fd, BLOCK)
             if not chunk:
                 raise Exited
             if len(self.buf) + len(chunk) > self.options.limit:
-                raise Error.oversized_answer(self.options.limit)
+                raise Error(f"an answer over {self.options.limit} bytes")
             self.buf += chunk
         line = bytes(self.buf[:end])
         del self.buf[: end + 1]
@@ -183,7 +168,8 @@ def answer(lines, ident: int, method: str):
         if "result" in message:
             return message["result"]
         error = message.get("error")
-        raise Error.failed_answer(method, error)
+        detail = error.get("message") if isinstance(error, dict) else error
+        raise Error(f"{method} failed: {detail}")
 
 
 def _polls(deadline: float, termination):

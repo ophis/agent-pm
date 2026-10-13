@@ -18,73 +18,7 @@ SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
 class Invalid(Exception):
-    @classmethod
-    def reference(cls, spec):
-        return cls(
-            f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or "
-            "https://host/owner/name"
-        )
-
-    @classmethod
-    def clone(cls, path):
-        return cls(f"{path} is not a git clone")
-
-    @classmethod
-    def origin(cls, path):
-        return cls(f"{path}: no origin URL naming host/owner/name")
-
-    @classmethod
-    def checkout(cls, slug):
-        return cls(f"unsafe checkout name {slug[:80]!r}")
-
-    @classmethod
-    def inaccessible(cls, slug, status):
-        return cls(f"{slug}: not found or no access (HTTP {status})")
-
-    @classmethod
-    def existing_path(cls, path):
-        return cls(f"{path} exists and is not a checkout")
-
-    @classmethod
-    def wrong_checkout(cls, path, slug):
-        return cls(f"{path} is not a checkout of {slug}")
-
-    @classmethod
-    def branch(cls, name):
-        return cls(f"unsafe branch name {name[:80]!r}")
-
-    @classmethod
-    def temporary_clone(cls, clone, temporary):
-        return cls(
-            f"{clone} is under the temp dir {temporary}: keep local clones outside temp dirs"
-        )
-
-    @classmethod
-    def symlink_policy(cls, path, actual, expected):
-        return cls(
-            f"{path} has core.symlinks={actual or 'unset'}, trusted_dirs gives {expected}: "
-            "remove it and run again"
-        )
-
-    @classmethod
-    def default_branch(cls, slug):
-        return cls(f"{slug}: unsafe default branch name")
-
-    @classmethod
-    def builds_on_default(cls, branch):
-        return cls(f"{branch} is the default branch; build on another")
-
-    @classmethod
-    def base_branch(cls, branch):
-        return cls(f"unsafe base branch name {str(branch)[:80]!r}")
-
-    @classmethod
-    def busy_branch(cls, branch, path):
-        return cls(f"{branch} is checked out in {path}")
-
-    @classmethod
-    def missing_worktree(cls, path):
-        return cls(f"{path} missing: run worktree first")
+    pass
 
 
 @dataclass(frozen=True)
@@ -101,7 +35,9 @@ class Repo:
             or m.group(3) in (".", "..")
             or (m.group(1) is None and spec.strip().startswith("https://"))
         ):
-            raise Invalid.reference(spec)
+            raise Invalid(
+                f"unreadable repo {spec[:80]!r}: want owner/name, host/owner/name or https://host/owner/name"
+            )
         return cls((m.group(1) or "github.com").lower(), m.group(2), m.group(3))
 
     @property
@@ -133,18 +69,18 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
     clone = os.path.realpath(os.path.expanduser(spec))
     dotgit = os.path.join(clone, ".git")
     if os.path.islink(dotgit) or not os.path.isdir(dotgit):
-        raise Invalid.clone(clone)
+        raise Invalid(f"{clone} is not a git clone")
     res = run(["git", "-C", clone, "remote", "get-url", "origin"], SHORT)
     slug = url_slug(res.stdout) if res.returncode == 0 else None
     if slug is None:
-        raise Invalid.origin(clone)
+        raise Invalid(f"{clone}: no origin URL naming host/owner/name")
     return Repo.parse(slug), clone
 
 
 def check_slug(slug: str | None, branch: str = "") -> str:
     slug = branch.replace("/", "-") if slug is None else slug
     if not SLUG.fullmatch(slug):
-        raise Invalid.checkout(slug)
+        raise Invalid(f"unsafe checkout name {slug[:80]!r}")
     return slug
 
 

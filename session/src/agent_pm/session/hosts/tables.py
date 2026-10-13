@@ -15,24 +15,24 @@ NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 
 def parse(table) -> Hosts:
     if not isinstance(table, Mapping):
-        raise HostsError.missing()
+        raise HostsError("[hosts]: missing")
     tables = {}
     for key, value in table.items():
         if key == "default":
             continue
         if not isinstance(key, str):
-            raise HostsError.key_type(key)
+            raise HostsError(f"[hosts] {key!r}: want a string key")
         if not isinstance(value, Mapping):
-            raise HostsError.table(key)
+            raise HostsError(f"[hosts] {key}: want default or a [hosts.<name>] table")
         if not NAME.match(key):
-            raise HostsError.name(key)
+            raise HostsError(f"[hosts.{key}]: want a name matching [a-z][a-z0-9_]*")
         implementation = value.get("implementation")
         if not isinstance(implementation, str) or not CLASS_PATH.fullmatch(implementation):
-            raise HostsError.implementation(key)
+            raise HostsError(f"[hosts.{key}].implementation: want module.path:Class")
         tables[key] = dict(value)
     default = table.get("default")
     if not isinstance(default, str) or default not in tables:
-        raise HostsError.default(tables)
+        raise HostsError(f"[hosts] default: want one of {', '.join(sorted(tables))}")
     return Hosts(default, tables)
 
 

@@ -40,22 +40,4 @@ class BranchSelection:
 
 
 class RepoCommandError(RuntimeError):
-    @classmethod
-    def gh(cls, argv, cause):
-        return cls(f"gh {' '.join(argv)[:100]}: {cause}")
-
-    @classmethod
-    def api(cls, cause):
-        return cls(f"gh api: {cause}")
-
-    @classmethod
-    def repository_response(cls, repository: Repo, cause):
-        return cls(f"gh api repos/{repository.owner}/{repository.name}: {cause!r}")
-
-    @classmethod
-    def clone(cls, cause):
-        return cls(f"gh repo clone: {cause}")
-
-    @classmethod
-    def head(cls, revision):
-        return cls(f"git rev-parse HEAD: {revision[:80]!r}")
+    pass

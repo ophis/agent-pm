@@ -31,6 +31,8 @@ from typing import TypeGuard
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import (
+    ROTATE_MSG,
+    UNPRINTABLE,
     CommandArgumentError,
     Entry,
     NotAWorker,
@@ -68,7 +70,7 @@ def driver_errors() -> Iterator[None]:
 
 def check_name(name: str) -> None:
     if not NAME.fullmatch(name):
-        raise WorkersError.name(name)
+        raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
 def sessions(match: str | None = None, *, driver=None) -> list[SessionRow]:
@@ -127,7 +129,7 @@ def manager_directory(name: str | None, *, driver=None) -> str:
     except RosterError as e:
         raise WorkersError(str(e)) from e
     if directory is None:
-        raise WorkersError.no_directory()
+        raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
     return directory
 
 
@@ -135,7 +137,7 @@ def configure() -> Driver:
     try:
         return Driver.from_config(read_project("session"))
     except (OSError, ValueError, ConfigError) as e:
-        raise WorkersError.configuration(e) from None
+        raise WorkersError(f"config: {e}") from None
 
 
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
@@ -167,15 +169,15 @@ def next_event(events: str, after: int | None) -> tuple[int, str]:
                 if ident is None:
                     ident = (st.st_dev, st.st_ino)
                 elif ident != (st.st_dev, st.st_ino):
-                    raise WorkersError.events_replaced(events)
+                    raise WorkersError(f"events file {events}: replaced")
                 if st.st_size < offset:
-                    raise WorkersError.events_shrank(events)
+                    raise WorkersError(f"events file {events}: shrank")
                 f.seek(offset)
                 data = f.read()
         except FileNotFoundError:
             data = b""
         except OSError as e:
-            raise WorkersError.events_io(events, e) from e
+            raise WorkersError(f"events file {events}: {e.strerror or e}") from e
         complete = data[: data.rfind(b"\n") + 1]
         offset += len(complete)
         batch = complete.split(b"\n")[:-1]
@@ -204,7 +206,7 @@ def content(event: str, *, driver=None) -> str:
             return "\n".join(text.split("\n")[:REPLY_LINES])
     row = session(name, driver=driver)
     if row is None:
-        raise WorkersError.missing_session(name)
+        raise WorkersError(f"{name}: no tmux session")
     if row.state == "dead":
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
     driver = configure() if driver is None else driver
@@ -418,17 +420,19 @@ def _text(value) -> bool:
 def _override(item: str) -> tuple[str, str]:
     key, eq, value = item.partition("=")
     if not (eq and key):
-        raise WorkersError.override_syntax(item)
+        raise WorkersError(f"--env {item}: want NAME=VALUE")
     if not roster.printable(value):
-        raise WorkersError.override_text(key, value)
+        raise WorkersError(f"--env {key}: {value!r}: {UNPRINTABLE}")
     return key, value
 
 
 def note_text(text: str) -> str | None:
     if len(text) > roster.NOTE_MAX:
-        raise WorkersError.note_length(len(text), roster.NOTE_MAX)
+        error_length = len(text)
+        error_maximum = roster.NOTE_MAX
+        raise WorkersError(f"note: {error_length} characters: want at most {error_maximum}")
     if not roster.printable(text):
-        raise WorkersError.note_text(text)
+        raise WorkersError(f"note: {text!r}: {UNPRINTABLE}")
     return text or None
 
 
@@ -555,7 +559,7 @@ def _launch(
     except OSError as e:
         with contextlib.suppress(DriverError):
             driver.close(name)
-        raise WorkersError.record_failed(path, e) from e
+        raise WorkersError(f"{path}: {e.strerror or e}; start undone") from e
     print(f"tui: session {name}: {driver.attach_command(name)}", file=sys.stderr)
     with driver_errors():
         driver.show(name, split=record["split"], split_from=record["split_from"])
@@ -575,7 +579,7 @@ def start(
     if spec.split_from is not None:
         check_name(spec.split_from)
     if spec.resume is not None and not roster.SID.fullmatch(spec.resume):
-        raise WorkersError.resume_sid(spec.resume)
+        raise WorkersError(f"--resume {spec.resume}: not a session id")
     if spec.note is not None:
         note_text(spec.note)
     env = dict(_override(item) for item in spec.overrides)
@@ -583,7 +587,7 @@ def start(
         pass
     cwd = os.path.abspath(spec.cwd)
     if not os.path.isdir(cwd):
-        raise WorkersError.cwd(cwd)
+        raise WorkersError(f"--cwd {cwd}: not a directory")
     record = {
         "version": 1,
         "name": spec.name,
@@ -726,7 +730,7 @@ def note(directory: str, own: str | None, name: str, text: str, *, driver=None) 
     check_name(name)
     with leased(directory, own, driver=driver) as r:
         if name not in r["entries"]:
-            raise WorkersError.missing_entry(name)
+            raise WorkersError(f"{name} not in roster")
         r["entries"][name]["note"] = note_text(text)
 
 
@@ -767,7 +771,7 @@ def _entries(directory: str) -> dict:
 def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[list[str], list[str]]:
     driver = configure() if driver is None else driver
     if own is None:
-        raise WorkersError.no_caller()
+        raise WorkersError("stop-all: not in tmux: run it in the manager's tmux session")
     home = roster.directory(own, driver=driver)
     if os.path.isdir(home):
         with leased(home, own, write=False, driver=driver):
@@ -818,7 +822,7 @@ def forget(directory: str, own: str | None, name: str, *, driver=None) -> None:
         )
         live_session = pane or session_driver
         if live_session is not None:
-            raise WorkersError.live_session(name, live_session)
+            raise WorkersError(f"{name}: session {live_session} is live")
 
 
 STARTS = ("start", "restart", "attach", "reply")
@@ -829,13 +833,13 @@ def _after(value: str) -> int | None:
         return None
     if re.fullmatch(r"[0-9]+", value):
         return int(value)
-    raise CommandArgumentError.after(value)
+    raise CommandArgumentError(f"{value!r}: use a line number or end")
 
 
 def _number(value: str) -> int:
     if re.fullmatch(r"[0-9]+", value):
         return int(value)
-    raise CommandArgumentError.number(value)
+    raise CommandArgumentError(f"{value!r}: use a non-negative integer")
 
 
 def _drop_import_root() -> None:
@@ -944,7 +948,7 @@ def _stop_all(a, driver) -> None:
     for line in lines or ([] if left else ["workers: stop-all: nothing to stop"]):
         print(line)
     if left:
-        raise WorkersError.kill_failed(left)
+        raise WorkersError(f"stop-all: still live after tmux kill-session: {', '.join(left)}")
 
 
 def _roster_command(a, driver) -> int:
@@ -1008,7 +1012,7 @@ def _next_event(a, driver, event_source) -> None:
         driver=driver,
     )
     if due:
-        raise Refused.rotation_due()
+        raise Refused(ROTATE_MSG)
     read_event = next_event if event_source is None else event_source.next
     line, event = read_event(events, after)
     print(f"{line} {event}")

@@ -183,14 +183,14 @@ def _read_file(path, workdir):
         return read_confined(path, workdir, limit=MAX_FILE)
     except ConfinedFileError as error:
         reasons = {
-            ConfinedReason.REGULAR: FileError.not_a_regular_file,
-            ConfinedReason.SINGLE_LINK: FileError.not_a_single_link_file,
-            ConfinedReason.SUFFIX: FileError.not_a_md_file,
-            ConfinedReason.OUTSIDE: FileError.not_under_the_workdir,
-            ConfinedReason.REPLACED: FileError.replaced,
-            ConfinedReason.TOO_LARGE: lambda: FileError.over_bytes(MAX_FILE),
+            ConfinedReason.REGULAR: "not a regular file",
+            ConfinedReason.SINGLE_LINK: "not a single-link file",
+            ConfinedReason.SUFFIX: "not a .md file",
+            ConfinedReason.OUTSIDE: "not under the workdir",
+            ConfinedReason.REPLACED: "file changed while reading",
+            ConfinedReason.TOO_LARGE: f"over {MAX_FILE} bytes",
         }
-        raise reasons[error.reason]() from None
+        raise FileError(reasons[error.reason]) from None
 
 
 def _url(ctx, url):

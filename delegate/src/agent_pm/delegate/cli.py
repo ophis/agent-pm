@@ -105,9 +105,9 @@ def _main(a: argparse.Namespace, *, application=None) -> tuple[int, str | None]:
     """(exit code, the valid outcome's status)."""
     try:
         if not a.list and None in (a.input, a.out, a.workdir):
-            raise ConfigError.required_paths()
+            raise ConfigError("--input, --out and --workdir are required")
         if a.resume and a.sid is None:
-            raise ConfigError.resume_sid_option()
+            raise ConfigError("--resume needs --sid")
         _check_detach(a)
         team = composer.team(composer.TEAM, composer.team_dirs())
         if a.list:
@@ -161,13 +161,13 @@ def _deliverable(out: str, text: str) -> None:
 def _check_detach(a: argparse.Namespace) -> None:
     detached = a.detach or a.driver is not None
     if a.events is not None and not detached:
-        raise ConfigError.events_detach()
+        raise ConfigError("--events needs --detach")
     if a.detach and a.events is None:
-        raise ConfigError.detach_events()
+        raise ConfigError("--detach needs --events")
     if (a.split is not None or a.split_from is not None) and not (detached and a.mode == "tui"):
-        raise ConfigError.detach_layout()
+        raise ConfigError("--split and --split-from need --detach --mode tui")
     if a.detach and a.out == "-":
-        raise ConfigError.detach_output()
+        raise ConfigError("--detach needs --out PATH")
 
 
 def _detach(a: argparse.Namespace, p: Plan) -> int:

@@ -58,29 +58,31 @@ class RunConfig:
 
     def __post_init__(self):
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
-            raise ConfigError.tier(self.tier)
+            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort not in EFFORTS:
-            raise ConfigError.effort(EFFORTS, self.effort)
+            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
         if (
             not isinstance(self.runtime, str)
             or not self.runtime.strip()
             or not self.runtime.isprintable()
         ):
-            raise ConfigError.runtime(self.runtime)
+            raise ConfigError(
+                f"runtime must be a non-empty one-line name, got {self.runtime!r:.80}"
+            )
         if "type" not in self.output:
-            raise ConfigError.output_type()
+            raise ConfigError("output.type is not set")
         if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:
-            raise ConfigError.gate()
+            raise ConfigError("gate must be one line of shell command without backticks")
         if not isinstance(self.language, str) or "\n" in self.language:
-            raise ConfigError.language()
+            raise ConfigError("language must be one line of text")
         if not isinstance(self.show, str) or "\n" in self.show:
-            raise ConfigError.show()
+            raise ConfigError("show must be one line of shell command")
         if self.cwd and (
             not isinstance(self.cwd, str)
             or not self.cwd.isprintable()
             or not os.path.isabs(os.path.expanduser(self.cwd))
         ):
-            raise ConfigError.configured_cwd(self.cwd)
+            raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
 
 
 @dataclass(frozen=True, kw_only=True)

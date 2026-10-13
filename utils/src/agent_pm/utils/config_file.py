@@ -24,18 +24,7 @@ UNCONFIGURED = ("utils", "manager")  # no own file
 
 
 class ConfigFileError(ValueError):
-    @classmethod
-    def shared_key(cls, project, key):
-        return cls(f"{project}/config.toml: {key} is also a same-level project's")
-
-    @classmethod
-    def unknown_key(cls, local, key):
-        return cls(f"{local}: unknown key {key!r}: no project's config.toml has it")
-
-    @classmethod
-    def unknown_project(cls, name):
-        projects = ", ".join(p for level in LEVELS for p in level)
-        return cls(f"project {name!r}: want one of {projects}")
+    pass
 
 
 class MissingConfig(FileNotFoundError):
@@ -79,12 +68,20 @@ def read_project(
         layer = {}
         for project in level:
             if clash := sorted(set(layer) & set(configs[project])):
-                raise ConfigFileError.shared_key(project, clash[0])
+                error_project = project
+                error_key_value = clash[0]
+                raise ConfigFileError(
+                    f"{error_project}/config.toml: {error_key_value} is also a same-level project's"
+                )
             layer.update(configs[project])
         out = merge(out, layer)
     found = _load(os.path.expanduser(local))
     if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
-        raise ConfigFileError.unknown_key(local, unknown[0])
+        error_local = local
+        error_key = unknown[0]
+        raise ConfigFileError(
+            f"{error_local}: unknown key {error_key!r}: no project's config.toml has it"
+        )
     if own:
         return merge(configs[name], _owned(found, known, lambda owners: name in owners))
     return merge(out, _owned(found, known, lambda owners: min(map(_rank, owners)) <= rank))
@@ -101,7 +98,8 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    raise ConfigFileError.unknown_project(name)
+    error_projects = ", ".join((p for level in LEVELS for p in level))
+    raise ConfigFileError(f"project {name!r}: want one of {error_projects}")
 
 
 def _configs(root: str, name: str, path: str | None) -> dict[str, dict]:

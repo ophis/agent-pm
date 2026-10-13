@@ -61,13 +61,7 @@ M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 
 
 class Skip(Exception):
-    @classmethod
-    def unsafe_directory(cls, join_ident_parts_1):
-        return cls(f"not a real directory inside {join_ident_parts_1}/, refusing to touch")
-
-    @classmethod
-    def not_repository(cls):
-        return cls("not a clone or worktree")
+    pass
 
 
 class Pruner:
@@ -113,13 +107,15 @@ class Pruner:
         key = "/".join((ident, *parts))
         try:
             if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip.unsafe_directory("/".join((ident, *parts[:-1])))
+                raise Skip(
+                    f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch"
+                )
             if parts == (TMP,):
                 self.delete(key, path, "temp files")
                 return None
             dotgit = os.path.join(path, ".git")
             if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
-                raise Skip.not_repository()
+                raise Skip("not a clone or worktree")
             common = common_dir(path) if os.path.isfile(dotgit) else None
             return (
                 common

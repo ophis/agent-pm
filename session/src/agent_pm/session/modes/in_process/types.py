@@ -26,7 +26,7 @@ class InProcessMode:
         try:
             threading.Thread(target=self._pump, args=(prompt, request), daemon=True).start()
         except RuntimeError as e:
-            raise DriverError.start_in_process(e) from e
+            raise DriverError(f"cannot start the in_process run: {e}") from e
         self.begun = True
 
     def _pump(self, prompt: str, request: SessionRequest) -> None:
@@ -74,10 +74,10 @@ class InProcessMode:
         return "live" if self.begun and not self.over.is_set() else "absent"
 
     def send(self, _text: str, /) -> None:
-        raise DriverError.tui_only("send")
+        raise DriverError(f"{'send'}: tui mode only")
 
     def screen(self, _lines: int | None = None, /) -> str:
-        raise DriverError.tui_only("screen")
+        raise DriverError(f"{'screen'}: tui mode only")
 
     def stop(self) -> None:
         # A run blocked in a call goes on until its next yield or the process exits.

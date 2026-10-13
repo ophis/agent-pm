@@ -50,7 +50,9 @@ def read_state(name: str) -> dict:
     try:
         return tui_hook.read_state(os.path.join(session_dir(name), tui_hook.STATE))
     except HookError as e:
-        raise DriverError.no_tui_session(name, e) from None
+        raise DriverError(
+            f"no tui session {name}" if e is None else f"no tui session {name}: {e}"
+        ) from None
 
 
 def close(name: str, *, host=tmux_host) -> None:
@@ -66,7 +68,11 @@ def _close(name: str, pane: str | None = None, *, host=tmux_host) -> None:
         host.kill(pane or name)
     except TuiError as e:
         if host.status(pane or name) is not None:
-            raise DriverError.close_tui(name, e) from None
+            raise DriverError(
+                f"cannot close tui session {name}: {e.strerror or e}"
+                if isinstance(e, OSError)
+                else f"cannot close tui session {name}: {e}"
+            ) from None
     _drop(name)
 
 
@@ -74,7 +80,11 @@ def _drop(name: str) -> None:
     try:
         _remove(session_dir(name))
     except OSError as e:
-        raise DriverError.close_tui(name, e) from None
+        raise DriverError(
+            f"cannot close tui session {name}: {e.strerror or e}"
+            if isinstance(e, OSError)
+            else f"cannot close tui session {name}: {e}"
+        ) from None
 
 
 @contextlib.contextmanager
@@ -84,7 +94,7 @@ def lock(name: str) -> Iterator[None]:
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     except OSError as e:
-        raise DriverError.file_access(path, e) from None
+        raise DriverError(f"{path}: {e.strerror or e}") from None
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -108,12 +118,12 @@ def _tui_dir() -> None:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             if os.fstat(fd).st_uid != os.getuid():
-                raise DriverError.foreign_directory(root)
+                raise DriverError(f"{root}: not your directory")
             os.fchmod(fd, 0o700)
         finally:
             os.close(fd)
     except OSError as e:
-        raise DriverError.file_access(root, e) from None
+        raise DriverError(f"{root}: {e.strerror or e}") from None
 
 
 def _records(data: bytes) -> Iterator[tuple[str, dict]]:
@@ -174,25 +184,25 @@ class TuiMode:
         }
         for field, check in tui_hook.SESSION_STATE.items():
             if not check(state[field]):
-                raise DriverError.bad_tui_field(name, field, state[field])
+                raise DriverError(f"tui session {name}: bad {field} {state[field]!r:.80}")
         status = host.status(name)
         if status == tmux_host.RUNNING:
-            raise DriverError.running_tui(name, host.attach_command(name))
+            raise DriverError(f"tui session {name} is running; {host.attach_command(name)}")
         if status == tmux_host.UNKNOWN:
-            raise DriverError.unknown_tui(name)
+            raise DriverError(f"tui session {name}: its tmux state is unknown")
         _tui_dir()
         mode = cls(name, run, info.sid, setup, host=host)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
-                    raise DriverError.non_directory(mode.dir)
+                    raise DriverError(f"{mode.dir}: not a directory")
                 shutil.rmtree(mode.dir)
             os.mkdir(mode.dir, 0o700)
             mode._made = os.lstat(mode.dir)
         except FileExistsError:
-            raise DriverError.starting_tui(name) from None
+            raise DriverError(f"tui session {name} is starting") from None
         except OSError as e:
-            raise DriverError.file_access(mode.dir, e) from None
+            raise DriverError(f"{mode.dir}: {e.strerror or e}") from None
         try:
             fd, temp = tempfile.mkstemp(dir=mode.dir, prefix=".session.")
             with os.fdopen(fd, "w") as f:
@@ -200,7 +210,7 @@ class TuiMode:
             os.replace(temp, os.path.join(mode.dir, tui_hook.STATE))
         except OSError as e:
             mode._unmake()
-            raise DriverError.file_access(mode.dir, e) from None
+            raise DriverError(f"{mode.dir}: {e.strerror or e}") from None
         return mode
 
     def begin(
@@ -221,12 +231,12 @@ class TuiMode:
             )
         except TuiError as e:
             self._unmake()
-            raise DriverError.start_tui(self.name, e) from e
+            raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         try:
             self._pane = self.host.pane(self.name)
         except TuiError as e:
             _close(self.name, host=self.host)  # start() holds the name's lock
-            raise DriverError.start_tui(self.name, e) from e
+            raise DriverError(f"cannot start tui session {self.name}: {e}") from e
         self._live = True
 
     def _unmake(self) -> None:
@@ -244,7 +254,9 @@ class TuiMode:
         except TuiError:
             tagged = pane = None
         if tagged != state["sid"]:
-            raise DriverError.no_tui_session(name)
+            raise DriverError(
+                f"no tui session {name}" if None is None else f"no tui session {name}: {None}"
+            )
         mode = cls(
             name,
             run,
@@ -395,18 +407,18 @@ class TuiMode:
                     self.host.keys(self._pane, item.name)
                 last = item
         except TuiError as e:
-            raise DriverError.send_tui(self.name, e) from e
+            raise DriverError(f"send to tui session {self.name}: {e}") from e
 
     def screen(self, lines: int | None = None, /) -> str:
         self._running()
         try:
             return self.host.read(self._pane, lines)
         except TuiError as e:
-            raise DriverError.screen_tui(self.name, e) from e
+            raise DriverError(f"screen of tui session {self.name}: {e}") from e
 
     def _running(self) -> None:
         if self._own(self.host.status(self.name)) != tmux_host.RUNNING:
-            raise DriverError.absent_tui(self.name)
+            raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
         """Under the name's lock, unless another pane holds the name, kills its pane's session

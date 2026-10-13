@@ -59,10 +59,10 @@ class CodexTui(Tui):
         store = self.store = sessions.store_root()
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
-            raise ConfigError.codex_executable()
+            raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
-            raise ConfigError.codex_hook()
+            raise ConfigError("Codex tui requires an absolute Driver hook command")
         roots = import_roots()
         dependencies = [
             *roots,

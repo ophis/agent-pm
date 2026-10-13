@@ -30,7 +30,7 @@ def bind(label, value, workdir, sid, *, root=None):
     try:
         state = sessions.load_session(workdir, sid, root=root)
         if state is None:
-            raise sessions.RecoveryError.missing_state()
+            raise sessions.RecoveryError("missing Codex recovery state")
         if os.path.realpath(value["cwd"]) != state.snapshot["cwd"]:
             return False
         sessions.bind_session(

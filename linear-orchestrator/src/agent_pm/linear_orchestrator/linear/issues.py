@@ -80,9 +80,11 @@ def parse_handoff(description) -> Handoff | None:
 def read_issue(gql, ident) -> Issue:
     node = gql(Q_ISSUE, i=ident)["issue"]
     if node is None:
-        raise IssueError.issue_not_found(ident)
+        raise IssueError(f"{ident}: issue not found")
     if node["identifier"] != ident:
-        raise IssueError.linear_returned_for(str(node["identifier"])[:40], ident)
+        error_str_node_identifier_40 = str(node["identifier"])[:40]
+        error_ident = ident
+        raise IssueError(f"Linear returned {error_str_node_identifier_40!r} for {error_ident}")
     notes = sorted(
         (
             Note(

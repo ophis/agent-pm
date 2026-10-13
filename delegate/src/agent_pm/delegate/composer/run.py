@@ -61,7 +61,9 @@ def run_key(layer: Mapping, role: str, key: str):
 
 def check_old_keys(table: Mapping, role: str, prefix: str = "") -> None:
     if old := sorted(OLD_KEYS & set(table)):
-        raise ConfigError.obsolete_task_keys(prefix, role, old[0])
+        raise ConfigError(
+            f"[{prefix}roles.{role}] has {old[0]!r}: task-level config and default_task are gone; set run keys in [{prefix}roles.{role}] (a run without a task picks one)"
+        )
 
 
 def resolve(
@@ -85,7 +87,7 @@ def resolve(
         try:
             _check_overlay(overlay, known, where)
         except ConfigError as e:
-            raise ConfigError.overlay(label, e) from None
+            raise ConfigError(f"{label}: {e}") from None
     cfg = config_of(config, local, cfg)
     _check(cfg)
     values = _run_keys(cfg, role)
@@ -103,7 +105,9 @@ def resolve(
         raise no_charter(role, cfg, team)
     tasks = index(role, team, config, local, cfg=cfg)
     if task and task not in tasks:
-        raise misnamed_error(team, "tasks", task) or ConfigError.task(task, role, tasks)
+        raise misnamed_error(team, "tasks", task) or ConfigError(
+            f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
+        )
     return replace(run, role_title=title_of(*found))
 
 
@@ -127,7 +131,7 @@ def access(
 ) -> Intent:
     cwd, project, repo_dir = location.cwd, location.project, location.repo_dir
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
-        raise ConfigError.absolute_cwd(cwd)
+        raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
     paths = {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
@@ -166,18 +170,18 @@ def _check(cfg: Mapping) -> None:
 def _check_overlay(overlay: Mapping, roles: set[str], where: str) -> None:
     """An overlay's errors name its tables in brackets."""
     if not isinstance(overlay, Mapping):
-        raise ConfigError.overlay_table(where)
+        raise ConfigError(f"[{where}] must be a table")
     _check_keys(overlay, RUN_KEYS | {"roles"}, f"[{where}]")
     _check_output(overlay, f"{where}.output", _boxed)
     if "roles" not in overlay:
         return
     if not isinstance(overlay["roles"], Mapping):
-        raise ConfigError.overlay_roles_table(where)
+        raise ConfigError(f"[{where}.roles] must be a table")
     for role, table in overlay["roles"].items():
         if role not in roles:
-            raise ConfigError.overlay_role(role, where)
+            raise ConfigError(f"unknown role {role!r} in [{where}.roles]")
         if not isinstance(table, Mapping):
-            raise ConfigError.overlay_role_table(where, role)
+            raise ConfigError(f"[{where}.roles.{role}] must be a table")
         _check_role(table, role, f"{where}.", _boxed)
 
 
@@ -195,13 +199,13 @@ def _check_output(table: Mapping, where: str, shown: Callable[[str], str]) -> No
     if "output" not in table:
         return
     if not isinstance(table["output"], Mapping):
-        raise ConfigError.table(shown(where))
+        raise ConfigError(f"{shown(where)} must be a table")
     _check_keys(table["output"], OUTPUT_KEYS, shown(where))
 
 
 def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed, key=str):
-        raise ConfigError.key(extra[0], where)
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:

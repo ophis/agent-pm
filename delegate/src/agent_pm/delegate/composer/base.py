@@ -29,7 +29,7 @@ def fill(text: str, values: Mapping, where: str) -> str:
 
     out = PLACEHOLDER.sub(value, text)
     if m := PLACEHOLDER.search(out):
-        raise ConfigError.placeholder(m.group(0), where)
+        raise ConfigError(f"unfilled placeholder {m.group(0)} in {where}")
     return out
 
 
@@ -61,13 +61,13 @@ def read_text(path: str) -> str:
         with open(path) as f:
             return f.read().strip() + "\n"
     except OSError as e:
-        raise ConfigError.file_io(path, e.strerror) from None
+        raise ConfigError(f"{path}: {e.strerror}") from None
     except UnicodeDecodeError:
-        raise ConfigError.file_encoding(path) from None
+        raise ConfigError(f"{path}: not UTF-8 text") from None
 
 
 def title_of(text: str, rel: str) -> str:
     first = text.splitlines()[0] if text.strip() else ""
     if not first.startswith("# "):
-        raise ConfigError.heading(rel)
+        raise ConfigError(f"{rel}: must start with a '# ' heading")
     return first[2:].strip()

@@ -19,9 +19,9 @@ class PrintPromptInProcess(InProcess):
         spec = request.spec
         resume = request.resumed
         if resume:
-            raise ConfigError.print_prompt_resume()
+            raise ConfigError("print_prompt has no session to resume")
         if spec.reply_tags is None:
-            raise ConfigError.print_prompt_protocol()
+            raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
 
     def run(self, prompt, request: SessionRequest):
         spec = request.spec

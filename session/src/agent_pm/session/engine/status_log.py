@@ -10,10 +10,7 @@ from agent_pm.utils import append_line
 
 
 class StatusError(ValueError):
-    @classmethod
-    def text(cls, label: str, value: object, *, one_word: bool) -> "StatusError":
-        want = "printable text without whitespace" if one_word else "non-empty printable text"
-        return cls(f"event {label}: want {want}, not {value!r}")
+    pass
 
 
 def _text(label: str, value, *, one_word: bool = False) -> str:
@@ -23,7 +20,8 @@ def _text(label: str, value, *, one_word: bool = False) -> str:
         and value.isprintable()
         and (not one_word or value.split() == [value])
     ):
-        raise StatusError.text(label, value, one_word=one_word)
+        want = "printable text without whitespace" if one_word else "non-empty printable text"
+        raise StatusError(f"event {label}: want {want}, not {value!r}")
     return value
 
 

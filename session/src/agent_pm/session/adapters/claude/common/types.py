@@ -52,7 +52,9 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
             or not isinstance(own, dict)
             or not all(isinstance(own.get(e, []), list) for e in hooks)
         ):
-            raise ConfigError.claude_settings(value)
+            raise ConfigError(
+                f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
+            )
         for event, entries in hooks.items():
             own[event] = [*own.get(event, []), *entries]
         return settings, (*flags[:i], *flags[end:])
@@ -79,7 +81,9 @@ def _strings(value) -> bool:
 
 def _read_dir(path: str) -> str:
     if not printable_abs(path) or any(c in NOT_LITERAL for c in path):
-        raise ConfigError.claude_read_directory(path, NOT_LITERAL)
+        raise ConfigError(
+            f"claude: read dir {path!r:.80} must be a printable absolute path without {NOT_LITERAL}"
+        )
     return path
 
 
@@ -135,7 +139,7 @@ class ClaudeCommon:
         common.check(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         if any(flag.startswith("--setting-sources") for flag in self.flags):
-            raise ConfigError.claude_setting_sources(TABLE)
+            raise ConfigError(f"--setting-sources is the Driver's: remove it from {TABLE}.flags")
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
@@ -145,14 +149,14 @@ class ClaudeCommon:
         if tier is None:
             return None
         if (model := self.tiers.get(str(tier))) is None:
-            raise ConfigError.claude_model(tier, TABLE)
+            raise ConfigError(f"no model for tier {tier} in {TABLE}.tiers")
         return model
 
     def effort(self, effort: str | None) -> str | None:
         if effort is None:
             return None
         if (value := self.efforts.get(effort)) is None:
-            raise ConfigError.claude_effort(effort, TABLE)
+            raise ConfigError(f"no effort for {effort!r} in {TABLE}.efforts")
         return value
 
     def env(self) -> dict[str, str]:
@@ -184,7 +188,7 @@ class ClaudeCommon:
     def uuid(sid) -> str:
         if isinstance(sid, str) and UUID.fullmatch(sid):
             return sid
-        raise ConfigError.claude_uuid(sid)
+        raise ConfigError(f"claude session ids are UUIDs, got {sid!r:.80}")
 
     def launch(
         self,
@@ -214,7 +218,7 @@ class ClaudeCommon:
         strict = "--strict-mcp-config" in _before_end(spec.flags)
         selection = self.selector(sid, resume=resume)
         if not isinstance(sid, str):
-            raise ConfigError.session_uuid(sid)
+            raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
         argv = (
             "claude",
             *head,

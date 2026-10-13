@@ -75,7 +75,7 @@ def linear_gql(query, *, service, timeout=30, **variables):
     except ValueError:
         raise Unavailable(operation(query), reason="response not JSON") from None
     if body.get("errors"):
-        raise LinearError.api(body["errors"])
+        raise LinearError(f"linear api error: {body['errors']}")
     return body["data"]
 
 
@@ -98,7 +98,7 @@ def key(service, timeout):
         timeout=timeout,
     ).stdout.strip()
     if not _clean(found):
-        raise LinearError.invalid_key(service)
+        raise LinearError(f"Linear key of {service}: empty, not printable or holds whitespace")
     return found
 
 
@@ -236,7 +236,7 @@ NOT_FOUND = "Entity not found"
 def call(gql, query, field, **v):
     out = gql(query, **v)[field]
     if not out["success"]:
-        raise LinearError.unsuccessful(field)
+        raise LinearError(f"{field}: success: false")
     return out
 
 
@@ -267,7 +267,7 @@ def find_comment(gql, cid, issue_id):
     if (found.get("issue") or {}).get("id") != issue_id or not (found.get("user") or {}).get(
         "isMe"
     ):
-        raise LinearError.foreign_comment(cid)
+        raise LinearError(f"comment {cid} is not ours")
     return found["body"]
 
 
@@ -321,7 +321,9 @@ def humans(gql, cfg):
     emails = cfg.human_members
     ids = [user_id(gql, e) for e in emails]
     if missing := [e for e, i in zip(emails, ids, strict=False) if not i]:
-        raise LinearError.human_members_not_found_in_linear(", ".join(missing))
+        raise LinearError(
+            f"linear-orchestrator/config.toml: human_members not found in Linear: {', '.join(missing)}"
+        )
     return ids
 
 
@@ -330,7 +332,11 @@ def role_ids(gql, roles):
     for name, role in roles.items():
         uid = user_id(gql, role.account)
         if not uid:
-            raise LinearError.roles_account_not_found_in_linear(name, role.account)
+            error_name = name
+            error_role_account = role.account
+            raise LinearError(
+                f"linear-orchestrator/config.toml [roles.{error_name}]: account {error_role_account!r} not found in Linear"
+            )
         out[uid] = name
     return out
 
@@ -342,11 +348,15 @@ Q_TEAM = """query($t: ID) { teams(filter: { id: { eq: $t } }) { nodes { id name
 def team(gql, cfg):
     nodes = gql(Q_TEAM, t=cfg.team)["teams"]["nodes"]
     if not nodes:
-        raise LinearError.team_not_found_in_linear(cfg.team)
+        raise LinearError(f"linear-orchestrator/config.toml: team {cfg.team} not found in Linear")
     t = nodes[0]
     ids = {s["id"] for s in t["states"]["nodes"]}
     if bad := [f"{k} {cfg.states[k]}" for k in config.STATES if cfg.states[k] not in ids]:
-        raise LinearError.states_not_workflow_states_of_team(t["name"], ", ".join(bad))
+        error_t_name = t["name"]
+        error_join_bad = ", ".join(bad)
+        raise LinearError(
+            f"linear-orchestrator/config.toml: [states] not workflow states of team {error_t_name!r}: {error_join_bad}"
+        )
     return Team(t["id"], t["name"], {k: cfg.states[k] for k in config.STATES})
 
 
@@ -361,9 +371,17 @@ def task_group(gql, cfg):
     try:
         label = gql(Q_TASK_GROUP, i=group)["issueLabel"]
     except LinearError as e:
-        raise LinearError.task_label_group_not_found_in_linear(group, e) from None
+        raise LinearError(
+            f"linear-orchestrator/config.toml: task_label_group {group} not found in Linear: {e}"
+        ) from None
     if not label["isGroup"]:
-        raise LinearError.task_label_group_is_not_a_label(group)
+        raise LinearError(
+            f"linear-orchestrator/config.toml: task_label_group {group} is not a label group"
+        )
     ids = {c["id"] for c in label["children"]["nodes"]}
     if bad := [f"{task} {i}" for task, i in cfg.task_labels.items() if i not in ids]:
-        raise LinearError.task_labels_not_labels_of_task_label(group, ", ".join(bad))
+        error_group = group
+        error_join_bad_value = ", ".join(bad)
+        raise LinearError(
+            f"linear-orchestrator/config.toml: [task_labels] not labels of task_label_group {error_group}: {error_join_bad_value}"
+        )

@@ -28,12 +28,12 @@ def read(body: str, output: Mapping, workdir: str) -> Outcome:
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
-        raise InvalidOutcome.not_json(e) from None
+        raise InvalidOutcome(f"not JSON: {e}") from None
     if not isinstance(data, dict):
-        raise InvalidOutcome.not_object()
+        raise InvalidOutcome("not an object")
     if "deliverable_file" in data:
         if "deliverable" in data:
-            raise InvalidOutcome.both_deliverables()
+            raise InvalidOutcome("give deliverable or deliverable_file, not both")
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
@@ -43,7 +43,7 @@ def read(body: str, output: Mapping, workdir: str) -> Outcome:
 def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     """Raises InvalidOutcome."""
     if not isinstance(data, dict):
-        raise InvalidOutcome.not_object()
+        raise InvalidOutcome("not an object")
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
     questions, files, deliverable = (
         data.get("questions") or [],
@@ -51,17 +51,17 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         data.get("deliverable") or "",
     )
     if status not in STATUSES:
-        raise InvalidOutcome.status(status)
+        raise InvalidOutcome(f"status {status!r} is not one of {', '.join(STATUSES)}")
     if not isinstance(title, str) or not title.strip() or not title.isprintable():
-        raise InvalidOutcome.title()
+        raise InvalidOutcome("title must be one line of printable text")
     if not isinstance(summary, str) or not isinstance(deliverable, str):
-        raise InvalidOutcome.text_fields()
+        raise InvalidOutcome("summary and deliverable must be text")
     if not isinstance(questions, list) or not isinstance(files, list):
-        raise InvalidOutcome.lists()
+        raise InvalidOutcome("questions and files must be lists")
     if status == "needs_input" and not 1 <= len(questions) <= 4:
-        raise InvalidOutcome.questions()
+        raise InvalidOutcome("needs_input must carry 1–4 questions")
     if status == "done" and output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
-        raise InvalidOutcome.missing_deliverable(output["type"])
+        raise InvalidOutcome(f"done with a {output['type']} destination must carry the deliverable")
     outcome = Outcome(
         cast(OutcomeStatus, status),
         title.strip(),
@@ -87,17 +87,19 @@ def _conform(value, schema: Mapping, where: str) -> None:
     if isinstance(kind, str) and (validate_kind := validators.get(kind)):
         validate_kind(value, schema, where)
     if "enum" in schema and value not in schema["enum"]:
-        raise InvalidOutcome.enum(where, value, schema["enum"])
+        raise InvalidOutcome(
+            f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}"
+        )
 
 
 def _object(value, schema, where):
     if not isinstance(value, dict):
-        raise InvalidOutcome.not_object(where)
+        raise InvalidOutcome("not an object" if where is None else f"{where} must be an object")
     props = schema.get("properties", {})
     if missing := [k for k in schema.get("required", ()) if k not in value]:
-        raise InvalidOutcome.missing_field(where, missing[0])
+        raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
     if schema.get("additionalProperties") is False and (extra := sorted(set(value) - set(props))):
-        raise InvalidOutcome.unknown_field(extra[0])
+        raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
     for key, item in value.items():
         if key in props:
             _conform(item, props[key], key)
@@ -105,20 +107,20 @@ def _object(value, schema, where):
 
 def _string(value, schema, where):
     if not isinstance(value, str):
-        raise InvalidOutcome.text(where)
+        raise InvalidOutcome(f"{where} must be text")
     if len(value) < schema.get("minLength", 0):
-        raise InvalidOutcome.too_short(where, schema["minLength"])
+        raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
     if len(value) > schema.get("maxLength", len(value)):
-        raise InvalidOutcome.too_long(where, schema["maxLength"])
+        raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
     if "pattern" in schema and not re.search(schema["pattern"], value):
-        raise InvalidOutcome.pattern(where, schema["pattern"])
+        raise InvalidOutcome(f"{where} must match {schema['pattern']}")
 
 
 def _array(value, schema, where):
     if not isinstance(value, list):
-        raise InvalidOutcome.list(where)
+        raise InvalidOutcome(f"{where} must be a list")
     if len(value) > schema.get("maxItems", len(value)):
-        raise InvalidOutcome.too_many_items(where, schema["maxItems"])
+        raise InvalidOutcome(f"{where} has more than {schema['maxItems']} items")
     for index, item in enumerate(value):
         _conform(item, schema.get("items", {}), f"{where}[{index}]")
 
@@ -135,13 +137,13 @@ def _url(url: str, out: Mapping) -> str:
         or " " in url
         or posixpath.normpath(unquote(parts.path)) != unquote(parts.path)
     ):
-        raise InvalidOutcome.plain_url()
+        raise InvalidOutcome("url must be a plain https link")
     if out["type"] == "github":
         host, prefix = out.get("host", "github.com"), f"/{out['repo']}/blob/{out['branch']}/"
         if parts.netloc != host or not parts.path.startswith(prefix):
-            raise InvalidOutcome.url_prefix(host, prefix)
+            raise InvalidOutcome(f"url must start with https://{host}{prefix}")
     elif out["type"] == "pull-request" and not PR_PATH.fullmatch(parts.path):
-        raise InvalidOutcome.pull_request_url()
+        raise InvalidOutcome("url must be a pull request, compare or tree link")
     return url
 
 
@@ -156,7 +158,9 @@ def _file(path, workdir: str) -> str:
         or not real.is_file()
         or real.stat().st_nlink != 1
     ):
-        raise InvalidOutcome.file(path)
+        raise InvalidOutcome(
+            f"file {str(path)[:200]!r} is not a single-link .md file under the workdir"
+        )
     return str(real)
 
 
@@ -166,19 +170,20 @@ def _read_file(real: str, workdir: str) -> str:
     try:
         data = read_confined(real, workdir, limit=cap)
     except ConfinedFileError as error:
-        errors = {
-            ConfinedReason.REGULAR: InvalidOutcome.not_regular,
-            ConfinedReason.SINGLE_LINK: InvalidOutcome.not_regular,
-            ConfinedReason.SUFFIX: InvalidOutcome.file,
-            ConfinedReason.OUTSIDE: InvalidOutcome.relocated,
-            ConfinedReason.REPLACED: InvalidOutcome.replaced,
+        path = str(real)[:200]
+        messages = {
+            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a single-link regular file",
+            ConfinedReason.SINGLE_LINK: f"deliverable_file {path!r}: not a single-link regular file",
+            ConfinedReason.SUFFIX: f"file {path!r} is not a single-link .md file under the workdir",
+            ConfinedReason.OUTSIDE: f"deliverable_file {path!r}: no longer under the workdir",
+            ConfinedReason.REPLACED: f"deliverable_file {path!r}: replaced while it was opened",
+            ConfinedReason.TOO_LARGE: f"deliverable_file {path!r}: too large (over {cap} bytes)",
         }
-        if error.reason is ConfinedReason.TOO_LARGE:
-            raise InvalidOutcome.large_file(real, cap) from None
-        raise errors[error.reason](real) from None
+        raise InvalidOutcome(messages[error.reason]) from None
     except OSError as error:
-        raise InvalidOutcome.unreadable(real, error) from None
+        reason = error.strerror or "unreadable"
+        raise InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}") from None
     try:
         return data.decode()
     except UnicodeDecodeError:
-        raise InvalidOutcome.file_encoding(real) from None
+        raise InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: not UTF-8 text") from None

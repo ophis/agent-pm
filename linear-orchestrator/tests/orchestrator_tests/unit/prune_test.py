@@ -82,7 +82,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
             gql.archived.append(v["i"])
             ident = v["i"].removeprefix("id-")
             if ident in fail:
-                raise LinearError.api("boom")
+                raise LinearError(f"linear api error: {'boom'}")
             if ident not in refuse:
                 gql.gone.add(ident)
             return {"issueArchive": {"success": ident not in refuse}}
@@ -812,7 +812,7 @@ class RetentionCleanup(PruneScenario):
 
         def gql(query, **v):
             if query == prune.Q_FINISHED:
-                raise LinearError.api("down")
+                raise LinearError(f"linear api error: {'down'}")
             return issues(query, **v)
 
         code, out = self.prune(gql)
@@ -948,7 +948,7 @@ class RetentionCleanup(PruneScenario):
         clone = self.mkc("TASK-49", "src", "o", "repo")
 
         def down(_query, **_v):
-            raise LinearError.api("down")
+            raise LinearError(f"linear api error: {'down'}")
 
         code, state, out = self.tick(down)
         self.assertEqual((code, state), (0, "Done"))

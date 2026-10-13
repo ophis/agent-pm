@@ -73,9 +73,11 @@ class Access:
     def __post_init__(self):
         for name in ("dirs", "commands", "reads"):
             if not _strings(getattr(self, name)):
-                raise ConfigError.string_tuple(name)
+                raise ConfigError(f"{name} must be a tuple of strings")
         if not env_ok(self.env):
-            raise ConfigError.access_environment()
+            raise ConfigError(
+                "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
+            )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -95,35 +97,39 @@ class Spec:
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
-            raise ConfigError.workdir(self.workdir)
+            raise ConfigError(
+                f"workdir must be a printable absolute path, got {self.workdir!r:.80}"
+            )
         if self.tier is not None and (
             isinstance(self.tier, bool) or not isinstance(self.tier, int) or not 1 <= self.tier <= 4
         ):
-            raise ConfigError.tier(self.tier)
+            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort is not None and self.effort not in EFFORTS:
-            raise ConfigError.effort(EFFORTS, self.effort)
+            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
         if self.access.cwd != "" and not printable_abs(self.access.cwd):
-            raise ConfigError.cwd(self.access.cwd)
+            raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
         self._validate_invocation()
 
     def _validate_invocation(self) -> None:
         if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
-            raise ConfigError.flags()
+            raise ConfigError("flags must be a tuple of strings without NUL")
         if not env_ok(self.env):
-            raise ConfigError.environment()
+            raise ConfigError("env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if self.name is not None and not isinstance(self.name, str):
-            raise ConfigError.name_type()
+            raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
-            raise ConfigError.protected_paths()
+            raise ConfigError("protect must be a tuple of printable absolute paths")
         if self.reply_tags is not None and not (
             isinstance(self.reply_tags, tuple)
             and len(self.reply_tags) == 2
             and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
         ):
-            raise ConfigError.reply_tags()
+            raise ConfigError(
+                "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
+            )
 
 
 @dataclass(frozen=True)
@@ -147,7 +153,7 @@ class Launch:
 
     def __post_init__(self):
         if self.project is not None and not isinstance(self.project, bool):
-            raise ConfigError.launch_project()
+            raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
             ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
@@ -158,7 +164,7 @@ class Launch:
             ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
         ):
             if not ok:
-                raise ConfigError.launch_strings(name)
+                raise ConfigError(f"launch: {name} must be strings without NUL")
 
 
 @dataclass(frozen=True)
@@ -246,102 +252,6 @@ class Key:
 
 class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
-
-    @classmethod
-    def sessions_unavailable(cls, cause: Exception | None = None) -> "DriverError":
-        detail = "tmux failed" if cause is None else str(cause)
-        return cls(f"tmux sessions unknown: {detail}")
-
-    @classmethod
-    def no_tui_session(cls, name: str, cause: Exception | None = None) -> "DriverError":
-        return cls(f"no tui session {name}" if cause is None else f"no tui session {name}: {cause}")
-
-    @classmethod
-    def close_tui(cls, name: str, cause: Exception) -> "DriverError":
-        return cls(
-            f"cannot close tui session {name}: {cause.strerror or cause}"
-            if isinstance(cause, OSError)
-            else f"cannot close tui session {name}: {cause}"
-        )
-
-    @classmethod
-    def file_access(cls, path: str, cause: OSError) -> "DriverError":
-        return cls(f"{path}: {cause.strerror or cause}")
-
-    @classmethod
-    def foreign_directory(cls, path: str) -> "DriverError":
-        return cls(f"{path}: not your directory")
-
-    @classmethod
-    def bad_tui_field(cls, name: str, field: str, value: object) -> "DriverError":
-        return cls(f"tui session {name}: bad {field} {value!r:.80}")
-
-    @classmethod
-    def running_tui(cls, name: str, attach: str) -> "DriverError":
-        return cls(f"tui session {name} is running; {attach}")
-
-    @classmethod
-    def unknown_tui(cls, name: str) -> "DriverError":
-        return cls(f"tui session {name}: its tmux state is unknown")
-
-    @classmethod
-    def non_directory(cls, path: str) -> "DriverError":
-        return cls(f"{path}: not a directory")
-
-    @classmethod
-    def starting_tui(cls, name: str) -> "DriverError":
-        return cls(f"tui session {name} is starting")
-
-    @classmethod
-    def start_tui(cls, name: str, cause: Exception) -> "DriverError":
-        return cls(f"cannot start tui session {name}: {cause}")
-
-    @classmethod
-    def send_tui(cls, name: str, cause: Exception) -> "DriverError":
-        return cls(f"send to tui session {name}: {cause}")
-
-    @classmethod
-    def screen_tui(cls, name: str, cause: Exception) -> "DriverError":
-        return cls(f"screen of tui session {name}: {cause}")
-
-    @classmethod
-    def absent_tui(cls, name: str) -> "DriverError":
-        return cls(f"tui session {name} is not running")
-
-    @classmethod
-    def start_in_process(cls, cause: RuntimeError) -> "DriverError":
-        return cls(f"cannot start the in_process run: {cause}")
-
-    @classmethod
-    def tui_only(cls, operation: str) -> "DriverError":
-        return cls(f"{operation}: tui mode only")
-
-    @classmethod
-    def start_command(cls, command: str, cause: Exception) -> "DriverError":
-        return cls(f"cannot start {command}: {cause}")
-
-    @classmethod
-    def missing_tmux(cls) -> "DriverError":
-        return cls("tmux not found")
-
-    @classmethod
-    def no_tui_runtime(cls, name: str, runtime: str) -> "DriverError":
-        return cls(f"no tui session {name}: runtime {runtime!r} has no tui mode")
-
-    @classmethod
-    def no_tmux_session(cls, name: str) -> "DriverError":
-        return cls(f"no tmux session {name}")
-
-    @classmethod
-    def no_anchor(cls, cause: Exception, split_from: str | None) -> "DriverError":
-        return cls(
-            f"no pane to show the TUI beside ({cause})"
-            + ("" if split_from else ": run from tmux or iTerm2, or pass split_from")
-        )
-
-    @classmethod
-    def detach(cls, name: str, cause: Exception) -> "DriverError":
-        return cls(f"detach {name}: {cause}")
 
 
 @dataclass(frozen=True)

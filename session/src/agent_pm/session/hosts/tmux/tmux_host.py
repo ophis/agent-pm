@@ -24,182 +24,11 @@ from typing import NamedTuple
 
 
 class TuiError(Exception):
-    @classmethod
-    def session_running(cls, session: str, attach: str) -> TuiError:
-        return cls(f"session {session} is running; {attach}")
-
-    @classmethod
-    def command_failed(cls, cause: object) -> TuiError:
-        return cls(f"tmux: {cause}")
-
-    @classmethod
-    def session_not_started(cls, session: str | None = None) -> TuiError:
-        return cls(
-            "the session did not start" if session is None else f"session {session} did not start"
-        )
-
-    @classmethod
-    def handover_failed(cls, cause: Exception) -> TuiError:
-        return cls(f"handover: {cause}")
-
-    @classmethod
-    def invalid_opener(cls, opener: object) -> TuiError:
-        return cls(
-            f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
-        )
-
-    @classmethod
-    def nul_argument(cls) -> TuiError:
-        return cls("an argv item holds a NUL character")
-
-    @classmethod
-    def unencodable_argument(cls) -> TuiError:
-        return cls("an argv item cannot be encoded")
-
-    @classmethod
-    def existing_session(cls, session: str) -> TuiError:
-        return cls(f"session {session} exists")
-
-    @classmethod
-    def empty_command(cls) -> TuiError:
-        return cls("no command")
-
-    @classmethod
-    def missing_command(cls, command: str) -> TuiError:
-        return cls(f"command not found: {command}")
-
-    @classmethod
-    def misread_argument(cls, argument: str) -> TuiError:
-        return cls(f"tmux would misread {argument!r}")
-
-    @classmethod
-    def invalid_tag(cls, key: str, value: object, pattern: str) -> TuiError:
-        return cls(f"tag {key!r}={value!r}: want {pattern} and a str tmux takes verbatim")
-
-    @classmethod
-    def failed_exec(cls, command: str, reason: str) -> TuiError:
-        return cls(f"cannot run {command}: {reason}")
-
-    @classmethod
-    def invalid_pane(cls, pane: object) -> TuiError:
-        return cls(f"bad tmux pane {pane!r}")
-
-    @classmethod
-    def invalid_shown_session(cls, session: object) -> TuiError:
-        return cls(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
-
-    @classmethod
-    def unsafe_events(cls, path: str) -> TuiError:
-        return cls(f"events file {path}: not a regular file owned by you")
-
-    @classmethod
-    def events_access(cls, path: str, cause: OSError) -> TuiError:
-        return cls(f"events file {path}: {cause.strerror}")
-
-    @classmethod
-    def mark_timeout(cls, seconds: float) -> TuiError:
-        return cls(f"tmux: timed out after {seconds} s")
-
-    @classmethod
-    def misread_events(cls, path: str) -> TuiError:
-        return cls(f"events file {path}: tmux would misread it")
-
-    @classmethod
-    def invalid_option(cls, name: object, pattern: str) -> TuiError:
-        return cls(f"option {name!r}: want {pattern}")
-
-    @classmethod
-    def invalid_lines(cls, lines: object) -> TuiError:
-        return cls(f"lines must be a positive int, not {lines!r}")
-
-    @classmethod
-    def iterm_not_running(cls) -> TuiError:
-        return cls("iTerm2 is not running")
-
-    @classmethod
-    def osascript_timeout(cls, seconds: float) -> TuiError:
-        return cls(f"osascript timed out after {seconds} s")
-
-    @classmethod
-    def osascript_failed(cls, cause: object) -> TuiError:
-        return cls(f"osascript: {cause}")
-
-    @classmethod
-    def osascript_output(cls, output: str) -> TuiError:
-        return cls(output or "osascript printed nothing")
-
-    @classmethod
-    def invalid_window(cls, window: object, pattern: str) -> TuiError:
-        return cls(f"invalid window id {window!r}: want {pattern}")
-
-    @classmethod
-    def invalid_grid_socket(cls, window: str, socket: str) -> TuiError:
-        return cls(f"grid {window}: socket path {socket!r}: want an absolute path")
-
-    @classmethod
-    def grid_lock_failed(cls, path: str, cause: OSError) -> TuiError:
-        return cls(f"grid lock {path}: {cause.strerror}")
-
-    @classmethod
-    def busy_grid(cls, window: str) -> TuiError:
-        return cls(f"grid {window}: busy")
-
-    @classmethod
-    def absent_session(cls, session: str | None) -> TuiError:
-        return cls(f"no session {session}")
-
-    @classmethod
-    def invalid_split(cls, split: object, choices: tuple[str, ...]) -> TuiError:
-        return cls(f"split must be one of {', '.join(choices)}, not {split!r}")
-
-    @classmethod
-    def invalid_per_column(cls, per_column: object) -> TuiError:
-        return cls(f"per_column must be an int from 1 to 9999, not {per_column!r}")
-
-    @classmethod
-    def invalid_retile(cls, retile: object, choices: tuple[str, ...]) -> TuiError:
-        return cls(f"retile must be one of {', '.join(choices)}, not {retile!r}")
-
-    @classmethod
-    def invalid_own_pane(cls, pane: object) -> TuiError:
-        return cls(f"bad $TMUX_PANE {pane!r}")
-
-    @classmethod
-    def invalid_own_session(cls, name: object) -> TuiError:
-        return cls(f"own tmux session {name!r}: want [A-Za-z0-9_-]+")
-
-    @classmethod
-    def no_anchor(cls, reason: str | None = None) -> TuiError:
-        return cls(
-            f"no anchor pane: {'not in tmux' if reason is None else reason}, "
-            "no iTerm2 pane ($ITERM_SESSION_ID)"
-        )
-
-    @classmethod
-    def invalid_iterm_session(cls, value: object, pattern: str) -> TuiError:
-        return cls(f"bad $ITERM_SESSION_ID {value!r}: want {pattern}")
-
-    @classmethod
-    def unshown_session(cls, session: str) -> TuiError:
-        return cls(f"no terminal shows tmux session {session}")
-
-    @classmethod
-    def invalid_session_name(cls, session: object) -> TuiError:
-        return cls(f"invalid session name {session!r}: want [A-Za-z0-9_-]+")
-
-    @classmethod
-    def invalid_target(cls, target: object) -> TuiError:
-        return cls(f"invalid target {target!r}: want a session name [A-Za-z0-9_-]+ or a pane id %N")
+    pass
 
 
 class CliError(argparse.ArgumentTypeError):
-    @classmethod
-    def per_column(cls, value: str) -> CliError:
-        return cls(f"want an int from 1 to 9999, not {value!r}")
-
-    @classmethod
-    def lines(cls, value: str) -> CliError:
-        return cls(f"want a positive int, not {value!r}")
+    pass
 
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -487,25 +316,25 @@ def mark(
     if not pane:
         return
     if not PANE.fullmatch(pane):
-        raise TuiError.invalid_pane(pane)
+        raise TuiError(f"bad tmux pane {pane!r}")
     mark_tmux([tmux, "set-option", "-t", pane, "@state", word], proc)
     if word not in ("done", "blocked") or events is None:
         return
     session = mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"], proc).strip()
     if not NAME.fullmatch(session):
-        raise TuiError.invalid_shown_session(session)
+        raise TuiError(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
     try:
         # O_NONBLOCK: a FIFO without a reader fails instead of hanging the hook
         fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-                raise TuiError.unsafe_events(events)
+                raise TuiError(f"events file {events}: not a regular file owned by you")
             os.write(fd, f"{time.strftime('%H:%M:%S')} {session} {word}\n".encode())
         finally:
             os.close(fd)
     except OSError as e:
-        raise TuiError.events_access(events, e) from e
+        raise TuiError(f"events file {events}: {e.strerror}") from e
 
 
 def mark_tmux(argv: list[str], proc) -> str:
@@ -518,11 +347,11 @@ def mark_tmux(argv: list[str], proc) -> str:
             timeout=MARK_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise TuiError.mark_timeout(MARK_TIMEOUT) from None
+        raise TuiError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
     except OSError as e:
-        raise TuiError.command_failed(e) from e
+        raise TuiError(f"tmux: {e}") from e
     if res.returncode:
-        raise TuiError.command_failed(tmux_error(res))
+        raise TuiError(f"tmux: {tmux_error(res)}")
     return res.stdout
 
 
@@ -532,7 +361,7 @@ def events_file(path: str) -> str:
     """
     path = os.path.abspath(path)
     if "#" in path or path.endswith(";"):
-        raise TuiError.misread_events(path)
+        raise TuiError(f"events file {path}: tmux would misread it")
     try:
         fd = os.open(
             path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
@@ -542,9 +371,9 @@ def events_file(path: str) -> str:
         finally:
             os.close(fd)
     except OSError as e:
-        raise TuiError.events_access(path, e) from e
+        raise TuiError(f"events file {path}: {e.strerror}") from e
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-        raise TuiError.unsafe_events(path)
+        raise TuiError(f"events file {path}: not a regular file owned by you")
     return path
 
 
@@ -702,7 +531,7 @@ def keys(target: str, *names: str, proc=subprocess.run) -> None:
     target = target_name(target)
     for name in names:
         if name.startswith("-") or name.endswith(";"):
-            raise TuiError.misread_argument(name)
+            raise TuiError(f"tmux would misread {name!r}")
     checked_tmux(["send-keys", "-t", target, *names], proc)
 
 
@@ -710,12 +539,12 @@ def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
     """None when unset or the target absent."""
     target = target_name(target)
     if not USER_OPTION.fullmatch(name):
-        raise TuiError.invalid_option(name, USER_OPTION.pattern)
+        raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
     res = call_tmux(["show-options", "-v", "-t", target, name], proc)
     if res.returncode:
         if tmux_error(res).startswith("invalid option:") or absent(res):
             return None
-        raise TuiError.command_failed(tmux_error(res))
+        raise TuiError(f"tmux: {tmux_error(res)}")
     return res.stdout.removesuffix("\n")
 
 
@@ -725,12 +554,12 @@ def pane(session: str, *, proc=subprocess.run) -> str | None:
     if res.returncode:
         if absent(res):
             return None
-        raise TuiError.command_failed(tmux_error(res))
+        raise TuiError(f"tmux: {tmux_error(res)}")
     found = res.stdout.strip()
     if not found:  # tmux (3.7) exits 0 printing nothing for a missing session
         return None
     if not PANE.fullmatch(found):
-        raise TuiError.invalid_pane(found)
+        raise TuiError(f"bad tmux pane {found!r}")
     return found
 
 
@@ -741,7 +570,7 @@ def read(target: str, lines: int | None = None, *, proc=subprocess.run) -> str:
     args = ["capture-pane", "-p", "-J", "-t", target_name(target)]
     if lines is not None:
         if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
-            raise TuiError.invalid_lines(lines)
+            raise TuiError(f"lines must be a positive int, not {lines!r}")
         args += ["-S", f"-{lines}"]
     text = checked_tmux(args, proc).stdout.splitlines()
     while text and not text[-1].strip():
@@ -758,13 +587,13 @@ def attach_command(session: str) -> str:
 def checked_tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
     res = call_tmux(args, proc, stdin)
     if res.returncode:
-        raise TuiError.command_failed(tmux_error(res))
+        raise TuiError(f"tmux: {tmux_error(res)}")
     return res
 
 
 def session_name(session: str) -> str:
     if not NAME.fullmatch(session):
-        raise TuiError.invalid_session_name(session)
+        raise TuiError(f"invalid session name {session!r}: want [A-Za-z0-9_-]+")
     return session
 
 
@@ -772,7 +601,9 @@ def target_name(target: str, suffix: str = ":") -> str:
     if PANE.fullmatch(target):
         return target
     if not NAME.fullmatch(target):
-        raise TuiError.invalid_target(target)
+        raise TuiError(
+            f"invalid target {target!r}: want a session name [A-Za-z0-9_-]+ or a pane id %N"
+        )
     return f"={target}{suffix}"
 
 
@@ -782,7 +613,7 @@ def call_tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.Com
             return proc(["tmux", *args], capture_output=True, text=True, input=stdin)
         return proc(["tmux", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
-        raise TuiError.command_failed(e) from e
+        raise TuiError(f"tmux: {e}") from e
 
 
 def tmux_error(res: subprocess.CompletedProcess) -> str:
@@ -829,12 +660,12 @@ def own_session(*, proc=subprocess.run) -> str | None:
         return None
     pane = os.environ.get("TMUX_PANE", "")
     if not PANE.fullmatch(pane):
-        raise TuiError.invalid_own_pane(pane)
+        raise TuiError(f"bad $TMUX_PANE {pane!r}")
     name = checked_tmux(
         ["display-message", "-p", "-t", pane, "#{session_name}"], proc
     ).stdout.strip()
     if not NAME.fullmatch(name):
-        raise TuiError.invalid_own_session(name)
+        raise TuiError(f"own tmux session {name!r}: want [A-Za-z0-9_-]+")
     return name
 
 
@@ -851,9 +682,11 @@ def find_opener(proc) -> str:
         return own
     value = os.environ.get("ITERM_SESSION_ID", "")
     if not value or os.environ.get("TERM_PROGRAM") != "iTerm.app":
-        raise TuiError.no_anchor()
+        raise TuiError(
+            f"no anchor pane: {('not in tmux' if None is None else None)}, no iTerm2 pane ($ITERM_SESSION_ID)"
+        )
     if ":" not in value or not OPENER.fullmatch(value):
-        raise TuiError.invalid_iterm_session(value, OPENER.pattern)
+        raise TuiError(f"bad $ITERM_SESSION_ID {value!r}: want {OPENER.pattern}")
     return value
 
 
@@ -864,7 +697,7 @@ def anchor(split_from: str | None = None, *, proc=subprocess.run) -> Anchor:
     if split_from is not None:
         found = shown_pane(split_from, proc, own=False)
         if found is None:
-            raise TuiError.unshown_session(split_from)
+            raise TuiError(f"no terminal shows tmux session {split_from}")
         return found
     own = own_session(proc=proc)
     return iterm_pane("not in tmux") if own is None else opener_pane(own, proc, own=True)
@@ -925,17 +758,21 @@ def list_clients(session: str, proc) -> list[list[str]]:
 def iterm_pane(why: str) -> Anchor:
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
-        raise TuiError.no_anchor(why)
+        raise TuiError(
+            f"no anchor pane: {('not in tmux' if why is None else why)}, no iTerm2 pane ($ITERM_SESSION_ID)"
+        )
     return Anchor(("id", [unique]))
 
 
 def validate_layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:
     if split is not None and split not in SPLITS:
-        raise TuiError.invalid_split(split, SPLITS)
+        raise TuiError(f"split must be one of {', '.join(SPLITS)}, not {split!r}")
     if split_from is not None:
         session_name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
-        raise TuiError.invalid_opener(opener)
+        raise TuiError(
+            f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
+        )
 
 
 def validate_per_column(per_column: int | None) -> None:
@@ -944,12 +781,12 @@ def validate_per_column(per_column: int | None) -> None:
         or not isinstance(per_column, int)
         or not 1 <= per_column <= 9999
     ):
-        raise TuiError.invalid_per_column(per_column)
+        raise TuiError(f"per_column must be an int from 1 to 9999, not {per_column!r}")
 
 
 def validate_retile(retile: str | None) -> None:
     if retile is not None and retile not in RETILES:
-        raise TuiError.invalid_retile(retile, RETILES)
+        raise TuiError(f"retile must be one of {', '.join(RETILES)}, not {retile!r}")
 
 
 def layout_checksum(body: str) -> str:
@@ -1362,7 +1199,7 @@ def tile(
     TILE_LIMIT re-tiles in TILE_WINDOW s, the grid is torn down.
     """
     if not WINDOW.fullmatch(window):
-        raise TuiError.invalid_window(window, WINDOW.pattern)
+        raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
     validate_per_column(per_column)
     socket = checked_tmux(
         ["display-message", "-p", "-t", window, "#{socket_path}"], proc
@@ -1496,14 +1333,14 @@ def grid_lock(socket: str, window: str, *, wait: bool):
     s, TuiError after TILE_WAIT s.
     """
     if not os.path.isabs(socket):
-        raise TuiError.invalid_grid_socket(window, socket)
+        raise TuiError(f"grid {window}: socket path {socket!r}: want an absolute path")
     path = f"{socket}-{window[1:]}.lock"
     try:
         fd = os.open(
             path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600
         )
     except OSError as e:
-        raise TuiError.grid_lock_failed(path, e) from e
+        raise TuiError(f"grid lock {path}: {e.strerror}") from e
     try:
         end = time.monotonic() + TILE_WAIT
         while True:
@@ -1513,11 +1350,11 @@ def grid_lock(socket: str, window: str, *, wait: bool):
             except BlockingIOError:
                 held = False
             except OSError as e:
-                raise TuiError.grid_lock_failed(path, e) from e
+                raise TuiError(f"grid lock {path}: {e.strerror}") from e
             if held or not wait:
                 break
             if time.monotonic() >= end:
-                raise TuiError.busy_grid(window)
+                raise TuiError(f"grid {window}: busy")
             time.sleep(TILE_POLL)
         yield held
     finally:
@@ -1572,7 +1409,7 @@ def start(
         path, wrapper = write_wrapper(tmp)
         state = status(session, proc=proc)
         if state == RUNNING:
-            raise TuiError.session_running(session, attach_command(session))
+            raise TuiError(f"session {session} is running; {attach_command(session)}")
         if isinstance(state, int):
             kill(session, proc=proc)
         pipe = handover(path, argv, cwd, env)
@@ -1612,12 +1449,14 @@ def start(
                 "duplicate session:"
             ):  # another start took the name: not ours to kill
                 may_run = False
-            raise TuiError.command_failed(tmux_error(res))
+            raise TuiError(f"tmux: {tmux_error(res)}")
         if not wait_started(path, pipe, argv[0], sleep):
-            raise TuiError.session_not_started()
+            raise TuiError(
+                "the session did not start" if None is None else f"session {None} did not start"
+            )
         may_run = False
     except OSError as e:
-        raise TuiError.handover_failed(e) from e
+        raise TuiError(f"handover: {e}") from e
     finally:
         cleanup_launch(tmp, pipe, session, proc, may_run=may_run)
 
@@ -1639,7 +1478,9 @@ def detach(
     block, opener = settings.block, settings.opener
     session_name(session)
     if opener is not None and not OPENER.fullmatch(opener):
-        raise TuiError.invalid_opener(opener)
+        raise TuiError(
+            f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
+        )
     validate_detach_arguments(argv)
     argv = prepare_command(argv, env)
     iterm = env.get("ITERM_SESSION_ID", "")
@@ -1670,23 +1511,27 @@ def detach(
         if res.returncode:
             if tmux_error(res).startswith("duplicate session:"):
                 may_run = False
-                raise TuiError.existing_session(session)
-            raise TuiError.command_failed(tmux_error(res))
+                raise TuiError(f"session {session} exists")
+            raise TuiError(f"tmux: {tmux_error(res)}")
         if not wait_started(path, pipe, argv[0], sleep):
-            raise TuiError.session_not_started(session)
+            raise TuiError(
+                "the session did not start"
+                if session is None
+                else f"session {session} did not start"
+            )
         may_run = False
     except OSError as e:
-        raise TuiError.handover_failed(e) from e
+        raise TuiError(f"handover: {e}") from e
     finally:
         cleanup_launch(tmp, pipe, session, proc, may_run=may_run)
 
 
 def prepare_command(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
     if not argv:
-        raise TuiError.empty_command()
+        raise TuiError("no command")
     exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
     if exe is None:
-        raise TuiError.missing_command(argv[0])
+        raise TuiError(f"command not found: {argv[0]}")
     return [os.path.abspath(exe), *argv[1:]]
 
 
@@ -1694,7 +1539,7 @@ def write_wrapper(tmp: str) -> tuple[str, list[str]]:
     path, fifo = os.path.join(tmp, "handover.json"), os.path.join(tmp, ERRPIPE)
     for arg in (sys.executable, path, fifo):
         if "#" in arg or arg.endswith(";"):
-            raise TuiError.misread_argument(arg)
+            raise TuiError(f"tmux would misread {arg!r}")
     return path, [sys.executable, "-I", "-c", EXEC, path, fifo]
 
 
@@ -1726,7 +1571,9 @@ def session_tags(session: str, tags: Mapping[str, str]) -> list[str]:
     args = []
     for key, value in tags.items():
         if not USER_OPTION.fullmatch(key) or not isinstance(value, str) or value.endswith(";"):
-            raise TuiError.invalid_tag(key, value, USER_OPTION.pattern)
+            raise TuiError(
+                f"tag {key!r}={value!r}: want {USER_OPTION.pattern} and a str tmux takes verbatim"
+            )
         args += [";", "set-option", "-t", f"={session}:", key, value]
     return args
 
@@ -1759,18 +1606,18 @@ def wait_started(path: str, pipe: int, command: str, sleep) -> bool:
             reason = os.strerror(int(out))
         except (ValueError, OverflowError):
             reason = "bad errpipe data"
-        raise TuiError.failed_exec(command, reason)
+        raise TuiError(f"cannot run {command}: {reason}")
     return True
 
 
 def validate_detach_arguments(argv):
     for arg in argv:
         if "\0" in arg:
-            raise TuiError.nul_argument()
+            raise TuiError("an argv item holds a NUL character")
         try:
             os.fsencode(arg)
         except UnicodeEncodeError:
-            raise TuiError.unencodable_argument() from None
+            raise TuiError("an argv item cannot be encoded") from None
 
 
 def cleanup_launch(tmp, pipe, session, proc, *, may_run: bool):
@@ -1932,7 +1779,7 @@ def split_pane(
     ]  # argv: as a sh -c string it died at once (tmux 3.7)
     for arg in command:
         if "#" in arg or arg.endswith(";"):
-            raise TuiError.misread_argument(arg)
+            raise TuiError(f"tmux would misread {arg!r}")
     try:
         res = call_tmux(
             [
@@ -1961,7 +1808,7 @@ def split_iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]
     except OSError:
         running = False
     if not running:
-        raise TuiError.iterm_not_running()
+        raise TuiError("iTerm2 is not running")
     kind, anchors = iterm
     try:
         res = proc(
@@ -1972,15 +1819,15 @@ def split_iterm(session: str, split: str, tmux: str, iterm: tuple[str, list[str]
             timeout=SHOW_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise TuiError.osascript_timeout(SHOW_TIMEOUT) from None
+        raise TuiError(f"osascript timed out after {SHOW_TIMEOUT} s") from None
     except OSError as e:
-        raise TuiError.osascript_failed(e) from e
+        raise TuiError(f"osascript: {e}") from e
     if res.returncode:
-        raise TuiError.osascript_failed(tmux_error(res))
+        raise TuiError(f"osascript: {tmux_error(res)}")
     out = res.stdout.strip()
     if out.startswith("ok ") and ITERM_ID.fullmatch(out[3:]):
         return out[3:]
-    raise TuiError.osascript_output(out)
+    raise TuiError(out or "osascript printed nothing")
 
 
 def record_pane(session: str, opener: str | None, pane: str, proc) -> None:
@@ -2114,7 +1961,7 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
             actions["tile"](a.window, wait=not a.no_wait, if_panes_changed=a.if_panes_changed)
         else:
             if actions["status"](a.session) is None:
-                raise TuiError.absent_session(a.session)
+                raise TuiError(f"no session {a.session}")
             return (
                 1
                 if actions["show"](
@@ -2180,13 +2027,13 @@ def _session_arg(value: str) -> str:
 
 def _per_column_arg(value: str) -> int:
     if not re.fullmatch(r"[0-9]{1,4}", value) or int(value) < 1:
-        raise CliError.per_column(value)
+        raise CliError(f"want an int from 1 to 9999, not {value!r}")
     return int(value)
 
 
 def _lines_arg(value: str) -> int:
     if not value.isdigit() or int(value) < 1:
-        raise CliError.lines(value)
+        raise CliError(f"want a positive int, not {value!r}")
     return int(value)
 
 

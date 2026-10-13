@@ -109,7 +109,7 @@ class FakeLinear:
         self.calls.append((query, v))
         self.services.append(service)
         if error := (self.fail.get(query) or self.fail.get((query, v.get("i")))):
-            raise LinearError.api(error)
+            raise LinearError(f"linear api error: {error}")
         if (value := self._identity(query, v)) is not None:
             return value
         if (value := self._detail(query, v)) is not None:

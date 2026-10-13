@@ -19,66 +19,6 @@ from types import SimpleNamespace
 class HookError(Exception):
     """One stderr line; the hook stops."""
 
-    @classmethod
-    def unloadable_host(cls, path) -> HookError:
-        return cls(f"tmux hook helper {path}: cannot load Python module")
-
-    @classmethod
-    def usage(cls) -> HookError:
-        return cls("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
-
-    @classmethod
-    def oversized_payload(cls, limit: int) -> HookError:
-        return cls(f"payload: over {limit} bytes")
-
-    @classmethod
-    def non_regular(cls, path: str) -> HookError:
-        return cls(f"{path}: not a regular file")
-
-    @classmethod
-    def file_access(cls, path: str, cause: OSError) -> HookError:
-        return cls(f"{path}: {cause.strerror}")
-
-    @classmethod
-    def oversized_state(cls, path: str, limit: int) -> HookError:
-        return cls(f"{path}: over {limit} bytes")
-
-    @classmethod
-    def non_object_state(cls, path: str) -> HookError:
-        return cls(f"{path}: not a JSON object")
-
-    @classmethod
-    def invalid_state_field(cls, path: str, field: str) -> HookError:
-        return cls(f"{path}: bad {field}")
-
-    @classmethod
-    def adapter_access(cls, path: str, cause: OSError) -> HookError:
-        return cls(f"adapter hook {path}: {cause.strerror}")
-
-    @classmethod
-    def unsafe_adapter(cls, path: str) -> HookError:
-        return cls(f"adapter hook {path}: not a regular file owned by you or root")
-
-    @classmethod
-    def unloadable_adapter(cls, path: str) -> HookError:
-        return cls(f"adapter hook {path}: cannot load Python module")
-
-    @classmethod
-    def missing_callback(cls, path: str) -> HookError:
-        return cls(f"adapter hook {path}: missing on_hook callback")
-
-    @classmethod
-    def unavailable_tmux(cls, path: str, cause: OSError) -> HookError:
-        return cls(f"tmux {path}: {cause.strerror}")
-
-    @classmethod
-    def unsafe_tmux(cls, path: str) -> HookError:
-        return cls(f"tmux {path}: not a regular executable file owned by you or root")
-
-    @classmethod
-    def short_write(cls, path: str) -> HookError:
-        return cls(f"{path}: short write")
-
 
 class EventHandler(Handler):
     def __init__(self, deliver: Callable[[BaseException], None]):
@@ -160,7 +100,7 @@ SESSION_STATE = {
 def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
     if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
-        raise HookError.usage()
+        raise HookError("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
     folder, label = argv
     state = read_state(os.path.join(folder, STATE))
     if "adapter_hook" in state:
@@ -194,7 +134,7 @@ def read_payload(stream) -> dict:
         if size <= PAYLOAD_MAX:
             chunks.append(chunk)
     if size > PAYLOAD_MAX:
-        raise HookError.oversized_payload(PAYLOAD_MAX)
+        raise HookError(f"payload: over {PAYLOAD_MAX} bytes")
     try:
         payload = json.loads(b"".join(chunks))
     except (ValueError, RecursionError):
@@ -215,28 +155,28 @@ def read_state(path: str) -> dict:
             if not stat.S_ISREG(
                 os.fstat(fd).st_mode
             ):  # first: fdopen raises on a directory, leaving fd open
-                raise HookError.non_regular(path)
+                raise HookError(f"{path}: not a regular file")
             with os.fdopen(fd, "rb", closefd=False) as f:
                 data = f.read(STATE_MAX + 1)
         finally:
             os.close(fd)
     except OSError as e:
-        raise HookError.file_access(path, e) from None
+        raise HookError(f"{path}: {e.strerror}") from None
     if len(data) > STATE_MAX:
-        raise HookError.oversized_state(path, STATE_MAX)
+        raise HookError(f"{path}: over {STATE_MAX} bytes")
     try:
         state = json.loads(data)
     except (ValueError, RecursionError):
         state = None
     if not isinstance(state, dict):
-        raise HookError.non_object_state(path)
+        raise HookError(f"{path}: not a JSON object")
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
-            raise HookError.invalid_state_field(path, field)
+            raise HookError(f"{path}: bad {field}")
     if "adapter_hook" in state and not _abs(state["adapter_hook"]):
-        raise HookError.invalid_state_field(path, "adapter_hook")
+        raise HookError(f"{path}: bad {'adapter_hook'}")
     if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
-        raise HookError.invalid_state_field(path, "adapter_state")
+        raise HookError(f"{path}: bad {'adapter_state'}")
     return state
 
 
@@ -244,16 +184,16 @@ def load_adapter(path: str):
     try:
         info = os.lstat(path)
     except OSError as error:
-        raise HookError.adapter_access(path, error) from error
+        raise HookError(f"adapter hook {path}: {error.strerror}") from error
     if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-        raise HookError.unsafe_adapter(path)
+        raise HookError(f"adapter hook {path}: not a regular file owned by you or root")
     spec = importlib.util.spec_from_file_location("_agent_pm_adapter_hook", path)
     if spec is None or spec.loader is None:
-        raise HookError.unloadable_adapter(path)
+        raise HookError(f"adapter hook {path}: cannot load Python module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if not callable(getattr(module, "on_hook", None)):
-        raise HookError.missing_callback(path)
+        raise HookError(f"adapter hook {path}: missing on_hook callback")
     return module
 
 
@@ -261,13 +201,13 @@ def check_tmux(path: str) -> str:
     try:
         st = os.stat(path)
     except OSError as e:
-        raise HookError.unavailable_tmux(path, e) from None
+        raise HookError(f"tmux {path}: {e.strerror}") from None
     if (
         not stat.S_ISREG(st.st_mode)
         or st.st_uid not in (0, os.getuid())
         or not os.access(path, os.X_OK)
     ):
-        raise HookError.unsafe_tmux(path)
+        raise HookError(f"tmux {path}: not a regular executable file owned by you or root")
     return path
 
 
@@ -291,15 +231,15 @@ def append(path: str, record: dict) -> None:
         )
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise HookError.non_regular(path)
+                raise HookError(f"{path}: not a regular file")
             fcntl.flock(fd, fcntl.LOCK_EX)
             written = os.write(fd, line)
         finally:
             os.close(fd)
     except OSError as e:
-        raise HookError.file_access(path, e) from None
+        raise HookError(f"{path}: {e.strerror}") from None
     if written != len(line):
-        raise HookError.short_write(path)
+        raise HookError(f"{path}: short write")
 
 
 def load_tmux_host():
