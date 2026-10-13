@@ -6,6 +6,14 @@ from session.tests.case import Case
 
 
 class FlagsTest(Case):
+    def test_unvalued_short_options_retain_their_raw_spelling(self):
+        for arg in ("-x", "-xattached", "-x=value", "-x="):
+            with self.subTest(arg=arg):
+                flag = next(scan((arg,), {"-c": "-c"}))
+                self.assertEqual(flag.word, arg[:2])
+                self.assertIsNone(flag.value)
+                self.assertEqual((flag.arg, flag.text), (arg, arg))
+
     def test_aliases_and_attached_or_following_values(self):
         valued = {"-c": "-c", "--config": "-c", "--add-dir": "--add-dir"}
         flags = ("-c", "one=1", "-ctwo=2", "-c=three=3", "--config=four=4", "--add-dir", "/x")
