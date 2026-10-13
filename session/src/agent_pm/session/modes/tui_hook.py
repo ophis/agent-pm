@@ -2,7 +2,8 @@
 session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
 "payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
 session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
-Standalone, stdlib only; never stdout, always exits 0. Failures append a full traceback to hook.log
+The entry script uses only the stdlib; adapter callbacks import packages after the supplied roots
+are set. Never stdout, always exits 0. Failures append a full traceback to hook.log
 when writable and report one stderr line.
 """
 
