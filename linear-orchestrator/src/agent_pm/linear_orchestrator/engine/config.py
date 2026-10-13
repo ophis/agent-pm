@@ -14,6 +14,7 @@ from typing import Literal
 
 import agent_pm.delegate.engine.config
 from agent_pm.delegate import composer
+from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.session import Session, api
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.git import GUARD
@@ -143,12 +144,6 @@ class Config:
 
     def run_dir(self, issue: str) -> str:
         return os.path.join(self.runs_dir, issue)
-
-
-class ConfigError(SystemExit):
-    def __init__(self, msg: str, logs_dir: str | None = None):
-        super().__init__(msg)
-        self.msg, self.logs_dir = msg, logs_dir
 
 
 def load(

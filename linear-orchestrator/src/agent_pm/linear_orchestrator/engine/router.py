@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.linear_orchestrator.engine import config, inputs, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
+from agent_pm.linear_orchestrator.engine.types import ConfigError, Invalid, Transient, Unavailable
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import (
     ISSUE_ID,
@@ -511,13 +512,9 @@ def outer(a, cfg, *, gql, run, keychain):
             )
         except Exception as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
-        if (
-            isinstance(repo, target.Transient)
-            or isinstance(repo, target.Invalid)
-            and a.mode == "resume"
-        ):
+        if isinstance(repo, Transient) or isinstance(repo, Invalid) and a.mode == "resume":
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
-        if isinstance(repo, target.Invalid):
+        if isinstance(repo, Invalid):
             try:
                 writeback.bounce(ctx, issue, repo.reason)
             except (Exception, SystemExit) as e:
@@ -754,7 +751,7 @@ def main(
     os.environ["PATH"] = config.path()
     try:
         cfg = config.load(path=config_path)
-    except config.ConfigError as e:
+    except ConfigError as e:
         if not e.logs_dir:
             print(e.msg, file=sys.stderr)
             return 1
@@ -773,7 +770,7 @@ def main(
         if opts["issue"]:
             return run_issue(opts, cfg, gql, now, start)
         return tick(opts, cfg, gql, now, datetime.now().hour if hour is None else hour, start)
-    except linear.Unavailable as e:
+    except Unavailable as e:
         return linear_error("router", e, opts["dry"])
 
 
