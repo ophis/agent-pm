@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import Launch, SessionStatus, Usage, Window
 
 from session.tests.case import Case
@@ -198,3 +199,10 @@ class UsageTest(Case):
         ):
             with self.subTest(output=output[:80]):
                 self.assertIsNone(self.adapter.usage(output))
+
+
+class ConfigurationPolicy(Base):
+    def test_adapter_has_no_policy_configuration(self):
+        for key in ("sandbox", "shell_network"):
+            with self.subTest(key=key), self.assertRaisesRegex(ConfigError, "unknown key"):
+                CodexAdapter(self.adapter.config | {key: "workspace-write"})

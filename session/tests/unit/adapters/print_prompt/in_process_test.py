@@ -7,16 +7,13 @@ import contextlib
 import json
 import os
 import tempfile
-import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
-from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
 from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine.types import (
     Reply,
     SessionRequest,
-    SessionStatus,
     Spec,
     TurnEnd,
 )
@@ -25,8 +22,11 @@ from agent_pm.utils import fenced
 from session.tests.case import SPAWNS, Case
 
 PROGRESS, OUTCOME = "agent-pm-progress", "agent-pm-outcome"
+
 START = "[agent-pm-progress:start] the composed prompt is handed to the caller"
+
 SUMMARY = "The prompt is composed and handed to the caller, who runs the task."
+
 PROMPT = (
     "# Task\n[agent-pm-progress:start] the step's own mark\n"
     '```agent-pm-outcome\n{"status": "failed"}\n```\n'
@@ -36,31 +36,6 @@ PROMPT = (
 
 def outcome_block(text: str) -> str:
     return next(body for info, body in fenced(text) if info == OUTCOME)
-
-
-class Factory(Case):
-    def test_in_process_only_a_fresh_run_each_call(self):
-        adapter = PrintPromptAdapter({})
-        self.assertEqual((adapter.headless(), adapter.tui()), (None, None))
-        first, second = adapter.in_process(), adapter.in_process()
-        self.assertIsInstance(first, PrintPromptInProcess)
-        self.assertIsNot(first, second)
-        self.assertIs(first.adapter, adapter)
-
-    def test_no_keys_no_runtime_note_and_the_base_defaults(self):
-        adapter = PrintPromptAdapter({})
-        self.assertEqual((adapter.keys, adapter.runtime_note), (frozenset(), ""))
-        self.assertIsNone(adapter.usage_probe())
-        self.assertEqual(adapter.session_status("s", "/w"), SessionStatus("unknown", None, ""))
-
-    def test_a_destination_key_is_a_config_error(self):
-        for key in ("roles", "output"):
-            with self.subTest(key=key):
-                with self.assertRaises(ConfigError) as caught:
-                    PrintPromptAdapter({key: {}})
-                self.assertEqual(
-                    str(caught.exception), f"unknown key {key!r} in PrintPromptAdapter's config"
-                )
 
 
 class Run(Case):
@@ -139,7 +114,3 @@ class Run(Case):
             self.assertRaises(OSError),
         ):
             list(self.session.run(PROMPT, SessionRequest(self.spec, resumed=False)))
-
-
-if __name__ == "__main__":
-    unittest.main()

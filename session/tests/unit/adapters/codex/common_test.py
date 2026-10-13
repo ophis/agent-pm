@@ -682,3 +682,12 @@ class GrantTest(Base):
             self.spec, access=dataclasses.replace(self.spec.access, project=True)
         )
         self.common.prepare(SessionRequest(spec, resumed=False))
+
+
+class SavedFlags(Base):
+    def test_invalid_saved_flags_fail_closed(self):
+        state = self.prepare()
+        for value in (None, True, 0, {}, "-s", [1], ["bad\0"]):
+            self.edit_record(snapshot=state.snapshot | {"flags": value})
+            with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "snapshot flags"):
+                self.common.load(str(self.work), self.spec.sid)

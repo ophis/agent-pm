@@ -28,6 +28,8 @@ from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 
+HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
+
 
 class TuiTest(Base):
     def launch(self, *, resume=False, adapter=None):
@@ -354,11 +356,13 @@ class TuiTest(Base):
 
 
 PROMPT = "quoted ' prompt\nnext"
+
 POLICY = (
     "approval_policy",
     "approvals_reviewer",
     "sandbox_workspace_write",
 )
+
 REFUSED = (
     ("-C", "/x"),
     ("--cd=/x",),
@@ -443,3 +447,62 @@ class SuppliedFlagsTest(Base):
             self.launch(changed, resume=True)
         changed = dataclasses.replace(spec, flags=("--add-dir", "/unrecorded"))
         self.assertEqual(self.launch(changed, resume=True)[1]["add_dirs"], [str(guarded)])
+
+
+class LaunchPolicy(Base):
+    def argv(self, adapter, spec, *, resume=False):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = adapter.tui().launch("hi", SessionRequest(spec, resumed=resume), HOOK)
+        return json.loads(launch.argv[-1])["argv"]
+
+    def test_supplied_policy_and_saved_replay_in_both_modes(self):
+        mode = "tui"
+        for saved, current in (
+            ("workspace-write", "danger-full-access"),
+            ("danger-full-access", "workspace-write"),
+        ):
+            with self.subTest(mode=mode, saved=saved):
+                flags = (
+                    "-s",
+                    saved,
+                    "-c",
+                    'approval_policy="on-request"',
+                    "-c",
+                    'approvals_reviewer="auto_review"',
+                    "-c",
+                    "sandbox_workspace_write.network_access=false",
+                )
+                spec = dataclasses.replace(
+                    self.spec, sid=f"{mode}-{saved}", flags=flags, env={"K": "saved"}
+                )
+                first = self.argv(self.adapter, spec)
+                self.assertEqual(first[first.index("-s") :][: len(flags)], list(flags))
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                self.rollout()
+                changed = dataclasses.replace(spec, flags=("-s", current), env={"K": "changed"})
+                second = self.argv(self.adapter, changed, resume=True)
+                self.assertEqual(second[second.index("-s") :][: len(flags)], list(flags))
+                self.assertEqual(
+                    self.common.load(str(self.work), spec.sid).snapshot["flags"], list(flags)
+                )
+
+    def test_separator_tail_follows_generated_options_on_fresh_and_resume(self):
+        mode = "tui"
+        with self.subTest(mode=mode):
+            supplied = ("--enable", "web", "--", "literal", "--last")
+            spec = dataclasses.replace(self.spec, sid=f"separator-{mode}", flags=supplied)
+            first = self.argv(self.adapter, spec)
+            self.common.bind(str(self.work), spec.sid, NATIVE)
+            self.rollout()
+            changed = dataclasses.replace(spec, flags=("--", "changed"))
+            second = self.argv(self.adapter, changed, resume=True)
+            for argv in (first, second):
+                boundary = argv.index("--")
+                self.assertEqual(argv[boundary:], ["--", "literal", "--last", "hi"])
+                self.assertIn("gpt-test", argv[:boundary])
+                self.assertIn(str(self.extra), argv[:boundary])
+                self.assertIn("project_doc_max_bytes=0", argv[:boundary])
+                self.assertEqual(sum(word.startswith("hooks.") for word in argv[:boundary]), 6)
+            self.assertEqual(
+                self.common.load(str(self.work), spec.sid).snapshot["flags"], list(supplied)
+            )

@@ -18,6 +18,7 @@ import uuid
 from unittest import mock
 
 import agent_pm.session as session_pkg
+from agent_pm.session import Driver
 from agent_pm.session.adapters import selection
 from agent_pm.session.adapters.types import ConfigError
 from agent_pm.session.engine import api, records
@@ -50,7 +51,7 @@ from session.tests import fake_adapter
 from session.tests.case import SPAWNS, Case
 from session.tests.modules import module_slot
 
-WAIT = 10  # upper bound on any wait, in seconds
+WAIT = 10
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
@@ -2117,3 +2118,9 @@ class ExportsTest(Case):
             self.assertEqual(
                 [(e["kind"], e["a"]) for e in records.read(records.path(d))], [("x", 1)]
             )
+
+
+class DriverConfiguration(Case):
+    def test_configure_is_concrete_and_refuses_bad_input(self):
+        with self.assertRaisesRegex(ConfigError, r"\Ahosts: want a mapping"):
+            self.driver = Driver(adapters={}, hosts=1, default_host="fake")
