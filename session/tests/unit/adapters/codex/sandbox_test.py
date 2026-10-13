@@ -58,20 +58,6 @@ class SandboxTest(Base):
             with self.subTest(key=key), self.assertRaisesRegex(ConfigError, "unknown key"):
                 configured(CodexAdapter, self.adapter.config | {key: "workspace-write"})
 
-    def test_legacy_snapshot_fails_closed_in_both_modes(self):
-        state = self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        self.rollout()
-        snapshot = state.snapshot.copy()
-        snapshot.pop("flags")
-        self.edit_record(snapshot=snapshot)
-        for mode in ("headless", "tui"):
-            with (
-                self.subTest(mode=mode),
-                self.assertRaisesRegex(ConfigError, "unsupported legacy.*start a new session"),
-            ):
-                self.argv(self.adapter, mode, self.spec, True)
-
     def test_invalid_saved_flags_fail_closed(self):
         state = self.prepare()
         for value in (None, True, 0, {}, "-s", [1], ["bad\0"]):

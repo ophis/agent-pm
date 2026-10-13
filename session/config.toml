@@ -78,7 +78,7 @@ implementation = "adapters.print_prompt:PrintPromptAdapter"
 default = "tmux"
 
 [hosts.tmux]
-# a forward name: TmuxHost does not exist yet, and nothing loads it until it does
+# a forward name: TmuxHost comes with TASK-368; nothing loads it until then
 implementation = "agent_pm.session.hosts.tmux:TmuxHost"
 status_line = false
 workers_per_column = 3

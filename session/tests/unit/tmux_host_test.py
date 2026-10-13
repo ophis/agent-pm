@@ -1,5 +1,5 @@
 """hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, respawn, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
+start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
 file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
 
 import ast
@@ -88,8 +88,6 @@ MODE_HOOKS = {
     "off": (),
 }  # each mode's
 RETILE_ERROR = "^retile must be one of all, open-close, off, not {}$"
-OLD_PID = "4321"  # the respawned pane's #{pane_pid}
-PANE_PID = ["tmux", "display-message", "-p", "-t", "=s:", "#{pane_pid}"]
 
 
 def done(argv, rc=0, out="", err=""):
@@ -286,8 +284,7 @@ def panes(*rows):
 class Tmux:
     """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after any -u) or another
     program to its (rc, stdout, stderr), an exception to raise, or a function of the argv giving either. `pane` is what
-    display-message prints (None: no server). On new-session or respawn-pane it reads the handover file named in its argv (after
-    EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
+    display-message prints (None: no server). On new-session it reads the handover file named in its argv (after EXEC); unless `hand_over` is False it plays the wrapper on the errpipe named next: opens it, unlinks the handover,
     then per `wrapper` closes it ("exec"), writes that errno (bytes: as given) and closes it, or keeps it open ("hang",
     fd `writer`)."""
 
@@ -319,7 +316,7 @@ class Tmux:
                 if self.pane is None
                 else done(argv, 0, self.pane + "\n")
             )
-        if argv[1] == "new-session" or "respawn-pane" in argv:
+        if argv[1] == "new-session":
             at = argv.index(tmux_host.EXEC)
             self.path, self.fifo = argv[at + 1 : at + 3]
             self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
@@ -1053,148 +1050,6 @@ class Detach(Case):
         self.detach(fake)
         self.assertEqual(fake.handover["cwd"], self.cwd)
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
-
-
-class Respawn(Case):
-    setUp = Start.setUp
-
-    def respawn(self, fake, session="s", argv=("tool", "-x", "a b"), env=None):
-        env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
-        tmux_host.respawn(session, list(argv), cwd=self.cwd, env=env, proc=fake, sleep=self.sleep)
-
-    def test_reads_the_old_pid_then_clears_the_history_and_respawns_the_pane_running_the_wrapper_in_one_command(
-        self,
-    ):
-        fake = Tmux(pane=OLD_PID)
-        self.respawn(fake)
-        self.assertEqual(
-            fake.calls,
-            [
-                PANE_PID,
-                [
-                    "tmux",
-                    "clear-history",
-                    "-t",
-                    "=s:",
-                    ";",
-                    "respawn-pane",
-                    "-k",
-                    "-t",
-                    "=s:",
-                    sys.executable,
-                    "-I",
-                    "-c",
-                    tmux_host.EXEC,
-                    fake.path,
-                    fake.fifo,
-                ],
-            ],
-        )
-        self.assertEqual(fake.kwargs, [TMUX_KW] * 2)
-        self.sleep.assert_not_called()
-
-    def test_handover_file_as_start_writes_it_with_the_old_pid_as_after(self):
-        env = {
-            "PATH": self.bin,
-            "HOME": "/h",
-            "PWD": "/stale",
-            "CHILD_SESSION": "1",
-            **{k: "x" for k in tmux_host.TERMINAL_KEYS},
-        }
-        fake = Tmux(pane=OLD_PID)
-        self.respawn(fake, env=env)
-        self.assertEqual(
-            fake.handover,
-            {
-                "argv": [self.tool, "-x", "a b"],
-                "cwd": self.cwd,
-                "env": {"PATH": self.bin, "HOME": "/h", "CHILD_SESSION": "1", "PWD": self.cwd},
-                "after": int(OLD_PID),
-            },
-        )
-        self.assertEqual(fake.mode, 0o600)
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_no_pid_no_after(self):
-        """tmux (3.7) prints an empty #{pane_pid} for a missing session: nothing to wait for; respawn-pane fails."""
-        for out in ("\n", "x\n", "0\n"):
-            with self.subTest(out=out):
-                fake = Tmux(results={"display-message": (0, out, "")})
-                self.respawn(fake)
-                self.assertNotIn("after", fake.handover)
-
-    def test_a_failed_pid_read(self):
-        fake = Tmux()
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: no server running$"):
-            self.respawn(fake)
-        self.assertEqual(fake.calls, [PANE_PID])
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_cwd_never_reaches_tmux(self):
-        self.cwd = os.path.join(self.root, "#(x)#{y}")
-        os.makedirs(self.cwd)
-        fake = Tmux(pane=OLD_PID)
-        self.respawn(fake)
-        self.assertEqual(fake.handover["cwd"], self.cwd)
-        self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
-
-    def test_refused_before_tmux(self):
-        for kw in ({"session": "a b"}, {"argv": ()}, {"argv": ("no-such-tool",)}):
-            with self.subTest(**kw):
-                fake = Tmux()
-                with self.assertRaises(tmux_host.TuiError):
-                    self.respawn(fake, **kw)
-                self.assertEqual(fake.calls, [])
-        with (
-            unittest.mock.patch.object(sys, "executable", "/opt/py#3/bin/python3"),
-            self.assertRaisesRegex(tmux_host.TuiError, "tmux would misread"),
-        ):
-            self.respawn(fake)
-        self.assertEqual(fake.calls, [])
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_a_failed_respawn(self):
-        fake = Tmux(pane=OLD_PID, fail={"clear-history"})
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
-            self.respawn(fake)
-        self.assertEqual(fake.commands(), ["display-message", "clear-history"])
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_wrapper_never_reads(self):
-        fake = Tmux(pane=OLD_PID, hand_over=False)
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^the pane did not respawn$"):
-            self.respawn(fake)
-        self.assertAlmostEqual(
-            sum(c.args[0] for c in self.sleep.call_args_list), tmux_host.HANDOVER_TIMEOUT
-        )
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_an_exec_failure_raises_its_error(self):
-        fake = Tmux(pane=OLD_PID, wrapper=errno.EACCES)
-        with self.assertRaisesRegex(
-            tmux_host.TuiError,
-            "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.EACCES)}") + "$",
-        ):
-            self.respawn(fake)
-        self.assertEqual(fake.commands(), ["display-message", "clear-history"])
-        self.sleep.assert_not_called()
-        self.assertEqual(os.listdir(self.temp), [])
-
-    def test_never_execd_is_not_respawned_after_the_deadline(self):
-        """HANDOVER_TIMEOUT s, plus RESPAWN_WAIT s while the wrapper may wait for the old process (`after`)."""
-        for pid, wait in (
-            (OLD_PID, tmux_host.HANDOVER_TIMEOUT + tmux_host.RESPAWN_WAIT),
-            ("", tmux_host.HANDOVER_TIMEOUT),
-        ):
-            with self.subTest(pid=pid):
-                self.sleep.reset_mock()
-                fake = Tmux(results={"display-message": (0, pid + "\n", "")}, wrapper="hang")
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^the pane did not respawn$"):
-                    self.respawn(fake)
-                os.close(fake.writer)
-                self.assertEqual(fake.commands(), ["display-message", "clear-history"])
-                self.assertAlmostEqual(sum(c.args[0] for c in self.sleep.call_args_list), wait)
-                self.assertEqual(os.listdir(self.temp), [])
 
 
 MARK_KW = {**TMUX_KW, "timeout": 5}
@@ -4971,31 +4826,11 @@ class SingleFile(Case):
             self.assertIn(word, res.stdout)
 
 
-# a program printing whether process argv[1] is alive (kill 0)
-ALIVE = """import os, sys
-try: os.kill(int(sys.argv[1]), 0)
-except OSError: print('gone')
-else: print('alive')"""
 # a program waiting up to 30 s for file argv[1]
 WAIT = """import os, sys, time
 for _ in range(3000):
     if os.path.exists(sys.argv[1]): break
     time.sleep(0.01)"""
-# time.sleep and time.monotonic of a process faked: a nap advances the clock, printing its seconds on stderr
-FAKE_CLOCK = """import os, time
-now = [time.monotonic()]
-def nap(seconds):
-    now[0] += seconds
-    os.write(2, b'%r\\n' % seconds)
-time.sleep, time.monotonic = nap, lambda: now[0]
-"""
-# open() of a process faked for one path: PROC_PATH reads PROC_STAT (Linux's /proc/<pid>/stat)
-FAKE_PROC = """import builtins, io
-real_open = builtins.open
-def fake_open(path, *args, **kwargs):
-    return io.BytesIO(PROC_STAT) if path == PROC_PATH else real_open(path, *args, **kwargs)
-builtins.open = fake_open
-"""
 
 
 class Exec(Case):
@@ -5034,18 +4869,6 @@ class Exec(Case):
         while chunk := os.read(self.reader, 64):
             out += chunk
         return out
-
-    def child(self, seconds):
-        """A process of ours that sleeps `seconds`, reaped by a thread as it ends (a zombie still answers kill 0);
-        killed at cleanup. Returns it and the reaping thread."""
-        proc = subprocess.Popen(
-            [sys.executable, "-c", f"import time; time.sleep({seconds})"], stdin=subprocess.DEVNULL
-        )
-        reaper = threading.Thread(target=proc.wait)
-        reaper.start()
-        self.addCleanup(reaper.join)
-        self.addCleanup(lambda: proc.returncode is None and proc.kill())
-        return proc, reaper
 
     def test_runs_the_handover(self):
         cwd = os.path.join(self.root, "cwd")
@@ -5143,89 +4966,6 @@ class Exec(Case):
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertEqual(
                     set(json.loads(res.stdout)) & {signal.SIGHUP, signal.SIGTERM}, want
-                )
-
-    def test_waits_for_the_old_process_to_end_after_taking_the_handover(self):
-        """respawn's `after`: the handover goes first; argv runs, closing the errpipe, once that process is gone."""
-        old, reaper = self.child(1)
-        with open(self.path, "w") as f:
-            json.dump(
-                {
-                    "argv": [sys.executable, "-c", ALIVE, str(old.pid)],
-                    "env": {},
-                    "cwd": self.root,
-                    "after": old.pid,
-                },
-                f,
-            )
-        wrapper = subprocess.Popen(
-            self.wrapper(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
-            text=True,
-        )
-        self.addCleanup(lambda: wrapper.returncode is None and wrapper.kill())
-        deadline = time.monotonic() + 5
-        while os.path.exists(self.path) and time.monotonic() < deadline:
-            time.sleep(0.01)
-        self.assertFalse(os.path.exists(self.path))
-        self.assertIsNone(old.returncode)
-        self.assertRaises(BlockingIOError, self.piped)
-        out, err = wrapper.communicate(timeout=30)
-        self.assertEqual((wrapper.returncode, out), (0, "gone\n"), err)
-        self.assertEqual(self.piped(), b"")
-        reaper.join(timeout=5)
-        self.assertIsNotNone(old.returncode)
-
-    def test_gives_up_after_respawn_wait(self):
-        """A process outliving the wait: argv runs anyway, after RESPAWN_WAIT s of naps (time.sleep and
-        time.monotonic faked in the wrapper's process); no `after`, or one already gone: no nap."""
-        old, _ = self.child(60)
-        gone, reaper = self.child(0)
-        reaper.join(timeout=10)
-        for extra, naps, state in (
-            ({"after": old.pid}, tmux_host.RESPAWN_WAIT, "alive"),
-            ({}, 0, "gone"),
-            ({"after": gone.pid}, 0, "gone"),
-        ):
-            with self.subTest(**extra):
-                pid = extra.get("after", gone.pid)
-                res = self.run_exec(
-                    [sys.executable, "-c", ALIVE, str(pid)],
-                    {},
-                    self.root,
-                    {},
-                    prelude=FAKE_CLOCK,
-                    **extra,
-                )
-                self.assertEqual((res.returncode, res.stdout), (0, f"{state}\n"), res.stderr)
-                self.assertAlmostEqual(
-                    sum(float(x) for x in res.stderr.split()), naps, delta=tmux_host.POLL / 2
-                )
-        self.assertIsNone(old.returncode)
-
-    def test_a_zombie_ends_the_wait(self):
-        """Where /proc/<pid>/stat exists, state Z (the field after the last `)`) counts as gone: it has exited and
-        released its locks, only not yet reaped."""
-        old, _ = self.child(60)
-        for stat_line, naps in (
-            (b"%d (python3) Z 1 1 1" % old.pid, 0),
-            (b"%d (a) Z (b) S 1 1 1" % old.pid, tmux_host.RESPAWN_WAIT),
-        ):
-            with self.subTest(stat=stat_line):
-                prelude = f"PROC_PATH, PROC_STAT = {f'/proc/{old.pid}/stat'!r}, {stat_line!r}\n{FAKE_PROC}{FAKE_CLOCK}"
-                res = self.run_exec(
-                    [sys.executable, "-c", ALIVE, str(old.pid)],
-                    {},
-                    self.root,
-                    {},
-                    prelude=prelude,
-                    after=old.pid,
-                )
-                self.assertEqual((res.returncode, res.stdout), (0, "alive\n"), res.stderr)
-                self.assertAlmostEqual(
-                    sum(float(x) for x in res.stderr.split()), naps, delta=tmux_host.POLL / 2
                 )
 
     def test_default_signal_dispositions(self):

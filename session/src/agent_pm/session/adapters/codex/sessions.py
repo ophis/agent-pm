@@ -72,8 +72,6 @@ def absolute_path(path: str, label: str) -> str:
 def validate_snapshot(value: dict) -> dict:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    if "flags" not in value:
-        raise RecoveryError("unsupported legacy Codex recovery snapshot: start a new session")
     if set(value) != {
         "cwd",
         "project",

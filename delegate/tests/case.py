@@ -56,8 +56,8 @@ class Case(unittest.TestCase):
                 registry.reset()
 
     def configure_session(self, adapters, tmux=None) -> None:
-        """Session.configure with settings(adapters, tmux), also what Session.settings returns for the rest
-        of the test, so an entry configuring again keeps them."""
+        """Session.configure with settings(adapters, tmux), also what registry.settings returns for the rest
+        of the test, so an entry's Session.configure_from keeps them."""
         given = settings(adapters, tmux)
         self.enterContext(mock.patch.object(registry, "settings", return_value=given))
         Session.configure(**given)

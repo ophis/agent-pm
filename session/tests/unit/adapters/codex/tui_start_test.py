@@ -22,7 +22,7 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 SCRIPTS = ("tui_hook.py", "tui_start.py")
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
 SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
-ROOTS = ("agent_pm", "session", "delegate", "manager", "tools", "adapters", "utils", "core")
+ROOTS = ("agent_pm", "session", "delegate", "manager", "adapters", "utils")
 LOADED = """import json, runpy, sys
 before = list(sys.path)
 runpy.run_path(sys.argv[1])

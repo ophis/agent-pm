@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.codex import tui_start
+from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
@@ -206,7 +207,7 @@ class Live(Case):
         return self.common.load(str(self.work), sid or self.sid)
 
     def record(self):
-        return next((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
+        return next(Path(store_root()).glob("*.json"))
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
@@ -331,7 +332,7 @@ class TuiIntegrationTest(Live):
         )
         self.assertEqual(self.calls()[-1]["argv"][:2], ["resume", native])
         self.assertEqual(
-            list((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")),
+            list(Path(store_root()).glob("*.json")),
             [self.record()],
         )
 
@@ -789,7 +790,7 @@ class TuiIntegrationTest(Live):
         fresh = api.writable_dirs("codex", self.spec)
         self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
-        self.assertFalse((self.home / ".agent-pm" / "core-new-sessions").exists())
+        self.assertFalse(Path(store_root()).parent.exists())
         self.assertEqual(self.logged(), [])
         first = self.start()
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))

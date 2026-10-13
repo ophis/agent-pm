@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine.types import Access, Spec
 
 from session.tests.case import REPO, Case
@@ -74,7 +75,7 @@ class Base(Case):
         return path
 
     def record(self):
-        return next((self.home / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json"))
+        return next(Path(store_root()).glob("*.json"))
 
     def edit_record(self, **fields):
         path = self.record()
