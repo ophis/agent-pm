@@ -125,3 +125,10 @@ class CliTest(Case):
                 self.assertEqual(stdout, "")
                 self.assertIn("not in roster", stderr)
                 self.assertFalse(os.path.exists(self.directory))
+
+    def test_empty_stop_all_reports_nothing_without_creating_a_manager(self):
+        with self.listed():
+            result, stdout, stderr = self.invoke("stop-all", "--manager", "mgr")
+        self.assertEqual(result, 0, stderr)
+        self.assertEqual(stdout, "nothing to stop\n")
+        self.assertFalse(os.path.exists(self.directory))

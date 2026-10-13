@@ -110,8 +110,8 @@ def _stop(args) -> int:
 
 
 def _stop_all(args) -> int:
-    for name in _crew(args).stop_all(dry_run=args.dry_run):
-        print(name)
+    names = _crew(args).stop_all(dry_run=args.dry_run)
+    print("\n".join(names) if names else "nothing to stop")
     return 0
 
 
