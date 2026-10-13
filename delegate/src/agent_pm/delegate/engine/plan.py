@@ -6,20 +6,17 @@ import functools
 import os
 import sys
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
+from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.paths import under
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
-
-
-class ConfigError(Exception):
-    pass
 
 
 def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
@@ -55,23 +52,6 @@ def _own(f):
             raise ConfigError(str(e)) from None
 
     return wrapped
-
-
-@dataclass(frozen=True)
-class Plan:
-    """`out` None: nothing is saved."""
-
-    runtime: str
-    mode: str
-    sid: str
-    resume: bool
-    prompt: str
-    spec: api.Spec
-    run: RunConfig
-    params: RunParams
-    out: str | None
-    name: str | None
-    events: str | None
 
 
 @_own
