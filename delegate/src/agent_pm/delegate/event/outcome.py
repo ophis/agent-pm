@@ -3,21 +3,19 @@ it against SCHEMA and what SCHEMA can't say. Its text stays untrusted: a path is
 most 200 characters.
 """
 
-import functools
 import json
 import os
 import posixpath
 import re
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, get_args
+from typing import cast
 from urllib.parse import unquote, urlsplit
 
+from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
-OutcomeStatus = Literal["done", "needs_input", "failed"]
-STATUSES = get_args(OutcomeStatus)
 SAVES_DELIVERABLE = (
     "local",
     "orchestrator",
@@ -25,32 +23,17 @@ SAVES_DELIVERABLE = (
 PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
 
 
-class InvalidOutcome(Exception):
-    pass
-
-
-@dataclass(frozen=True)
-class Outcome:
-    status: OutcomeStatus
-    title: str
-    summary: str
-    questions: list[str] = field(default_factory=list)
-    url: str = ""
-    files: list[str] = field(default_factory=list)
-    deliverable: str = ""
-
-
 def read(body: str, output: Mapping, workdir: str) -> Outcome:
     """`output`: the run's [output] table. Raises InvalidOutcome."""
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
-        raise InvalidOutcome(f"not JSON: {e}") from None
+        raise InvalidOutcome.not_json(e) from None
     if not isinstance(data, dict):
-        raise InvalidOutcome("not an object")
+        raise InvalidOutcome.not_object()
     if "deliverable_file" in data:
         if "deliverable" in data:
-            raise InvalidOutcome("give deliverable or deliverable_file, not both")
+            raise InvalidOutcome.both_deliverables()
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
@@ -60,7 +43,7 @@ def read(body: str, output: Mapping, workdir: str) -> Outcome:
 def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     """Raises InvalidOutcome."""
     if not isinstance(data, dict):
-        raise InvalidOutcome("not an object")
+        raise InvalidOutcome.not_object()
     status, title, summary = data.get("status"), data.get("title"), data.get("summary")
     questions, files, deliverable = (
         data.get("questions") or [],
@@ -68,19 +51,19 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         data.get("deliverable") or "",
     )
     if status not in STATUSES:
-        raise InvalidOutcome(f"status {status!r} is not one of {', '.join(STATUSES)}")
+        raise InvalidOutcome.status(status)
     if not isinstance(title, str) or not title.strip() or not title.isprintable():
-        raise InvalidOutcome("title must be one line of printable text")
+        raise InvalidOutcome.title()
     if not isinstance(summary, str) or not isinstance(deliverable, str):
-        raise InvalidOutcome("summary and deliverable must be text")
+        raise InvalidOutcome.text_fields()
     if not isinstance(questions, list) or not isinstance(files, list):
-        raise InvalidOutcome("questions and files must be lists")
+        raise InvalidOutcome.lists()
     if status == "needs_input" and not 1 <= len(questions) <= 4:
-        raise InvalidOutcome("needs_input must carry 1–4 questions")
+        raise InvalidOutcome.questions()
     if status == "done" and output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
-        raise InvalidOutcome(f"done with a {output['type']} destination must carry the deliverable")
+        raise InvalidOutcome.missing_deliverable(output["type"])
     outcome = Outcome(
-        status,
+        cast(OutcomeStatus, status),
         title.strip(),
         summary,
         [str(q) for q in questions] if status == "needs_input" else [],
@@ -92,7 +75,6 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     return outcome
 
 
-@functools.cache
 def _schema() -> dict:
     with open(SCHEMA) as f:
         return json.load(f)
@@ -100,40 +82,44 @@ def _schema() -> dict:
 
 def _conform(value, schema: Mapping, where: str) -> None:
     """Only the subset of JSON Schema the outcome schema uses."""
-    kind = schema.get("type")
-    if kind == "object":
-        if not isinstance(value, dict):
-            raise InvalidOutcome(f"{where} must be an object")
-        props = schema.get("properties", {})
-        if missing := [k for k in schema.get("required", ()) if k not in value]:
-            raise InvalidOutcome(f"{where} lacks {missing[0]!r}")
-        if schema.get("additionalProperties") is False and (
-            extra := sorted(set(value) - set(props))
-        ):
-            raise InvalidOutcome(f"unknown field {extra[0][:100]!r}")
-        for k, v in value.items():
-            if k in props:
-                _conform(v, props[k], k)
-    elif kind == "string":
-        if not isinstance(value, str):
-            raise InvalidOutcome(f"{where} must be text")
-        if len(value) < schema.get("minLength", 0):
-            raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
-        if len(value) > schema.get("maxLength", len(value)):
-            raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
-            raise InvalidOutcome(f"{where} must match {schema['pattern']}")
-    elif kind == "array":
-        if not isinstance(value, list):
-            raise InvalidOutcome(f"{where} must be a list")
-        if len(value) > schema.get("maxItems", len(value)):
-            raise InvalidOutcome(f"{where} has more than {schema['maxItems']} items")
-        for i, v in enumerate(value):
-            _conform(v, schema.get("items", {}), f"{where}[{i}]")
+    validators = {"object": _object, "string": _string, "array": _array}
+    if validate_kind := validators.get(schema.get("type")):
+        validate_kind(value, schema, where)
     if "enum" in schema and value not in schema["enum"]:
-        raise InvalidOutcome(
-            f"{where} {value!r} is not one of {', '.join(map(str, schema['enum']))}"
-        )
+        raise InvalidOutcome.enum(where, value, schema["enum"])
+
+
+def _object(value, schema, where):
+    if not isinstance(value, dict):
+        raise InvalidOutcome.not_object(where)
+    props = schema.get("properties", {})
+    if missing := [k for k in schema.get("required", ()) if k not in value]:
+        raise InvalidOutcome.missing_field(where, missing[0])
+    if schema.get("additionalProperties") is False and (extra := sorted(set(value) - set(props))):
+        raise InvalidOutcome.unknown_field(extra[0])
+    for key, item in value.items():
+        if key in props:
+            _conform(item, props[key], key)
+
+
+def _string(value, schema, where):
+    if not isinstance(value, str):
+        raise InvalidOutcome.text(where)
+    if len(value) < schema.get("minLength", 0):
+        raise InvalidOutcome.too_short(where, schema["minLength"])
+    if len(value) > schema.get("maxLength", len(value)):
+        raise InvalidOutcome.too_long(where, schema["maxLength"])
+    if "pattern" in schema and not re.search(schema["pattern"], value):
+        raise InvalidOutcome.pattern(where, schema["pattern"])
+
+
+def _array(value, schema, where):
+    if not isinstance(value, list):
+        raise InvalidOutcome.list(where)
+    if len(value) > schema.get("maxItems", len(value)):
+        raise InvalidOutcome.too_many_items(where, schema["maxItems"])
+    for index, item in enumerate(value):
+        _conform(item, schema.get("items", {}), f"{where}[{index}]")
 
 
 def _url(url: str, out: Mapping) -> str:
@@ -148,13 +134,13 @@ def _url(url: str, out: Mapping) -> str:
         or " " in url
         or posixpath.normpath(unquote(parts.path)) != unquote(parts.path)
     ):
-        raise InvalidOutcome("url must be a plain https link")
+        raise InvalidOutcome.plain_url()
     if out["type"] == "github":
         host, prefix = out.get("host", "github.com"), f"/{out['repo']}/blob/{out['branch']}/"
         if parts.netloc != host or not parts.path.startswith(prefix):
-            raise InvalidOutcome(f"url must start with https://{host}{prefix}")
+            raise InvalidOutcome.url_prefix(host, prefix)
     elif out["type"] == "pull-request" and not PR_PATH.fullmatch(parts.path):
-        raise InvalidOutcome("url must be a pull request, compare or tree link")
+        raise InvalidOutcome.pull_request_url()
     return url
 
 
@@ -169,35 +155,33 @@ def _file(path, workdir: str) -> str:
         or not real.is_file()
         or real.stat().st_nlink != 1
     ):
-        raise InvalidOutcome(
-            f"file {str(path)[:200]!r} is not a single-link .md file under the workdir"
-        )
+        raise InvalidOutcome.file(path)
     return str(real)
+
+
+def _contents(real, workdir, cap):
+    with os.fdopen(os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
+        opened = os.fstat(source.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise InvalidOutcome.not_regular(real)
+        if not Path(os.path.realpath(real)).is_relative_to(os.path.realpath(workdir)):
+            raise InvalidOutcome.relocated(real)
+        current = os.stat(real)
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise InvalidOutcome.replaced(real)
+        return source.read(cap + 1)
 
 
 def _read_file(real: str, workdir: str) -> str:
     """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
-
-    def invalid(reason: str) -> InvalidOutcome:
-        return InvalidOutcome(f"deliverable_file {str(real)[:200]!r}: {reason}")
-
     cap = 4 * _schema()["properties"]["deliverable"]["maxLength"]
     try:
-        with os.fdopen(os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
-            opened = os.fstat(f.fileno())
-            if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
-                raise invalid("not a single-link regular file")
-            if not Path(os.path.realpath(real)).is_relative_to(os.path.realpath(workdir)):
-                raise invalid("no longer under the workdir")
-            now = os.stat(real)
-            if (now.st_dev, now.st_ino) != (opened.st_dev, opened.st_ino):
-                raise invalid("replaced while it was opened")
-            data = f.read(cap + 1)
-    except OSError as e:
-        raise invalid(e.strerror or "unreadable") from None
+        data = _contents(real, workdir, cap)
+    except OSError as error:
+        raise InvalidOutcome.unreadable(real, error) from None
     if len(data) > cap:
-        raise invalid(f"too large (over {cap} bytes)")
+        raise InvalidOutcome.large_file(real, cap)
     try:
         return data.decode()
     except UnicodeDecodeError:
-        raise invalid("not UTF-8 text") from None
+        raise InvalidOutcome.file_encoding(real) from None

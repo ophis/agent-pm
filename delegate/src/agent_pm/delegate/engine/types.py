@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
-from agent_pm.delegate.event.outcome import Outcome
+from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import Driver
 from agent_pm.session import Spec as SessionSpec
 
