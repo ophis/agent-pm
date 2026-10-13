@@ -282,6 +282,35 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["worker"].state, State.LIVE)
         self.assertEqual(self.calls("resume"), [])
 
+    def test_attach_tolerates_concurrent_resume_or_stop_after_status_snapshot(self):
+        for action in ("resume", "stop"):
+            self.gone(action)
+            ctl.set_session(self.ctl_dir, action, alive=True)
+            real_run = subprocess.run
+
+            def run(argv, **options):
+                result = real_run(argv, **options)
+                if tuple(argv) == (self.command, "status"):
+                    other = Roster(self.directory)
+                    if action == "resume":
+                        other.claim_resume(action)
+                    else:
+                        other.remove(action)
+                return result
+
+            with (
+                self.subTest(action=action),
+                mock.patch("subprocess.run", side_effect=run),
+                self.listed(),
+            ):
+                table = self.crew.attach()
+            if action == "resume":
+                self.assertEqual(self.roster.entries()[action].state, State.RESUMING)
+                self.assertIn(action + "\t", table)
+            else:
+                self.assertNotIn(action, self.roster.entries())
+                self.assertNotIn(action + "\t", table)
+
     def test_attach_times_out_old_starting_and_resuming_entries_but_leaves_young_ones(self):
         self.roster.begin(Spec("old", (self.command, "start", "old")), sid=str(uuid.uuid4()))
         self.roster.begin(Spec("young", (self.command, "start", "young")), sid=str(uuid.uuid4()))

@@ -536,6 +536,15 @@ class Roster:
                 raise RosterError(f"{name}: unknown state {state!r}") from error
             self._mark(data, name, target)
 
+    def mark_if(self, name: str, expected: Entry, state: State) -> bool:
+        with self._locked() as data:
+            self._lease(data)
+            value = data["entries"].get(name)
+            if value is None or _entry(value) != expected:
+                return False
+            self._mark(data, name, state)
+            return True
+
     def claim_resume(self, name: str) -> Entry | None:
         with self._locked() as data:
             self._lease(data)

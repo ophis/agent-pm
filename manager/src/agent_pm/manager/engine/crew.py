@@ -101,12 +101,12 @@ class Crew:
     def run(self, spec: Spec) -> Record:
         self._listed = None
         sid = str(uuid.uuid4())
-        self.roster.begin(spec, sid=sid)
+        intent = self.roster.begin(spec, sid=sid)
         try:
             record = self._start(spec.argv, spec.name, sid)
             self.roster.commit(spec.name, record)
         except (RosterError, RuntimeError, ValueError):
-            self.roster.mark(spec.name, State.LOST)
+            self.roster.mark_if(spec.name, intent, State.LOST)
             raise
         return record
 
@@ -190,11 +190,11 @@ class Crew:
             if age <= TIMEOUT:
                 continue
             if entry.state == State.STARTING:
-                self.roster.mark(name, State.LOST)
+                self.roster.mark_if(name, entry, State.LOST)
             elif entry.state == State.RESUMING and here is not None:
                 live = entry.sid is not None and any(entry.sid == found.sid for found in here)
                 if not live:
-                    self.roster.mark(name, State.GONE)
+                    self.roster.mark_if(name, entry, State.GONE)
         for record in here or ():
             try:
                 adopted = self.roster.adopt(record)
@@ -207,7 +207,7 @@ class Crew:
         for failure in failures:
             print(f"crew: {failure}", file=sys.stderr)
         shown: list[Record] = []
-        for name, entry in entries.items():
+        for name, entry in tuple(entries.items()):
             if name not in answers:
                 continue
             status = answers[name]
@@ -222,7 +222,14 @@ class Crew:
                 else:
                     state = State.GONE
                 if state != entry.state:
-                    self.roster.mark(name, state)
+                    if not self.roster.mark_if(name, entry, state):
+                        current = self.roster.entries().get(name)
+                        if current is None:
+                            entries.pop(name)
+                        else:
+                            entries[name] = current
+                        answers.pop(name)
+                        continue
             entries[name] = replace(entry, state=state)
             if state == State.LIVE and status.attach is not None and entry.record is not None:
                 shown.append(entry.record)
@@ -280,7 +287,7 @@ class Crew:
             resumed = self._start(record.resume, name, claimed.sid)
             self.roster.commit(name, resumed)
         except (RosterError, RuntimeError, ValueError):
-            self.roster.mark(name, State.GONE)
+            self.roster.mark_if(name, claimed, State.GONE)
             raise
         return resumed
 

@@ -211,6 +211,49 @@ class RosterTest(Case):
         self.roster.note("x", None)
         self.assertIsNone(self.roster.entries()["x"].note)
 
+    def test_mark_if_applies_only_to_matching_snapshot(self):
+        self.live(note="keep")
+        expected = self.roster.entries()["x"]
+        self.assertTrue(self.roster.mark_if("x", expected, State.GONE))
+        current = self.roster.entries()["x"]
+        self.assertEqual(current, replace(expected, state=State.GONE))
+
+    def test_mark_if_ignores_missing_or_changed_state(self):
+        self.live()
+        expected = self.roster.entries()["x"]
+        self.roster.mark("x", State.DONE)
+        before = Path(self.roster.path).read_bytes()
+        self.assertFalse(self.roster.mark_if("x", expected, State.GONE))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.roster.remove("x")
+        before = Path(self.roster.path).read_bytes()
+        self.assertFalse(self.roster.mark_if("x", expected, State.GONE))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+
+    def test_mark_if_ignores_replaced_sid_and_changed_note(self):
+        self.live()
+        expected = self.roster.entries()["x"]
+        self.roster.note("x", "changed")
+        before = Path(self.roster.path).read_bytes()
+        self.assertFalse(self.roster.mark_if("x", expected, State.GONE))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.roster.remove("x")
+        replacement = replace(self.record, sid=str(uuid4()))
+        self.roster.adopt(replacement)
+        before = Path(self.roster.path).read_bytes()
+        self.assertFalse(self.roster.mark_if("x", expected, State.GONE))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(self.roster.entries()["x"].record, replacement)
+
+    def test_mark_if_checks_lease_before_missing_or_stale_snapshot(self):
+        with self.roster.hold("first"):
+            self.live()
+            expected = self.roster.entries()["x"]
+            with Roster(self.directory).hold("replacement", force=True):
+                for name in ("x", "missing"):
+                    with self.subTest(name=name), self.assertRaises(Stale):
+                        self.roster.mark_if(name, expected, State.GONE)
+
     def test_resume_claim_is_atomic_across_instances(self):
         self.live()
         self.roster.mark("x", State.GONE)
