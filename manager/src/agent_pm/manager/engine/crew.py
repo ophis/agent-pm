@@ -924,104 +924,6 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
-def _attach(a, driver) -> int:
-    text, entries = attach(
-        manager_directory(a.manager, driver=driver),
-        own_session(driver=driver),
-        after=a.after,
-        gen=a.gen,
-        driver=driver,
-    )
-    print(text, end="", flush=True)
-    failed = False
-    if a.resume:
-        for ok, line in recover(entries):
-            print(line, flush=True)
-            failed = failed or not ok
-    return int(failed)
-
-
-def _stop_all(a, driver) -> None:
-    lines, left = stop_all(own_session(driver=driver), dry_run=a.dry_run, driver=driver)
-    for line in lines or ([] if left else ["workers: stop-all: nothing to stop"]):
-        print(line)
-    if left:
-        raise WorkersError(f"stop-all: still live after tmux kill-session: {', '.join(left)}")
-
-
-def _roster_command(a, driver) -> int:
-    if a.cmd == "attach":
-        return _attach(a, driver)
-    if a.cmd == "stop-all":
-        _stop_all(a, driver)
-        return 0
-    directory = manager_directory(a.manager, driver=driver)
-    own = own_session(driver=driver)
-    if a.cmd == "release":
-        release(directory, own, driver=driver)
-        print(f"workers: released {directory}")
-    elif a.cmd == "note":
-        note(directory, own, a.name, a.text, driver=driver)
-    elif a.cmd == "stop":
-        stop(directory, own, a.name, driver=driver)
-    else:
-        forget(directory, own, a.name, driver=driver)
-    return 0
-
-
-def _worker_command(a, flags, driver) -> None:
-    if a.cmd == "start":
-        directory = manager_directory(a.manager, driver=driver)
-        parent = caller(driver=driver)
-        spec = Spec(
-            a.name,
-            a.cwd or os.getcwd(),
-            prompt=a.prompt,
-            note=a.note,
-            flags=tuple(flags),
-            client=a.client,
-            overrides=tuple(a.env),
-            resume=a.resume,
-            split=a.split,
-            split_from=a.split_from,
-        )
-        sid = start(
-            spec,
-            directory=directory,
-            own=None if parent is None else parent.name,
-            own_runtime=None if parent is None else parent.runtime,
-            driver=driver,
-        )
-        print(f"{a.name} {sid}")
-    elif a.cmd == "restart":
-        restart(a.name, own=own_session(driver=driver), driver=driver)
-    else:
-        text = reply(a.name, driver=driver)
-        if text:
-            print(text)
-
-
-def _next_event(a, driver, event_source) -> None:
-    events, after, due = record_cursor(
-        manager_directory(a.manager, driver=driver),
-        own_session(driver=driver),
-        a.after,
-        a.gen,
-        driver=driver,
-    )
-    if due:
-        raise Refused(ROTATE_MSG)
-    read_event = next_event if event_source is None else event_source.next
-    line, event = read_event(events, after)
-    print(f"{line} {event}")
-    try:
-        text = content(event, driver=driver)
-    except WorkersError as e:
-        text = f"workers: {e}"  # stdout: background readers watch only it
-    if text:
-        print(text)
-
-
 def main(argv=None, *, driver=None, event_source=None) -> int:
     _drop_import_root()
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -1036,12 +938,90 @@ def main(argv=None, *, driver=None, event_source=None) -> int:
     try:
         if a.cmd in STARTS:
             driver = configure() if driver is None else driver
-        if a.cmd in ("start", "restart", "reply"):
-            _worker_command(a, flags, driver)
+        if a.cmd == "start":
+            directory = manager_directory(a.manager, driver=driver)
+            parent = caller(driver=driver)
+            spec = Spec(
+                a.name,
+                a.cwd or os.getcwd(),
+                prompt=a.prompt,
+                note=a.note,
+                flags=tuple(flags),
+                client=a.client,
+                overrides=tuple(a.env),
+                resume=a.resume,
+                split=a.split,
+                split_from=a.split_from,
+            )
+            sid = start(
+                spec,
+                directory=directory,
+                own=None if parent is None else parent.name,
+                own_runtime=None if parent is None else parent.runtime,
+                driver=driver,
+            )
+            print(f"{a.name} {sid}")
+        elif a.cmd == "restart":
+            restart(a.name, own=own_session(driver=driver), driver=driver)
+        elif a.cmd == "reply":
+            text = reply(a.name, driver=driver)
+            if text:
+                print(text)
         elif a.cmd == "next-event":
-            _next_event(a, driver, event_source)
+            events, after, due = record_cursor(
+                manager_directory(a.manager, driver=driver),
+                own_session(driver=driver),
+                a.after,
+                a.gen,
+                driver=driver,
+            )
+            if due:
+                raise Refused(ROTATE_MSG)
+            read_event = next_event if event_source is None else event_source.next
+            line, event = read_event(events, after)
+            print(f"{line} {event}")
+            try:
+                text = content(event, driver=driver)
+            except WorkersError as e:
+                text = f"workers: {e}"  # stdout: background readers watch only it
+            if text:
+                print(text)
+        elif a.cmd == "attach":
+            text, entries = attach(
+                manager_directory(a.manager, driver=driver),
+                own_session(driver=driver),
+                after=a.after,
+                gen=a.gen,
+                driver=driver,
+            )
+            print(text, end="", flush=True)
+            failed = False
+            if a.resume:
+                for ok, line in recover(entries):
+                    print(line, flush=True)
+                    failed = failed or not ok
+            return int(failed)
+        elif a.cmd == "stop-all":
+            lines, left = stop_all(own_session(driver=driver), dry_run=a.dry_run, driver=driver)
+            for line in lines or ([] if left else ["workers: stop-all: nothing to stop"]):
+                print(line)
+            if left:
+                raise WorkersError(
+                    f"stop-all: still live after tmux kill-session: {', '.join(left)}"
+                )
         else:
-            return _roster_command(a, driver)
+            directory = manager_directory(a.manager, driver=driver)
+            own = own_session(driver=driver)
+            if a.cmd == "release":
+                release(directory, own, driver=driver)
+                print(f"workers: released {directory}")
+            elif a.cmd == "note":
+                note(directory, own, a.name, a.text, driver=driver)
+            elif a.cmd == "stop":
+                stop(directory, own, a.name, driver=driver)
+            else:
+                forget(directory, own, a.name, driver=driver)
+            return 0
     except Refused as e:
         print(f"workers: {e}")
         return 1

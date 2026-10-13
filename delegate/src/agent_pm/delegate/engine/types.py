@@ -72,14 +72,6 @@ class Limit:
     resets_at: float | None
 
 
-@dataclass
-class AttemptState:
-    returncode: int | None = None
-    last: str | None = None
-    limit: Limit | None = None
-    replied: str | None = None
-
-
 @dataclass(frozen=True)
 class Result:
     returncode: int

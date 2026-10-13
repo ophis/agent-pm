@@ -840,9 +840,47 @@ def grid_tree(
     for pane, (_, opener) in owner.items():
         parent[pane] = node.get(opener, opener if opener and opener not in names else None)
 
+    def under(key) -> list[str]:
+        return [
+            *([key] if key in owner else []),
+            *(p for k, up in parent.items() if up == key for p in under(k)),
+        ]
+
     paths = layout_paths(layout)
     rank = {pane: i for i, pane in enumerate(paths)}
-    spans = adopt_orphans(parent, owner, paths, manager=manager, panes=panes, layout=layout)
+    columns = (
+        layout.children[1]
+        if layout.kind == LEFT_RIGHT
+        and len(layout.children) == 2
+        and layout.children[0].pane == manager
+        else layout
+    )
+    groups = sorted({up for up in parent.values() if up is not None and up not in owner})
+    spans = {q: set(under(q)) for q in groups}
+    mains = [p for p in panes if p != manager and parent.get(p) is None]
+    for q in groups:
+        path = paths[min(spans[q])]
+        for pane in spans[q]:
+            path = [a for a, b in zip(path, paths[pane], strict=False) if a is b]
+        if path[-1] is layout or path[-1] is columns:
+            parent.update((k, None) for k, up in list(parent.items()) if up == q)
+            continue
+        parent[q] = None
+        for cell in reversed(path):
+            head = cell.children[0] if cell.kind == LEFT_RIGHT else None
+            if head is None or head.kind != LEAF or head.pane in spans[q]:
+                continue
+            # R is a pane's own cell ({pane, its children}) only with two children and that pane the
+            # one main pane
+            if (
+                head.pane == manager
+                or cell is columns
+                and (len(cell.children) != 2 or mains != [head.pane])
+            ):
+                break
+            if head.pane in owner:
+                parent[q] = head.pane
+                break
     reached, todo = set(), [None]
     while todo:
         key = todo.pop()
@@ -851,8 +889,30 @@ def grid_tree(
         todo += found
     parent.update((k, None) for k in list(parent) if k not in reached and parent[k] not in spans)
 
+    def first(key) -> int:
+        return min(rank[p] for p in under(key))
+
+    def slots(key) -> list[Slot]:
+        if key is None:
+            order = sorted(
+                (k for k, up in parent.items() if up is None),
+                key=lambda k: natural_order(owner[k][0] if k in owner else k),
+            )
+        else:
+            live = sorted(
+                (k for k, up in parent.items() if up == key and k in owner),
+                key=lambda p: int(p[1:]),
+            )
+            order = list(live)
+            for q in sorted(
+                (k for k, up in parent.items() if up == key and k not in owner), key=first
+            ):
+                later = next((k for k in live if first(k) > first(q)), None)
+                order.insert(len(order) if later is None else order.index(later), q)
+        return [Slot(k if k in owner else None, tuple(slots(k))) for k in order]
+
     manual = sorted((p for p in panes if p != manager and p not in owner), key=lambda p: int(p[1:]))
-    return [*family_slots(parent, owner, rank), *(Slot(p) for p in manual)]
+    return [*slots(None), *(Slot(p) for p in manual)]
 
 
 def grid_layout(
@@ -949,76 +1009,6 @@ def pane_swaps(have: list[str], want: list[str]) -> list[tuple[str, str]]:
             swaps.append((pane, have[i]))
             have[i], have[j] = pane, have[i]
     return swaps
-
-
-def descendants(key, owner, parent) -> list[str]:
-    return [
-        *([key] if key in owner else []),
-        *(p for k, up in parent.items() if up == key for p in descendants(k, owner, parent)),
-    ]
-
-
-def adopt_orphans(parent, owner, paths, *, manager, panes, layout):
-    columns = (
-        layout.children[1]
-        if layout.kind == LEFT_RIGHT
-        and len(layout.children) == 2
-        and layout.children[0].pane == manager
-        else layout
-    )
-    groups = sorted({up for up in parent.values() if up is not None and up not in owner})
-    spans = {q: set(descendants(q, owner, parent)) for q in groups}
-    mains = [p for p in panes if p != manager and parent.get(p) is None]
-    for q in groups:
-        path = paths[min(spans[q])]
-        for pane in spans[q]:
-            path = [a for a, b in zip(path, paths[pane], strict=False) if a is b]
-        if path[-1] is layout or path[-1] is columns:
-            parent.update((k, None) for k, up in list(parent.items()) if up == q)
-            continue
-        parent[q] = None
-        for cell in reversed(path):
-            head = cell.children[0] if cell.kind == LEFT_RIGHT else None
-            if head is None or head.kind != LEAF or head.pane in spans[q]:
-                continue
-            # R is a pane's own cell ({pane, its children}) only with two children and that pane the
-            # one main pane
-            if (
-                head.pane == manager
-                or cell is columns
-                and (len(cell.children) != 2 or mains != [head.pane])
-            ):
-                break
-            if head.pane in owner:
-                parent[q] = head.pane
-                break
-    return spans
-
-
-def family_slots(parent, owner, rank):
-    def first(key) -> int:
-        return min(rank[p] for p in descendants(key, owner, parent))
-
-    def slots(key) -> list[Slot]:
-        if key is None:
-            order = sorted(
-                (k for k, up in parent.items() if up is None),
-                key=lambda k: natural_order(owner[k][0] if k in owner else k),
-            )
-        else:
-            live = sorted(
-                (k for k, up in parent.items() if up == key and k in owner),
-                key=lambda p: int(p[1:]),
-            )
-            order = list(live)
-            for q in sorted(
-                (k for k, up in parent.items() if up == key and k not in owner), key=first
-            ):
-                later = next((k for k in live if first(k) > first(q)), None)
-                order.insert(len(order) if later is None else order.index(later), q)
-        return [Slot(k if k in owner else None, tuple(slots(k))) for k in order]
-
-    return slots(None)
 
 
 def find_grid(
@@ -1640,8 +1630,16 @@ def open_pane(
     tmux = os.path.abspath(tmux)
     own = grid = new = None
     try:
-        opener, own, sessions, grid = pane_context(
-            proc, split=split, split_from=split_from, opener=opener
+        if opener is None:
+            try:
+                opener, own = find_opener(proc), True
+            except TuiError:
+                if split_from is None:
+                    raise
+        in_tmux = opener is not None and ":" not in opener
+        sessions = list_sessions(proc) if in_tmux or (split is None and split_from is None) else []
+        grid = (
+            find_grid(opener, sessions, proc, own=own) if opener is not None and in_tmux else None
         )
         if grid is not None:
             window, manager, at, side = grid
@@ -1821,20 +1819,6 @@ def run_template(session: str, template: str, proc) -> str | None:
     except OSError as e:
         return str(e)
     return f"exit status {res.returncode}" if res.returncode else None
-
-
-def pane_context(proc, *, split=None, split_from=None, opener=None):
-    own = None
-    if opener is None:
-        try:
-            opener, own = find_opener(proc), True
-        except TuiError:
-            if split_from is None:
-                raise
-    in_tmux = opener is not None and ":" not in opener
-    sessions = list_sessions(proc) if in_tmux or (split is None and split_from is None) else []
-    grid = find_grid(opener, sessions, proc, own=own) if opener is not None and in_tmux else None
-    return opener, own, sessions, grid
 
 
 def main(argv: list[str] | None = None, *, operations=None) -> int:

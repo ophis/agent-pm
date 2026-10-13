@@ -103,9 +103,6 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
-        self._validate_invocation()
-
-    def _validate_invocation(self) -> None:
         if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
             raise ConfigError("flags must be a tuple of strings without NUL")
         if not _env_ok(self.env):

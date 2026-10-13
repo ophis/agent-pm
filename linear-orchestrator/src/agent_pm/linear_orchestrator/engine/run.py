@@ -64,22 +64,6 @@ def _run_role(a, cfg):
     return role
 
 
-def _event(a, cfg, ctx, post, event):
-    name = config.tui_name(ctx.role, a.issue, a.sid) if a.tui else None
-    if isinstance(event, delegate.Begun):
-        post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
-        if name is not None:
-            try:
-                if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
-                    print(printable(command), file=sys.stderr, flush=True)
-            except (SessionConfigError, DriverError) as e:
-                log("run", "tui-error", a.issue, session=name, msg=one_line(e))
-    elif isinstance(event, delegate.Progress):
-        writeback.progress(ctx, event)
-    elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
-        writeback.finish(ctx, event.result.outcome)
-
-
 def _report_outcome(a, cfg, ctx, result):
     if result and result.limit:
         at = result.limit.resets_at
@@ -128,6 +112,20 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         ):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
 
+    def on_event(event):
+        if isinstance(event, delegate.Begun):
+            post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
+            if name is not None:
+                try:
+                    if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
+                        print(printable(command), file=sys.stderr, flush=True)
+                except (SessionConfigError, DriverError) as e:
+                    log("run", "tui-error", a.issue, session=name, msg=one_line(e))
+        elif isinstance(event, delegate.Progress):
+            writeback.progress(ctx, event)
+        elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
+            writeback.finish(ctx, event.result.outcome)
+
     rc, result = 1, None
     try:
         os.makedirs(rd, exist_ok=True)
@@ -148,7 +146,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
             cfg.roles[role].run,
             spec,
             driver=cfg.driver,
-            on_event=functools.partial(_event, a, cfg, ctx, post),
+            on_event=on_event,
         )
         rc = result.returncode
     except Stopped as e:

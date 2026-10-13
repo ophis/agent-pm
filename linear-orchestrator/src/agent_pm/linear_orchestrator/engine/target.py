@@ -152,21 +152,6 @@ def _branches(ident, repo: tuple[str, str], run, work, roles):
     ]
 
 
-def _checked_info(repo: tuple[str, str], tag, run):
-    asked = f"{tag}{repo[0]}/{repo[1]}"
-    info = _repo_info(*repo, run)
-    if isinstance(info, Invalid):
-        return Invalid(tag + info.reason)
-    if isinstance(info, Transient):
-        return info
-    _, can_push, default = info
-    if not can_push:
-        return Invalid(f"{asked}: no push permission")
-    if not isinstance(default, str) or not REF.fullmatch(default):
-        return Invalid(f"{asked}: unsafe default branch name")
-    return info
-
-
 def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transient:
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
@@ -177,10 +162,17 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
         )
     if isinstance(repo, Invalid):
         return repo
-    info = _checked_info(repo, tag, run)
-    if isinstance(info, (Invalid, Transient)):
+    asked = f"{tag}{repo[0]}/{repo[1]}"
+    info = _repo_info(*repo, run)
+    if isinstance(info, Invalid):
+        return Invalid(tag + info.reason)
+    if isinstance(info, Transient):
         return info
-    (o, n), _, _ = info
+    (o, n), can_push, default = info
+    if not can_push:
+        return Invalid(f"{asked}: no push permission")
+    if not isinstance(default, str) or not REF.fullmatch(default):
+        return Invalid(f"{asked}: unsafe default branch name")
     ident = issue.identifier
     names = _branches(ident, (o, n), run, work, roles)
     if isinstance(names, Transient):

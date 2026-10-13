@@ -123,19 +123,6 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     return own + f"\n{params.input.strip()}\n"
 
 
-def _link_errors(label: str, left: str, anchors: set, entries: Mapping) -> list[str]:
-    errors = []
-    for t, target in LINK.findall(left):
-        if target.startswith("#"):
-            if target[1:] not in anchors:
-                errors.append(f"{label}: no such anchor: [{t}]({target})")
-            elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
-                errors.append(f"{label}: not a path of the prompt at that anchor: [{t}]({target})")
-        elif not SCHEME.match(target):
-            errors.append(f"{label}: relative link target: [{t}]({target})")
-    return errors
-
-
 def reference_errors(
     own: str,
     tasks: Mapping[str, str],
@@ -188,7 +175,16 @@ def reference_errors(
                     break
                 pos += len(best)
             left = "".join(kept) + line[pos:]
-            errors.extend(_link_errors(label, left, anchors, entries))
+            for t, target in LINK.findall(left):
+                if target.startswith("#"):
+                    if target[1:] not in anchors:
+                        errors.append(f"{label}: no such anchor: [{t}]({target})")
+                    elif " › " in t and target[1:] not in entries.get(tuple(t.split(" › ")), ()):
+                        errors.append(
+                            f"{label}: not a path of the prompt at that anchor: [{t}]({target})"
+                        )
+                elif not SCHEME.match(target):
+                    errors.append(f"{label}: relative link target: [{t}]({target})")
             plain = LINK.sub(" ", left)
             if "›" in plain or any(name in titles for name in PAREN.findall(plain)):
                 errors.append(f"{label}: bare reference: {line.strip()}")

@@ -270,19 +270,6 @@ def no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) 
     return ConfigError(f"roles.{role}: no charter roles/{role}.md in core or team_dirs")
 
 
-def _team_file_owner(path: str, shown: str, me: int) -> None:
-    try:
-        st = os.stat(path)
-    except OSError as e:
-        raise ConfigError(f"{path}: {e.strerror}") from None
-    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise ConfigError(f"team_dirs: {shown} is writable by group or others: chmod go-w it")
-    if st.st_uid != me:
-        raise ConfigError(
-            f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it"
-        )
-
-
 def check_team_dirs(
     dirs: Sequence[str], *, writes: Sequence[tuple[str, str]], temp: Sequence[str] | None = None
 ) -> None:
@@ -298,7 +285,18 @@ def check_team_dirs(
                     f"team_dirs: {shown} is in temp dir {t}: any process can write there"
                 )
             check_overlap(shown, real, writes)
-            _team_file_owner(path, shown, me)
+            try:
+                st = os.stat(path)
+            except OSError as e:
+                raise ConfigError(f"{path}: {e.strerror}") from None
+            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                raise ConfigError(
+                    f"team_dirs: {shown} is writable by group or others: chmod go-w it"
+                )
+            if st.st_uid != me:
+                raise ConfigError(
+                    f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it"
+                )
         for parent in Path(d).parents:
             try:
                 st = os.stat(parent)

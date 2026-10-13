@@ -144,18 +144,14 @@ def _main(a: argparse.Namespace, *, application=None) -> tuple[int, str | None]:
     if result.outcome is None:
         say(f"delegate: {result.error}")
         return (3 if result.returncode or result.limit else 1), None
-    _deliverable(a.out, result.outcome.deliverable)
+    text = result.outcome.deliverable
+    if text:
+        if a.out == "-":
+            print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
+        elif holds(path := os.path.abspath(a.out), text):
+            say(f"delegate: deliverable {path}")
     say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
-
-
-def _deliverable(out: str, text: str) -> None:
-    if not text:
-        return
-    if out == "-":
-        print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
-    elif holds(path := os.path.abspath(out), text):
-        say(f"delegate: deliverable {path}")
 
 
 def _check_detach(a: argparse.Namespace) -> None:

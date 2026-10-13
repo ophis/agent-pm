@@ -14,7 +14,6 @@ from pathlib import Path
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
-    AttemptState,
     Begun,
     ConfigError,
     Event,
@@ -236,35 +235,31 @@ class _Attempts:
                 self.stop(handle)
                 return Result(1, None, stale)
             self.on_event(Begun(p.sid))
-            return self._outcome(handle)
+            fixed = False
+            while True:
+                rc, last, limit = self.attempt(handle)
+                diagnostic = f"the client exited {rc}" if rc else ""
+                if limit:
+                    return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
+                if (block := outcome_block(last or "")) is None:
+                    return Result(rc, None, diagnostic or "the agent run returned no outcome")
+                try:
+                    outcome = read_outcome(block, p.run.output, p.spec.workdir)
+                except InvalidOutcome as e:
+                    if rc or fixed:
+                        return Result(rc, None, diagnostic or f"invalid outcome: {e}")
+                    self.note("invalid", error=str(e))
+                    say(f"delegate: invalid outcome: {e}; resuming once")
+                    try:
+                        handle = self.policy.fix(handle, p, FIX.format(error=e))
+                    except (SessionConfigError, DriverError) as failed:
+                        return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
+                    fixed = True
+                    continue
+                return self.finish(outcome, rc)
         except BaseException:
             self.stop(handle)
             raise
-
-    def _outcome(self, handle: Handle) -> Result:
-        p = self.plan
-        fixed = False
-        while True:
-            rc, last, limit = self.attempt(handle)
-            diagnostic = f"the client exited {rc}" if rc else ""
-            if limit:
-                return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
-            if (block := outcome_block(last or "")) is None:
-                return Result(rc, None, diagnostic or "the agent run returned no outcome")
-            try:
-                outcome = read_outcome(block, p.run.output, p.spec.workdir)
-            except InvalidOutcome as e:
-                if rc or fixed:
-                    return Result(rc, None, diagnostic or f"invalid outcome: {e}")
-                self.note("invalid", error=str(e))
-                say(f"delegate: invalid outcome: {e}; resuming once")
-                try:
-                    handle = self.policy.fix(handle, p, FIX.format(error=e))
-                except (SessionConfigError, DriverError) as failed:
-                    return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
-                fixed = True
-                continue
-            return self.finish(outcome, rc)
 
     def stop(self, handle: Handle) -> bool:
         """A DriverError is printed, not raised; False then, the session maybe running."""
@@ -289,40 +284,36 @@ class _Attempts:
                 return f"cannot remove the stale out: {e}"
         return ""
 
-    def _turn_end(self, handle: Handle, event: TurnEnd, state: AttemptState):
-        if event.reply and event.reply != state.replied:
-            # A headless turn repeats its Reply at turn end.
-            state.last = self.reply(event.reply)
-        state.replied = None
-        return (
-            None if state.limit else self.policy.turn_end(handle, state.last or "", event.pending)
-        )
-
-    def _event(self, event, handle: Handle, state: AttemptState):
-        if isinstance(event, Reply):
-            state.last = state.replied = self.reply(event.text)
-        elif isinstance(event, TurnEnd):
-            return self._turn_end(handle, event, state)
-        elif isinstance(event, Stderr):
-            say(event.text)
-        elif isinstance(event, IdleTimeout):
-            self.note("idle", seconds=event.seconds)
-            if not state.limit:
-                return self.policy.idle(event.seconds)
-        elif isinstance(event, LimitHit):
-            self.note("limit", resets_at=event.resets_at)
-            state.limit = Limit(event.resets_at)
-            if not self.stop(handle):
-                return END
-        elif isinstance(event, Exited):
-            state.returncode = event.returncode
-        return None
-
     def attempt(self, handle: Handle) -> tuple[int, str | None, Limit | None]:
         """rc 0 when the policy ended it, the session running on."""
-        state = AttemptState()
+        rc: int | None = None
+        last: str | None = None
+        limit: Limit | None = None
+        replied: str | None = None
         for event in handle.events():
-            answer = self._event(event, handle, state)
+            answer = None
+            if isinstance(event, Reply):
+                last = replied = self.reply(event.text)
+            elif isinstance(event, TurnEnd):
+                if event.reply and event.reply != replied:
+                    # A headless turn repeats its Reply at turn end.
+                    last = self.reply(event.reply)
+                replied = None
+                if not limit:
+                    answer = self.policy.turn_end(handle, last or "", event.pending)
+            elif isinstance(event, Stderr):
+                say(event.text)
+            elif isinstance(event, IdleTimeout):
+                self.note("idle", seconds=event.seconds)
+                if not limit:
+                    answer = self.policy.idle(event.seconds)
+            elif isinstance(event, LimitHit):
+                self.note("limit", resets_at=event.resets_at)
+                limit = Limit(event.resets_at)
+                if not self.stop(handle):
+                    break
+            elif isinstance(event, Exited):
+                rc = event.returncode
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
                 name = handle.name
@@ -334,7 +325,7 @@ class _Attempts:
                 return 0, None, None
             if answer == END:
                 break
-        return state.returncode or 0, state.last, state.limit
+        return rc or 0, last, limit
 
     def reply(self, text: str) -> str:
         for line in text.splitlines():
