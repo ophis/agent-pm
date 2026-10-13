@@ -160,6 +160,11 @@ NOQA_ALLOWED = {
         "BLE001",
         "limit",
     ): "Report the session after a failed limit.",
+    (
+        f"{SESSION_SRC}modes/tui_hook.py",
+        "BLE001",
+        "__main__",
+    ): "the hook must never fail the client runtime",
 }
 
 
@@ -665,6 +670,19 @@ def _suppression_functions(tree, parents=()):
             scope = (*parents, node.name)
             if not isinstance(node, ast.ClassDef):
                 yield node.lineno, node.end_lineno, ".".join(scope)
+        if (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "__name__"
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.Eq)
+            and len(node.test.comparators) == 1
+            and isinstance(node.test.comparators[0], ast.Constant)
+            and node.test.comparators[0].value == "__main__"
+        ):
+            scope = (*parents, "__main__")
+            yield node.lineno, node.end_lineno, ".".join(scope)
         yield from _suppression_functions(node, scope)
 
 

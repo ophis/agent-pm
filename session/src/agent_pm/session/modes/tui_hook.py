@@ -12,11 +12,11 @@ from __future__ import annotations
 import fcntl
 import importlib.util
 import json
-import logging
 import os
 import re
 import stat
 import sys
+import traceback
 from contextlib import suppress
 from datetime import datetime
 
@@ -230,30 +230,17 @@ def say(text: str) -> None:
         print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
 
 
-class _HookLog(logging.FileHandler):
-    def handleError(self, record) -> None:
-        """Log write errors skip stderr."""
-
-
-def _error_logger(argv: list[str]) -> logging.Logger:
-    logger = logging.Logger("tui_hook", logging.ERROR)
-    handler: logging.Handler = logging.NullHandler()
-    if argv and _abs(argv[0]):
-        with suppress(OSError):
-            handler = _HookLog(os.path.join(argv[0], "hook.log"), encoding="utf-8")
-    logger.addHandler(handler)
-    return logger
-
-
 if __name__ == "__main__":
     try:
         main(sys.argv[1:], sys.stdin.buffer)
-    except Exception as e:
-        logger = _error_logger(sys.argv[1:])
-        logger.exception("hook failed")
-        for handler in logger.handlers[:]:
-            logger.removeHandler(handler)
-            with suppress(OSError):
-                handler.close()
+    except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
+        if len(sys.argv) > 1 and _abs(sys.argv[1]):
+            with suppress(OSError), open(
+                os.path.join(sys.argv[1], "hook.log"),
+                "a",
+                encoding="utf-8",
+                errors="backslashreplace",
+            ) as file:
+                file.write(traceback.format_exc())
         say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
     sys.exit(0)

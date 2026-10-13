@@ -249,14 +249,19 @@ class ErrorLoggingTest(HookBase):
         self.assertNothingWritten()
 
     def test_failed_file_write_keeps_one_stderr_line(self):
-        script = """import io, logging, runpy, sys
+        script = """import builtins, io, os, runpy, sys
 from unittest import mock
 class BrokenFile(io.StringIO):
     def write(self, value):
         raise OSError("disk full")
 path, folder = sys.argv[1:]
 sys.argv = [path, folder, "stop"]
-with mock.patch("logging.FileHandler._open", return_value=BrokenFile()):
+real_open = builtins.open
+def open_file(name, *args, **kwargs):
+    if os.fspath(name) == os.path.join(folder, "hook.log"):
+        return BrokenFile()
+    return real_open(name, *args, **kwargs)
+with mock.patch("builtins.open", side_effect=open_file):
     runpy.run_path(path, run_name="__main__")
 """
         os.unlink(os.path.join(self.dir, "session.json"))

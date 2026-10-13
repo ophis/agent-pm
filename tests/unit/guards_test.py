@@ -208,7 +208,13 @@ class SourceSuppressions(Sample):
         lines = []
         parts = scope.split(".")
         for depth, name in enumerate(parts):
-            declaration = f"class {name}:" if name[0].isupper() else f"def {name}():"
+            declaration = (
+                'if __name__ == "__main__":'
+                if name == "__main__"
+                else f"class {name}:"
+                if name[0].isupper()
+                else f"def {name}():"
+            )
             lines.append("    " * depth + declaration)
         indent = "    " * len(parts)
         lines.extend(indent + ("" if comment_only else "pass  ") + comment for comment in comments)
@@ -227,6 +233,17 @@ class SourceSuppressions(Sample):
 
     def test_the_real_inventory_has_matching_comments(self):
         self.assertEqual(guards.source_suppressions(REPO), [])
+
+    def test_hook_suppression_is_only_at_the_main_boundary(self):
+        path = "session/src/agent_pm/session/modes/tui_hook.py"
+        reason = guards.NOQA_ALLOWED[path, "BLE001", "__main__"]
+        comment = f"# noqa: BLE001  # {reason}"
+        self.assertEqual(
+            self.found(
+                {path: self.scoped("__main__", [comment]) + self.scoped("other", [comment])}
+            ),
+            [f"{path}:4: suppression BLE001 in other is not allowed"],
+        )
 
     def test_strings_docstrings_and_unrelated_comments_are_ignored(self):
         self.assertEqual(
