@@ -12,7 +12,7 @@ from orchestrator_tests.integration.fake_linear.data import IDS, KINDS, _errors,
 from orchestrator_tests.integration.fake_linear.operations import Operations
 from orchestrator_tests.integration.fake_linear.projection import project, selection
 from orchestrator_tests.integration.fake_linear.registry import OPS, TABLE, texts
-from orchestrator_tests.integration.fake_linear.types import Request, _Failure
+from orchestrator_tests.integration.fake_linear.types import HttpReply, IssueSeed, Request, _Failure
 from orchestrator_tests.integration.fixture_errors import FakeCredentialError, FixtureError, Problem
 
 
@@ -44,42 +44,31 @@ class FakeLinear(Operations):
             for lid, lname in labels.items():
                 self.labels[lid] = {"id": lid, "name": lname, "isGroup": False, "parent": id}
 
-    def issue(
-        self,
-        title="Issue",
-        *,
-        identifier=None,
-        id=None,
-        state="todo",
-        assignee=None,
-        project=None,
-        description="",
-        priority=0,
-        labels=(),
-        created=None,
-        updated=None,
-    ):
+    def issue(self, title="Issue", *, seed: IssueSeed | None = None):
+        seed = seed or IssueSeed()
         with self.lock:
-            if (assignee is not None and assignee not in self.users) or any(
-                i not in self.labels for i in labels
+            if (
+                seed.assignee is not None
+                and seed.assignee not in self.users
+                or any(i not in self.labels for i in seed.labels)
             ):
                 raise FixtureError.unseeded_access()
-            if project:
-                self.projects[project["id"]] = project["name"]
-            at = stamp(created)
+            if seed.project:
+                self.projects[seed.project["id"]] = seed.project["name"]
+            at = stamp(seed.created)
             try:
                 return self._add(
-                    id or str(uuid.uuid4()),
-                    identifier,
+                    seed.id or str(uuid.uuid4()),
+                    seed.identifier,
                     title=title,
-                    description=description,
-                    priority=priority,
-                    state=IDS[state],
-                    assignee=assignee,
-                    project=project and dict(project),
-                    labels=list(labels),
+                    description=seed.description,
+                    priority=seed.priority,
+                    state=IDS[seed.state],
+                    assignee=seed.assignee,
+                    project=seed.project and dict(seed.project),
+                    labels=list(seed.labels),
                     createdAt=at,
-                    updatedAt=stamp(updated) if updated else at,
+                    updatedAt=stamp(seed.updated) if seed.updated else at,
                 )
             except Problem as e:
                 raise ValueError(str(e)) from None
@@ -133,32 +122,30 @@ class FakeLinear(Operations):
             account = caller and caller["email"]
             if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
                 return self._log(
-                    None,
-                    account,
-                    {},
-                    "error",
-                    400,
-                    _errors("fake: bad request: not a query string and a variables object"),
+                    Request(None, account, {}, "error"),
+                    HttpReply(
+                        400, _errors("fake: bad request: not a query string and a variables object")
+                    ),
                 )
             variables, op = variables or {}, self.ops.get(query)
             if caller is None:
                 return self._log(
-                    op or query, None, variables, "unauthorized", 401, _errors("fake: unauthorized")
+                    Request(op or query, None, variables, "unauthorized"),
+                    HttpReply(401, _errors("fake: unauthorized")),
                 )
             if op is None:
                 return self._log(
-                    query, account, variables, "unknown", 200, _errors("fake: unknown query")
+                    Request(query, account, variables, "unknown"),
+                    HttpReply(200, _errors("fake: unknown query")),
                 )
             failure = self._failure(op, account)
             kind = failure.kind if failure else "ok"
             if kind in ("error", "503"):
                 return self._log(
-                    op,
-                    account,
-                    variables,
-                    kind,
-                    int(kind) if kind == "503" else 200,
-                    _errors(f"fake: {op}: injected {kind}"),
+                    Request(op, account, variables, kind),
+                    HttpReply(
+                        int(kind) if kind == "503" else 200, _errors(f"fake: {op}: injected {kind}")
+                    ),
                 )
             try:
                 sel = selection(query)
@@ -171,15 +158,12 @@ class FakeLinear(Operations):
                 message = (
                     str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
                 )
-                return self._log(op, account, variables, "error", 200, _errors(message))
+                return self._log(
+                    Request(op, account, variables, "error"), HttpReply(200, _errors(message))
+                )
             return self._log(
-                op,
-                account,
-                variables,
-                kind,
-                200,
-                {"data": data},
-                failure.seconds if kind == "hang" else 0,
+                Request(op, account, variables, kind),
+                HttpReply(200, {"data": data}, failure.seconds if kind == "hang" else 0),
             )
 
     def __call__(self, query, *, timeout=30, service=None, **variables):
@@ -206,9 +190,9 @@ class FakeLinear(Operations):
             raise LinearError.api(body["errors"])
         return body["data"]
 
-    def _log(self, op, account, variables, result, status, body, delay=0):
-        self.requests.append(Request(op, account, variables, result))
-        return status, body, delay
+    def _log(self, request: Request, reply: HttpReply):
+        self.requests.append(request)
+        return reply.status, reply.payload, reply.delay
 
     def _failure(self, op, account):
         for f in self.failures:

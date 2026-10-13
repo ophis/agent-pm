@@ -158,11 +158,13 @@ class Segment(BoardExpectations):
     def backlog_issue(self, role, title, description, labels=()):
         ident = self.fake.issue(
             title,
-            state="backlog",
-            assignee=self.ids[ACCOUNTS[role]],
-            project=PROJECT,
-            description=description,
-            labels=labels,
+            seed=fake_linear.IssueSeed(
+                state="backlog",
+                assignee=self.ids[ACCOUNTS[role]],
+                project=PROJECT,
+                description=description,
+                labels=labels,
+            ),
         )["identifier"]
         self.track(ident, state="backlog", title=title)
         return ident
@@ -415,10 +417,12 @@ class Segment(BoardExpectations):
         with self.step("seed: backlog"):
             src = self.fake.issue(
                 RESEARCH[0],
-                state="done",
-                assignee=self.ids[ACCOUNTS["researcher"]],
-                project=PROJECT,
-                description=RESEARCH[1],
+                seed=fake_linear.IssueSeed(
+                    state="done",
+                    assignee=self.ids[ACCOUNTS["researcher"]],
+                    project=PROJECT,
+                    description=RESEARCH[1],
+                ),
             )
             path = (
                 f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}"

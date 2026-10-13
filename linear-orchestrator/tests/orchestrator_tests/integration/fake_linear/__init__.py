@@ -10,4 +10,5 @@ from orchestrator_tests.integration.fake_linear.http import seam as seam
 from orchestrator_tests.integration.fake_linear.http import serve as serve
 from orchestrator_tests.integration.fake_linear.registry import index as index
 from orchestrator_tests.integration.fake_linear.registry import texts as texts
+from orchestrator_tests.integration.fake_linear.types import IssueSeed as IssueSeed
 from orchestrator_tests.integration.fake_linear.types import Request as Request

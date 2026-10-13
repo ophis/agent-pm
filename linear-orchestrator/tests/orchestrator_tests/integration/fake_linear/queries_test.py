@@ -62,10 +62,10 @@ class FixtureOperations(Case):
 
     def test_seeding_refuses_a_used_or_malformed_issue_id(self):
         fake = fake_linear.FakeLinear()
-        uid = fake.issue(identifier="TASK-7")["id"]
+        uid = fake.issue(seed=fake_linear.IssueSeed(identifier="TASK-7"))["id"]
         for kw in ({"identifier": "TASK-7"}, {"id": uid}, {"identifier": "OTHER-1"}):
             with self.subTest(**kw), self.assertRaises(ValueError):
-                fake.issue(**kw)
+                fake.issue(seed=fake_linear.IssueSeed(**kw))
 
     def test_backlog_is_a_state_outside_the_config(self):
         self.assertNotIn(fake_linear.BACKLOG, STATES.values())
@@ -78,7 +78,10 @@ class FixtureOperations(Case):
         fake = fake_linear.FakeLinear()
         actor = fake.user("me@x.com", "Me")
         self.assertEqual(
-            fake.issue("Later", identifier="TASK-1", state="backlog")["state"], fake_linear.BACKLOG
+            fake.issue("Later", seed=fake_linear.IssueSeed(identifier="TASK-1", state="backlog"))[
+                "state"
+            ],
+            fake_linear.BACKLOG,
         )
         fake.move("TASK-1", "todo", actor=actor)
         self.assertEqual(fake.find("TASK-1")["state"], STATES["todo"])
@@ -95,7 +98,10 @@ class FixtureOperations(Case):
 
     def test_relate_records_the_issues_ids_and_refuses_an_unknown_one(self):
         fake = fake_linear.FakeLinear()
-        a, b = fake.issue("A", identifier="TASK-1"), fake.issue("B", identifier="TASK-2")
+        a, b = (
+            fake.issue("A", seed=fake_linear.IssueSeed(identifier="TASK-1")),
+            fake.issue("B", seed=fake_linear.IssueSeed(identifier="TASK-2")),
+        )
         fake.relate("blocks", "TASK-1", b["id"])
         self.assertEqual(fake.relations, [("blocks", a["id"], b["id"])])
         for refs in (("TASK-1", "TASK-9"), ("TASK-9", "TASK-2"), (a["id"], "no-such-id")):
@@ -144,8 +150,13 @@ class GraphQLQueries(ServerCase):
         self.assertEqual(linear.team(self.gql, cfg).states, STATES)
 
     def test_a_backlog_issue_is_not_in_a_todo_list(self):
-        later = self.fake.issue("Later", state="backlog", assignee=self.engineer, project=PROJECT)
-        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT)
+        later = self.fake.issue(
+            "Later",
+            seed=fake_linear.IssueSeed(state="backlog", assignee=self.engineer, project=PROJECT),
+        )
+        ready = self.fake.issue(
+            "Ready", seed=fake_linear.IssueSeed(assignee=self.engineer, project=PROJECT)
+        )
 
         def listed(state):
             flt = {
@@ -181,8 +192,8 @@ class GraphQLQueries(ServerCase):
         self.assertEqual(self.fake.find(new["id"])["state"], fake_linear.BACKLOG)
 
     def test_relate_shows_in_relations_and_inverse_relations(self):
-        self.fake.issue("Later", identifier="TASK-8", state="backlog")
-        ready = self.fake.issue("Ready", identifier="TASK-9")
+        self.fake.issue("Later", seed=fake_linear.IssueSeed(identifier="TASK-8", state="backlog"))
+        ready = self.fake.issue("Ready", seed=fake_linear.IssueSeed(identifier="TASK-9"))
         self.fake.relate("blocks", "TASK-8", ready["id"])
         self.assertEqual(
             self.gql(issues.Q_ISSUE, i="TASK-8")["issue"]["relations"]["nodes"],
@@ -202,7 +213,7 @@ class GraphQLQueries(ServerCase):
         )
 
     def test_the_write_back_ops(self):
-        prd = self.fake.issue("PRD: Widgets", state="done")
+        prd = self.fake.issue("PRD: Widgets", seed=fake_linear.IssueSeed(state="done"))
         linear.call(
             self.gql,
             promote.M_RELATE,
@@ -245,12 +256,14 @@ class GraphQLQueries(ServerCase):
         created, handed, said, done = (f"2026-10-0{d}T07:00:00.000Z" for d in (5, 6, 7, 8))
         src = self.fake.issue(
             "Research",
-            identifier="TASK-9",
-            state="in_review",
-            assignee=self.engineer,
-            project=PROJECT,
-            priority=2,
-            created=created,
+            seed=fake_linear.IssueSeed(
+                identifier="TASK-9",
+                state="in_review",
+                assignee=self.engineer,
+                project=PROJECT,
+                priority=2,
+                created=created,
+            ),
         )
         self.fake.move("TASK-9", "handoff", actor=self.human, at=handed)
         self.fake.comment("TASK-9", self.human, "Build it.", at=said)

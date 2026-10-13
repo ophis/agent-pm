@@ -23,10 +23,9 @@ class ServerCase(Case):
         self.human = fake.user("Me@X.com", "Me")
         fake.issue(
             "Session registry",
-            identifier="TASK-7",
-            state="in_progress",
-            assignee=self.engineer,
-            project=PROJECT,
+            seed=fake_linear.IssueSeed(
+                identifier="TASK-7", state="in_progress", assignee=self.engineer, project=PROJECT
+            ),
         )
         self.url = fake_linear.serve(self, fake)
         env = mock.patch.dict(

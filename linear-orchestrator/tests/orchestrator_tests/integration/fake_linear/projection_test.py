@@ -130,7 +130,7 @@ class GraphQLProjection(ServerCase):
         )
 
     def test_a_move_is_history_by_the_caller(self):
-        self.fake.issue("Claimed", identifier="TASK-8")
+        self.fake.issue("Claimed", seed=fake_linear.IssueSeed(identifier="TASK-8"))
         self.fake.move(
             "TASK-8",
             "in_progress",
@@ -282,13 +282,20 @@ class GraphQLProjection(ServerCase):
     def test_finished_issues_page(self):
         finished = [
             self.fake.issue(
-                f"Finished {n}", state=("done", "canceled")[n % 2], assignee=self.engineer
+                f"Finished {n}",
+                seed=fake_linear.IssueSeed(
+                    state=("done", "canceled")[n % 2], assignee=self.engineer
+                ),
             )["identifier"]
             for n in range(51)
         ]
-        archived = self.fake.issue("Archived", state="done", assignee=self.engineer)["identifier"]
+        archived = self.fake.issue(
+            "Archived", seed=fake_linear.IssueSeed(state="done", assignee=self.engineer)
+        )["identifier"]
         linear.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
-        self.fake.issue("Someone else's", state="done", assignee=self.human)
+        self.fake.issue(
+            "Someone else's", seed=fake_linear.IssueSeed(state="done", assignee=self.human)
+        )
         pages, cursor = [], None
         while True:
             page = self.gql(
@@ -307,7 +314,7 @@ class GraphQLProjection(ServerCase):
         self.assertTrue(self.fake.find(archived)["archived"])
 
     def test_issue_create_takes_the_next_number_and_refuses_a_used_id(self):
-        self.fake.issue("Older", identifier="TASK-3")
+        self.fake.issue("Older", seed=fake_linear.IssueSeed(identifier="TASK-3"))
         new = {
             "id": promote.child_id("src", "pm", "2026-10-09T07:00:00.000Z"),
             "teamId": TEAM,
@@ -352,10 +359,15 @@ class GraphQLProjection(ServerCase):
     def test_the_board_reads(self):
         done = "2026-10-08T07:00:00.000Z"
         self.fake.label_group(TASK_GROUP, "Tasks", {LABEL: "build"})
-        blocker = self.fake.issue("Blocker", state="in_progress")
-        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT, labels=[LABEL])
-        self.fake.issue("No project", assignee=self.engineer)
-        self.fake.issue("Someone else's", assignee=self.human, project=PROJECT)
+        blocker = self.fake.issue("Blocker", seed=fake_linear.IssueSeed(state="in_progress"))
+        ready = self.fake.issue(
+            "Ready",
+            seed=fake_linear.IssueSeed(assignee=self.engineer, project=PROJECT, labels=[LABEL]),
+        )
+        self.fake.issue("No project", seed=fake_linear.IssueSeed(assignee=self.engineer))
+        self.fake.issue(
+            "Someone else's", seed=fake_linear.IssueSeed(assignee=self.human, project=PROJECT)
+        )
         linear.call(
             self.gql,
             promote.M_RELATE,

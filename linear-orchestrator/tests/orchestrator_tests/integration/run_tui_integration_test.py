@@ -7,6 +7,7 @@ closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows be
 import functools
 import unittest
 
+from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flows.fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
 from orchestrator_tests.unit.run.support import ID, SID, UUID
 from orchestrator_tests.unit.writeback.support import PRD
@@ -38,11 +39,13 @@ class Tui(Flow):
         self.guard()
         self.fake.issue(
             "Session registry",
-            identifier=ID,
-            id=UUID,
-            state="in_progress",
-            assignee=self.ids[ACCOUNTS["pm"]],
-            project=PROJECT,
+            seed=fake_linear.IssueSeed(
+                identifier=ID,
+                id=UUID,
+                state="in_progress",
+                assignee=self.ids[ACCOUNTS["pm"]],
+                project=PROJECT,
+            ),
         )
         self.scene([f"{mark('start', 'a PRD.')}\n{block(DONE)}"])
 

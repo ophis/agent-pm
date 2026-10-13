@@ -14,6 +14,7 @@ import unittest
 
 from agent_pm.linear_orchestrator.engine import config
 from orchestrator_tests.case import PYTHONPATH
+from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flows.fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
@@ -77,10 +78,12 @@ class Router(TmuxFlow):
         super().setUp()
         self.fake.issue(
             TITLE,
-            identifier=ID,
-            assignee=self.ids[ENGINEER],
-            project=PROJECT,
-            description="Add a session registry.",
+            seed=fake_linear.IssueSeed(
+                identifier=ID,
+                assignee=self.ids[ENGINEER],
+                project=PROJECT,
+                description="Add a session registry.",
+            ),
         )
 
     def claim(self, mode="start", *argv):
@@ -158,10 +161,8 @@ class Router(TmuxFlow):
         pane = self.server.tmux("list-panes", "-t", f"={driver}", "-F", "#{pane_pid}")
         self.assertEqual(pane.returncode, 0, pane.stderr)
         os.kill(int(pane.stdout), signal.SIGKILL)
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.kill(self.started()[0]["pid"], signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         live_tmux.wait(lambda: not self.live(driver), TIMEOUT, f"{driver} to end")
         self.assertEqual(self.state(ID), "in_progress")
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
