@@ -1,4 +1,4 @@
-"""utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs and printable_abs."""
+"""utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs, printable_abs and import_roots."""
 
 import os
 import subprocess
@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils.paths import printable_abs, real_dirs, temp_dirs, under
+from agent_pm.utils.paths import import_roots, printable_abs, real_dirs, temp_dirs, under
 
 from utils.tests.case import REPO, Case
 
@@ -103,6 +103,33 @@ class PrintableAbs(Case):
         ):
             with self.subTest(value=value):
                 self.assertFalse(printable_abs(value))
+
+
+class ImportRootsTest(Case):
+    def test_only_each_projects_src_holding_just_its_own_subpackage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for rel in (
+                "utils/src/agent_pm/utils",
+                "linear-x/src/agent_pm/linear_x",
+                "tmpq1/src/agent_pm/utils",
+                "two/src/agent_pm/two",
+                "two/src/agent_pm/other",
+                "inited/src/agent_pm/inited",
+                "utils/nested/src/agent_pm/nested",
+                "bare/src/agent_pm/bare",
+            ):
+                (repo / rel).mkdir(parents=True)
+                if rel != "bare/src/agent_pm/bare":
+                    (repo / rel / "__init__.py").touch()
+            (repo / "inited/src/agent_pm/__init__.py").touch()
+            (repo / "utils/src/agent_pm/.DS_Store").touch()
+            self.assertEqual(import_roots(tmp), (f"{tmp}/linear-x/src", f"{tmp}/utils/src"))
+
+    def test_this_repos_are_its_five_projects(self):
+        found = import_roots(REPO)
+        self.assertEqual(len(found), 5, found)
+        self.assertIn(os.path.join(REPO, "utils", "src"), found)
 
 
 if __name__ == "__main__":

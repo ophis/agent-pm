@@ -403,7 +403,6 @@ def _start(argv, termination):
     sessions.protect(
         state,
         [
-            *sessions.IMPORT_ROOTS,
             sys.prefix,
             sys.base_prefix,
             sys.executable,

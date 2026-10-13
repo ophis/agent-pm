@@ -40,6 +40,10 @@ class TuiTest(Base):
         proc.assert_not_called()
         return run, launch, json.loads(launch.argv[-1])
 
+    def test_the_launch_protects_the_import_roots_first(self):
+        _, _, data = self.launch()
+        self.assertEqual(data["protect"][: len(ROOTS)], list(ROOTS))
+
     def payload(self, **fields):
         return {"session_id": NATIVE, "cwd": str(self.cwd), **fields}
 

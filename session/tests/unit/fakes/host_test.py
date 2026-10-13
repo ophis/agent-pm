@@ -1,15 +1,16 @@
-"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's reuse and send's errors."""
+"""session/tests/fakes/host.py: FakeHost passes HostContract; its own refusals, a dead name's reuse, send's errors
+and cleanup of a child an ended program left."""
 
 import os
 import sys
+import time
 import unittest
-from unittest import mock
 
 from agent_pm.session import DriverError
 from agent_pm.session.engine.api import Key, Paste
 
 from session.tests.case import Case
-from session.tests.contracts.host import SLEEP, HostContract, program
+from session.tests.contracts.host import PUT, SLEEP, HostContract, gone, program, read
 from session.tests.fakes.host import FakeHost
 
 
@@ -63,12 +64,23 @@ class FakeHostOnly(Case):
             with self.subTest(action=action), self.assertRaises(DriverError):
                 terminal.send(action)
 
-    def test_kill_after_the_process_ended_signals_nothing(self):
-        ended = self.host.detach("w1", program("pass"), self.home, {})
-        self.assertTrue(ended.wait_exit(10))
-        with mock.patch.object(os, "killpg") as killpg:
-            ended.kill()
-        killpg.assert_not_called()
+    def test_kill_and_close_end_a_child_left_by_an_ended_program(self):
+        spawn = PUT + (
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "put(str(child.pid))"
+        )
+        for name, end in (("w1", "kill"), ("w2", "close")):
+            with self.subTest(end=end):
+                path = os.path.join(self.home, name)
+                ended = self.host.detach(name, program(spawn, path), self.home, {})
+                self.assertTrue(ended.wait_exit(10))
+                child = int(read(path))
+                self.assertFalse(gone(child))
+                getattr(ended, end)()
+                deadline = time.monotonic() + 5
+                while not gone(child) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(gone(child))
 
 
 if __name__ == "__main__":

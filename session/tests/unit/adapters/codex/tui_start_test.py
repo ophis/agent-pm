@@ -14,7 +14,8 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import tui_hook, tui_start
 
-from session.tests.case import PYTHONPATH, Case
+from session.tests import case
+from session.tests.case import Case
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -66,9 +67,6 @@ class SiblingTest(Case):
             (result.returncode, result.stdout, result.stderr),
             (1, "", "codex tui: Codex tui launch: malformed launch data\n"),
         )
-
-    def test_its_protected_roots_are_the_import_roots(self):
-        self.assertEqual(os.pathsep.join(tui_start.sessions.IMPORT_ROOTS), PYTHONPATH)
 
 
 class StartTest(Base):
@@ -386,7 +384,7 @@ class ProtectTest(Base):
                 protect=(str(link),),
             )
             data = self.launch(spec)
-            self.assertEqual(json.loads(data)["protect"], [str(link)])
+            self.assertEqual(json.loads(data)["protect"], [*case.ROOTS, str(link)])
             link.unlink()
             link.symlink_to(target)
             with (

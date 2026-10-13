@@ -20,7 +20,7 @@ tmux_calls(repo)      "tmux" only in TMUX_HOST
 status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
-namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage
+namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
@@ -120,6 +120,7 @@ PKG = "agent_pm"
 ORCH_PKG = f"{PKG}.{ORCH}"
 ORCH_SRC = f"src/{PKG}/{ORCH}/"
 ORCH_PROJECT = "linear-orchestrator"
+LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_package entry
 PROJECTS = {
     "delegate": "delegate",
     "session": SESSION,
@@ -150,10 +151,13 @@ MANAGER_ALLOWED = {
     "manager.crew": ("utils", "manager.roster", "manager.engine.types"),
     "manager.roster": ("utils", "manager.engine.types"),
 }
-# until TASK-371
 MANAGER_EXCEPTIONS = {
-    "manager.crew": (f"{PKG}.{CONFIG}", f"{PKG}.session.Session", f"{PKG}.session.api"),
-    "manager.roster": (f"{PKG}.session.api",),
+    "manager.crew": (
+        f"{PKG}.{CONFIG}",  # until TASK-371
+        f"{PKG}.session.Session",  # until TASK-371
+        f"{PKG}.session.api",  # until TASK-371
+    ),
+    "manager.roster": (f"{PKG}.session.api",),  # until TASK-371
 }
 COMMAND = "agent-pm-"
 SESSION_COMMAND = "agent-pm-session"
@@ -459,7 +463,11 @@ def namespace_package(repo: str) -> list[str]:
     for top, own in PROJECTS.items():
         for rel, wanted in (("src", {PKG}), (f"src/{PKG}", {own})):
             path = os.path.join(repo, top, rel)
-            have = set(os.listdir(path) if os.path.isdir(path) else ()) - {"__pycache__"}
+            have = {
+                e
+                for e in (os.listdir(path) if os.path.isdir(path) else ())
+                if e not in LEFTOVERS and not e.endswith(".egg-info")
+            }
             found.update(
                 f"{top}/{rel}/{e}: "
                 + ("namespace package __init__.py" if e == "__init__.py" else f"not {top}'s")

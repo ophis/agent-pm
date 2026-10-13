@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fcntl
 import fnmatch
-import glob
 import hashlib
 import json
 import os
@@ -15,10 +14,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 6))
-IMPORT_ROOTS = tuple(
-    sorted(os.path.dirname(p) for p in glob.glob(os.path.join(REPO, "*", "src", "agent_pm")))
-)
 
 
 VALUED = {

@@ -7,8 +7,7 @@ the lower one's whole; a layer cannot drop a key a lower one sets.
 Ownership of a local key: a top-level key in one project's config.toml is that project's. A top-level table in
 several (roles) is resolved by the full dotted key, among the projects with that table: those whose config.toml has
 the key, else the same table, depth and last key (roles.<new role>.account), else a suffix of the key
-(roles.<role>.cwd: cwd), else all of them. read_project(name) takes the local keys owned at or below name's level,
-own=True only name's file and the local keys it owns; a local top-level key no project has is a ValueError."""
+(roles.<role>.cwd: cwd), else all of them; a local top-level key no project has is a ValueError."""
 
 import os
 import tomllib
@@ -20,7 +19,6 @@ LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manag
 
 
 def merge(base: dict, over: dict) -> dict:
-    """`over` on `base`: tables merge key by key; any other value replaces base's."""
     out = dict(base)
     for k, v in over.items():
         out[k] = merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
@@ -28,7 +26,6 @@ def merge(base: dict, over: dict) -> dict:
 
 
 def read_config(path: str, local: str) -> dict:
-    """`path`, with `local` (~ expanded) merged on top when it exists."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
     local = os.path.expanduser(local)
@@ -41,9 +38,8 @@ def read_config(path: str, local: str) -> dict:
 def read_project(
     name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
-    """Every project config.toml at or below `name`'s level, in LEVELS order, then `local`'s keys owned at or below
-    it; `own`: `name`'s config.toml and the local keys it owns. `path` stands in for `name`'s own config.toml (owning
-    its keys and the file's). A missing config.toml or local file is empty."""
+    """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`: `name`'s file and
+    the local keys it owns. `path` stands in for `name`'s config.toml. A missing file is empty."""
     rank = _rank(name)
     configs = _configs(root, name, path)
     known = (

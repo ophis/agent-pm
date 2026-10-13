@@ -1,20 +1,16 @@
 """The delegate's paths, their only home: CONFIG, delegate/config.toml (read through
 agent_pm.utils.config_file.read_project("delegate"), ~/.agent-pm/local.toml on top); DELEGATE, the delegate project
-dir; IMPORT_ROOTS, every project's src/ beside it (each holding agent_pm/); PYTHONPATH, them joined: a child's.
+dir; IMPORT_ROOTS, the projects' src/ (agent_pm.utils.paths.import_roots); PYTHONPATH, them joined: a child's.
 harness_host(config, hosts): a read delegate config's [delegates] harness_host, None unset, checked against the host
 names `hosts` (Session.parse_hosts' tables); else ValueError."""
 
-import glob
 import os
 from collections.abc import Collection, Mapping
 
+from agent_pm.utils.paths import import_roots
+
 DELEGATE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
-IMPORT_ROOTS = tuple(
-    sorted(
-        os.path.dirname(p)
-        for p in glob.glob(os.path.join(os.path.dirname(DELEGATE), "*", "src", "agent_pm"))
-    )
-)
+IMPORT_ROOTS = import_roots()
 PYTHONPATH = os.pathsep.join(IMPORT_ROOTS)
 CONFIG = os.path.join(DELEGATE, "config.toml")
 

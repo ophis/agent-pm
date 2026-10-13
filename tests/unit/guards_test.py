@@ -1012,6 +1012,15 @@ class NamespacePackage(Sample):
         root = self.own("session/src/__pycache__/x.pyc", f"session/{PKG}/__pycache__/x.pyc")
         self.assertEqual(guards.namespace_package(root), [])
 
+    def test_finder_and_build_leftovers_are_ignored(self):
+        root = self.own(
+            "utils/src/.DS_Store",
+            f"utils/{PKG}/.DS_Store",
+            "manager/src/agent_pm_manager.egg-info/PKG-INFO",
+            f"session/{PKG}/x.egg-info/PKG-INFO",
+        )
+        self.assertEqual(guards.namespace_package(root), [])
+
     def test_an_init_py_is_refused(self):
         root = self.own(*(f"{top}/{PKG}/__init__.py" for top in guards.PROJECTS))
         self.assertEqual(

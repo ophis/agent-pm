@@ -7,6 +7,7 @@ import sys
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit
+from agent_pm.utils.paths import import_roots
 
 from . import sessions
 from .common import LIMIT_PREFIXES, added_dirs, flags, native_id, passed, refuse, reset_at
@@ -50,8 +51,9 @@ class CodexTui(Tui):
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
             raise ConfigError("Codex tui requires an absolute Driver hook command")
+        roots = import_roots()
         dependencies = [
-            *sessions.IMPORT_ROOTS,
+            *roots,
             sys.prefix,
             sys.base_prefix,
             sys.executable,
@@ -116,7 +118,7 @@ class CodexTui(Tui):
             "workdir": self.state.workdir,
             "sid": self.state.sid,
             "store": store,
-            "protect": list(spec.protect),
+            "protect": [*roots, *spec.protect],
             "add_dirs": added,
         }
         return Launch(
