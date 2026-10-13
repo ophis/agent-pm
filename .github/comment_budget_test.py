@@ -86,10 +86,10 @@ class Measure(unittest.TestCase):
 
 class Rules(unittest.TestCase):
     def test_paths_pick_their_rule(self):
-        for path in ("tests/a.py", "x/tests/b.py", "new/tests/c.py", "core/d_test.py"):
+        for path in ("tests/a.py", "x/tests/b.py", "tests/unit/c.py", "delegate/d_test.py"):
             with self.subTest(path=path):
                 self.assertIs(budget.rule(path), budget.TESTS)
-        for path in ("new/core/src/e.py", ".github/comment_budget.py", "contests/f.py", "tests.py"):
+        for path in ("delegate/src/e.py", ".github/comment_budget.py", "contests/f.py", "tests.py"):
             with self.subTest(path=path):
                 self.assertIs(budget.rule(path), budget.SOURCE)
 

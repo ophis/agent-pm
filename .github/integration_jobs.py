@@ -1,6 +1,7 @@
-"""CI integration jobs: JOBS entries are directories ending in /, files, or <file>::<Class>.
-Exact classes outrank the longest matching path. --check rejects loader errors, unmatched classes/tests,
-empty jobs, duplicate tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests."""
+"""CI integration jobs, Integration <project> [shard], over DIRECTORIES (the repo's and each project's): JOBS
+entries, from the repo root, are directories ending in /, files, or <file>::<Class>. Exact classes outrank
+the longest matching path. --check rejects loader errors, unmatched classes/tests, empty jobs, duplicate
+tests, and a workflow matrix.job unlike JOBS; <job> runs that job's tests through run_tests.py."""
 
 import json
 import re
@@ -9,27 +10,28 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
+import run_tests
+
 ROOT = Path(__file__).resolve().parents[1]
-DIRECTORY = "new/tests/integration"
+DIRECTORIES = (
+    "tests/integration",
+    *sorted(
+        f"{p.parents[1].name}/tests/integration"
+        for p in ROOT.glob("*/src/agent_pm")
+        if (p.parents[1] / "tests" / "integration").is_dir()
+    ),
+)
 WORKFLOW = ROOT / ".github/workflows/test.yml"
+CREW = "manager/tests/integration/crew_integration_test.py"
 JOBS = {
-    "driver": ["driver/"],
-    "adapters": ["adapters/"],
-    "delegate-composer": ["delegate/", "composer/"],
-    "orchestrator": ["orchestrator/"],
-    "crew-1": [
-        "tmux/crew_integration_test.py::ClaudeLifecycleTest",
-        "tmux/crew_integration_test.py::RuntimeTest",
-    ],
-    "crew-2": [
-        "tmux/crew_integration_test.py::CodexLifecycleTest",
-        "tmux/crew_integration_test.py::RosterTest",
-    ],
-    "crew-3": [
-        "tmux/crew_integration_test.py::ManagersTest",
-        "tmux/crew_integration_test.py::RosterRecoveryTest",
-    ],
-    "shared": ["imports_integration_test.py", "live_tmux_integration_test.py"],
+    "session 1": ["session/tests/integration/"],
+    "session 2": ["session/tests/integration/adapters/"],
+    "delegate": ["delegate/tests/integration/"],
+    "linear-orchestrator": ["linear-orchestrator/tests/integration/"],
+    "manager 1": [f"{CREW}::ClaudeLifecycleTest", f"{CREW}::RuntimeTest"],
+    "manager 2": [f"{CREW}::CodexLifecycleTest", f"{CREW}::RosterTest"],
+    "manager 3": [f"{CREW}::ManagersTest", f"{CREW}::RosterRecoveryTest"],
+    "repo": ["tests/integration/"],
 }
 
 
@@ -87,18 +89,15 @@ def validate(found, suites, labels):
         )
 
 
-def check(root, directory, jobs, workflow):
-    loader = unittest.TestLoader()
-    start = str(root / directory)
-    found = list(tests(loader.discover(start, pattern="*_test.py", top_level_dir=str(root))))
+def check(root, directories, jobs, workflow):
+    loader, found = unittest.TestLoader(), []
+    for directory in directories:
+        start = str(root / directory)
+        found += tests(loader.discover(start, pattern="*_test.py", top_level_dir=str(root)))
     if loader.errors:
         raise ValueError("\n".join(loader.errors))
     split, unassigned = {job: [] for job in jobs}, set()
-    prefix = directory.replace("/", ".") + "."
-    locations = [
-        (test, type(test).__module__.removeprefix(prefix).replace(".", "/") + ".py")
-        for test in found
-    ]
+    locations = [(test, type(test).__module__.replace(".", "/") + ".py") for test in found]
     classes = {f"{file}::{type(test).__name__}" for test, file in locations}
     missing_classes = sorted(
         {entry for entries in jobs.values() for entry in entries if "::" in entry} - classes
@@ -118,20 +117,23 @@ def check(root, directory, jobs, workflow):
     return split
 
 
-def run(suite):
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(suite))
-    return 0 if result.wasSuccessful() else 1
+def run(suite, title):
+    return run_tests.run(unittest.TestSuite(suite), title)
 
 
 def main(argv):
     if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
         raise ValueError("give --check or a job name: " + ", ".join(JOBS))
-    split = check(ROOT, DIRECTORY, JOBS, WORKFLOW.read_text())
+    title = f"Integration {argv[0]}"
+    code = None if argv == ["--check"] else run_tests.supervise(title)
+    if code is not None:
+        return code
+    split = check(ROOT, DIRECTORIES, JOBS, WORKFLOW.read_text())
     if argv == ["--check"]:
         counts = ", ".join(f"{job} {len(suite)}" for job, suite in split.items())
         print(f"integration jobs match discovery and the workflow: {counts}")
         return 0
-    return run(split[argv[0]])
+    return run(split[argv[0]], title)
 
 
 if __name__ == "__main__":
