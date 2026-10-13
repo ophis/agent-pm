@@ -45,7 +45,7 @@ SCRIPTS = ("crew.py", "drive.py", "router.py")
 LEGACY = "workers.py"
 LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
 CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
-CREW_MODULE = ("-P", "-m", "agent_pm.manager.crew")
+CREW_MODULE = ("-P", "-m", "agent_pm.manager.engine.crew")
 TOP = ("version", "holder", "cursor", "gen", "entries")
 FIELDS = (
     "kind",

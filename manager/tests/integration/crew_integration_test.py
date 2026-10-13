@@ -1,6 +1,6 @@
-"""agent_pm.manager.crew end to end: its CLI (`python3 -P -m agent_pm.manager.crew`) run as a
-manager runs it, on a private tmux server (session/tests/live_tmux.py) with a control-mode client on
-the manager. Workers are plain tui sessions of the real Adapters running
+"""agent_pm.manager.engine.crew end to end: its CLI (`python3 -P -m agent_pm.manager.engine.crew`)
+run as a manager runs it, on a private tmux server (session/tests/live_tmux.py) with a control-mode
+client on the manager. Workers are plain tui sessions of the real Adapters running
 session/tests/integration/adapters/claude/fake_claude.py and the Codex fake_tui.py (on PATH as
 `claude` and `codex`); follow-ups go through the Driver's tmux_host.py send. HOME and the server's
 root lie under AGENT_PM_TEST_TMP (else the repo root), outside the temp dirs a plain Codex session
@@ -21,7 +21,7 @@ import threading
 import unittest
 from unittest import mock
 
-from agent_pm.manager import crew, roster
+from agent_pm.manager.engine import crew, roster
 from agent_pm.utils import LOCAL
 
 from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
@@ -29,8 +29,8 @@ from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
 
-CREW = [*PY, "-m", "agent_pm.manager.crew"]
-ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.crew"]
+CREW = [*PY, "-m", "agent_pm.manager.engine.crew"]
+ENTRY = [sys.executable, "-P", "-m", "agent_pm.manager.engine.crew"]
 TMUX_HOST = os.path.join(SRC["session"], "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
 MANAGER = "mgr"
 SECOND = "mgr2"
@@ -76,7 +76,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 
 def tail(directory: str, n: int = 0, gen: int = 0, *backlog: str) -> str:
     me, events, name = (
-        f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.crew",
+        f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.engine.crew",
         shlex.quote(os.path.join(directory, "events")),
         os.path.basename(directory),
     )
@@ -325,7 +325,8 @@ class Live(Case):
         return not any(self.live(n) for n in names)
 
     def dumping(self, runtime: str, fake: str) -> str:
-        """Puts a `runtime` on PATH that logs its argv and env, then runs `fake`; returns that log."""
+        """Puts a `runtime` on PATH that logs its argv and env, then runs `fake`; returns that log.
+        """
         path = os.path.join(self.root, f"{runtime}.env.jsonl")
         q = shlex.quote
         with open(os.path.join(self.server.bin, runtime), "w") as f:

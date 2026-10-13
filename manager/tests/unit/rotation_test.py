@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.manager import roster
+from agent_pm.manager.engine import roster
 from agent_pm.session import SessionStatusLog
 
 from manager.tests.case import Case

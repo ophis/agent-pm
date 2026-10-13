@@ -1,5 +1,5 @@
-"""agent_pm.manager.crew, the old core's crew_test ported onto a fake session.engine.api (Api):
-argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces the
+"""agent_pm.manager.engine.crew, the old core's crew_test ported onto a fake session.engine.api
+(Api): argv, env, tmux and the tui settings are the Driver's now, and the worker record replaces the
 session options.
 """
 
@@ -25,7 +25,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.manager import crew, roster
+from agent_pm.manager.engine import crew, roster
 from agent_pm.manager.engine.types import Spec
 from agent_pm.session import (
     Access,
@@ -43,8 +43,8 @@ from agent_pm.utils import LOCAL
 
 from manager.tests.case import PYTHONPATH, SRC, Case
 
-CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")
-MODULE = ["-P", "-m", "agent_pm.manager.crew"]
+CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "engine", "crew.py")
+MODULE = ["-P", "-m", "agent_pm.manager.engine.crew"]
 SID = "0b6f1c2e-3d4a-4b5c-8d6e-7f8091a2b3c4"
 SID2 = "1" + SID[1:]
 WHEN = "2026-10-09T12:00:00+00:00"
@@ -243,7 +243,8 @@ class Runs:
 
 
 class CrewCase(Case):
-    """A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured."""
+    """A caller-owned fake session driver, self.api (replaceable), sleep patched, stderr captured.
+    """
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -1920,7 +1921,7 @@ class AttachTest(RosterCase):
             ["env", f"PYTHONPATH={PYTHONPATH}", PY, *MODULE, "; rm -rf ~"],
         )
 
-    def test_a_worker_entrys_resume_line_names_the_import_root_then_the_callers_pythonpath(self):
+    def test_a_worker_entries_resume_line_names_the_import_root_then_the_callers_pythonpath(self):
         e = entry(resume=started("w1", "--client", "rt0"))
         self.seed(w1=e)
         with mock.patch.dict(os.environ, {"PYTHONPATH": f"{PYTHONPATH}:/u 1"}):
@@ -2819,7 +2820,7 @@ class CursorTest(RosterCase):
     def test_attach_prints_the_backlog_after_the_cursor_then_n_gen_and_the_arm_commands(self):
         events = [f"12:00:0{i} w1 done" for i in range(1, 6)]
         self.fill(nl(*events), cursor=3)
-        me = f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.crew"
+        me = f"env PYTHONPATH={shlex.quote(PYTHONPATH)} python3 -P -m agent_pm.manager.engine.crew"
         self.assertEqual(
             self.attach(),
             (

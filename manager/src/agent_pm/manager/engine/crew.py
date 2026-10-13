@@ -5,9 +5,9 @@ config's `runtime`, roster.default_runtime), starts the worker with its workdir
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the
 live sessions, reopens the unshown and prints the table, the backlog and how to arm a monitor. Exits
 1 on an error, 2 on a usage error. Follow-ups go through the Driver's tmux_host.py send. Run as `env
-PYTHONPATH=<the import roots>[:U] python3 -P -m agent_pm.manager.crew …`, the form of each crew
-command it prints. main first sets PYTHONPATH to U, the caller's minus each entry resolving to one
-(unset when empty): what workers and recovered role or pipeline entries get; then configures the
+PYTHONPATH=<the import roots>[:U] python3 -P -m agent_pm.manager.engine.crew …`, the form of each
+crew command it prints. main first sets PYTHONPATH to U, the caller's minus each entry resolving to
+one (unset when empty): what workers and recovered role or pipeline entries get; then configures the
 session from the session config before a subcommand of STARTS (those that start, show or attach a
 session); next-event configures just before it attaches, a config error becoming its content text.
 The import roots (agent_pm.delegate's IMPORT_ROOTS), then U, appear only in a command running crew:
@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Iterator
 
 from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
-from agent_pm.manager import roster
+from agent_pm.manager.engine import roster
 from agent_pm.manager.engine.types import RosterError, Spec, Stale
 from agent_pm.session import (
     Access,

@@ -1,6 +1,6 @@
-"""agent_pm.manager.roster, the old core's roster_test ported onto a fake session.engine.api (Tmux):
-LEGACY_CLIENT's cases became FR-28's default runtime; worker_dir, default_runtime and the crew
-module's entries are new.
+"""agent_pm.manager.engine.roster, the old core's roster_test ported onto a fake session.engine.api
+(Tmux): LEGACY_CLIENT's cases became FR-28's default runtime; worker_dir, default_runtime and the
+crew module's entries are new.
 """
 
 import contextlib
@@ -19,7 +19,7 @@ import types
 import unittest
 import unittest.mock
 
-from agent_pm.manager import roster
+from agent_pm.manager.engine import roster
 from agent_pm.session import DriverError, SessionRow
 from agent_pm.utils import LOCAL, read_project
 
@@ -28,7 +28,7 @@ from manager.tests.case import PY, REPO, SRC, Case, child_env
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
 WHEN = "2026-01-01T00:00:00+00:00"
-MODULE = ["-P", "-m", "agent_pm.manager.crew"]
+MODULE = ["-P", "-m", "agent_pm.manager.engine.crew"]
 PRE_MOVE = ["-P", "-m", "agent_pm.crew"]
 NOT_REGULAR = "{}: not a regular file owned by you"
 NOT_A_DIR = "not a directory owned by you"
@@ -318,7 +318,7 @@ class ManagerTest(Base):
 
 CHILD = """
 import sys
-from agent_pm.manager import roster
+from agent_pm.manager.engine import roster
 for i in range(15):
     roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"]))
 """
@@ -326,7 +326,7 @@ for i in range(15):
 LEASE_CHILD = """
 import sys
 from types import SimpleNamespace
-from agent_pm.manager import roster
+from agent_pm.manager.engine import roster
 from agent_pm.session import SessionRow
 d, own = sys.argv[1], sys.argv[2]
 live = [SessionRow("held", None, None, "working", None, None, None, None, False)]
@@ -381,7 +381,7 @@ VALID = {
     "started": [WHEN, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00-05:00"],
 }
 RESUME_LIST = "a list of 2 or more printable strings"
-RESUME_1 = "-P -m agent_pm.manager.crew or an absolute path named crew.py, drive.py or router.py"
+RESUME_1 = "-P -m agent_pm.manager.engine.crew or an absolute path named crew.py, drive.py or router.py"
 NOTE = "null or a printable string of at most 500 characters"
 CWD = "an absolute printable path"
 ID = "null or a printable string of 1–200 characters without whitespace"
@@ -412,8 +412,8 @@ INVALID = [
     ("resume", ["/p", "/x/crew.py/"], f"resume[1]: '/x/crew.py/': want {RESUME_1}"),
     ("resume", ["/p", "workers.py"], f"resume[1]: 'workers.py': want {RESUME_1}"),
     ("resume", ["/p", "-P", "-m"], f"resume[1]: '-P': want {RESUME_1}"),
-    ("resume", ["/p", "-P", "-m", "agent_pm.manager.roster"], f"resume[1]: '-P': want {RESUME_1}"),
-    ("resume", ["/p", "-m", "agent_pm.manager.crew"], f"resume[1]: '-m': want {RESUME_1}"),
+    ("resume", ["/p", "-P", "-m", "agent_pm.manager.engine.roster"], f"resume[1]: '-P': want {RESUME_1}"),
+    ("resume", ["/p", "-m", "agent_pm.manager.engine.crew"], f"resume[1]: '-m': want {RESUME_1}"),
     ("note", "a\nb", f"note: {{!r}}: want {NOTE}"),
     ("note", "x" * 501, f"note: {{!r}}: want {NOTE}"),
     ("note", "a\x9fb", f"note: {{!r}}: want {NOTE}"),
@@ -988,7 +988,7 @@ class RosterTest(Base):
     def test_recovery_runs_the_crew_module_for_a_crew_py_or_legacy_workers_py_entry(self):
         self.assertEqual(
             roster.CREW,
-            os.path.realpath(os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")),
+            os.path.realpath(os.path.join(SRC["manager"], "agent_pm", "manager", "engine", "crew.py")),
         )
         self.assertTrue(os.path.isfile(roster.CREW))
         for script in ("/old/version/workers.py", "/old/skills/tmux/scripts/crew.py"):
@@ -1441,7 +1441,7 @@ class StopTest(Base):
                 )
                 self.assertEqual(self.tmux.calls, kills(*closed))
 
-    def test_an_entry_key_beats_another_entrys_tui(self):
+    def test_an_entry_key_beats_another_entries_tui(self):
         self.entries["t1"] = good()
         self.live("t1", "d1")
         self.assertEqual(self.stop("t1")[0], "t1")
