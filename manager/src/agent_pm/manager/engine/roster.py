@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -339,13 +340,36 @@ class Roster:
 
     def _cleanup_receipts(self, data: dict) -> None:
         referenced = {entry["receipt"] for entry in data["entries"].values()}
-        for item in os.scandir(self.directory):
-            if RECEIPT_FILE.fullmatch(item.name) is None or item.name in referenced:
-                continue
-            info = item.stat(follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                raise RosterError(f"{item.path}: not a regular receipt owned by you")
-            os.unlink(item.path)
+        with os.scandir(self.directory) as items:
+            for item in items:
+                if RECEIPT_FILE.fullmatch(item.name) is None or item.name in referenced:
+                    continue
+                try:
+                    fd = os.open(item.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    try:
+                        info = os.fstat(fd)
+                        if (
+                            not stat.S_ISREG(info.st_mode)
+                            or info.st_uid != os.getuid()
+                            or info.st_nlink != 1
+                        ):
+                            raise RosterError(
+                                f"{item.path}: not a private regular receipt owned by you"
+                            )
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            continue
+                        current = item.stat(follow_symlinks=False)
+                        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                            raise RosterError(f"{item.path}: receipt replaced during cleanup")
+                        os.unlink(item.path)
+                    finally:
+                        os.close(fd)
+                except FileNotFoundError:
+                    continue
+                except (OSError, RosterError) as error:
+                    print(f"manager: receipt cleanup: {error}; left in place", file=sys.stderr)
 
     def begin(self, intent: Spec, *, sid: str) -> Entry:
         _name(intent.name)
@@ -417,24 +441,39 @@ class Roster:
     def _settle_receipts(self, data: dict) -> None:
         for name, value in data["entries"].items():
             entry = _entry(value)
-            if entry.state != State.LIVE or entry.receipt is None:
+            if entry.receipt is None:
                 continue
             path = os.path.join(self.directory, entry.receipt)
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except FileNotFoundError:
+                data["entries"][name] = asdict(replace(entry, receipt=None))
+                print(
+                    f"manager: {name}: missing receipt {path}; reference cleared", file=sys.stderr
+                )
+                continue
+            except OSError as error:
+                print(f"manager: receipt: {error}; left in place", file=sys.stderr)
+                continue
             try:
                 info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                    raise RosterError(f"{path}: not a regular receipt owned by you")
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.getuid()
+                    or info.st_nlink != 1
+                ):
+                    print(
+                        f"manager: receipt {path}: not a private regular file owned by you; left in place",
+                        file=sys.stderr,
+                    )
+                    continue
+                if entry.state != State.LIVE:
+                    continue
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     continue
-                try:
-                    recorded = self._receipt_record(entry)
-                except RosterError:
-                    continue
-                if recorded == entry.record:
-                    data["entries"][name] = asdict(replace(entry, receipt=None))
+                data["entries"][name] = asdict(replace(entry, receipt=None))
             finally:
                 os.close(fd)
 

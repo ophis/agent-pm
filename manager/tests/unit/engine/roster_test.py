@@ -597,6 +597,126 @@ class RosterTest(Case):
         with self.assertRaisesRegex(RosterError, "already owned"):
             self.roster.adopt(replace(self.record, ctl=("another-ctl",)))
 
+    def test_adopted_record_retires_empty_or_mismatching_receipt(self):
+        for contents in (
+            b"",
+            b"not a Record\n",
+            replace(self.record, detail="older").to_line().encode(),
+        ):
+            with self.subTest(contents=contents):
+                self.begin("alias")
+                entry = self.roster.entries()["alias"]
+                receipt = Path(self.directory, entry.receipt)
+                receipt.write_bytes(contents)
+                self.roster.mark("alias", State.LOST)
+                self.roster.adopt(self.record)
+                self.assertIsNone(self.roster.entries()["alias"].receipt)
+                self.assertFalse(receipt.exists())
+                self.roster.remove("alias")
+
+    def test_adoption_keeps_active_stdout_and_original_record_read_available(self):
+        self.begin("alias")
+        entry = self.roster.entries()["alias"]
+        receipt = Path(self.directory, entry.receipt)
+        self.roster.mark("alias", State.LOST)
+        with self.roster.open_receipt("alias") as output:
+            self.roster.adopt(self.record)
+            self.assertEqual(self.roster.entries()["alias"].receipt, entry.receipt)
+            self.assertTrue(receipt.exists())
+            contents = b"late child output\n" + self.record.to_line().encode() + b"\n"
+            output.write(contents)
+            output.flush()
+            self.assertEqual(receipt.read_bytes(), contents)
+            self.assertEqual(self.roster.receipt_record("alias"), self.record)
+            self.roster.commit("alias", self.record)
+            self.assertTrue(receipt.exists())
+        self.roster.entries()
+        self.assertFalse(receipt.exists())
+
+    def test_concurrent_adoption_does_not_bypass_stdout_sid_validation(self):
+        for sid in (None, str(uuid4())):
+            with self.subTest(sid=sid):
+                self.begin("alias")
+                entry = self.roster.entries()["alias"]
+                self.roster.mark("alias", State.LOST)
+                wrong = replace(self.record, sid=sid)
+                with self.roster.open_receipt("alias") as output:
+                    self.roster.adopt(self.record)
+                    self.assertEqual(self.roster.entries()["alias"].receipt, entry.receipt)
+                    output.write(wrong.to_line().encode() + b"\n")
+                    output.flush()
+                    actual = self.roster.receipt_record("alias")
+                    self.assertEqual(actual, wrong)
+                    with self.assertRaisesRegex(RosterError, "Record.sid"):
+                        self.roster.commit("alias", actual)
+                    self.assertEqual(self.roster.entries()["alias"].record, self.record)
+                self.roster.entries()
+                self.assertIsNone(self.roster.entries()["alias"].receipt)
+                self.roster.remove("alias")
+
+    def test_missing_receipt_reference_is_repaired_and_entry_remains_removable(self):
+        for state in (State.STARTING, State.LOST, State.LIVE, State.GONE):
+            with self.subTest(state=state):
+                self.begin()
+                entry = self.roster.entries()["x"]
+                receipt = Path(self.directory, entry.receipt)
+                if state == State.LOST:
+                    self.roster.mark("x", state)
+                elif state in {State.LIVE, State.GONE}:
+                    data = self.content()
+                    data["entries"]["x"].update(
+                        record=json.loads(self.record.to_line()), state=state, argv=[]
+                    )
+                    Path(self.roster.path).write_text(json.dumps(data))
+                receipt.unlink()
+                warning = io.StringIO()
+                with mock.patch("sys.stderr", warning):
+                    self.roster.entries()
+                self.assertIn("missing receipt", warning.getvalue())
+                self.assertIsNone(self.roster.entries()["x"].receipt)
+                self.roster.remove("x")
+                self.assertEqual(self.roster.entries(), {})
+
+    def test_unsafe_orphan_receipts_warn_without_blocking_ledger_operations(self):
+        self.roster.adopt(self.record)
+        target = Path(self.home, "outside")
+        target.write_text("keep")
+        for kind in ("symlink", "fifo", "hardlink"):
+            with self.subTest(kind=kind):
+                orphan = Path(self.directory, "receipt-unsafe.stdout")
+                if kind == "symlink":
+                    orphan.symlink_to(target)
+                elif kind == "fifo":
+                    os.mkfifo(orphan)
+                else:
+                    os.link(target, orphan)
+                warning = io.StringIO()
+                with mock.patch("sys.stderr", warning):
+                    self.roster.note("x", kind)
+                    self.assertEqual(self.roster.entries()["x"].note, kind)
+                self.assertTrue(orphan.exists())
+                self.assertIn("left in place", warning.getvalue())
+                self.assertEqual(target.read_text(), "keep")
+                orphan.unlink()
+        self.roster.remove("x")
+
+    def test_unsafe_referenced_receipt_can_be_removed_without_touching_target(self):
+        self.begin()
+        entry = self.roster.entries()["x"]
+        receipt = Path(self.directory, entry.receipt)
+        target = Path(self.home, "outside")
+        target.write_text("keep")
+        receipt.unlink()
+        receipt.symlink_to(target)
+        warning = io.StringIO()
+        with mock.patch("sys.stderr", warning):
+            self.assertEqual(self.roster.entries()["x"].receipt, entry.receipt)
+            self.roster.remove("x")
+            self.assertEqual(self.roster.entries(), {})
+        self.assertTrue(receipt.is_symlink())
+        self.assertEqual(target.read_text(), "keep")
+        self.assertIn("left in place", warning.getvalue())
+
     def test_receipt_survives_failure_until_remove_and_orphans_are_cleaned(self):
         self.begin()
         entry = self.roster.entries()["x"]
