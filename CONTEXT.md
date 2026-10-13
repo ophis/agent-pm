@@ -5,7 +5,7 @@ An unattended pipeline that runs role agents on tasks, in five layers (README �
 ## Language
 
 **Layer**:
-One project of the stack and its package, `<project>/src/agent_pm/<package>/`; cross-layer imports use lower layers' public packages (AGENTS.md › Import rules).
+One project of the stack and its package, `<project>/src/agent_pm/<package>/`; each layer calls only the next lower one, through its public package (temporary TASK-371/372 exceptions: AGENTS.md › Import rules).
 _Avoid_: level (a config override level)
 
 **Role**:

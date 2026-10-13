@@ -13,7 +13,7 @@ flowchart LR
 
 ### Core architecture
 
-Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Cross-layer imports use lower layers' public packages; the rules: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
+Five layers, one project each: utils < session < delegate < linear-orchestrator < manager. Each layer calls only the next lower one, through its public package; temporary TASK-371/372 exceptions: `AGENTS.md` › Import rules. The code, by package; terms in `CONTEXT.md`.
 
 ```mermaid
 flowchart TB
