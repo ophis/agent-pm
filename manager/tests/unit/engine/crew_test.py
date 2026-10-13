@@ -148,6 +148,42 @@ class CrewTest(Case):
         self.assertEqual(resumed, started)
         self.assertEqual(self.roster.entries()["worker"].sid, started.sid)
 
+    def test_launch_uses_own_events_and_control_commands_scrub_inherited_events_and_sid(self):
+        calls = []
+        native_run = subprocess.run
+
+        def run(argv, **options):
+            verb = "ls" if tuple(argv) == HERE else argv[1]
+            calls.append((verb, options["env"]))
+            if tuple(argv) == HERE:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return native_run(argv, **options)
+
+        with (
+            mock.patch.dict(
+                os.environ, {"AGENT_PM_EVENTS": "/parent/events", "AGENT_PM_SID": "parent"}
+            ),
+            mock.patch("subprocess.run", side_effect=run),
+        ):
+            record = self.start("worker")
+            ctl.set_session(self.ctl_dir, "worker", displayable=True)
+            self.crew.attach()
+            ctl.set_session(self.ctl_dir, "worker", alive=False)
+            self.crew.attach()
+            self.assertEqual(self.crew.resume("worker"), record)
+            self.crew.stop("worker")
+        self.assertEqual(
+            {verb for verb, _env in calls}, {"start", "resume", "ls", "status", "show", "close"}
+        )
+        for verb, env in calls:
+            with self.subTest(verb=verb):
+                if verb in {"start", "resume"}:
+                    self.assertEqual(env["AGENT_PM_EVENTS"], os.path.join(self.directory, "events"))
+                    self.assertEqual(env["AGENT_PM_SID"], record.sid)
+                else:
+                    self.assertNotIn("AGENT_PM_EVENTS", env)
+                    self.assertNotIn("AGENT_PM_SID", env)
+
     def test_null_or_mismatched_sid_keep_launch_lost(self):
         cases = {
             "null": replace(self.fake_record("null"), sid=None).to_line() + "\n",

@@ -36,6 +36,7 @@ class Crew:
             if key
             not in {
                 "AGENT_PM_SID",
+                "AGENT_PM_EVENTS",
                 "AGENT_PM_MANAGER",
                 "AGENT_PM_HOLDER_ID",
                 "AGENT_PM_HOLDER_GENERATION",
