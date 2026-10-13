@@ -1,3 +1,5 @@
+from agent_pm.linear_orchestrator.engine.routing import types as routing
+
 """The researcher to pm flow over router.py --issue, run.py in its detached Driver session and
 promote.py: a research issue becomes a PM issue; a task label picks the task; a blocked issue waits
 for its blocker; an answer starts a new session; a failed run is not promoted; four failed runs cap
@@ -6,7 +8,6 @@ the issue.
 
 import unittest
 
-from agent_pm.linear_orchestrator.engine import router
 from orchestrator_tests.integration.flow_fixtures import (
     HARNESS_EMAIL,
     HUMAN,
@@ -67,7 +68,7 @@ class ResearcherToPm(Segment):
     def test_a6_capped_after_four_failed_runs(self):
         ident = self.researcher_ready()
         self.wait_next_second(ident)
-        for _ in range(router.CAP):
+        for _ in range(routing.CAP):
             self.claim(ident, "researcher", self.agent_script("researcher", "failed", ident))
             self.agent_run()
         with self.step("router: cap"):
@@ -78,7 +79,7 @@ class ResearcherToPm(Segment):
                     for e in self.refused(ident, attempts)
                 ],
                 [
-                    ("router", "claim-skip", ident, "in_review", f"reached {router.CAP} attempts"),
+                    ("router", "claim-skip", ident, "in_review", f"reached {routing.CAP} attempts"),
                     ("router", "pick-none", None, None, "nothing claimable"),
                 ],
                 attempts,
@@ -90,7 +91,7 @@ class ResearcherToPm(Segment):
                 comments=[(HARNESS_EMAIL, "cap")],
                 subscribers=[HUMAN],
             )
-        self.assertEqual(len(self.runs()), router.CAP)
+        self.assertEqual(len(self.runs()), routing.CAP)
 
 
 if __name__ == "__main__":

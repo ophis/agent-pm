@@ -1,3 +1,5 @@
+from agent_pm.linear_orchestrator.engine.routing import types as routing
+
 """The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
 comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a promote
 tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed requests, and
@@ -13,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm.linear_orchestrator.engine import config, router, runs
+from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import SERVICE_ERRORS
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError as SessionConfigError
@@ -49,7 +51,7 @@ RUN_KEYS = ("kind", "issue", "sid", "role", "runtime")
 SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit) · ")
 # a session comment's first write: its update misses, then it is created by its id
 FIRST_WRITE = ("sessions.M_UPDATE", HARNESS_EMAIL, "error")
-HARNESS_TEXTS = {router.CAP_COMMENT: "cap", router.INTERRUPTED: "interrupted"}
+HARNESS_TEXTS = {routing.CAP_COMMENT: "cap", routing.INTERRUPTED: "interrupted"}
 RESEARCH = (
     "Session registries in agent harnesses",
     "How do agent harnesses keep track of their sessions?",
@@ -555,7 +557,7 @@ class Segment(TmuxFlow):
             runs.parse_log(os.path.join(self.logs, "runs.jsonl")),
         )
         return (
-            f"{router.attempt_count(entries, ident, moved)}"
+            f"{routing.attempt_count(entries, ident, moved)}"
             f" attempts since the human's move to Todo at {moved.isoformat()}"
             f"; runs.jsonl at {[e.ts.isoformat() for e in entries]}"
         )

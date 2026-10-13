@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, router
+from agent_pm.linear_orchestrator.engine.usage import types as runtime_usage
 from agent_pm.session import ConfigError, SessionStatus
 from orchestrator_tests.unit.clock import frozen
 from orchestrator_tests.unit.router.data import (
@@ -33,10 +34,12 @@ class RuntimeUsage(Base):
 
     def gate(self):
         self.write_runs()
-        return router.Gate(self.runs, NOW, dry=False, driver=self.api)
+        return runtime_usage.Gate(self.runs, NOW, dry=False, driver=self.api)
 
     def test_thresholds(self):
-        self.assertEqual((router.MAX_5H, router.BRAKE_5H, router.MAX_WEEK), (90, 80, 100))
+        self.assertEqual(
+            (runtime_usage.MAX_5H, router.BRAKE_5H, runtime_usage.MAX_WEEK), (90, 80, 100)
+        )
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),
@@ -74,7 +77,7 @@ class RuntimeUsage(Base):
             (reading(89.94, None), "five_hour=89.94% weekly=none"),
         )
         for usage, out in rows:
-            self.assertEqual(router.summary(usage), out)
+            self.assertEqual(runtime_usage.summary(usage), out)
 
 
 class ClaimUsageGates(Base):

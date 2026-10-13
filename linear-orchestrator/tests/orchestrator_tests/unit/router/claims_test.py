@@ -1,6 +1,6 @@
 import re
 
-from agent_pm.linear_orchestrator.engine import router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.unit.board_ids import TEAM
 from orchestrator_tests.unit.router.data import (
@@ -137,7 +137,7 @@ class IssueClaims(Base):
             self.add("start", "TASK-1", sid, 300)
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
         self.assertEqual(
             (fake.issues["TASK-1"]["assignee"], fake.issues["TASK-1"]["subscribers"]),
             (who("researcher"), ["me@x.com"]),
@@ -354,7 +354,7 @@ class IssueBlockers(Base):
                 "claim TASK-3 role=researcher runtime=a",
             ],
         )
-        self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
+        self.assertEqual(fake.reads(), [routing.q_issues(routing.RELATIONS), routing.q_issues()])
         self.assertEqual(
             [v["i"] for q, v in fake.queries if "issue(id:" in q and "inverseRelations" in q],
             ["TASK-1", "TASK-2", "TASK-3"],

@@ -1,7 +1,8 @@
 import json
 import os
 
-from agent_pm.linear_orchestrator.engine import config, router
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from orchestrator_tests.unit.clock import frozen
 from orchestrator_tests.unit.router.data import (
     CONFIG,
@@ -196,8 +197,8 @@ class ScheduledRuns(TickScenario):
             {i: (t["state"], t.get("comments")) for i, t in fake.issues.items()},
             {
                 "TASK-1": ("In Progress", None),
-                "TASK-2": ("Todo", [router.INTERRUPTED]),
-                "TASK-3": ("In Review", [router.CAP_COMMENT]),
+                "TASK-2": ("Todo", [routing.INTERRUPTED]),
+                "TASK-3": ("In Review", [routing.CAP_COMMENT]),
                 "TASK-4": ("Todo", None),
                 "TASK-5": ("In Progress", None),
                 "TASK-6": ("Todo", None),

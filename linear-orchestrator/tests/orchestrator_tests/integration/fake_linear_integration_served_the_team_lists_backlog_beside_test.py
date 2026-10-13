@@ -1,7 +1,8 @@
 import uuid
 from types import SimpleNamespace
 
-from agent_pm.linear_orchestrator.engine import promote, prune, router
+from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.linear import issues, linear, writeback
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.fake_linear_integration_data import PR, PROJECT
@@ -43,7 +44,7 @@ class ServedTheTeamListsBacklogBeside(ServedScenario):
                 "assignee": {"id": {"in": [self.engineer]}},
                 "state": {"id": {"eq": state}},
             }
-            return [n["identifier"] for n in self.gql(router.q_issues(), f=flt)["issues"]["nodes"]]
+            return [n["identifier"] for n in self.gql(routing.q_issues(), f=flt)["issues"]["nodes"]]
 
         backlog = fake_linear.BACKLOG
         self.assertEqual(listed(STATES["todo"]), [ready["identifier"]])

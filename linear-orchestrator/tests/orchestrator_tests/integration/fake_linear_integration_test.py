@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import promote, prune, router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear
@@ -20,8 +21,8 @@ class Table(Case):
         }
         want.update(
             {
-                "router.issues": router.q_issues(),
-                "router.issues+relations": router.q_issues(router.RELATIONS),
+                "router.issues": routing.q_issues(),
+                "router.issues+relations": routing.q_issues(routing.RELATIONS),
             }
         )
         self.assertEqual(fake_linear.texts(), want)

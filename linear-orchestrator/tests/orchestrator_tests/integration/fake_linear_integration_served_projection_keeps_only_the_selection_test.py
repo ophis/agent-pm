@@ -6,7 +6,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import promote, prune, router
+from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from orchestrator_tests.integration import fake_linear
@@ -372,14 +373,14 @@ class ServedProjectionKeepsOnlyTheSelection(ServedScenario):
             "assignee": {"id": {"in": [self.engineer]}},
             "state": {"id": {"eq": STATES["todo"]}},
         }
-        nodes = self.gql(router.q_issues(router.RELATIONS), f=flt)["issues"]["nodes"]
+        nodes = self.gql(routing.q_issues(routing.RELATIONS), f=flt)["issues"]["nodes"]
         self.assertEqual([n["identifier"] for n in nodes], [ready["identifier"]])
-        self.assertEqual(router.blockers(nodes[0]), [blocker["identifier"]])
+        self.assertEqual(routing.blockers(nodes[0]), [blocker["identifier"]])
         self.assertNotIn(
-            "inverseRelations", self.gql(router.q_issues(), f=flt)["issues"]["nodes"][0]
+            "inverseRelations", self.gql(routing.q_issues(), f=flt)["issues"]["nodes"][0]
         )
         self.assertEqual(
-            self.gql(router.Q_RECHECK, i=ready["id"])["issue"],
+            self.gql(routing.Q_RECHECK, i=ready["id"])["issue"],
             {
                 "state": {"id": STATES["todo"]},
                 "assignee": {"id": self.engineer, "email": ENGINEER_EMAIL},
@@ -388,9 +389,11 @@ class ServedProjectionKeepsOnlyTheSelection(ServedScenario):
             },
         )
         self.fake.move(blocker["id"], "done", actor=self.harness, at=done)
-        self.assertEqual(router.blockers(self.gql(router.Q_RELATIONS, i=ready["id"])["issue"]), [])
         self.assertEqual(
-            self.gql(router.Q_HISTORY, i=blocker["id"])["issue"]["history"]["nodes"],
+            routing.blockers(self.gql(routing.Q_RELATIONS, i=ready["id"])["issue"]), []
+        )
+        self.assertEqual(
+            self.gql(routing.Q_HISTORY, i=blocker["id"])["issue"]["history"]["nodes"],
             [
                 {
                     "createdAt": done,

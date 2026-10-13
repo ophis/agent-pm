@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.session import ConfigError, DriverError, SessionStatus
 from orchestrator_tests.unit.router.data import (
     CONFIG,
@@ -61,7 +62,7 @@ class StaleRunRecovery(Base):
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
-                    (t["state"], t.get("comments")), (state, [router.INTERRUPTED] if out else None)
+                    (t["state"], t.get("comments")), (state, [routing.INTERRUPTED] if out else None)
                 )
                 self.assertEqual(
                     self.said(),
@@ -154,7 +155,7 @@ class ClaimRechecks(Base):
         self.assertEqual((taken["assignee"], task, role, runtime), (who("pm"), None, "pm", "b"))
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
-        a = router.begin("new", taken, "s1", role, task, runtime, self.runs)
+        a = router.begin(("new", taken, "s1", role, task, runtime), self.runs)
         self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
 
     def test_the_task_label_is_checked_against_the_new_role(self):
@@ -195,7 +196,7 @@ class ClaimRechecks(Base):
             {"TASK-1": {"project": {"id": IDS[PD], "name": PD}}},
         )
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
-        a = router.begin("new", self.taken[0], "s1", "researcher", None, "a", self.runs)
+        a = router.begin(("new", self.taken[0], "s1", "researcher", None, "a"), self.runs)
         self.assertEqual(a.project, IDS[PD])
 
     def test_a_removed_project_is_skipped(self):

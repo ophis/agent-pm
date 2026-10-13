@@ -367,7 +367,7 @@ class RunStartRecords(Base):
         found = issue("TASK-1", "In Progress", "researcher")
         with frozen("2026-10-09T00:26:33-04:00"):
             got = [
-                router.begin(mode, found, "s1", "researcher", task, "a", path)
+                router.begin((mode, found, "s1", "researcher", task, "a"), path)
                 for mode, task in (("new", "light-research"), ("resume", None))
             ]
         with open(path) as f:

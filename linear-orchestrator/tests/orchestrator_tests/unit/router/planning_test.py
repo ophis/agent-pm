@@ -1,6 +1,6 @@
 import json
 
-from agent_pm.linear_orchestrator.engine import router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.unit.router.data import (
     AGENT,
@@ -86,7 +86,7 @@ class RunPlanning(Base):
             self.add("resume", "TASK-1", "sid1", m)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.CAP_COMMENT])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
 
     def test_live_session_not_resumed_or_recovered(self):
         resume = "resume TASK-3 c https://linear.app/x/TASK-3 Deep Research"
@@ -224,7 +224,7 @@ class RunPlanning(Base):
                         "TASK-6": "In Progress",
                     },
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"][0], router.INTERRUPTED)
+                self.assertEqual(fake.issues["TASK-1"]["comments"][0], routing.INTERRUPTED)
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
@@ -252,7 +252,7 @@ class RunPlanning(Base):
         t = fake.issues["TASK-1"]
         self.assertEqual(
             (t["state"], t["assignee"], t["comments"]),
-            ("Todo", who("engineer"), [router.INTERRUPTED]),
+            ("Todo", who("engineer"), [routing.INTERRUPTED]),
         )
         self.assertNotIn("subscribers", t)
         self.assertFalse(any("assigneeId" in repr(v) for _, v in fake.mutations))
@@ -305,7 +305,7 @@ class RunPlanning(Base):
                 )
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
-        self.assertEqual(fake.issues["TASK-1"]["comments"][-1], router.CAP_COMMENT)
+        self.assertEqual(fake.issues["TASK-1"]["comments"][-1], routing.CAP_COMMENT)
 
     def test_user_reset_resumes_and_orders_by_new_sid(self):
         rows = (
@@ -342,7 +342,7 @@ class RunPlanning(Base):
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
                     (t["state"], t["assignee"], t["comments"], t.get("subscribers", [])),
-                    ("In Review", who("researcher"), [router.CAP_COMMENT], members),
+                    ("In Review", who("researcher"), [routing.CAP_COMMENT], members),
                 )
                 self.assertEqual(
                     writes(fake),

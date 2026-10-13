@@ -10,6 +10,8 @@ from datetime import timedelta
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, router, runs
+from agent_pm.linear_orchestrator.engine.routing import types as routing
+from agent_pm.linear_orchestrator.engine.usage import types as runtime_usage
 from agent_pm.session import SessionStatus
 from orchestrator_tests.case import PYTHONPATH
 from orchestrator_tests.unit.clock import logs_at
@@ -140,13 +142,17 @@ class Base(run_fixtures.Base):
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=again):
             out = use(
-                router.Board(
+                routing.Board(
                     functools.partial(fake, service=HARNESS),
                     runs.parse_log(self.runs),
-                    NOW,
-                    dry,
                     cfg,
-                    router.Gate(self.runs, NOW, dry=dry, driver=self.api) if gate else None,
+                    routing.BoardPolicy(
+                        now=NOW,
+                        dry=dry,
+                        gate=runtime_usage.Gate(self.runs, NOW, dry=dry, driver=self.api)
+                        if gate
+                        else None,
+                    ),
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())

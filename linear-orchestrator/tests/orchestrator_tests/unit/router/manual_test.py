@@ -2,7 +2,8 @@ import os
 from datetime import timedelta
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, router
+from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.router.data import (
@@ -39,7 +40,7 @@ class ExplicitIssueRuns(TickBase):
                 capped,
                 "recover TASK-1 to=in_review reason=reached 4 attempts",
                 "In Review",
-                router.CAP_COMMENT,
+                routing.CAP_COMMENT,
             ),
             (
                 "role",
@@ -61,7 +62,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: self.add("start", "TASK-1", "n", 5),
                 "recover TASK-1 to=todo reason=not resumable sid=n",
                 "Todo",
-                router.INTERRUPTED,
+                routing.INTERRUPTED,
             ),
             (
                 "no sid",
@@ -69,7 +70,7 @@ class ExplicitIssueRuns(TickBase):
                 lambda: None,
                 f"recover TASK-1 to=todo reason=no session updated={ago(minutes=5)}",
                 "Todo",
-                router.INTERRUPTED,
+                routing.INTERRUPTED,
             ),
         ]
 

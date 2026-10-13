@@ -5,6 +5,7 @@ from datetime import timedelta
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import SessionStatus
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -355,7 +356,7 @@ class RouterOutages(TickBase):
                     ("In Progress", [], ""),
                 )
                 self.assertEqual(
-                    self.tick(fake, "--now", now=NOW + router.STALE + timedelta(minutes=1)), 0
+                    self.tick(fake, "--now", now=NOW + routing.STALE + timedelta(minutes=1)), 0
                 )
                 self.assertEqual(
                     self.said(),
@@ -367,4 +368,4 @@ class RouterOutages(TickBase):
                         "launch TASK-1 exit=0",
                     ],
                 )
-                self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+                self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])

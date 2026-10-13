@@ -1,4 +1,4 @@
-from agent_pm.linear_orchestrator.engine import router
+from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.unit.board_ids import TASK_GROUP, TEAM
@@ -73,7 +73,7 @@ class TaskSelection(TaskLabelsScenario):
         )
         for labels, want in cases:
             self.assertEqual(
-                router.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks),
+                routing.task_for(labels, TASK_GROUP, "researcher", role_tasks, label_tasks),
                 want,
                 labels,
             )
@@ -140,7 +140,7 @@ class TaskSelection(TaskLabelsScenario):
         )
         self.assertEqual(
             {i: fake.issues[i].get("comments") for i in ("TASK-1", "TASK-2")},
-            {"TASK-1": [router.CAP_COMMENT], "TASK-2": [self.ORPHAN]},
+            {"TASK-1": [routing.CAP_COMMENT], "TASK-2": [self.ORPHAN]},
         )
         self.assertEqual([i for op, i in writes(fake) if op == "read"], ["TASK-1", "TASK-2"])
         self.assertEqual([v["i"] for q, v in fake.queries if q == RECHECK], ["TASK-2", "TASK-3"])
@@ -373,7 +373,7 @@ class ScheduledTaskSelection(TickBase):
         self.moved("TASK-1", 61)
         self.add("start", "TASK-1", "a", 60)
         self.tick(fake)
-        self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
+        self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])
         self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())
         (launch,) = self.start.launches
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))

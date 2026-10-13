@@ -1,3 +1,5 @@
+from agent_pm.linear_orchestrator.engine.routing import types as routing
+
 """Linear's GraphQL API as the orchestrator's queries use it, in memory, served over loopback HTTP:
 each exact query text is an op (OPS; BUILT: the router's issue lists, built by router.q_issues), its
 answer projected to the query's selection.
@@ -45,8 +47,8 @@ MODULES = {
     for m in (linear, router, issues, sessions, writeback, promote, prune)
 }
 BUILT = {
-    "router.issues": router.q_issues(),
-    "router.issues+relations": router.q_issues(router.RELATIONS),
+    "router.issues": routing.q_issues(),
+    "router.issues+relations": routing.q_issues(routing.RELATIONS),
 }
 CREATE = {"id", "teamId", "projectId", "assigneeId", "stateId", "priority", "title", "description"}
 COMPARATORS = {
