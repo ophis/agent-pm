@@ -389,7 +389,13 @@ class Roster:
             if any(value["sid"] == sid for value in data["entries"].values()):
                 raise RosterError(f"sid {sid}: already owned")
             entry = Entry(
-                None, State.STARTING, intent.note, _now(), intent.argv, sid, self._new_receipt()
+                None,
+                State.STARTING,
+                intent.note or None,
+                _now(),
+                intent.argv,
+                sid,
+                self._new_receipt(),
             )
             data["entries"][intent.name] = asdict(entry)
         return entry
@@ -565,7 +571,7 @@ class Roster:
         _note(text)
         with self._locked() as data:
             self._lease(data)
-            data["entries"][name] = asdict(replace(self._get(data, name), note=text))
+            data["entries"][name] = asdict(replace(self._get(data, name), note=text or None))
 
     def adopt(self, record: Record) -> str | None:
         _name(record.name)
