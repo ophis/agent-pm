@@ -165,7 +165,8 @@ class Checks:
         if self.tree == "utils/tests":
             self.assertFalse(hasattr(self.case, "child_env"))
             return
-        child_env, ROOTS, PYTHONPATH = self.case.child_env, self.case.ROOTS, self.case.PYTHONPATH
+        child_env, ROOTS = self.case.child_env, self.case.ROOTS
+        PYTHONPATH = os.pathsep.join(ROOTS)
         base = {
             "HOME": "/h",
             "PATH": "/b",

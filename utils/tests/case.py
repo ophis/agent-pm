@@ -13,7 +13,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 INITS = glob.glob(os.path.join(REPO, "*", "src", "agent_pm", "*", "__init__.py"))
 SRC = {init.split(os.sep)[-2]: os.sep.join(init.split(os.sep)[:-3]) for init in INITS}
 ROOTS = tuple(sorted(set(SRC.values())))
-PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = ":".join(os.path.relpath(root, REPO) for root in ROOTS)
 
 
