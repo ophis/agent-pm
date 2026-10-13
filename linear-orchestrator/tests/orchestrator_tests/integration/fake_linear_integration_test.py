@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import promote, prune, router
+from agent_pm.linear_orchestrator.engine import promote, prune
 from agent_pm.linear_orchestrator.engine.routing import types as routing
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.case import Case
@@ -14,10 +14,18 @@ from orchestrator_tests.unit.board_ids import STATES
 class Table(Case):
     def test_every_query_constant_has_an_op(self):
         want = {
-            f"{m.__name__.rpartition('.')[2]}.{k}": v
-            for m in (linear, router, issues, sessions, writeback, promote, prune)
-            for k, v in vars(m).items()
-            if k[:2] in ("Q_", "M_") and isinstance(v, str)
+            f"{name}.{key}": value
+            for name, module in (
+                ("linear", linear),
+                ("router", routing),
+                ("issues", issues),
+                ("sessions", sessions),
+                ("writeback", writeback),
+                ("promote", promote),
+                ("prune", prune),
+            )
+            for key, value in vars(module).items()
+            if key[:2] in ("Q_", "M_") and isinstance(value, str)
         }
         want.update(
             {

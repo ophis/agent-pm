@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 from agent_pm import delegate
@@ -156,3 +157,9 @@ class PruneScope:
     roles: Mapping[str, str]
     driver: Driver
     writable: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class TickTime:
+    now: datetime
+    hour: int

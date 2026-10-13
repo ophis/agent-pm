@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agent_pm.linear_orchestrator.engine import config, promote, prune, router
+from agent_pm.linear_orchestrator.engine import config, promote, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.integration.fixture_errors import FakeCredentialError, FixtureError, Problem
@@ -43,9 +43,10 @@ NAMES = {i: k for k, i in IDS.items()}
 TITLES = {**config.STATES, "backlog": "Backlog"}
 KINDS = ("error", "unsuccessful", "503", "hang")
 MODULES = {
-    m.__name__.rpartition(".")[2]: m
-    for m in (linear, router, issues, sessions, writeback, promote, prune)
+    m.__name__.rpartition(".")[2]: m for m in (linear, issues, sessions, writeback, promote, prune)
 }
+MODULES["router"] = routing
+
 BUILT = {
     "router.issues": routing.q_issues(),
     "router.issues+relations": routing.q_issues(routing.RELATIONS),

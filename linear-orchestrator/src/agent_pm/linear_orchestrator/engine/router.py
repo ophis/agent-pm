@@ -30,19 +30,18 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from agent_pm.delegate import PYTHONPATH
-from agent_pm.linear_orchestrator.engine import config, inputs, startup, target
+from agent_pm.linear_orchestrator.engine import config, startup
+from agent_pm.linear_orchestrator.engine.launch.types import Launch
 from agent_pm.linear_orchestrator.engine.routing.types import Board, BoardPolicy, Held
 from agent_pm.linear_orchestrator.engine.runs import note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
-    Invalid,
     RouterServices,
-    Transient,
+    TickTime,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.engine.usage.types import Gate, exhausted, read_usage, summary
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
+from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.linear_orchestrator.linear.linear import (
     ISSUE_ID,
     linear_error,
@@ -50,7 +49,6 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     one_line,
 )
-from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
 
 BRAKE_5H = 80
@@ -60,9 +58,7 @@ USAGE = (
     "[--now] [--dry-run] [--issue ID] | --brake ROLE"
 )
 FLAGS = {"--dry-run": "dry", "--now": "now"}
-RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
 SESSIONS = "agent-pm-"
-SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
 
 
 def live_sessions(roles, *, driver):
@@ -98,115 +94,8 @@ def begin(selection, runs):
     )
 
 
-def fail(ident, kind, reason, rc):
-    log("router", kind, ident, reason=reason)
-    return rc
-
-
 def outer(a, cfg, *, gql, run, keychain):
-    """Launch with canonical import roots followed by caller-provided Python paths."""
-    os.environ["PATH"] = config.path()
-    if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
-        print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
-        return 2
-    role = config.role_for(cfg.roles, a.assignee)
-    if role is None:
-        return fail(a.issue, "config-error", f"{a.assignee!r} is not a role account", 2)
-    tasks, key = cfg.roles[role].tasks, cfg.roles[role].key
-    if a.task is not None and a.task not in tasks:
-        why = f"task {a.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
-        return fail(a.issue, "config-error", why, 2)
-    if not keychain(key):
-        return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
-    if a.mode == "resume":
-        try:
-            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
-            why = None if st.resumable == "yes" else st.resumable
-        except (SessionConfigError, DriverError, OSError, ValueError, RuntimeError) as e:
-            why = one_line(e)
-        if why:
-            return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
-    try:
-        issue = issues.read_issue(gql, a.issue)
-    except SERVICE_ERRORS as e:
-        return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
-    ctx = writeback.context(
-        cfg,
-        role,
-        gql,
-        ident=a.issue,
-        issue_id=issue.id,
-        sid=a.sid,
-        resume=a.mode == "resume",
-        project=a.project,
-        target=None,
-    )
-    build = config.TASKS[role].kind == "build"
-    if build:
-        try:
-            repo = target.check(
-                issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
-            )
-        except SERVICE_ERRORS as e:
-            return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
-        if isinstance(repo, Transient) or isinstance(repo, Invalid) and a.mode == "resume":
-            return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
-        if isinstance(repo, Invalid):
-            try:
-                writeback.bounce(ctx, issue, repo.reason)
-            except SERVICE_ERRORS as e:
-                return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
-            log("router", "bounce", a.issue, reason=repo.reason)
-            return 0
-    else:
-        repo = target.research_repo(issue, cfg.project_repos)
-    if repo is not None:
-        repo = target.with_clone(repo, a.issue, cfg.local_clones, work=cfg.runs_dir, run=run)
-    rd = cfg.run_dir(a.issue)
-    try:
-        sources = inputs.gather(issue, role, cfg.docs, run=run)
-    except SERVICE_ERRORS as e:
-        return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
-    try:
-        os.makedirs(rd, exist_ok=True)
-        text = inputs.render(
-            issue, role, sources, humans=ctx.humans, target=repo, docs=cfg.docs
-        ).replace("\0", "")
-        text = text.encode("utf-8", "replace").decode()  # a lone surrogate would fail execve
-    except SERVICE_ERRORS as e:
-        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
-        return 1
-    try:
-        cfg.driver.detach(
-            config.session(role, a.issue),
-            [
-                sys.executable,
-                *RUN,
-                "--uuid",
-                issue.id,
-                *(["--target", f"{repo.owner}/{repo.name}"] if build and repo is not None else []),
-                *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
-                f"--input={text}",
-            ],
-            cwd=rd,
-            env={
-                **os.environ,
-                "PYTHONPATH": os.pathsep.join(
-                    dict.fromkeys(
-                        os.path.abspath(path)
-                        for path in (
-                            *PYTHONPATH.split(os.pathsep),
-                            *os.environ.get("PYTHONPATH", "").split(os.pathsep),
-                        )
-                        if path
-                    )
-                ),
-            },
-        )
-    except (SessionConfigError, DriverError) as e:
-        log("router", "launch-error", a.issue, error=one_line(e))
-        return 1
-    return 0
+    return Launch(a, cfg, gql, run, keychain).execute()
 
 
 @contextlib.contextmanager
@@ -244,7 +133,8 @@ def choose(board, gate, live_ids, full, counts):
     return "new", issue, str(uuid.uuid4()), role, task, runtime
 
 
-def tick(opts, cfg, gql, now, hour, start):
+def tick(opts, cfg, gql, time: TickTime, start):
+    now, hour = time.now, time.hour
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -280,13 +170,17 @@ def tick(opts, cfg, gql, now, hour, start):
                 return 0
             a = begin(run, runs)
             walk.write()  # the outer logs past the walk
-            try:
-                rc = start(a)
-            except SERVICE_ERRORS as e:
-                walk("launch-error", a.issue, error=one_line(e))
-                return 0
-            walk("launch", a.issue, exit=rc)
-            return 0
+            return start_run(start, a, walk)
+
+
+def start_run(start, args, say):
+    try:
+        result = start(args)
+    except SERVICE_ERRORS as error:
+        say("launch-error", args.issue, error=one_line(error))
+    else:
+        say("launch", args.issue, exit=result)
+    return 0
 
 
 def run_issue(opts, cfg, gql, now, start):
@@ -356,12 +250,8 @@ def main(
     run = services.run or config.sh_run
     keychain = services.keychain or linear.has_key
     start, driver = services.start, services.driver
-    opts = options(argv)
+    opts = requested(argv)
     if opts is None:
-        print(USAGE, file=sys.stderr)
-        return 2
-    if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
-        print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
         return 2
     os.environ["PATH"] = config.path()
     cfg = startup.configured("router", config_path, dry=opts["dry"])
@@ -369,19 +259,36 @@ def main(
         return 1
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
     if opts["brake"] is not None:
-        if opts["brake"] not in cfg.roles:
-            print(f"router.py: no role {opts['brake']}", file=sys.stderr)
-            return 2
-        return brake(opts["brake"], cfg)
+        return requested_brake(opts["brake"], cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     start = start or functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain)
     now = now or datetime.now(UTC)
     try:
         if opts["issue"]:
             return run_issue(opts, cfg, gql, now, start)
-        return tick(opts, cfg, gql, now, datetime.now().hour if hour is None else hour, start)
+        return tick(
+            opts, cfg, gql, TickTime(now, datetime.now().hour if hour is None else hour), start
+        )
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
+
+
+def requested(argv):
+    opts = options(argv)
+    if opts is None:
+        print(USAGE, file=sys.stderr)
+        return None
+    if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
+        print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
+        return None
+    return opts
+
+
+def requested_brake(role, cfg):
+    if role not in cfg.roles:
+        print(f"router.py: no role {role}", file=sys.stderr)
+        return 2
+    return brake(role, cfg)
 
 
 if __name__ == "__main__":
