@@ -1,10 +1,9 @@
-"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the
-payload JSON on stdin. Checks session.json, appends {"ts", "label", "payload"} to hooks.jsonl, then
-marks the pane with the label's word (tmux_host.mark) through session.json's tmux_path, never a tmux
-on PATH. Payload strs are cut to CUT chars unless the word is done. Never prints on stdout and
-always exits 0 (a runtime may read both). stdlib only, standalone. An optional adapter_hook binds
-runtime-specific identity before journaling; failures append their full traceback to hook.log when
-writable and report one stderr line.
+"""Each tui hook runs `<python> -I tui_hook.py <session dir> <label>` with JSON on stdin. Checks
+session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
+"payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
+session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
+Standalone, stdlib only; never stdout, always exits 0. Failures append a full traceback to hook.log
+when writable and report one stderr line.
 """
 
 from __future__ import annotations
@@ -235,12 +234,15 @@ if __name__ == "__main__":
         main(sys.argv[1:], sys.stdin.buffer)
     except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
         if len(sys.argv) > 1 and _abs(sys.argv[1]):
-            with suppress(OSError), open(
-                os.path.join(sys.argv[1], "hook.log"),
-                "a",
-                encoding="utf-8",
-                errors="backslashreplace",
-            ) as file:
+            with (
+                suppress(OSError),
+                open(
+                    os.path.join(sys.argv[1], "hook.log"),
+                    "a",
+                    encoding="utf-8",
+                    errors="backslashreplace",
+                ) as file,
+            ):
                 file.write(traceback.format_exc())
         say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
     sys.exit(0)
