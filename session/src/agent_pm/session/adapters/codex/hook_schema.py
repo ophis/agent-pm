@@ -1,4 +1,4 @@
-"""Codex hook labels, app-server names and Driver event kinds for isolated scripts."""
+"""Codex hook labels, app-server names and Tui event kinds for isolated scripts."""
 
 HOOKS = (
     ("SessionStart", "sessionStart", "activity"),

@@ -1,4 +1,4 @@
-"""Codex standalone hook binding and opaque Driver forwarding."""
+"""Codex standalone hook binding and opaque Tui mode forwarding."""
 
 import contextlib
 import io
@@ -90,7 +90,7 @@ class HookTest(Base):
         self.prepare()
         folder = self.root / "hook-session"
         folder.mkdir()
-        from agent_pm.session.modes import tui_hook as driver_hook
+        from agent_pm.session.modes import tui_hook as mode_hook
 
         state = {
             "runtime": "codex",
@@ -108,7 +108,7 @@ class HookTest(Base):
         }
         (folder / "session.json").write_text(json.dumps(state))
         result = subprocess.run(
-            [sys.executable, "-I", driver_hook.__file__, str(folder), "Stop"],
+            [sys.executable, "-I", mode_hook.__file__, str(folder), "Stop"],
             input=json.dumps(self.payload(last_assistant_message="reply")),
             capture_output=True,
             text=True,
@@ -120,7 +120,7 @@ class HookTest(Base):
         self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         result = subprocess.run(
-            [sys.executable, "-I", driver_hook.__file__, str(folder), "Stop"],
+            [sys.executable, "-I", mode_hook.__file__, str(folder), "Stop"],
             input=json.dumps(self.payload(agent_id=CHILD)),
             capture_output=True,
             text=True,

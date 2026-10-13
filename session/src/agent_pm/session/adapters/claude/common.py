@@ -135,7 +135,9 @@ class ClaudeCommon:
         common.check(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         if any(flag.startswith("--setting-sources") for flag in self.flags):
-            raise ConfigError(f"--setting-sources is the Driver's: remove it from {TABLE}.flags")
+            raise ConfigError(
+                f"--setting-sources is set by the Claude adapter: remove it from {TABLE}.flags"
+            )
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))

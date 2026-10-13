@@ -59,7 +59,7 @@ class CodexTui(Tui):
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
-            raise ConfigError("Codex tui requires an absolute Driver hook command")
+            raise ConfigError("Codex tui requires an absolute Tui mode hook command")
         roots = import_roots()
         dependencies = [
             *roots,

@@ -1,4 +1,4 @@
-"""Codex binding callback path-loaded by the Driver hook running with Python -I."""
+"""Codex binding callback path-loaded by the Tui mode hook running with Python -I."""
 
 from __future__ import annotations
 

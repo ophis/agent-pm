@@ -99,7 +99,7 @@ def refuse(flags) -> None:
             else ""
         )
         if flag.word in RESERVED or key in RESERVED_KEYS:
-            raise ConfigError(f"{flag.text}: the Driver sets Codex's hooks, session and cwd")
+            raise ConfigError(f"{flag.text}: the Codex adapter sets hooks, session and cwd")
 
 
 def passed(flags) -> list[str]:
