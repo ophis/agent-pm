@@ -9,6 +9,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from agent_pm.session.adapters.codex import CodexAdapter
+
 from session.tests.case import REPO, SRC, Case
 from session.tests.integration.adapters.codex import fake_app_server
 
@@ -66,7 +68,7 @@ class AppServerIntegrationTest(Case):
         self.log.unlink(missing_ok=True)
         started = time.monotonic()
         result = subprocess.run(
-            (sys.executable, str(self.script), "--timeout", str(timeout)),
+            (sys.executable, "-I", str(self.script), "--timeout", str(timeout)),
             cwd=self.work,
             env={**self.env, "FAKE_CASE": case, **env},
             capture_output=True,
@@ -117,6 +119,30 @@ class AppServerIntegrationTest(Case):
                 {"id": 2, "method": "account/rateLimits/read"},
             ],
         )
+
+    def test_production_probe_isolates_the_shipped_types_sibling(self):
+        self.assertTrue((self.script.parent / "types.py").is_file())
+        launch = CodexAdapter({}).usage_probe()
+        self.assertEqual(Path(launch.argv[-1]), self.script)
+        code = """import json, os, sys, sysconfig, types
+folder = os.path.realpath(sys.argv[1])
+print(json.dumps([
+    sys.flags.isolated,
+    folder not in [os.path.realpath(path) for path in sys.path],
+    os.path.realpath(types.__file__) != os.path.join(folder, "types.py"),
+    os.path.realpath(types.__file__) == os.path.realpath(os.path.join(sysconfig.get_path("stdlib"), "types.py")),
+]))
+"""
+        result = subprocess.run(
+            (*launch.argv[:-1], "-c", code, str(self.script.parent)),
+            cwd=self.script.parent,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(json.loads(result.stdout), [1, True, True, True])
 
     def test_partial_null_and_empty_native_snapshots_are_preserved(self):
         for case in ("weekly-only", "null", "empty", "fallback", "five-first", "weekly-full"):
@@ -183,7 +209,7 @@ class AppServerIntegrationTest(Case):
         ):
             with self.subTest(argv=argv):
                 result = subprocess.run(
-                    (sys.executable, str(self.script), *argv),
+                    (sys.executable, "-I", str(self.script), *argv),
                     cwd=self.work,
                     env=self.env,
                     capture_output=True,

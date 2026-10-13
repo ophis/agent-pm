@@ -353,7 +353,7 @@ class CodexCommon:
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_server.py")
         return Launch(
-            (os.path.realpath(sys.executable), script),
+            (os.path.realpath(sys.executable), "-I", script),
             env={**self.DEFAULTS, **self.config.get("env", {})},
             unset=self.UNSET,
         )
