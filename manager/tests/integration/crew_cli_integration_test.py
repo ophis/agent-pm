@@ -261,3 +261,13 @@ class Commands(Case):
         )
         self.succeeded("attach", "--manager", "mgr", "--after", "1", "--gen", "0")
         self.assertEqual(crew.roster.backlog(), (1, 0, []))
+        with open(crew.roster.events, "a", encoding="utf-8") as stream:
+            stream.write("diagnostic\n12:00:01 a blocked\ngarbage\n")
+        attached = self.succeeded("attach", "--manager", "mgr")
+        self.assertIn("3 12:00:01 a blocked\n", attached)
+        self.assertNotIn("diagnostic", attached)
+        self.assertNotIn("garbage", attached)
+        self.assertEqual(
+            self.succeeded("next-event", "--manager", "mgr", "--after", "1", "--gen", "0"),
+            "3 12:00:01 a blocked\n",
+        )

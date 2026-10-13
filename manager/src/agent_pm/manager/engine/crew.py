@@ -1,6 +1,7 @@
 """Execute opaque starter, control and resume commands while Roster owns their bookkeeping."""
 
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
+EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
 BIN = str(Path(__file__).parents[5] / "bin")
@@ -256,7 +258,11 @@ class Crew:
             output.append("\t".join(printable(field).replace("\t", " ") for field in fields))
             if entry.state == State.GONE and record is not None:
                 output.append(printable(f"resume {name}: {shlex.join(record.resume)}"))
-        output.extend(f"{cursor + i} {line}" for i, line in enumerate(backlog, 1))
+        output.extend(
+            f"{cursor + i} {printable(line)}"
+            for i, line in enumerate(backlog, 1)
+            if EVENT.fullmatch(line)
+        )
         output.append(f"N={cursor} GEN={generation}")
         return "\n".join(output) + "\n"
 
@@ -352,5 +358,8 @@ class Crew:
         while True:
             line, event = self.roster.next_event(cursor, gen)
             if event is not None:
-                return line, event
-            time.sleep(0.5)
+                cursor = line
+                if EVENT.fullmatch(event):
+                    return line, printable(event)
+            else:
+                time.sleep(0.5)

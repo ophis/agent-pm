@@ -617,6 +617,17 @@ class CrewTest(Case):
             stream.write("12:00:00 worker outcome done\n")
         self.assertEqual(self.crew.next_event(after=0, gen=0), (1, "12:00:00 worker outcome done"))
 
+    def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
+        with open(self.roster.events, "a", encoding="utf-8") as stream:
+            stream.write("diagnostic\n12:00:00 worker outcome done\ngarbage\n")
+        with self.listed():
+            table = self.crew.attach()
+        self.assertIn("2 12:00:00 worker outcome done\n", table)
+        self.assertNotIn("diagnostic", table)
+        self.assertNotIn("garbage", table)
+        self.assertTrue(table.endswith("N=0 GEN=0\n"))
+        self.assertEqual(self.crew.next_event(after=0, gen=0), (2, "12:00:00 worker outcome done"))
+
     def test_launch_does_not_pass_its_managers_lease_to_the_worker(self):
         with self.roster.hold("owner") as lease:
             crew = Crew(self.roster, lease=lease)
