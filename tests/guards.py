@@ -75,7 +75,7 @@ ALLOWED = {
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
     ("session.engine.base", HOSTS),  # Session.parse_hosts
     (OUTSIDE, SESSION),
-    ("manager.crew", "delegate"),  # IMPORT_ROOTS, PYTHONPATH: until TASK-371
+    ("manager.crew", "delegate"),  # until TASK-371
 }
 SESSION_INTERNAL = (SESSION_API, SESSION_TYPES)
 SHARED = ("utils", CONFIG, "delegate.event")

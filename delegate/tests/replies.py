@@ -1,5 +1,4 @@
-"""Reply and record helpers every delegate test and its upper layers' share: an outcome block, a progress mark, a fake
-client call's argv, a run record without its time, a pid's liveness."""
+"""Reply and run-record helpers shared by delegate tests and the layers above."""
 
 import json
 import os
