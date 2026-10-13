@@ -290,8 +290,7 @@ def plan_docs(wt: str, branch: str) -> list[dict]:
 
 def _author(row: dict, key: str) -> str | None:
     who = row.get(key)
-    login = who.get("login") if isinstance(who, dict) else None
-    return login if isinstance(login, str) and login else None
+    return who.get("login") if isinstance(who, dict) else None
 
 
 def _oldest_first(entries: list[dict]) -> list[dict]:

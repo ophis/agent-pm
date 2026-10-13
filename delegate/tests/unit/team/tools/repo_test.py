@@ -485,7 +485,7 @@ class Status(Base):
                 self.assertIsNone(result["pr"])
 
     def test_missing_feedback_logins_are_anonymous(self):
-        for author in (None, {}, "deleted", [], {"login": ""}, {"login": 7}):
+        for author in (None, {}, "deleted", [], {"login": ""}):
             with self.subTest(author=author):
                 comment = {
                     "created_at": "2026-10-03T00:00:00Z",
@@ -500,7 +500,22 @@ class Status(Base):
                 self.assertEqual(code, 0, result)
                 self.assertEqual(result["user"], [])
                 self.assertEqual(len(result["others"]), 1)
-                self.assertIsNone(result["others"][0]["author"])
+                expected = author.get("login") if isinstance(author, dict) else None
+                self.assertEqual(result["others"][0]["author"], expected)
+
+    def test_author_logins_keep_main_values_without_normalization(self):
+        for login in (None, "", 7, [], {"malformed": "login"}):
+            with self.subTest(login=login):
+                self.assertIs(repo._author({"author": {"login": login}}, "author"), login)
+
+    def test_a_non_string_feedback_login_keeps_main_failure(self):
+        comment = {"created_at": "2026-10-03T00:00:00Z", "user": {"login": 7}, "body": "feedback"}
+        with self.assertRaises(AttributeError):
+            self.status(
+                pr_list([pr()]),
+                (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps([[comment]]))),
+                NO_FEEDBACK,
+            )
 
     def test_malformed_comments_are_one_line_command_errors(self):
         for payload in (
