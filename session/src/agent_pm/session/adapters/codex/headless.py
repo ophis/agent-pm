@@ -87,13 +87,16 @@ class CodexHeadless(Headless):
         elif kind == "turn.completed":
             yield TurnEnd(self.last_reply)
         elif kind in ("error", "turn.failed"):
-            error = record.get("message") if kind == "error" else record.get("error")
-            if isinstance(error, dict):
-                error = error.get("message")
-            if isinstance(error, str) and error.strip():
-                yield Stderr(error)
-                if not self.limit_sent and error.replace("’", "'").startswith(LIMIT_PREFIXES):
-                    self.limit_sent = True
-                    yield LimitHit(reset_at(error, self.common.config.get("env", {})))
+            yield from self._error(record, kind)
         elif isinstance(kind, str):
             yield Activity(kind)
+
+    def _error(self, record, kind):
+        error = record.get("message") if kind == "error" else record.get("error")
+        if isinstance(error, dict):
+            error = error.get("message")
+        if isinstance(error, str) and error.strip():
+            yield Stderr(error)
+            if not self.limit_sent and error.replace("’", "'").startswith(LIMIT_PREFIXES):
+                self.limit_sent = True
+                yield LimitHit(reset_at(error, self.common.config.get("env", {})))

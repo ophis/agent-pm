@@ -13,6 +13,14 @@ class Termination(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ProcessRequest:
+    exe: str
+    args: list[str]
+    cwd: str
+    env: dict[str, str]
+
+
+@dataclass(frozen=True, kw_only=True)
 class RpcOptions:
     env: dict[str, str]
     wait: float

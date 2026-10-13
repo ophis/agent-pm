@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,7 +20,11 @@ if TYPE_CHECKING:
         added_dirs,
         validate_snapshot,
     )
-    from agent_pm.session.adapters.codex.persistence.types import SessionFile, SessionState
+    from agent_pm.session.adapters.codex.persistence.types import (
+        CreationOptions,
+        SessionFile,
+        SessionState,
+    )
 
 
 _load_file = runpy.run_path(
@@ -31,8 +35,10 @@ _records = _load_file(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/types.py"),
 )
 RecoveryError = _records.RecoveryError
+private_file = _records.private_file
 if not TYPE_CHECKING:
     SessionFile, SessionState = _records.SessionFile, _records.SessionState
+    CreationOptions = _records.CreationOptions
     _snapshot = _load_file(
         "agent_pm.session.adapters.codex.persistence.snapshot",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/snapshot.py"),
@@ -215,10 +221,8 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
     if not os.path.exists(path):
         if not create:
             return False
-        try:
+        with suppress(FileExistsError):
             os.mkdir(path, 0o700)
-        except FileExistsError:
-            pass
         fd = os.open(os.path.dirname(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(fd)
@@ -292,27 +296,7 @@ def read_state(
         return None
     except OSError as exc:
         raise RecoveryError.unreadable_state(path, exc) from exc
-    try:
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or stat.S_IMODE(info.st_mode) != 0o600
-        ):
-            raise RecoveryError.unsafe_state_file(path)
-        if info.st_size > _MAX_SESSION_BYTES:
-            raise RecoveryError.oversized_state_file(path)
-        with os.fdopen(fd, "r", encoding="utf-8") as stream:
-            fd = -1
-            text = stream.read(_MAX_SESSION_BYTES + 1)
-            if len(text.encode("utf-8")) > _MAX_SESSION_BYTES:
-                raise RecoveryError.oversized_state_file(path)
-            data = json.loads(text)
-    except (ValueError, UnicodeError, RecursionError) as exc:
-        raise RecoveryError.malformed_state(path) from exc
-    finally:
-        if fd >= 0:
-            os.close(fd)
+    data = _state_data(fd, path)
     if workdir is None:
         if not isinstance(data, dict):
             raise RecoveryError.malformed_state()
@@ -394,10 +378,10 @@ def create_session(
     snapshot: dict,
     writable_roots: list[str],
     *,
-    persist: bool = True,
-    root: str | None = None,
+    options: CreationOptions | None = None,
 ) -> SessionState:
-    root = store_root(root)
+    options = CreationOptions() if options is None else options
+    root = store_root(options.root)
     workdir, sid = session_identity(workdir, sid)
     validate_snapshot(snapshot)
     state = _state(
@@ -416,7 +400,7 @@ def create_session(
     )
     recovery_snapshot(state, root=root)
     check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-    return save_session(state, root=root) if persist else state
+    return save_session(state, root=root) if options.persist else state
 
 
 def save_session(state: SessionState, *, root: str | None = None) -> SessionState:
@@ -486,3 +470,24 @@ def protect(state, dependencies, environment=None, added=()):
             for path in {os.path.abspath(dependency), os.path.realpath(dependency)}:
                 if inside(path, root) or inside(root, path):
                     raise RecoveryError.writable_dependency(root, path)
+
+
+def _state_data(fd: int, path: str):
+    try:
+        info = os.fstat(fd)
+        if not private_file(info):
+            raise RecoveryError.unsafe_state_file(path)
+        if info.st_size > _MAX_SESSION_BYTES:
+            raise RecoveryError.oversized_state_file(path)
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            text = stream.read(_MAX_SESSION_BYTES + 1)
+            if len(text.encode("utf-8")) > _MAX_SESSION_BYTES:
+                raise RecoveryError.oversized_state_file(path)
+            data = json.loads(text)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise RecoveryError.malformed_state(path) from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return data

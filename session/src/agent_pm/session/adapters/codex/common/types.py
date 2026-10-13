@@ -17,6 +17,7 @@ from agent_pm.session.adapters.codex.persistence.snapshot import (
     validate_snapshot,
 )
 from agent_pm.session.adapters.codex.persistence.types import (
+    CreationOptions,
     RecoveryError,
     SessionFile,
     SessionState,
@@ -294,7 +295,9 @@ class CodexCommon:
                 "env": {**self.config.get("env", {}), **spec.access.env, **spec.env},
             }
         )
-        return create_session(workdir, sid, snapshot, roots, persist=persist)
+        return create_session(
+            workdir, sid, snapshot, roots, options=CreationOptions(persist=persist)
+        )
 
     def _new_roots(self, spec) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")
@@ -367,7 +370,7 @@ class CodexCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        """Map native account rate limits to five-hour and weekly usage; malformed data is unknown."""
+        """Map account limits to five-hour and weekly usage; malformed data is unknown."""
         try:
             result = json.loads(output)
         except (ValueError, TypeError, RecursionError):

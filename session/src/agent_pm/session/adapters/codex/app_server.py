@@ -17,7 +17,12 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent_pm.session.adapters.codex.server.types import Error, Exited, RpcOptions
+    from agent_pm.session.adapters.codex.server.types import (
+        Error,
+        Exited,
+        ProcessRequest,
+        RpcOptions,
+    )
 
 POLL = 0.1
 BLOCK = 1 << 16
@@ -36,6 +41,7 @@ if not TYPE_CHECKING:
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "server/types.py"),
     )
     Error, Exited, RpcOptions = _types.Error, _types.Exited, _types.RpcOptions
+    ProcessRequest = _types.ProcessRequest
 
 
 def call(

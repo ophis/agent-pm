@@ -91,15 +91,7 @@ def validate_snapshot(value: dict) -> dict:
         "env",
     }:
         raise RecoveryError.snapshot_field("fields")
-    env = value["env"]
-    if not isinstance(env, dict) or not all(
-        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
-        for k, v in env.items()
-    ):
-        raise RecoveryError.snapshot_field("env")
-    flags = value["flags"]
-    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
-        raise RecoveryError.snapshot_field("flags")
+    env, flags = _snapshot_inputs(value)
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     if type(value["project"]) is not bool:
         raise RecoveryError.snapshot_field("project")
@@ -128,3 +120,16 @@ def validate_snapshot(value: dict) -> dict:
     if validated != value:
         raise RecoveryError.snapshot_field("path")
     return validated
+
+
+def _snapshot_inputs(value):
+    env = value["env"]
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise RecoveryError.snapshot_field("env")
+    flags = value["flags"]
+    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
+        raise RecoveryError.snapshot_field("flags")
+    return env, flags

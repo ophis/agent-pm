@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from dataclasses import dataclass
+
+
+@dataclass(frozen=True, kw_only=True)
+class CreationOptions:
+    root: str | None = None
+    persist: bool = True
 
 
 class RecoveryError(Exception):
@@ -147,3 +155,11 @@ class SessionState:
     snapshot: dict
     writable_roots: list[str]
     native_id: str | None = None
+
+
+def private_file(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o600
+    )

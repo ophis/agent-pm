@@ -37,10 +37,10 @@ def bind(label, value, workdir, sid, *, root=None):
         sessions.bind_session(
             workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5, root=root
         )
-        return True
     except (sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex hook: {exc}", file=sys.stderr)
         return False
+    return True
 
 
 def on_hook(label, payload, state):
