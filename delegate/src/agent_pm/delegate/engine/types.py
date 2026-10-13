@@ -6,7 +6,17 @@ from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import Spec as SessionSpec
 
-__all__ = ["ConfigError", "Spec", "Plan", "Limit", "Result", "Begun", "Progress", "Finished"]
+__all__ = [
+    "ConfigError",
+    "Spec",
+    "Plan",
+    "Limit",
+    "Result",
+    "Begun",
+    "Progress",
+    "Finished",
+    "Event",
+]
 
 
 @dataclass(frozen=True)
@@ -69,3 +79,6 @@ class Progress:
 @dataclass(frozen=True)
 class Finished:
     result: Result
+
+
+Event = Begun | Progress | Finished

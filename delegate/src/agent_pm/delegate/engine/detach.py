@@ -7,11 +7,12 @@ import sys
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, SessionStatusLog, api
+from agent_pm.session import DriverError, SessionStatusLog, layout
+from agent_pm.session import detach as detach_session
 from agent_pm.utils.files import append_line
-from agent_pm.utils.text import printable
 
 MODES = ("headless", "tui")
 
@@ -26,7 +27,6 @@ def names(role: str, sid: str, mode: str) -> tuple[str | None, str]:
 class Detached:
     driver: str
     tui: str | None
-    opener: str | None
 
 
 def detach(
@@ -36,8 +36,8 @@ def detach(
     split: str | None = None,
     split_from: str | None = None,
 ) -> Detached:
-    """The events file must be one you own (created if missing); a tui run's pane opener from api.layout, None when
-    the caller has no pane and split_from is None. DriverError from api.detach propagates."""
+    """The events file must be one you own (created if missing); a tui run's pane opener from layout, None when
+    the caller has no pane and split_from is None. DriverError from detach_session propagates."""
     mode = p.spec.mode
     if mode not in MODES:
         raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
@@ -52,7 +52,7 @@ def detach(
     opener = None
     if tui is not None:
         try:
-            opener = api.layout(split, split_from)
+            opener = layout(split, split_from)
         except DriverError as e:
             if split_from is not None:
                 raise ConfigError(str(e)) from None
@@ -87,7 +87,7 @@ def detach(
         *(["--resume"] if p.spec.resume else []),
     ]
     try:
-        api.detach(
+        detach_session(
             driver,
             argv,
             cwd=os.getcwd(),
@@ -96,7 +96,7 @@ def detach(
         )
     except SessionConfigError as e:
         raise ConfigError(str(e)) from None
-    return Detached(driver, tui, opener)
+    return Detached(driver, tui)
 
 
 def outcome(events: str, driver: str, status: str | None) -> None:
@@ -104,4 +104,4 @@ def outcome(events: str, driver: str, status: str | None) -> None:
     try:
         SessionStatusLog(events).write(driver, "outcome", status or "error")
     except OSError as e:
-        print(printable(f"delegate: {e}"), file=sys.stderr, flush=True)
+        say(f"delegate: {e}")

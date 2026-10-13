@@ -4,122 +4,24 @@ any ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test
 
 import json
 import os
-import shlex
-import subprocess
-import sys
-import tempfile
 import unittest
 from unittest import mock
 
 from agent_pm.delegate.engine.runner import FIX
 
-from delegate.tests.case import REPO, Case, child_env
-from delegate.tests.integration.cli_integration_test import (
-    CLI,
+from delegate.tests.integration.cli import (
     DONE,
-    SID,
+    NATIVE,
     UNSAVED,
     UNSAVED_ERROR,
-    mark,
+    CodexIntegration,
 )
-from delegate.tests.unit.runner_test import block
+from delegate.tests.integration.cli import codex_said as said
+from delegate.tests.replies import block, mark
 from session.tests.integration.adapters.codex import fake_codex
 
-NATIVE = fake_codex.NATIVE
-END = {"out": {"type": "turn.completed"}}
 
-
-def said(*texts) -> list[dict]:
-    """The fake's steps: an agent message per text, then the turn's end."""
-    return [*map(fake_codex.message, texts), END]
-
-
-class Integration(Case):
-    ROLE, TASK = "dummy-tester", "echo"
-
-    def setUp(self):
-        home = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
-        tmp = tempfile.TemporaryDirectory()
-        for d in (home, tmp):
-            self.addCleanup(d.cleanup)
-        self.home, root = os.path.realpath(home.name), os.path.realpath(tmp.name)
-        self.work, bin_dir = os.path.join(root, "work"), os.path.join(root, "bin")
-        for d in (self.work, bin_dir):
-            os.mkdir(d)
-        codex = os.path.join(bin_dir, "codex")
-        with open(codex, "w") as f:
-            f.write(
-                f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(fake_codex.__file__)} "$@"\n'
-            )
-        os.chmod(codex, 0o755)
-        self.out = os.path.join(self.work, "out.md")
-        self.scenario, self.log = (
-            os.path.join(root, "scenario.json"),
-            os.path.join(root, "exec.jsonl"),
-        )
-        self.env = {
-            **child_env({}),
-            "PATH": f"{bin_dir}:/usr/bin:/bin",
-            "HOME": self.home,
-            "PYTHONUTF8": "1",
-            "CODEX_HOME": os.path.join(self.home, ".codex"),
-            "FAKE_LOG": self.log,
-            "FAKE_SCENARIO": self.scenario,
-        }
-
-    def drive(self, steps, *extra, **scenario) -> subprocess.CompletedProcess:
-        with open(self.scenario, "w") as f:
-            json.dump({"steps": steps, **scenario}, f)
-        argv = [
-            *CLI,
-            "--runtime",
-            "codex",
-            "--role",
-            self.ROLE,
-            "--task",
-            self.TASK,
-            "--input",
-            "Hello.",
-            "--out",
-            self.out,
-            "--workdir",
-            self.work,
-            "--sid",
-            SID,
-            *extra,
-        ]
-        return subprocess.run(
-            argv,
-            cwd=self.work,
-            env=self.env,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-    def records(self) -> list[dict]:
-        with open(os.path.join(self.work, "run.jsonl")) as f:
-            return [json.loads(line) for line in f]
-
-    def kinds(self) -> list[str]:
-        return [e["kind"] for e in self.records()]
-
-    def texts(self, kind: str, key: str = "text") -> list:
-        return [e[key] for e in self.records() if e["kind"] == kind]
-
-    def calls(self) -> list[dict]:
-        if not os.path.exists(self.log):
-            return []
-        with open(self.log) as f:
-            return [json.loads(line) for line in f]
-
-    def read(self, path: str) -> str:
-        with open(path) as f:
-            return f.read()
-
-
-class Codex(Integration):
+class Codex(CodexIntegration):
     def test_reports_start_and_valid_outcome(self):
         res = self.drive(said(mark("start", "echoing"), "Codex says hello.", block(DONE)))
         self.assertEqual(res.returncode, 0, res.stderr)

@@ -14,8 +14,7 @@ from typing import NamedTuple
 from agent_pm.linear_orchestrator.engine import config, router, runs
 from agent_pm.linear_orchestrator.linear import linear
 
-from delegate.tests.integration.cli_integration_test import mark, option
-from delegate.tests.unit.runner_test import block
+from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
 
 from . import fake_linear

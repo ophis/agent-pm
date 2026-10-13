@@ -11,7 +11,7 @@ from unittest import mock
 
 from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.linear import linear, sessions
-from agent_pm.session import ConfigError, SessionStatus, api
+from agent_pm.session import ConfigError, SessionStatus
 
 from .. import case
 
@@ -118,7 +118,9 @@ def bounded(limit):
 
 class Case(case.Case):
     def setUp(self):
-        patch = mock.patch.multiple(api, session_record=mock.DEFAULT, session_status=mock.DEFAULT)
+        patch = mock.patch.multiple(
+            sessions, session_record=mock.DEFAULT, session_status=mock.DEFAULT
+        )
         mocks = patch.start()
         self.addCleanup(patch.stop)
         self.session, self.info = mocks["session_record"], mocks["session_status"]

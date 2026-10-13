@@ -1,6 +1,7 @@
 """An agent run's outcome: read parses an outcome block, reads its deliverable_file in and validates it against SCHEMA
 and what SCHEMA can't say. Its text stays untrusted: a path is shown as a repr, at most 200 characters."""
 
+import functools
 import json
 import os
 import posixpath
@@ -12,11 +13,9 @@ from pathlib import Path
 from typing import Literal, get_args
 from urllib.parse import unquote, urlsplit
 
-from agent_pm.delegate.composer import SCHEMA, RunConfig
-from agent_pm.utils.files import save  # noqa: F401
-
-Status = Literal["done", "needs_input", "failed"]
-STATUSES = get_args(Status)
+SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
+OutcomeStatus = Literal["done", "needs_input", "failed"]
+STATUSES = get_args(OutcomeStatus)
 SAVES_DELIVERABLE = (
     "local",
     "orchestrator",
@@ -30,7 +29,7 @@ class InvalidOutcome(Exception):
 
 @dataclass(frozen=True)
 class Outcome:
-    status: Status
+    status: OutcomeStatus
     title: str
     summary: str
     questions: list[str] = field(default_factory=list)
@@ -39,8 +38,8 @@ class Outcome:
     deliverable: str = ""
 
 
-def read(body: str, run: RunConfig, workdir: str) -> Outcome:
-    """Raises InvalidOutcome."""
+def read(body: str, output: Mapping, workdir: str) -> Outcome:
+    """`output`: the run's [output] table. Raises InvalidOutcome."""
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
@@ -53,10 +52,10 @@ def read(body: str, run: RunConfig, workdir: str) -> Outcome:
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
-    return validate(data, run, workdir)
+    return validate(data, output, workdir)
 
 
-def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
+def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     """Raises InvalidOutcome."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
@@ -76,16 +75,14 @@ def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
         raise InvalidOutcome("questions and files must be lists")
     if status == "needs_input" and not 1 <= len(questions) <= 4:
         raise InvalidOutcome("needs_input must carry 1–4 questions")
-    if status == "done" and run.output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
-        raise InvalidOutcome(
-            f"done with a {run.output['type']} destination must carry the deliverable"
-        )
+    if status == "done" and output["type"] in SAVES_DELIVERABLE and not deliverable.strip():
+        raise InvalidOutcome(f"done with a {output['type']} destination must carry the deliverable")
     outcome = Outcome(
         status,
         title.strip(),
         summary,
         [str(q) for q in questions] if status == "needs_input" else [],
-        _url(data.get("url") or "", run),
+        _url(data.get("url") or "", output),
         [_file(p, workdir) for p in files],
         deliverable,
     )
@@ -93,6 +90,7 @@ def validate(data: dict, run: RunConfig, workdir: str) -> Outcome:
     return outcome
 
 
+@functools.cache
 def _schema() -> dict:
     with open(SCHEMA) as f:
         return json.load(f)
@@ -136,8 +134,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
         )
 
 
-def _url(url: str, run: RunConfig) -> str:
-    out = run.output
+def _url(url: str, out: Mapping) -> str:
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
     parts = urlsplit(url) if isinstance(url, str) else None

@@ -5,13 +5,10 @@ import re
 from collections.abc import Mapping
 
 from agent_pm.delegate.composer.types import ConfigError
-from agent_pm.delegate.engine.config import CONFIG as CONFIG
 from agent_pm.utils import markdown
 
-DELEGATE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEAM = os.path.join(DELEGATE, "team")
+TEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "team")
 OUTPUT = "output"
-SCHEMA = os.path.join(DELEGATE, "event", "outcome.schema.json")
 PLACEHOLDER = re.compile(r"\{\{(\w+)(?:\|([^{}]*))?\}\}")
 METHOD = re.compile(r"<team>/methods/([\w-]+)\.md")
 HEADING = re.compile(r"^(#{1,6}) (.+)$")

@@ -1,4 +1,4 @@
-"""delegate/engine/detach.py: names; detach's call of api.detach (argv, env, cwd, opener), its refusals with nothing started
+"""delegate/engine/detach.py: names; detach's call of detach_session (argv, env, cwd, opener), its refusals with nothing started
 and the Driver's errors; outcome's line and its write errors."""
 
 import errno
@@ -14,10 +14,10 @@ from agent_pm.delegate import ConfigError
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, api
+from agent_pm.session import DriverError
 
 from delegate.tests.case import Case
-from delegate.tests.unit.plan_test import SID, Base
+from delegate.tests.unit.engine.plans import SID, Base
 
 TUI = "dummy-tester-11111111"
 DRIVER = f"{TUI}-drive"
@@ -32,15 +32,15 @@ class Names(Case):
 
 
 class Detach(Base):
-    """api.detach and api.layout patched (the opener `mgr`); the cwd self.tmp."""
+    """detach_session and layout patched (the opener `mgr`); the cwd self.tmp."""
 
     def setUp(self):
         super().setUp()
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(api, "detach"))
-        self.layout = self.enterContext(mock.patch.object(api, "layout", return_value="mgr"))
+        self.started = self.enterContext(mock.patch.object(detach, "detach_session"))
+        self.layout = self.enterContext(mock.patch.object(detach, "layout", return_value="mgr"))
 
     def plan(self, mode="headless", task="echo", **kw):
         return self.planned("dummy-tester", task, mode=mode, input=INPUT, sid=SID, **kw)[0]
@@ -78,7 +78,7 @@ class Detach(Base):
         return str(cm.exception)
 
     def test_headless_runs_the_driver_form_with_the_import_root_and_the_cwd(self):
-        self.assertEqual(self.detached(self.plan(), "events"), detach.Detached(DRIVER, None, None))
+        self.assertEqual(self.detached(self.plan(), "events"), detach.Detached(DRIVER, None))
         self.layout.assert_not_called()
         self.started.assert_called_once_with(
             DRIVER,
@@ -92,7 +92,7 @@ class Detach(Base):
 
     def test_tui_passes_each_option_given_and_the_layouts_opener(self):
         got = self.detached(self.plan("tui", repo="-r"), split="right", split_from="mgr")
-        self.assertEqual(got, detach.Detached(DRIVER, TUI, "mgr"))
+        self.assertEqual(got, detach.Detached(DRIVER, TUI))
         self.layout.assert_called_once_with("right", "mgr")
         self.assertEqual(
             self.started.call_args.args[1],
@@ -111,7 +111,7 @@ class Detach(Base):
     def test_no_pane_without_split_from_is_no_opener(self):
         self.layout.side_effect = DriverError("no pane to show the TUI beside (x)")
         self.assertEqual(
-            self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI, None)
+            self.detached(self.plan("tui"), split="below"), detach.Detached(DRIVER, TUI)
         )
         self.assertEqual(self.started.call_args.args[1], self.argv("tui", "--split=below"))
         self.assertIsNone(self.started.call_args.kwargs["opener"])

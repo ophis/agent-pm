@@ -9,11 +9,15 @@ from agent_pm.session import Session, Spec
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
+from agent_pm.utils.config_file import read_project
 
-from delegate.tests.case import Case, committed
-from session.tests.case import settings
+from session.tests.case import Case, settings
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+def committed() -> dict:
+    return registry.settings(read_project("session", local=os.devnull))["adapters"]
 
 
 class Committed(Case):
@@ -43,7 +47,7 @@ class Committed(Case):
                 "efforts": {e: e for e in ("low", "medium", "high", "xhigh", "max")},
             },
         )
-        self.configure_session(tables)
+        Session.configure(**settings(tables))
         adapter = registry.adapter("claude")
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (

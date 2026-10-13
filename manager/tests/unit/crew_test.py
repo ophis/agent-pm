@@ -20,7 +20,6 @@ import unittest
 import uuid
 from unittest import mock
 
-import agent_pm.delegate.engine.config
 from agent_pm.manager import crew, roster
 from agent_pm.manager.engine.types import Spec
 from agent_pm.session import (
@@ -33,13 +32,13 @@ from agent_pm.session import (
     IdleTimeout,
     SessionBound,
     SessionRow,
-    api,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.session.adapters import registry
 from agent_pm.utils import config_file
 
 from manager.tests.case import PYTHONPATH, SRC, Case
+from session.tests.patch import Patched
 
 CREW = os.path.join(SRC["manager"], "agent_pm", "manager", "crew.py")
 MODULE = ["-P", "-m", "agent_pm.manager.crew"]
@@ -231,15 +230,16 @@ class Runs:
 
 
 class CrewCase(Case):
-    """session.engine.api faked by self.api (replaceable), sleep patched, stderr captured."""
+    """The session's functions faked by self.api (replaceable), sleep patched, stderr captured."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
         self.api = Api(own=None)
-        for name in ("sessions", "start", "show", "attach_command", "close", "attach"):
-            self.enterContext(mock.patch.object(api, name, functools.partial(self.call, name)))
+        names = ("sessions", "start", "show", "attach_command", "close", "attach")
+        fakes = {name: functools.partial(self.call, name) for name in names}
+        self.enterContext(Patched("agent_pm.manager", **fakes))
         self.sleep = self.enterContext(mock.patch.object(crew.time, "sleep"))
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": PYTHONPATH}))
@@ -999,10 +999,10 @@ class MainTest(WorkerCase):
         self.assertEqual(self.api.starts[-1]["resume"], SID)
 
     def test_main_configures_the_session_from_the_session_config_before_reaching_it(self):
-        seen, attach = [], api.attach
+        seen, attach = [], crew.attach_session
         self.api.tuis["w1"] = ("done", "")
         with mock.patch.object(
-            api, "attach", lambda name: seen.append(registry.configured()) or attach(name)
+            crew, "attach_session", lambda name: seen.append(registry.configured()) or attach(name)
         ):
             self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
         self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
@@ -2857,8 +2857,8 @@ class CursorTest(RosterCase):
         root = os.path.join(self.dir, "my src")
         with (
             mock.patch.dict(os.environ, {"HOME": home, "PYTHONPATH": root}),
-            mock.patch.object(agent_pm.delegate.engine.config, "PYTHONPATH", root),
-            mock.patch.object(agent_pm.delegate.engine.config, "IMPORT_ROOTS", (root,)),
+            mock.patch.object(crew, "PYTHONPATH", root),
+            mock.patch.object(crew, "IMPORT_ROOTS", (root,)),
         ):
             rc, out, err = self.attach()
         self.assertEqual((rc, err), (0, ""))

@@ -14,7 +14,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, promote, prune
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import ConfigError, DriverError, api
+from agent_pm.session import ConfigError, DriverError
 from agent_pm.utils import paths, shell
 
 from ..case import Case
@@ -789,7 +789,7 @@ class PruneTest(Case):
         seen, close = [], self.api.close
         gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
         with mock.patch.object(
-            api, "close", lambda name: (seen.append(os.path.isdir(clone)), close(name))
+            prune, "close", lambda name: (seen.append(os.path.isdir(clone)), close(name))
         ):
             code, out = self.prune(gql)
         self.assertEqual(code, 0)

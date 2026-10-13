@@ -9,11 +9,12 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.delegate.composer import OUTCOME, RunConfig
+from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
+    Event,
     Finished,
     Limit,
     Plan,
@@ -23,9 +24,22 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.event.outcome import read as read_outcome
-from agent_pm.delegate.event.reply import marks, outcome_block
+from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, api
+from agent_pm.session import (
+    DriverError,
+    Exited,
+    Handle,
+    IdleTimeout,
+    LimitHit,
+    Reply,
+    Stderr,
+    TurnEnd,
+    attach_command,
+    holds,
+    note,
+    start,
+)
 from agent_pm.utils.files import save
 from agent_pm.utils.text import printable
 
@@ -42,9 +56,6 @@ NUDGE = (
 END = "end"
 
 
-Event = Begun | Progress | Finished
-
-
 @dataclass(frozen=True)
 class GiveUp:
     reason: str
@@ -54,9 +65,9 @@ class Headless:
     def __init__(self, note: Callable[..., None]):
         self.note = note
 
-    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> api.Handle:
+    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
         s = p.spec
-        return api.start(
+        return start(
             s.runtime,
             s.mode,
             p.prompt,
@@ -66,13 +77,11 @@ class Headless:
             events=events,
         )
 
-    def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
+    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         s = p.spec
-        return api.start(
-            s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT
-        )
+        return start(s.runtime, s.mode, text, p.session, resume=s.sid, idle_timeout=IDLE_TIMEOUT)
 
-    def turn_end(self, handle: api.Handle, reply: str, pending: int) -> str | GiveUp | None:
+    def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
         return None
 
     def progress(self) -> None:
@@ -90,16 +99,16 @@ class Tui(Headless):
         super().__init__(note)
         self.nudged, self.count = False, 0
 
-    def start(self, p: Plan) -> api.Handle:
+    def start(self, p: Plan) -> Handle:
         handle = super().start(p, p.spec.name, p.spec.events)
-        _say(f"delegate: tui session {handle.name}: {api.attach_command(handle.name)}")
+        say(f"delegate: tui session {handle.name}: {attach_command(handle.name)}")
         return handle
 
-    def fix(self, handle: api.Handle, p: Plan, text: str) -> api.Handle:
+    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
         handle.send(text)
         return handle
 
-    def turn_end(self, handle: api.Handle, reply: str, pending: int) -> str | GiveUp | None:
+    def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
         if outcome_block(reply) is not None:
             return END
         if pending:
@@ -109,7 +118,7 @@ class Tui(Headless):
             try:
                 handle.send(NUDGE)
             except DriverError as e:
-                _say(f"delegate: tui: {e}")
+                say(f"delegate: tui: {e}")
             self.note("nudge")
             return None
         self.count += 1
@@ -127,7 +136,7 @@ class Tui(Headless):
 POLICIES = {"headless": Headless, "tui": Tui, "in_process": Headless}
 
 
-def _say(text: str) -> None:
+def say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
@@ -171,7 +180,7 @@ class _Attempts:
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        api.note(self.workdir, kind, **fields)
+        note(self.workdir, kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
@@ -208,12 +217,12 @@ class _Attempts:
                 if (block := outcome_block(last or "")) is None:
                     return Result(rc, None, diagnostic or "the agent run returned no outcome")
                 try:
-                    outcome = read_outcome(block, p.run, p.spec.workdir)
+                    outcome = read_outcome(block, p.run.output, p.spec.workdir)
                 except InvalidOutcome as e:
                     if rc or fixed:
                         return Result(rc, None, diagnostic or f"invalid outcome: {e}")
                     self.note("invalid", error=str(e))
-                    _say(f"delegate: invalid outcome: {e}; resuming once")
+                    say(f"delegate: invalid outcome: {e}; resuming once")
                     try:
                         handle = self.policy.fix(handle, p, FIX.format(error=e))
                     except (SessionConfigError, DriverError) as failed:
@@ -225,12 +234,12 @@ class _Attempts:
             self.stop(handle)
             raise
 
-    def stop(self, handle: api.Handle) -> bool:
+    def stop(self, handle: Handle) -> bool:
         """A DriverError is printed, not raised; False then, the session maybe running."""
         try:
             handle.stop()
         except DriverError as e:
-            _say(f"delegate: {self.plan.spec.mode}: {e}")
+            say(f"delegate: {self.plan.spec.mode}: {e}")
             return False
         return True
 
@@ -246,7 +255,7 @@ class _Attempts:
                 return f"cannot remove the stale out: {e}"
         return ""
 
-    def attempt(self, handle: api.Handle) -> tuple[int, str | None, Limit | None]:
+    def attempt(self, handle: Handle) -> tuple[int, str | None, Limit | None]:
         """rc 0 when the policy ended it, the session running on."""
         rc = last = limit = replied = None
         for event in handle.events():
@@ -262,7 +271,7 @@ class _Attempts:
                 if not limit:
                     answer = self.policy.turn_end(handle, last or "", event.pending)
             elif isinstance(event, Stderr):
-                _say(event.text)
+                say(event.text)
             elif isinstance(event, IdleTimeout):
                 self.note("idle", seconds=event.seconds)
                 if not limit:
@@ -276,8 +285,8 @@ class _Attempts:
                 rc = event.returncode
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
-                _say(
-                    f"delegate: {answer.reason}; session {handle.name} left open: {api.attach_command(handle.name)}"
+                say(
+                    f"delegate: {answer.reason}; session {handle.name} left open: {attach_command(handle.name)}"
                 )
                 return 0, None, None
             if answer == END:
@@ -287,10 +296,10 @@ class _Attempts:
     def reply(self, text: str) -> str:
         for line in text.splitlines():
             if line.strip():
-                _say(line)
+                say(line)
         for name, said in marks(text):
             self.note("progress", name=name, text=said)
-            _say(f"Progress ({name}): {said}")
+            say(f"Progress ({name}): {said}")
             self.seen.add(name)
             self.on_event(Progress(name, said))
             self.policy.progress()
@@ -299,13 +308,13 @@ class _Attempts:
     def finish(self, outcome: Outcome, rc: int) -> Result:
         s, kind = self.plan.spec, self.plan.run.output["type"]
         if outcome.deliverable and s.out:
-            if not api.holds(s.out, outcome.deliverable):  # else the agent run wrote it there
+            if not holds(s.out, outcome.deliverable):  # else the agent run wrote it there
                 try:
                     save(s.out, outcome.deliverable)
                 except OSError as e:
                     if kind in SAVES_DELIVERABLE:
                         raise
-                    _say(f"delegate: cannot save the deliverable to {s.out}: {e}")
+                    say(f"delegate: cannot save the deliverable to {s.out}: {e}")
                     self.note("save_error", error=str(e))
             if kind == "local":
                 outcome = replace(outcome, url=s.out)

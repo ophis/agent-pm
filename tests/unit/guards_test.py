@@ -79,7 +79,6 @@ class RealTree(Case):
             (guards.import_hygiene, REPO),
             (guards.namespace_package, REPO),
             (guards.package_top, REPO),
-            (guards.session_api_uses, REPO),
             (guards.shared_types, REPO),
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
@@ -394,7 +393,6 @@ class LayerImports(Sample):
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n",
-                f"delegate/{PKG}/delegate/event/outcome.py": "from agent_pm.delegate.composer import SCHEMA\n",
                 f"delegate/{PKG}/delegate/composer/teams.py": "from agent_pm.delegate.event import PROGRESS\n"
                 "from agent_pm.delegate.engine import plan\n",
                 f"delegate/{PKG}/delegate/engine/plan.py": "from agent_pm.delegate.event.outcome import Outcome\n"
@@ -437,7 +435,7 @@ class PureUtils(Sample):
             ],
         )
 
-    def test_only_outcome_in_delegate_event_imports_the_composer(self):
+    def test_nothing_in_delegate_event_imports_the_composer(self):
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/event/reply.py": "from agent_pm.delegate.composer import RunConfig\n"
@@ -449,7 +447,8 @@ class PureUtils(Sample):
         self.assertEqual(
             guards.pure_utils(root),
             [
-                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event.outcome imports agent_pm.delegate.engine.plan",
+                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event imports agent_pm.delegate.composer.SCHEMA",
+                f"delegate/{PKG}/delegate/event/outcome.py: delegate.event imports agent_pm.delegate.engine.plan",
                 f"delegate/{PKG}/delegate/event/reply.py: delegate.event imports agent_pm.delegate.composer.RunConfig",
             ],
         )
@@ -561,7 +560,7 @@ class ManagerImports(Sample):
     def test_each_named_exception_is_allowed(self):
         root = self.tree(
             {
-                f"manager/{PKG}/manager/crew.py": "import os\nimport agent_pm.delegate.engine.config\n"
+                f"manager/{PKG}/manager/crew.py": "import os\nfrom agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH\n"
                 "from agent_pm.manager import roster\nfrom agent_pm.session import Session, api\n"
                 "from agent_pm.utils.files import save\nfrom . import roster\n",
                 f"manager/{PKG}/manager/roster.py": "import json\nfrom agent_pm.session import api\n"
@@ -1545,34 +1544,6 @@ class PackageTop(Sample):
         files = self.package("delegate", "__init__.py", "cli.py")
         self.assertIn(
             f"delegate/{PKG}/delegate/engine: missing", guards.package_top(self.tree(files))
-        )
-
-
-class SessionApiUses(Sample):
-    API = f"session/{PKG}/session/engine/api.py"
-    PUBLIC = f"session/{PKG}/session/__init__.py"
-
-    def test_only_api_names_with_no_public_session_path(self):
-        root = self.tree(
-            {
-                self.API: '__all__ = ["start", "Spec", "Handle"]\n',
-                self.PUBLIC: '__all__ = ["api", "Spec"]\n',
-                f"delegate/{PKG}/delegate/x.py": "from agent_pm.session import api\n"
-                "api.start()\napi.Handle\napi.records.path()\napi.Spec\n",
-                f"manager/{PKG}/manager/x.py": "import agent_pm.session.api as a\na.session()\n",
-                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py": "import agent_pm.session\n"
-                "agent_pm.session.api.session_info()\n",
-                f"session/{PKG}/session/x.py": "from agent_pm.session import api\napi.records\n",
-            }
-        )
-        self.assertEqual(
-            guards.session_api_uses(root),
-            [
-                f"delegate/{PKG}/delegate/x.py:4: uses api.records",
-                f"delegate/{PKG}/delegate/x.py:5: uses api.Spec, not agent_pm.session.Spec",
-                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py:2: uses api.session_info",
-                f"manager/{PKG}/manager/x.py:2: uses api.session",
-            ],
         )
 
 

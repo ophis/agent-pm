@@ -1,8 +1,8 @@
-"""delegate/reply.py: progress mark lines and the outcome block of a reply (FR-18)."""
+"""delegate/event/reply.py: progress mark lines and the outcome block of a reply (FR-18)."""
 
 import unittest
 
-from agent_pm.delegate.composer import PROGRESS
+from agent_pm.delegate.event import PROGRESS
 from agent_pm.delegate.event.reply import MARK, marks, outcome_block
 
 from delegate.tests.case import Case

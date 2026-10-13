@@ -16,18 +16,8 @@ from agent_pm.session import Session
 from agent_pm.utils.config_file import read_project
 
 from delegate.tests.case import Case
-from delegate.tests.integration.cli_integration_test import (
-    DONE,
-    RESETS,
-    SID,
-    UNSAVED,
-    UNSAVED_ERROR,
-    mark,
-    option,
-    prompt,
-    running,
-)
-from delegate.tests.unit.runner_test import block
+from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
+from delegate.tests.replies import block, mark, option, prompt, running
 from session.tests.integration.adapters.claude import fake_claude
 
 

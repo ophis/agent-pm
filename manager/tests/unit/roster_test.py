@@ -18,10 +18,11 @@ import unittest
 import unittest.mock
 
 from agent_pm.manager import roster
-from agent_pm.session import DriverError, SessionRow, api
+from agent_pm.session import DriverError, SessionRow
 from agent_pm.utils.config_file import LOCAL, read_project
 
 from manager.tests.case import PY, REPO, SRC, Case, child_env
+from session.tests.patch import Patched
 
 SID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
 SID2 = "1b2c3d4e-5f60-7890-abcd-ef0123456789"
@@ -80,8 +81,9 @@ class Base(Case):
         self.managers = os.path.join(self.agent_pm, "managers")
         self.dir = os.path.join(self.managers, "m1")
         self.tmux = Tmux()
-        for name in ("sessions", "close"):
-            self.enterContext(unittest.mock.patch.object(api, name, getattr(self.tmux, name)))
+        self.enterContext(
+            Patched("agent_pm.manager", sessions=self.tmux.sessions, close=self.tmux.close)
+        )
 
     def umask(self, mask):
         self.addCleanup(os.umask, os.umask(mask))
@@ -322,12 +324,12 @@ LEASE_CHILD = """
 import sys
 from unittest import mock
 from agent_pm.manager import roster
-from agent_pm.session import SessionRow, api
+from agent_pm.session import SessionRow
 d, own = sys.argv[1], sys.argv[2]
 live = [SessionRow("held", None, None, "working", None, None, None, None, False)]
 sys.stdin.readline()
 try:
-    with mock.patch.object(api, "sessions", return_value=live), roster.locked(d) as r:
+    with mock.patch.object(roster, "sessions", return_value=live), roster.locked(d) as r:
         roster.take(r, d, own)
 except roster.Held as e:
     print(e)

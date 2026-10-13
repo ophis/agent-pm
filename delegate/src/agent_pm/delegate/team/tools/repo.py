@@ -29,43 +29,17 @@ import subprocess
 import sys
 from datetime import datetime
 
-from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
 from agent_pm.utils.args import Once
 from agent_pm.utils.config_file import LOCAL, read_project
-from agent_pm.utils.git import GUARD, LOCK, common_dir, git  # noqa: F401
-from agent_pm.utils.paths import real_dirs, temp_dirs, under
-from agent_pm.utils.repos import (  # noqa: F401
-    HOST,
-    NAME,
-    OWNER,
-    SLUG,
-    SPEC,
-    URL,
-    Invalid,
-    Repo,
-    check_slug,
-    checkout,
-    origin,
-    resolve,
-    url_slug,
-)
-from agent_pm.utils.shell import (  # noqa: F401
-    LONG,
-    SHORT,
-    USERINFO,
-    Runner,
-    err_text,
-    redact,
-    sh,
-)
+from agent_pm.utils.git import git
+from agent_pm.utils.paths import temp_dirs, under
+from agent_pm.utils.repos import Invalid, Repo, check_slug, checkout, origin, resolve
+from agent_pm.utils.shell import LONG, SHORT, Runner, err_text, redact, sh
 
 SHA = re.compile(r"[0-9a-f]{40}")
 FETCH = ("fetch", "--refmap=", "origin", "+refs/heads/*:refs/remotes/origin/*")
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
-
-
-def trusted_dirs(cfg: dict) -> frozenset[str]:
-    return real_dirs(cfg.get("trusted_dirs", []), "trusted_dirs")
 
 
 def gh_json(run: Runner, argv: list[str]):

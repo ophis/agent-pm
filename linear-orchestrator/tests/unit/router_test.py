@@ -21,7 +21,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, inputs, router, runs, target
 from agent_pm.linear_orchestrator.engine import run as run_py
 from agent_pm.linear_orchestrator.linear import issues, linear
-from agent_pm.session import ConfigError, DriverError, SessionStatus, Window, api
+from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.shell import SHORT
@@ -3546,7 +3546,7 @@ class Entry(OuterBase):
                         lines.append(f.read())
                     return detach(*args, **kw)
 
-                with mock.patch.object(api, "detach", at_detach):
+                with mock.patch.object(router, "detach", at_detach):
                     self.assertEqual(self.entry(*argv), 0)
                 kind, ident, sid, role, runtime = self.last_run()
                 self.assertEqual((kind, ident, role, runtime), ("start", ID, "engineer", "a"))

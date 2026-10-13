@@ -3,10 +3,10 @@ access intent (access), whose env is the session env its commands and gate need.
 commands and gate, so a caller passes only operator-controlled config as one."""
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
-from agent_pm.delegate.composer.base import CONFIG, fill, title_of
+from agent_pm.delegate.composer.base import fill, title_of
 from agent_pm.delegate.composer.teams import (
     charter,
     config_of,
@@ -18,9 +18,9 @@ from agent_pm.delegate.composer.teams import (
     team_or_default,
 )
 from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
-from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine import config as delegate_config
+from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH
 from agent_pm.utils.config_file import LOCAL
-from agent_pm.utils.paths import real_dirs
 
 RUN_KEYS = frozenset(
     {
@@ -105,7 +105,7 @@ def trusted_dirs(
     config: str = CONFIG, local: str = LOCAL, *, cfg: Mapping | None = None
 ) -> frozenset[str]:
     try:
-        return real_dirs(config_of(config, local, cfg).get("trusted_dirs", []), "trusted_dirs")
+        return delegate_config.trusted_dirs(config_of(config, local, cfg))
     except ValueError as e:
         raise ConfigError(str(e)) from None
 
@@ -157,31 +157,17 @@ def access(
 
 
 def _check(cfg: Mapping) -> None:
-    _check_output(cfg, "output")
+    _check_output(cfg, "output", str)
     for r, table in cfg.get("roles", {}).items():
-        check_old_keys(table, r)
-        _check_keys(table, RUN_KEYS, f"roles.{r}")
-        _check_output(table, f"roles.{r}.output")
-
-
-def _check_output(table: Mapping, where: str) -> None:
-    if "output" not in table:
-        return
-    if not isinstance(table["output"], Mapping):
-        raise ConfigError(f"{where} must be a table")
-    _check_keys(table["output"], OUTPUT_KEYS, where)
-
-
-def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
-    if extra := sorted(set(table) - allowed):
-        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
+        _check_role(table, r, "", str)
 
 
 def _check_overlay(overlay: Mapping, roles: set[str], where: str) -> None:
+    """An overlay's errors name its tables in brackets."""
     if not isinstance(overlay, Mapping):
         raise ConfigError(f"[{where}] must be a table")
-    _check_overlay_keys(overlay, RUN_KEYS | {"roles"}, where)
-    _check_overlay_output(overlay, where)
+    _check_keys(overlay, RUN_KEYS | {"roles"}, f"[{where}]")
+    _check_output(overlay, f"{where}.output", _boxed)
     if "roles" not in overlay:
         return
     if not isinstance(overlay["roles"], Mapping):
@@ -191,22 +177,30 @@ def _check_overlay(overlay: Mapping, roles: set[str], where: str) -> None:
             raise ConfigError(f"unknown role {role!r} in [{where}.roles]")
         if not isinstance(table, Mapping):
             raise ConfigError(f"[{where}.roles.{role}] must be a table")
-        check_old_keys(table, role, f"{where}.")
-        _check_overlay_keys(table, RUN_KEYS, f"{where}.roles.{role}")
-        _check_overlay_output(table, f"{where}.roles.{role}")
+        _check_role(table, role, f"{where}.", _boxed)
 
 
-def _check_overlay_output(table: Mapping, where: str) -> None:
+def _boxed(where: str) -> str:
+    return f"[{where}]"
+
+
+def _check_role(table: Mapping, role: str, prefix: str, shown: Callable[[str], str]) -> None:
+    check_old_keys(table, role, prefix)
+    _check_keys(table, RUN_KEYS, shown(f"{prefix}roles.{role}"))
+    _check_output(table, f"{prefix}roles.{role}.output", shown)
+
+
+def _check_output(table: Mapping, where: str, shown: Callable[[str], str]) -> None:
     if "output" not in table:
         return
     if not isinstance(table["output"], Mapping):
-        raise ConfigError(f"[{where}.output] must be a table")
-    _check_overlay_keys(table["output"], OUTPUT_KEYS, f"{where}.output")
+        raise ConfigError(f"{shown(where)} must be a table")
+    _check_keys(table["output"], OUTPUT_KEYS, shown(where))
 
 
-def _check_overlay_keys(table: Mapping, allowed: frozenset, where: str) -> None:
+def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed, key=str):
-        raise ConfigError(f"unknown key {extra[0]!r} in [{where}]")
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:

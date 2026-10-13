@@ -10,8 +10,7 @@ from datetime import UTC, datetime
 
 from agent_pm.linear_orchestrator.linear import linear
 
-from delegate.tests.integration.cli_integration_test import mark, option
-from delegate.tests.unit.runner_test import block
+from delegate.tests.replies import block, mark, option
 
 from ..unit.board_ids import STATES
 from ..unit.run_fixtures import ID, SESSION, SID, UUID

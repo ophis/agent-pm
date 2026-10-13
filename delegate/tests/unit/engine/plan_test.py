@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import sys
 import tempfile
 import unittest
 import uuid
@@ -15,22 +14,23 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Spec, composer, plan
+from agent_pm.delegate import ConfigError, composer
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.engine import plan as plan_module
+from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Session, api
+from agent_pm.session import Access, Session, note
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import temp_dirs, under
 
-from delegate.tests.case import REPO, Case, committed
-from delegate.tests.unit.composer.team_test import POET, VERSE
-from session.tests import fake_adapter
+from delegate.tests.case import REPO
+from delegate.tests.unit.composer.teams import POET, VERSE
+from delegate.tests.unit.engine.plans import SID, Base
 
-SID = "11111111-2222-3333-4444-555555555555"
 TASKS = os.path.join(composer.TEAM, "tasks")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 TEAM_FILES = {"roles/poet.md": POET, "tasks/verse.md": VERSE}
@@ -51,49 +51,6 @@ def write_team(top, files=TEAM_FILES):
         with open(path, "w") as f:
             f.write(text)
         os.chmod(path, 0o644)
-
-
-class Base(Case):
-    """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm) and the registry's
-    adapters: the core config's and the fake runtime."""
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = os.path.realpath(tmp.name)
-        self.work = os.path.join(self.tmp, "work")
-        self.out = os.path.join(self.work, "out.md")
-        self.enterContext(
-            mock.patch.dict(sys.modules, {"agent_pm.session.adapters.fake": fake_adapter})
-        )
-        self.local("")
-
-    def local(self, text):
-        """The local config `text`, the session configured with its adapters and the fake runtime."""
-        local = os.path.join(self.agent_pm, "config.local.toml")
-        with open(local, "w") as f:
-            f.write(text)
-        fake = {"implementation": "adapters.fake:FakeAdapter"}
-        self.configure_session(committed(local) | {"fake": fake})
-
-    def planned(
-        self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
-    ):
-        """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.", runtime "fake",
-        headless, out self.out, workdir self.work, the cwd the workdir, unless `kw` says otherwise."""
-        kw = {"runtime": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
-        workdir = kw.pop("workdir", self.work)
-        kw.setdefault("cwd", workdir)
-        run = run or replace(composer.resolve(role, team=team), **(keys or {}))
-        err = io.StringIO()
-        with redirect_stderr(err):
-            got = plan(run, Spec(kw.pop("input"), workdir, task=task, team=team, **kw))
-        return got, err.getvalue()
-
-    def refused(self, *args, **kw) -> str:
-        with self.assertRaises(ConfigError) as cm:
-            self.planned(*args, **kw)
-        return str(cm.exception)
 
 
 class ReplyTags(Base):
@@ -195,7 +152,7 @@ class Cwd(Base):
 
     def test_a_resume_runs_in_the_cwd_and_project_of_its_session_record(self):
         os.makedirs(self.work)
-        api.note(
+        note(
             self.work,
             "session",
             sid=SID,
@@ -429,7 +386,7 @@ class ConfiguredTeamDirs(Base):
                 )
 
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
-        with mock.patch.object(api, "writable_dirs", return_value=()) as asked:
+        with mock.patch.object(plan_module, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
             asked.assert_called_once_with("fake", got.session, SID)
             asked.reset_mock()
@@ -585,7 +542,7 @@ class Policy(Base):
             "[policy.claude]\nenv = { K = 1 }\n",
             '[policy.claude]\nunset = ["K"]\n',
         ):
-            with self.subTest(text=text), mock.patch.object(api, "start") as start:
+            with self.subTest(text=text), mock.patch.object(runner, "start") as start:
                 self.local(text)
                 self.assertIn("policy", self.refused(runtime="claude"))
                 start.assert_not_called()

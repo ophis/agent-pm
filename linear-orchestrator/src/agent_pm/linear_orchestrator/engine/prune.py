@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown: skipped):
-- closes its live TUI sessions of a configured role (api.close) before its checkouts go, since a left-open agent may
+- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a left-open agent may
   work in one;
 - deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own folder, a src or
   publish entry only as a clone or worktree (.git a directory or a file), uncommitted work included;
@@ -30,7 +30,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     log,
     one_line,
 )
-from agent_pm.session import ConfigError, DriverError, api
+from agent_pm.session import ConfigError, DriverError, close, sessions
 from agent_pm.utils.git import GUARD, common_dir, git
 from agent_pm.utils.paths import under
 from agent_pm.utils.shell import SHORT
@@ -203,7 +203,7 @@ class Pruner:
 
     def live_tuis(self):
         try:
-            names = [row.name for row in api.sessions()]
+            names = [row.name for row in sessions()]
         except DriverError:
             return None
         roles, found = set(self.roles.values()), {}
@@ -218,7 +218,7 @@ class Pruner:
                 self.say("prune-plan", ident, session=name, what="close the tui session")
                 continue
             try:
-                api.close(name)
+                close(name)
             except (ConfigError, DriverError) as e:
                 self.error(ident, session=name, error=one_line(e))
             else:

@@ -4,41 +4,15 @@ command of the prompt that runs an agent_pm module or team tool."""
 
 import os
 import re
-import shlex
 import subprocess
 
 from agent_pm.delegate import cli, composer
 
-from delegate.tests.case import REPO, Case
+from delegate.tests.case import Case
+from delegate.tests.unit.skills.act_as import argv, command, head, prefix, text
 
-SKILL_DIR = os.path.join(REPO, "delegate", "skills", "act-as")
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
-
-
-def text() -> str:
-    with open(os.path.join(SKILL_DIR, "SKILL.md"), encoding="utf-8") as f:
-        return f.read()
-
-
-def command(step: int) -> str:
-    line = re.search(rf"^{step}\. .*$", text(), re.M)[0]
-    return re.search(r"`(env [^`]+)`", line)[1]
-
-
-def head() -> str:
-    """Step 3's command before its options."""
-    return command(3).partition(" --runtime ")[0]
-
-
-def prefix() -> str:
-    """What step 4 puts before each command of the prompt that runs an agent_pm module or team tool."""
-    return command(4)
-
-
-def argv(command: str) -> list[str]:
-    """command as Bash splits it once Claude Code substitutes ${CLAUDE_SKILL_DIR}."""
-    return shlex.split(command.replace("${CLAUDE_SKILL_DIR}", SKILL_DIR))
 
 
 class ActAs(Case):

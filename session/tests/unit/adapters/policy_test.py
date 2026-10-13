@@ -1,36 +1,20 @@
+"""A caller's policy (Spec.flags and env) reaches each runtime's launch; the adapters name no policy."""
+
 import dataclasses
 from pathlib import Path
-from unittest import mock
 
-from agent_pm.delegate.engine.plan import policy
-from agent_pm.delegate.engine.types import ConfigError
 from agent_pm.session import Access, Spec
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 
-from delegate.tests.case import REPO
+from session.tests.case import REPO
 from session.tests.unit.adapters.codex.support import NATIVE, Base
+
+CODEX = ("-s", "danger-full-access", "-c", 'approval_policy="on-request"')
+CLAUDE = ("--permission-mode", "auto", "--strict-mcp-config")
 
 
 class PolicyTest(Base):
-    def test_selected_policy_is_declarative(self):
-        config = {"policy": {"codex": {"flags": ["-s", "workspace-write"], "env": {"K": "v"}}}}
-        with mock.patch("agent_pm.delegate.engine.plan.read_project", return_value=config):
-            self.assertEqual(policy("codex"), (("-s", "workspace-write"), {"K": "v"}))
-            self.assertEqual(policy("fake"), ((), {}))
-
-    def test_invalid_selected_policy_fails_before_launch(self):
-        for value in (None, [], {"flags": "-s"}, {"flags": [1]}, {"env": {"K": 1}}, {"unknown": 1}):
-            with (
-                self.subTest(value=value),
-                mock.patch(
-                    "agent_pm.delegate.engine.plan.read_project",
-                    return_value={"policy": {"codex": value}},
-                ),
-                self.assertRaises(ConfigError),
-            ):
-                policy("codex")
-
     def test_snapshot_replays_supplied_flags_and_environment(self):
         flags = (
             "-s",
@@ -59,27 +43,17 @@ class PolicyTest(Base):
         spec = Spec(workdir="/w", access=Access(env={"A": "1"}), env={"B": "2"})
         self.assertEqual((spec.access.env, dict(spec.env)), ({"A": "1"}, {"B": "2"}))
 
-    def test_default_policy_reaches_both_runtime_launches(self):
-        for runtime in ("claude", "codex"):
-            flags, env = policy(runtime)
-            if runtime == "codex":
+    def test_a_policy_reaches_both_runtime_launches(self):
+        for flags in (CODEX, CLAUDE):
+            if flags is CODEX:
                 adapter = self.adapter
-                spec = dataclasses.replace(self.spec, flags=flags, env=env)
-                expected = (
-                    "-s",
-                    "danger-full-access",
-                    "-c",
-                    'approval_policy="on-request"',
-                    "-c",
-                    'approvals_reviewer="auto_review"',
-                )
+                spec = dataclasses.replace(self.spec, flags=flags)
             else:
                 adapter = ClaudeAdapter({})
-                spec = Spec(workdir=str(self.work), sid=NATIVE, flags=flags, env=env)
-                expected = ("--permission-mode", "auto", "--strict-mcp-config")
+                spec = Spec(workdir=str(self.work), sid=NATIVE, flags=flags)
             launch = adapter.headless().launch("hi", spec, False)
-            start = launch.argv.index(expected[0])
-            self.assertEqual(launch.argv[start : start + len(expected)], expected)
+            start = launch.argv.index(flags[0])
+            self.assertEqual(launch.argv[start : start + len(flags)], flags)
 
     def test_adapters_contain_no_role_policy_names(self):
         root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"

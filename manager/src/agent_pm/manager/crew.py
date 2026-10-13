@@ -1,4 +1,4 @@
-"""A manager's workers, each a plain tui session reached only through session.engine.api, and its roster (roster.py). start
+"""A manager's workers, each a plain tui session reached only through agent_pm.session, and its roster (roster.py). start
 picks the runtime (--client, else the caller's own tui session's, else the config's `runtime`, roster.default_runtime), starts the worker
 with its workdir ~/.agent-pm/workers/<sid>/, records it there in worker.json (what restart replays), shows it, enters
 it in the roster and watches it EARLY s for a death or a dialog. attach syncs the roster with the live sessions,
@@ -8,7 +8,7 @@ error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONP
 each entry resolving to one (unset when empty): what workers and recovered role or pipeline entries get; then
 configures the session from the session config before a subcommand of STARTS (those that start, show or attach a
 session); next-event configures just before it attaches, a config error becoming its content text. The import roots
-(delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it prints (U as at
+(agent_pm.delegate's IMPORT_ROOTS), then U, appear only in a command running crew: each one it prints (U as at
 print time) and a recovered worker entry."""
 
 import argparse
@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Iterator
 
-import agent_pm.delegate.engine.config
+from agent_pm.delegate import IMPORT_ROOTS, PYTHONPATH
 from agent_pm.manager import roster
 from agent_pm.manager.engine.types import RosterError, Spec, Stale
 from agent_pm.session import (
@@ -33,12 +33,18 @@ from agent_pm.session import (
     ConfigError,
     DriverError,
     Exited,
+    Handle,
     IdleTimeout,
     Session,
     SessionRow,
-    api,
+    attach_command,
+    close,
+    sessions,
+    show,
 )
 from agent_pm.session import Spec as SessionSpec
+from agent_pm.session import attach as attach_session
+from agent_pm.session import start as start_session
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.files import save
 from agent_pm.utils.paths import printable_abs
@@ -99,7 +105,7 @@ def _check(name: str) -> None:
 
 def _rows(match: str | None = None) -> list[SessionRow]:
     with _driver():
-        return api.sessions(match)
+        return sessions(match)
 
 
 def _row(name: str) -> SessionRow | None:
@@ -224,7 +230,7 @@ def _died(name: str, runtime: str, code: int) -> str:
     )
 
 
-def _early(name: str, runtime: str, handle: api.Handle) -> None:
+def _early(name: str, runtime: str, handle: Handle) -> None:
     deadline = time.monotonic() + EARLY
     with _driver():
         for event in handle.events():
@@ -242,7 +248,7 @@ def _launch(
 ) -> None:
     name = record["name"]
     with _driver():
-        handle = api.start(
+        handle = start_session(
             record["runtime"],
             "tui",
             prompt,
@@ -256,11 +262,11 @@ def _launch(
         save(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
     except OSError as e:
         with contextlib.suppress(DriverError):
-            api.close(name)
+            close(name)
         raise WorkersError(f"{path}: {e.strerror or e}; start undone") from e
-    print(f"tui: session {name}: {api.attach_command(name)}", file=sys.stderr)
+    print(f"tui: session {name}: {attach_command(name)}", file=sys.stderr)
     with _driver():
-        api.show(name, split=record["split"], split_from=record["split_from"])
+        show(name, split=record["split"], split_from=record["split_from"])
     _enroll(record, own, note)
     _early(name, record["runtime"], handle)
 
@@ -369,14 +375,14 @@ def restart(name: str, *, own: str | None) -> None:
     record = _recorded(workdir, name, row.sid)
     spec = _spec(record, workdir)
     with _driver():
-        api.close(name)
+        close(name)
     _launch(record, spec, own, prompt="", resume=row.sid, note=None)
 
 
 def reply(name: str) -> str | None:
     _check(name)
     with _driver():
-        return api.attach(name).reply
+        return attach_session(name).reply
 
 
 def next_event(events: str, after: int | None) -> tuple[int, str]:
@@ -419,7 +425,7 @@ def content(event: str) -> str:
     if kind == "done":
         _configure()
         try:
-            text = api.attach(name).reply
+            text = attach_session(name).reply
         except (ConfigError, DriverError):
             text = None
         if text is not None:
@@ -431,7 +437,7 @@ def content(event: str) -> str:
         return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
     _configure()
     with _driver():
-        return api.attach(name).screen(PANE_LINES)
+        return attach_session(name).screen(PANE_LINES)
 
 
 def _status(cwd: str) -> str | None:
@@ -510,9 +516,9 @@ def _reopen(panes: dict, entries: dict, live: dict[str, SessionRow]) -> tuple[di
         if live[session].shown is not None:
             shown[name] = live[session].shown or "a terminal"
             continue
-        print(f"tui: session {session}: {api.attach_command(session)}", file=sys.stderr)
+        print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
         with _driver():
-            api.show(session, split=e["split"], split_from=e["split_from"])
+            show(session, split=e["split"], split_from=e["split_from"])
         opened.append((name, e["kind"], e["sid"], session))
     return shown, opened
 
@@ -521,11 +527,7 @@ def _pythonpath(argv: list[str]) -> dict[str, str]:
     if tuple(argv[1:4]) != roster.CREW_MODULE:
         return {}
     user = os.environ.get("PYTHONPATH")
-    return {
-        "PYTHONPATH": os.pathsep.join(
-            filter(None, (agent_pm.delegate.engine.config.PYTHONPATH, user))
-        )
-    }
+    return {"PYTHONPATH": os.pathsep.join(filter(None, (PYTHONPATH, user)))}
 
 
 def _command(argv: list[str]) -> str:
@@ -724,7 +726,7 @@ def stop_all(own: str | None, *, dry_run: bool = False) -> tuple[list[str], list
         verb = "stopped"
         for name in chosen:
             with contextlib.suppress(DriverError):
-                api.close(name)
+                close(name)
         after = _live()
         left = [n for n in chosen if n in after]
         gone = set(chosen) - set(left)
@@ -790,7 +792,7 @@ def _number(value: str) -> int:
 
 
 def _drop_import_root() -> None:
-    roots = {os.path.realpath(r) for r in agent_pm.delegate.engine.config.IMPORT_ROOTS}
+    roots = {os.path.realpath(r) for r in IMPORT_ROOTS}
     entries = os.environ.pop("PYTHONPATH", "").split(os.pathsep)
     if user := os.pathsep.join(p for p in entries if os.path.realpath(p) not in roots):
         os.environ["PYTHONPATH"] = user

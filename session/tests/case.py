@@ -1,5 +1,5 @@
 """Case, every session test's base; session settings (HOSTS, settings); child helpers (PY, child_env); this
-tree's import roots (REPO, SRC, ROOTS)."""
+tree's import roots (REPO, SRC, ROOTS); SPAWNS, the calls that start a process."""
 
 import os
 import sys
@@ -17,6 +17,7 @@ ROOTS = import_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-s")
+SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 

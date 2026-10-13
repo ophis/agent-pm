@@ -14,14 +14,16 @@ import types
 import unittest
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer.base import CONFIG, anchor, fill, outline
+from agent_pm.delegate.composer.base import anchor, fill, outline
 from agent_pm.delegate.composer.prompt import RETURN, RULE, reference_errors
 from agent_pm.delegate.composer.run import check_old_keys
 from agent_pm.delegate.composer.teams import START
+from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.event.outcome import SCHEMA
 from agent_pm.utils.markdown import unfenced
 
 from delegate.tests.case import REPO, ROOTS, Case
-from delegate.tests.unit.composer.prompt_test import (
+from delegate.tests.unit.composer.prompts import (
     RUN,
     composed,
     heading_anchors,
@@ -32,7 +34,7 @@ from delegate.tests.unit.composer.prompt_test import (
     section,
     task_text,
 )
-from delegate.tests.unit.composer.team_test import INTRO
+from delegate.tests.unit.composer.teams import INTRO
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 # outcome.schema.json at main 3e5f9f3
@@ -57,9 +59,7 @@ dir = "Product Design/"
 API = [
     "ConfigError",
     "TEAM",
-    "SCHEMA",
-    "PROGRESS",
-    "OUTCOME",
+    "DELIVERABLE",
     "RunConfig",
     "RunParams",
     "Team",
@@ -79,6 +79,9 @@ API = [
 ]
 DROPPED = [
     "SRC",
+    "SCHEMA",
+    "PROGRESS",
+    "OUTCOME",
     "CONFIG",
     "Intent",
     "roles",
@@ -203,9 +206,6 @@ class Package(Case):
         self.assertIs(composer.team, composer.teams.team)
         self.assertIs(composer.team_paths, composer.teams.team_paths)
         self.assertEqual(CONFIG, os.path.join(REPO, "delegate", "config.toml"))
-        self.assertEqual(
-            (composer.PROGRESS, composer.OUTCOME), ("agent-pm-progress", "agent-pm-outcome")
-        )
 
 
 class Acceptance(Case):
@@ -268,7 +268,7 @@ class Acceptance(Case):
             self.assertIn("## Resume", [line.rstrip() for _, line in unfenced(text)], name)
 
     def test_the_outcome_schema_is_mains(self):
-        with open(composer.SCHEMA, "rb") as f:
+        with open(SCHEMA, "rb") as f:
             self.assertEqual(hashlib.sha256(f.read()).hexdigest(), SCHEMA_SHA256)
 
     def test_no_language_no_language_rule(self):
@@ -329,7 +329,7 @@ class Shipped(Case):
             f"{role} {task}": words(composed(role, task)[0]) for role, task in runs()
         }
         composer_py = glob.glob(os.path.join(os.path.dirname(composer.__file__), "*.py"))
-        for path in [CONFIG, composer.SCHEMA, *composer_py]:
+        for path in [CONFIG, SCHEMA, *composer_py]:
             with open(path) as f:
                 texts[path] = f.read()
         for label, text in texts.items():

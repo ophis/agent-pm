@@ -30,28 +30,8 @@ from agent_pm.delegate.composer.teams import (
 from agent_pm.utils import config_file
 
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.teams import FILES, INTRO, POET, STEPS, VERSE, WRITER
 
-INTRO = "Pick the task below that fits the input; unsure → `{0}` (`<tasks>/{0}.md`).\n\n"
-WRITER = (
-    "# Writer\n\nWrite well.\n\n## Tasks\n\n"
-    + INTRO.format("short-note")
-    + "- `short-note` (`<tasks>/short-note.md`): a note; most times; light.\n"
-    "- `long-note` (`<tasks>/long-note.md`): a long note; when asked; heavy.\n\n"
-    "## Style\n\n- `draft`: not a task.\n"
-)
-EDITOR = (
-    "# Editor\n\nEdit well.\n\n## Tasks\n\n"
-    + INTRO.format("long-note")
-    + "- `long-note` (`<tasks>/long-note.md`): a long note; always; heavy.\n"
-)
-FILES = {
-    "roles/writer.md": WRITER,
-    "roles/editor.md": EDITOR,
-    "tasks/short-note.md": "# Short Note\n\nWrite a note.\n",
-    "tasks/long-note.md": "# Long Note\n\nWrite a long note.\n",
-    "templates/note.md": "# Note: [Title]\n",
-    "methods/deep.md": "# Deep\n",
-}
 CONFIG = """\
 tier = 2
 effort = "high"
@@ -72,13 +52,6 @@ BUILT_IN = {
     },
     "editor": {"long-note": "a long note; always; heavy."},
 }
-POET = (
-    "# Poet\n\nRhyme.\n\n## Tasks\n\n"
-    + INTRO.format("verse")
-    + "- `verse` (`<tasks>/verse.md`): a verse; always; light.\n"
-)
-STEPS = "\n## Steps\n\n1. **Report progress**:\n   [agent-pm-progress:start] the topic.\n\n## Resume\n\nGo on.\n"
-VERSE = "# Verse\n" + STEPS
 TINY = "# Tiny Note\n" + STEPS
 TINY_LINE = "- `tiny-note` (`<tasks>/tiny-note.md`): a tiny note; rarely; light.\n"
 FRONT = '---\ncommands: ["rm *"]\n---\n'

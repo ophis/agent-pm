@@ -1,6 +1,5 @@
 """Every message passed between layers: reply.py and outcome.py agent to Delegate, delegate_event.py Delegate to
-orchestration (DelegateEvent, the callback line). Never import outcome here: it imports delegate.composer, which imports
-reply (a cycle)."""
+orchestration (DelegateEvent, the callback line)."""
 
 from agent_pm.delegate.event.delegate_event import KINDS, DelegateEvent, DelegateEventError
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS

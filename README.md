@@ -60,8 +60,8 @@ flowchart TB
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
   LC -->|agent_pm.delegate.composer| C
-  LO -->|"agent_pm.session.api, until TASK-372"| DR
-  MG -->|"agent_pm.session.api, until TASK-371"| DR
+  LO -->|"agent_pm.session, until TASK-372"| DR
+  MG -->|"agent_pm.session, until TASK-371"| DR
   D --> C
   D -->|agent_pm.session| SE
   C -->|reads| T

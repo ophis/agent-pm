@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.types import Begun, Finished, Progress, Result
+from agent_pm.delegate.engine.types import Event, Result
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
 from agent_pm.utils.record import Record, Status
@@ -43,9 +43,7 @@ class Delegate(ABC):
     def detach(self, *, outer: Mapping | None = None) -> Record: ...
 
     @abstractmethod
-    def run(
-        self, on_event: Callable[[Begun | Progress | Finished], None] | None = None
-    ) -> Result: ...
+    def run(self, on_event: Callable[[Event], None] | None = None) -> Result: ...
 
     @abstractmethod
     def alive(self) -> bool: ...

@@ -16,8 +16,7 @@ import types
 import unittest
 from unittest import mock
 
-from agent_pm.session import api
-from agent_pm.session.engine import records
+from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
     Activity,

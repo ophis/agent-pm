@@ -6,8 +6,7 @@ and leaves its TUI open."""
 import functools
 import unittest
 
-from delegate.tests.integration.cli_integration_test import mark
-from delegate.tests.unit.runner_test import block
+from delegate.tests.replies import block, mark
 from session.tests import live_tmux
 
 from ..unit.run_fixtures import ID, SID, UUID
