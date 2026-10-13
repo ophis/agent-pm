@@ -1,4 +1,9 @@
-"""Codex startup run with Python -I, which excludes the adapter package's import roots."""
+"""Codex startup run with Python -I and one bounded JSON object argument.
+
+Required keys: argv, hook, commands, hook_flags, workdir, sid, store, protect,
+add_dirs, import_roots. import_roots must name distinct absolute source directories
+for the already-imported session and utils packages in the launching interpreter.
+"""
 
 from __future__ import annotations
 
@@ -49,13 +54,14 @@ def _bootstrap(argv):
     data = _decode_launch_data(argv)
     roots = _import_roots(data.get("import_roots"))
     sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
+    return data
 
 
 ANSWER_MAX = 64 << 20
 
 if __name__ == "__main__":
     try:
-        _bootstrap(sys.argv[1:])
+        launch_data = _bootstrap(sys.argv[1:])
     except StartError as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -224,13 +230,23 @@ def trusted(result, cwd: str, commands: dict[str, str]) -> str:
     )
 
 
-def main(argv, *, trust=hook_trust):
+def main(data):
+    try:
+        launch(data)
+    except Stopped as exc:
+        return 128 + exc.signum
+    except (StartError, sessions.RecoveryError, OSError, ValueError) as exc:
+        print(f"codex tui: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def launch(data, *, trust=hook_trust):
     with _Termination() as termination:
-        return _start(argv, termination, trust)
+        return _start(_launch_data(data), termination, trust)
 
 
-def _start(argv, termination, trust):
-    data = _launch_data(argv)
+def _start(data, termination, trust):
     commands = data["commands"]
     sessions.absolute_path(data["store"], "store")
     state = sessions.SessionStore(data["store"]).load(data["workdir"], data["sid"])
@@ -306,9 +322,8 @@ def _listed_hooks(result, cwd):
     return hooks
 
 
-def _launch_data(argv):
-    data = _decode_launch_data(argv)
-    if set(data) != {
+def _launch_data(data):
+    if not isinstance(data, dict) or set(data) != {
         "argv",
         "hook",
         "commands",
@@ -348,10 +363,4 @@ def _launch_data(argv):
 
 
 if __name__ == "__main__":
-    try:
-        main(sys.argv[1:])
-    except Stopped as exc:
-        sys.exit(128 + exc.signum)
-    except (StartError, sessions.RecoveryError, OSError, ValueError) as exc:
-        print(f"codex tui: {exc}", file=sys.stderr)
-        sys.exit(1)
+    sys.exit(main(launch_data))

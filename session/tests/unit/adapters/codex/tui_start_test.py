@@ -3,6 +3,7 @@
 import contextlib
 import copy
 import dataclasses
+import io
 import json
 import os
 import pathlib
@@ -87,6 +88,29 @@ class BootstrapTest(Case):
         self.assertEqual(values[:16], [1, *([True] * 14), []])
         self.assertTrue(values[16].startswith(data["import_roots"][0] + os.sep))
         self.assertTrue(values[17].startswith(data["import_roots"][1] + os.sep))
+
+    def test_main_reports_launch_validation_as_one_line_and_failure_status(self):
+        stderr = io.StringIO()
+        with mock.patch("sys.stderr", stderr):
+            self.assertEqual(tui_start.main({}), 1)
+        self.assertEqual(stderr.getvalue(), "codex tui: Codex tui launch: invalid launch fields\n")
+
+    def test_isolated_launcher_decodes_launch_data_once(self):
+        code = """import json, runpy, sys
+from unittest import mock
+script, data = sys.argv[1:]
+sys.argv = [script, data]
+with mock.patch("json.loads", wraps=json.loads) as decode:
+    try:
+        runpy.run_path(script, run_name="__main__")
+    except SystemExit as error:
+        status = error.code
+print(json.dumps([status, decode.call_count]))
+"""
+        result = self.isolated(self.data(), code=code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
+        self.assertEqual(json.loads(result.stdout), [1, 1])
 
     def test_supplied_alternate_layout_ignores_cwd_and_pythonpath_decoys(self):
         layout = pathlib.Path(self.home) / "layout"
@@ -288,7 +312,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             mock.patch("os.chdir") as chdir,
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]], trust=trust)
+            tui_start.launch(json.loads(launch.argv[-1]), trust=trust)
         chdir.assert_called_once_with(str(self.cwd))
         exe, argv, env = execute.call_args.args
         self.assertEqual(exe, "/protected/codex")
@@ -315,7 +339,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([launch.argv[-1]], trust=trust)
+            tui_start.launch(json.loads(launch.argv[-1]), trust=trust)
         self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
@@ -404,7 +428,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         with mock.patch.object(subprocess, "Popen") as proc:
             for data in ("null", "not-json", "{}"):
                 with self.assertRaises(tui_start.StartError):
-                    tui_start.main([data])
+                    tui_start.launch(tui_start._bootstrap([data]))
         proc.assert_not_called()
 
     def test_import_roots_are_required_and_validated_without_spawning(self):
@@ -422,9 +446,9 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                     self.subTest(roots=changed.get("import_roots")),
                     self.assertRaises(tui_start.StartError),
                 ):
-                    tui_start.main([json.dumps(changed)])
+                    tui_start.launch(changed)
             with self.assertRaisesRegex(tui_start.StartError, "fields"):
-                tui_start.main([json.dumps(data | {"unknown": []})])
+                tui_start.launch(data | {"unknown": []})
         proc.assert_not_called()
         execute.assert_not_called()
 
@@ -454,7 +478,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                     mock.patch("os.execve") as execute,
                     self.assertRaises(tui_start.Stopped),
                 ):
-                    tui_start.main([launch.argv[-1]])
+                    tui_start.launch(json.loads(launch.argv[-1]))
                 self.assertEqual(popen.call_count, 1)
                 kill.assert_called_with(123, tui_start.signal.SIGKILL)
                 proc.wait.assert_called()
@@ -476,7 +500,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             mock.patch("os.execve") as execute,
             self.assertRaisesRegex(tui_start.sessions.RecoveryError, "rewrite|writable"),
         ):
-            tui_start.main([launch.argv[-1]])
+            tui_start.launch(json.loads(launch.argv[-1]))
         proc.assert_not_called()
         execute.assert_not_called()
 
@@ -517,7 +541,7 @@ class ProtectTest(Base):
                     tui_start.sessions.RecoveryError, f"could rewrite hook dependency {target}$"
                 ),
             ):
-                tui_start.main([data])
+                tui_start.launch(json.loads(data))
             proc.assert_not_called()
             execute.assert_not_called()
 
@@ -530,9 +554,9 @@ class ProtectTest(Base):
                         self.subTest(key=key, paths=paths),
                         self.assertRaises(tui_start.StartError),
                     ):
-                        tui_start.main([json.dumps({**data, key: paths})])
+                        tui_start.launch({**data, key: paths})
                 with self.assertRaisesRegex(tui_start.StartError, "fields"):
-                    tui_start.main([json.dumps({k: v for k, v in data.items() if k != key})])
+                    tui_start.launch({k: v for k, v in data.items() if k != key})
         proc.assert_not_called()
 
     def test_the_recheck_covers_saved_flags_on_resume(self):
@@ -553,7 +577,7 @@ class ProtectTest(Base):
                 tui_start.sessions.RecoveryError, "could rewrite hook dependency"
             ),
         ):
-            tui_start.main([data])
+            tui_start.launch(json.loads(data))
         proc.assert_not_called()
         execute.assert_not_called()
 
@@ -566,7 +590,7 @@ class ProtectTest(Base):
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
-            tui_start.main([data], trust=trust)
+            tui_start.launch(json.loads(data), trust=trust)
         argv = execute.call_args.args[1]
         start = argv.index("-c", 6)
         self.assertEqual(argv[start : start + len(flags)], list(flags))
