@@ -148,7 +148,10 @@ COMMAND_SRC = (
     f"{ORCH_PROJECT}/{ORCH_SRC}",
 )
 MANAGER = "manager"
-MANAGER_ALLOWED = {"manager.crew": ("utils", "manager.roster"), "manager.roster": ("utils",)}
+MANAGER_ALLOWED = {
+    "manager.crew": ("utils", "manager.roster", "manager.engine.types"),
+    "manager.roster": ("utils", "manager.engine.types"),
+}
 # until TASK-371
 MANAGER_EXCEPTIONS = {
     "manager.crew": (f"{PKG}.{CONFIG}", f"{PKG}.session.Session", f"{PKG}.session.api"),

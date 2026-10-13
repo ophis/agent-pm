@@ -24,6 +24,7 @@ from collections.abc import Iterator
 
 import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
+from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.files import save
@@ -132,14 +133,14 @@ def _runtime(client: str | None, own_runtime: str | None) -> str:
         return own_runtime
     try:
         return roster.default_runtime()
-    except roster.RosterError as e:
+    except RosterError as e:
         raise WorkersError(str(e)) from e
 
 
 def _worker_dir(sid: str) -> str:
     try:
         return roster.worker_dir(sid)
-    except roster.RosterError as e:
+    except RosterError as e:
         raise WorkersError(str(e)) from e
 
 
@@ -451,7 +452,7 @@ def _status(cwd: str) -> str | None:
 def _placed(e: dict, row: api.SessionRow) -> dict:
     for key in ("pane", "opener"):
         if getattr(row, key) is not None:
-            with contextlib.suppress(roster.RosterError):
+            with contextlib.suppress(RosterError):
                 e = roster.entry(**{**e, key: getattr(row, key)})
     return e
 
@@ -576,7 +577,7 @@ def attach(
                     if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
                         _place(r, name, live[session])
         table = _table(r["entries"], shown)
-    except roster.RosterError as e:
+    except RosterError as e:
         raise WorkersError(str(e)) from e
     me, name = (
         _command(["python3", *roster.CREW_MODULE]),
@@ -598,7 +599,7 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             continue
         try:
             argv = roster.recovery(e)
-        except roster.RosterError as err:
+        except RosterError as err:
             raise WorkersError(str(err)) from err
         if argv is None:
             yield False, f"resumed {name}: not run: no sid"
@@ -636,7 +637,7 @@ def _leased(directory: str, own: str | None, *, write: bool = True):
         with roster.locked(directory, write=write) as r:
             roster.check(r, directory, own)
             yield r
-    except roster.RosterError as e:
+    except RosterError as e:
         raise WorkersError(str(e)) from e
 
 
@@ -682,7 +683,7 @@ def _entries(directory: str) -> dict:
     try:
         with roster.locked(directory, write=False) as r:
             return r["entries"]
-    except roster.RosterError as e:
+    except RosterError as e:
         print(f"workers: stop-all: {e}", file=sys.stderr)
         return {}
 
@@ -722,7 +723,7 @@ def stop_all(own: str | None, *, dry_run: bool = False) -> tuple[list[str], list
                         if k in gone or e["tui"] in gone and k not in after
                     ]:
                         roster.remove(r, k)
-            except (roster.RosterError, WorkersError) as e:
+            except (RosterError, WorkersError) as e:
                 print(f"workers: stop-all: {e}", file=sys.stderr)
     lines = [
         f"{verb} {n}" + ("; a scheduler may resume it" if n in pipelines else "")
@@ -743,7 +744,7 @@ def forget(directory: str, own: str | None, name: str) -> None:
 def _directory(name: str | None) -> str:
     try:
         directory = roster.directory(name)
-    except roster.RosterError as e:
+    except RosterError as e:
         raise WorkersError(str(e)) from e
     if directory is None:
         raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
@@ -754,7 +755,7 @@ def _record(directory: str, own: str | None, after: int | None, gen: int) -> tup
     with _leased(directory, own) as r:
         try:
             after = roster.advance(r, directory, after, gen)
-        except roster.Stale as e:
+        except Stale as e:
             raise Refused(str(e)) from e
         return roster.events(directory, create=False), after, roster.due(r, directory)
 
