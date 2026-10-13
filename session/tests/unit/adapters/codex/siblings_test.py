@@ -86,3 +86,10 @@ module = load("record")
 print(json.dumps([sys.modules["_agent_pm_codex_record"] is module, module.Record(7).value]))
 """
         self.assertEqual(self._run_loader(code, fixture), [True, 7])
+
+    def test_shared_flags_load_from_the_adapters_directory(self):
+        scanner = siblings.load("flags")
+        self.assertEqual(
+            scanner.__file__, os.path.join(os.path.dirname(siblings.DIRECTORY), "flags.py")
+        )
+        self.assertIs(scanner, siblings.load("flags"))

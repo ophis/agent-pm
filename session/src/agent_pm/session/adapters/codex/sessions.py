@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import stat
 import tempfile
 import time
@@ -46,6 +47,10 @@ def private_file(info: os.stat_result) -> bool:
     )
 
 
+_sibling = runpy.run_path(os.path.join(os.path.dirname(__file__), "siblings.py"))["load"]
+argv_flags = _sibling("flags")
+
+
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 VALUED = {
@@ -61,37 +66,11 @@ VALUED = {
 }
 
 
-def split_flags(flags) -> tuple[list[str], list[str]]:
-    index = flags.index("--") if "--" in flags else len(flags)
-    return list(flags[:index]), list(flags[index:])
-
-
-def options(flags):
-    i = 0
-    while i < len(flags) and flags[i] != "--":
-        flag = flags[i]
-        if flag.startswith("--"):
-            word, eq, value = flag.partition("=")
-        else:
-            word, value = flag[:2], flag[2:].removeprefix("=")
-            eq = flag[2:]
-        name = VALUED.get(word)
-        if name is None:
-            yield (word if flag.startswith("--") else flag), None, flag
-        elif eq:
-            yield name, value, flag
-        else:
-            i += 1
-            value = flags[i] if i < len(flags) else ""
-            yield name, value, f"{flag} {value}"
-        i += 1
-
-
 def added_dirs(flags, cwd: str) -> list[str]:
     return [
-        os.path.join(cwd, value)
-        for name, value, _ in options(flags)
-        if name == "--add-dir" and value is not None
+        os.path.join(cwd, flag.value)
+        for flag in argv_flags.scan(flags, VALUED)
+        if flag.word == "--add-dir" and flag.value is not None
     ]
 
 

@@ -10,6 +10,7 @@ from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.codex.sessions import (
+    VALUED,
     RecoveryError,
     SessionFile,
     SessionState,
@@ -22,7 +23,6 @@ from agent_pm.session.adapters.codex.sessions import (
     inside,
     load_session,
     native_id,
-    options,
     read_metadata,
     read_state,
     recovery_snapshot,
@@ -30,12 +30,12 @@ from agent_pm.session.adapters.codex.sessions import (
     session_file,
     session_identity,
     session_paths,
-    split_flags,
     store_directory,
     store_root,
     validate_snapshot,
 )
 from agent_pm.session.adapters.common import check, number, resume_command
+from agent_pm.session.adapters.flags import scan, split_flags
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
@@ -98,22 +98,22 @@ def reset_at(message, environment):
 
 
 def refuse(flags) -> None:
-    for name, value, text in options(flags):
+    for flag in scan(flags, VALUED):
         key = (
-            value.partition("=")[0].split(".", 1)[0].strip().strip("\"'")
-            if name == "-c" and value is not None
+            flag.value.partition("=")[0].split(".", 1)[0].strip().strip("\"'")
+            if flag.word == "-c" and flag.value is not None
             else ""
         )
-        if name in RESERVED or key in RESERVED_KEYS:
-            raise ConfigError(f"{text}: the Driver sets Codex's hooks, session and cwd")
+        if flag.word in RESERVED or key in RESERVED_KEYS:
+            raise ConfigError(f"{flag.text}: the Driver sets Codex's hooks, session and cwd")
 
 
 def passed(flags) -> list[str]:
     return [
         word
-        for name, value, _ in options(flags)
-        if name in PASSED and value is not None
-        for word in (name, value)
+        for flag in scan(flags, VALUED)
+        if flag.word in PASSED and flag.value is not None
+        for word in (flag.word, flag.value)
     ]
 
 

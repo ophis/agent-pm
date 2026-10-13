@@ -95,6 +95,7 @@ STANDALONE = frozenset(
     for path in (
         "hosts/tmux/tmux_host.py",
         "modes/tui_hook.py",
+        "adapters/flags.py",
         "adapters/codex/app_server.py",
         "adapters/codex/hook_schema.py",
         "adapters/codex/sessions.py",

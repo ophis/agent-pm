@@ -9,7 +9,8 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.selection import UUID, scan
+from agent_pm.session.adapters.flags import scan
+from agent_pm.session.adapters.selection import UUID
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
@@ -24,23 +25,20 @@ TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
 
 
-def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
-    return flags[: flags.index("--")] if "--" in flags else flags
-
-
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     """Each --add-dir X or --add-dir=X's X before "--"."""
-    return (value for _, word, value in scan(flags, ("--add-dir",)) if word == "--add-dir")
+    return (
+        flag.value
+        for flag in scan(flags, {"--add-dir": "--add-dir"})
+        if flag.word == "--add-dir" and flag.value is not None
+    )
 
 
 def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
-    for i, flag in enumerate(_before_end(flags)):
-        if flag == "--settings":
-            value, end = (flags[i + 1] if i + 1 < len(flags) else ""), i + 2
-        elif flag.startswith("--settings="):
-            value, end = flag.removeprefix("--settings="), i + 1
-        else:
+    for flag in scan(flags, {"--settings": "--settings"}):
+        if flag.word != "--settings" or flag.value is None:
             continue
+        value = flag.value
         try:
             settings = json.loads(value)
         except (ValueError, RecursionError):
@@ -56,7 +54,7 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
             )
         for event, entries in hooks.items():
             own[event] = [*own.get(event, []), *entries]
-        return settings, (*flags[:i], *flags[end:])
+        return settings, (*flags[: flag.start], *flags[flag.end :])
     return {"hooks": dict(hooks)}, flags
 
 
@@ -214,7 +212,7 @@ class ClaudeCommon:
             *_read_rules(access.reads),
             *self.allow,
         )
-        strict = "--strict-mcp-config" in _before_end(spec.flags)
+        strict = any(flag.arg == "--strict-mcp-config" for flag in scan(spec.flags))
         selection = self.selector(sid, resume=resume)
         if not isinstance(sid, str):
             raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
