@@ -70,7 +70,7 @@ The line-per-event file a session's watchers read: `HH:MM:SS <name> <word> ...`.
 _Avoid_: event
 
 **Delegate event**:
-The callback line a Delegate run emits: begun, progress, finished. In code: `delegate/src/agent_pm/delegate/event/delegate_event.py`.
+The event a Delegate run delivers to its callback: Begun, Progress or Finished. In code: `delegate/src/agent_pm/delegate/engine/types.py`.
 _Avoid_: event
 
 **Attended run**:
