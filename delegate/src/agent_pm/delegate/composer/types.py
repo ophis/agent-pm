@@ -1,6 +1,8 @@
-"""The Composer's shared types: its ConfigError, a role's run config and one run's params."""
+"""The Composer's shared types: its ConfigError, a role's run config, one run's params, its Team and a run's access
+intent."""
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
@@ -73,3 +75,34 @@ class RunParams:
         if Path(os.path.realpath(out)).is_relative_to(os.path.realpath(self.workdir)):
             return out
         return os.path.join(os.path.abspath(self.workdir), "tmp", "deliverable.md")
+
+
+@dataclass(frozen=True)
+class Team:
+    """The roles, tasks and templates a run can name: the team root's and the team dirs' files (composer.team)."""
+
+    root: str
+    dirs: tuple[str, ...] = ()
+    files: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
+    misnamed: tuple[str, ...] = ()
+
+    def custom(self, path: str) -> bool:
+        return not Path(path).is_relative_to(self.root)
+
+    def label(self, kind: str, name: str, path: str) -> str:
+        return path if self.custom(path) else f"{kind}/{name}.md"
+
+    def source(self, path: str) -> str:
+        return path if self.custom(path) else "built-in"
+
+
+@dataclass(frozen=True)
+class Intent:
+    dirs: tuple[str, ...]
+    reads: tuple[str, ...]
+    writes: tuple[str, ...]
+    commands: tuple[str, ...]
+    gate: str
+    env: Mapping[str, str]
+    cwd: str
+    project: bool

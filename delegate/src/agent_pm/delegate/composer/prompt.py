@@ -14,6 +14,7 @@ import os
 import re
 from collections.abc import Mapping
 
+from agent_pm.delegate.composer import teams
 from agent_pm.delegate.composer.base import (
     CODE_SPAN,
     FILE_REF,
@@ -27,8 +28,8 @@ from agent_pm.delegate.composer.base import (
     outline,
     read_text,
 )
-from agent_pm.delegate.composer.teams import Team, index, tasks_path, team_or_default
-from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams
+from agent_pm.delegate.composer.teams import index, tasks_path, team_or_default
+from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
 from agent_pm.utils.markdown import unfenced
 
@@ -73,7 +74,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
         "language": run.language,
     }
     names |= {"task": f"`{run.task}` (`<tasks>/{run.task}.md`)"} if run.task else {}
-    if not (charter := team.charter(run.role)):
+    if not (charter := teams.charter(team, run.role)):
         raise ConfigError(f"missing file roles/{run.role}.md")
     role, rel = charter
     guide, principles = _read(team.root, "guide.md"), _read(team.root, "principles.md")
@@ -86,7 +87,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     }
     parts = list(texts.items())
     for name in run.templates:
-        body, label = team.read("templates", name)
+        body, label = teams.read(team, "templates", name)
         f = _fence(body)
         parts.append((label, f"# Template: `templates/{name}.md`\n\n{f}markdown\n{body}{f}\n"))
     output, dest = os.path.join(team.root, OUTPUT), f"destinations/{run.output['type']}.md"
@@ -102,7 +103,7 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     joined = [part for _, part in parts]
     joined.insert(1, _parameters(run, params, texts, team))
     own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")
-    if team.used(run.role, run.templates):
+    if teams.used(team, run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
     return own + f"\n{params.input.strip()}\n"
 
@@ -189,8 +190,8 @@ def _task_path(after: str, paths) -> str | None:
 
 
 def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]) -> None:
-    used = team.used(run.role, run.templates)
-    paths = {t: team.lookup("tasks", t) for t in index(run.role, team)}
+    used = teams.used(team, run.role, run.templates)
+    paths = {t: teams.lookup(team, "tasks", t) for t in index(run.role, team)}
     tasks = {t: read_text(p) for t, p in paths.items()}
     labels = {t: team.label("tasks", t, p) for t, p in paths.items()}
     named = dict.fromkeys(METHOD.findall(own + "".join(tasks.values())))
@@ -235,7 +236,7 @@ def _check_prompt(team: Team, run: RunConfig, own: str, parts: Mapping[str, str]
 
 def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], team: Team) -> str:
     texts = dict(texts) | {
-        label: body for body, label in (team.read("tasks", t) for t in index(run.role, team))
+        label: body for body, label in (teams.read(team, "tasks", t) for t in index(run.role, team))
     }
     named = dict.fromkeys(f"methods/{m}.md" for t in texts.values() for m in METHOD.findall(t))
     texts |= {

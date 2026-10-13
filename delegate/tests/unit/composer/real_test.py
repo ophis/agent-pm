@@ -66,6 +66,8 @@ API = [
     "team",
     "team_dirs",
     "index",
+    "lookup",
+    "check_all",
     "catalog",
     "check_team_dirs",
     "check_overlap",

@@ -5,7 +5,6 @@ import os
 import re
 import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_pm.delegate.composer.base import (
@@ -16,7 +15,7 @@ from agent_pm.delegate.composer.base import (
     read_text,
     title_of,
 )
-from agent_pm.delegate.composer.types import ConfigError
+from agent_pm.delegate.composer.types import ConfigError, Team
 from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils.config_file import LOCAL, read_config, read_project
 from agent_pm.utils.markdown import unfenced
@@ -30,95 +29,84 @@ INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)
 INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")
 
 
-@dataclass(frozen=True)
-class Team:
-    root: str
-    dirs: tuple[str, ...] = ()
-    files: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
-    misnamed: tuple[str, ...] = ()
-
-    def custom(self, path: str) -> bool:
-        return not Path(path).is_relative_to(self.root)
-
-    def label(self, kind: str, name: str, path: str) -> str:
-        return path if self.custom(path) else f"{kind}/{name}.md"
-
-    def source(self, path: str) -> str:
-        return path if self.custom(path) else "built-in"
-
-    def lookup(self, kind: str, name: str) -> str | None:
-        paths = self.files.get((kind, name), ())
-        if len(paths) > 1:
-            raise ConfigError(
-                f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add"
-            )
-        if paths and self.custom(paths[0]):
-            self.check_file(kind, paths[0])
-        return paths[0] if paths else None
-
-    def read(self, kind: str, name: str) -> tuple[str, str]:
-        if not (path := self.lookup(kind, name)):
-            raise self.misnamed_error(kind, name) or ConfigError(f"missing file {kind}/{name}.md")
-        return read_text(path), self.label(kind, name, path)
-
-    def check_file(self, kind: str, path: str) -> None:
-        text = read_text(path)
-        if text.split("\n", 1)[0].strip() == "---":
-            raise ConfigError(
-                f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
-                f"{LOCAL}"
-            )
-        if m := PLACEHOLDER.search(text):
-            raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
-        for m in METHOD.findall(text):
-            if not os.path.isfile(os.path.join(self.root, "methods", f"{m}.md")):
-                raise ConfigError(
-                    f"{path}: names <team>/methods/{m}.md, which core has no file for"
-                )
-        if kind == "roles":
-            title_of(text, path)
-        elif kind == "tasks":
-            if not text.startswith("# "):
-                raise ConfigError(f"{path}: must start with a '# ' heading")
-            if (n := len(START.findall(text))) != 1:
-                raise ConfigError(f"{path}: has {n} [{PROGRESS}:start] lines, not 1")
-            if not any(line.rstrip() == "## Resume" for _, line in unfenced(text)):
-                raise ConfigError(f"{path}: has no ## Resume section")
-
-    def charter(self, role: str) -> tuple[str, str] | None:
-        if not (path := self.lookup("roles", role)):
-            return None
-        return read_text(path), self.label("roles", role, path)
-
-    def tasks_dir(self, role: str) -> str | None:
-        path = self.lookup("roles", role)
-        return (
-            os.path.join(os.path.dirname(os.path.dirname(path)), "tasks")
-            if path and self.custom(path)
-            else None
+def lookup(team: Team, kind: str, name: str) -> str | None:
+    paths = team.files.get((kind, name), ())
+    if len(paths) > 1:
+        raise ConfigError(
+            f"{paths[1]}: {kind[:-1]} {name!r} is also defined by {paths[0]}; team dir files only add"
         )
+    if paths and team.custom(paths[0]):
+        check_file(team, kind, paths[0])
+    return paths[0] if paths else None
 
-    def used(self, role: str, templates: Sequence[str] = ()) -> list[str]:
-        paths = [self.lookup("roles", role)]
-        paths += [self.lookup("tasks", t) for t in index(role, self)]
-        paths += [self.lookup("templates", name) for name in templates]
-        return list(dict.fromkeys(p for p in paths if p and self.custom(p)))
 
-    def misnamed_error(
-        self, kind: str | None = None, name: str | None = None
-    ) -> ConfigError | None:
-        for path in self.misnamed:
-            stem = os.path.basename(path).removesuffix(".md")
-            if kind is None or (os.path.basename(os.path.dirname(path)), stem) == (kind, name):
-                return ConfigError(f"{path}: name {stem!r}: want {TEAM_NAME.pattern}")
+def read(team: Team, kind: str, name: str) -> tuple[str, str]:
+    if not (path := lookup(team, kind, name)):
+        raise misnamed_error(team, kind, name) or ConfigError(f"missing file {kind}/{name}.md")
+    return read_text(path), team.label(kind, name, path)
+
+
+def check_file(team: Team, kind: str, path: str) -> None:
+    text = read_text(path)
+    if text.split("\n", 1)[0].strip() == "---":
+        raise ConfigError(
+            f"{path}: front matter (---) is not read: team dir files hold text only; run keys go in "
+            f"{LOCAL}"
+        )
+    if m := PLACEHOLDER.search(text):
+        raise ConfigError(f"{path}: unfilled placeholder {m[0]}")
+    for m in METHOD.findall(text):
+        if not os.path.isfile(os.path.join(team.root, "methods", f"{m}.md")):
+            raise ConfigError(f"{path}: names <team>/methods/{m}.md, which core has no file for")
+    if kind == "roles":
+        title_of(text, path)
+    elif kind == "tasks":
+        if not text.startswith("# "):
+            raise ConfigError(f"{path}: must start with a '# ' heading")
+        if (n := len(START.findall(text))) != 1:
+            raise ConfigError(f"{path}: has {n} [{PROGRESS}:start] lines, not 1")
+        if not any(line.rstrip() == "## Resume" for _, line in unfenced(text)):
+            raise ConfigError(f"{path}: has no ## Resume section")
+
+
+def charter(team: Team, role: str) -> tuple[str, str] | None:
+    if not (path := lookup(team, "roles", role)):
         return None
+    return read_text(path), team.label("roles", role, path)
 
-    def check_all(self, cfg: Mapping) -> None:
-        if e := self.misnamed_error():
-            raise e
-        for kind, name in self.files:
-            self.lookup(kind, name)
-        roles(self, cfg)
+
+def tasks_dir(team: Team, role: str) -> str | None:
+    path = lookup(team, "roles", role)
+    return (
+        os.path.join(os.path.dirname(os.path.dirname(path)), "tasks")
+        if path and team.custom(path)
+        else None
+    )
+
+
+def used(team: Team, role: str, templates: Sequence[str] = ()) -> list[str]:
+    paths = [lookup(team, "roles", role)]
+    paths += [lookup(team, "tasks", t) for t in index(role, team)]
+    paths += [lookup(team, "templates", name) for name in templates]
+    return list(dict.fromkeys(p for p in paths if p and team.custom(p)))
+
+
+def misnamed_error(
+    team: Team, kind: str | None = None, name: str | None = None
+) -> ConfigError | None:
+    for path in team.misnamed:
+        stem = os.path.basename(path).removesuffix(".md")
+        if kind is None or (os.path.basename(os.path.dirname(path)), stem) == (kind, name):
+            return ConfigError(f"{path}: name {stem!r}: want {TEAM_NAME.pattern}")
+    return None
+
+
+def check_all(team: Team, cfg: Mapping) -> None:
+    if e := misnamed_error(team):
+        raise e
+    for kind, name in team.files:
+        lookup(team, kind, name)
+    roles(team, cfg)
 
 
 def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
@@ -178,12 +166,12 @@ def team(root: str = TEAM, dirs: Sequence[str] = ()) -> Team:
 
 
 def tasks_path(role: str, team: Team) -> str:
-    return team.tasks_dir(role) or os.path.join(team.root, "tasks")
+    return tasks_dir(team, role) or os.path.join(team.root, "tasks")
 
 
 def roles(team: Team, cfg: Mapping) -> list[str]:
     for role in cfg.get("roles", {}):
-        if not team.lookup("roles", role):
+        if not lookup(team, "roles", role):
             raise no_charter(role)
     charters = {name: paths for (kind, name), paths in team.files.items() if kind == "roles"}
     core = [name for name, paths in charters.items() if not team.custom(paths[0])]
@@ -208,9 +196,9 @@ def index(
     cfg: Mapping | None = None,
 ) -> dict[str, str]:
     team = team_or_default(team)
-    if not (charter := team.charter(role)):
-        raise no_charter(role, read(config, local, cfg), team)
-    text, rel = charter
+    if not (found := charter(team, role)):
+        raise no_charter(role, config_of(config, local, cfg), team)
+    text, rel = found
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
     if not (lines := INDEX_LINE.findall(section)):
@@ -229,14 +217,14 @@ def index(
             raise ConfigError(f"{rel}: {t!r} has path {path!r}, not '<tasks>/{t}.md'")
     own = tasks_path(role, team)
     for t in tasks:
-        if not (path := team.lookup("tasks", t)):
-            raise team.misnamed_error("tasks", t) or ConfigError(
+        if not (path := lookup(team, "tasks", t)):
+            raise misnamed_error(team, "tasks", t) or ConfigError(
                 f"{rel}: lists {t!r} without tasks/{t}.md"
             )
         if os.path.dirname(path) != own:
             raise ConfigError(
                 f"{rel}: lists {t!r}, whose file {team.label('tasks', t, path)} is not in "
-                f"{team.tasks_dir(role) or 'core team/tasks'}: a role runs only its own tasks"
+                f"{tasks_dir(team, role) or 'core team/tasks'}: a role runs only its own tasks"
             )
     return tasks
 
@@ -252,7 +240,7 @@ def catalog(
     }
 
 
-def read(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
+def config_of(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
     """`cfg`, the caller's already-read delegate config, else `config` with `local` read."""
     return read_project("delegate", path=config, local=local) if cfg is None else cfg
 
@@ -260,7 +248,7 @@ def read(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
 def role_tables(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
     if cfg is None and not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = read(config, local, cfg).get("roles")
+    roles = config_of(config, local, cfg).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():
@@ -274,7 +262,7 @@ def team_or_default(given: Team | None) -> Team:
 
 
 def no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) -> ConfigError:
-    if team is not None and (e := team.misnamed_error("roles", role)):
+    if team is not None and (e := misnamed_error(team, "roles", role)):
         return e
     if cfg is not None and role not in cfg.get("roles", {}):
         return ConfigError(f"unknown role {role!r}")

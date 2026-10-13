@@ -13,7 +13,6 @@ from agent_pm.delegate import composer
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
-    Intent,
     access,
     bind,
     check_old_keys,
@@ -21,6 +20,7 @@ from agent_pm.delegate.composer.run import (
     trusted_dirs,
 )
 from agent_pm.delegate.composer.teams import team
+from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils import config_file
 

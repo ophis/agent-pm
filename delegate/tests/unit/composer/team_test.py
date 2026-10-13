@@ -11,15 +11,21 @@ from agent_pm.delegate.composer import ConfigError
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.teams import (
     catalog,
+    charter,
+    check_all,
     check_overlap,
     check_team_dirs,
     index,
+    lookup,
+    read,
     role_tables,
     roles,
+    tasks_dir,
     tasks_path,
     team,
     team_dirs,
     team_paths,
+    used,
 )
 from agent_pm.utils import config_file
 
@@ -321,14 +327,14 @@ class TeamDirs(Fake):
         self.addCleanup(os.chdir, here)
         self.assertEqual(team_dirs(self.config, self.local_file), ())
         self.assertIsNone(
-            team(self.root, team_dirs(self.config, self.local_file)).lookup("roles", "poet")
+            lookup(team(self.root, team_dirs(self.config, self.local_file)), "roles", "poet")
         )
         self.assertEqual(self.refused(self.tasks_of, "poet"), "unknown role 'poet'")
 
     def test_a_new_role_and_the_catalog(self):
         found = self.with_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
         self.assertEqual(self.tasks_of("poet", found), {"verse": "a verse; always; light."})
-        self.assertEqual(found.charter("poet"), (POET, self.path("roles/poet.md")))
+        self.assertEqual(charter(found, "poet"), (POET, self.path("roles/poet.md")))
         listed = catalog(found, self.config, self.local_file)
         self.assertEqual(listed, BUILT_IN | {"poet": {"verse": "a verse; always; light."}})
         self.assertEqual(list(listed), ["writer", "editor", "poet"])
@@ -374,7 +380,7 @@ class TeamDirs(Fake):
     def test_tasks_dir_and_tasks_path(self):
         found = self.with_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
         self.assertEqual(
-            (found.tasks_dir("poet"), found.tasks_dir("writer"), found.tasks_dir("nobody")),
+            (tasks_dir(found, "poet"), tasks_dir(found, "writer"), tasks_dir(found, "nobody")),
             (self.path("tasks"), None, None),
         )
         self.assertEqual(
@@ -393,11 +399,11 @@ class TeamDirs(Fake):
                 found = self.with_dir(files, kind)
                 rel = next(iter(files))
                 self.assertEqual(
-                    self.refused(found.lookup, kind, name),
+                    self.refused(lookup, found, kind, name),
                     f"{self.path(rel, kind)}: {kind[:-1]} {name!r} is also defined by "
                     f"{self.root}/{rel}; team dir files only add",
                 )
-                self.assertIn("is also defined by", self.refused(found.check_all, self.cfg()))
+                self.assertIn("is also defined by", self.refused(check_all, found, self.cfg()))
         a = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE}, "a")
         b = self.team_dir({"roles/poet.md": POET}, "b")
         self.assertEqual(
@@ -418,11 +424,11 @@ class TeamDirs(Fake):
         self.tasks_of("writer", found)
         self.tasks_of("poet", found)
         self.assertEqual(
-            self.refused(found.check_all, self.cfg()),
+            self.refused(check_all, found, self.cfg()),
             f"{self.path('tasks/Big_Note.md')}: name 'Big_Note': want [a-z0-9-]+",
         )
         self.assertEqual(
-            self.refused(found.read, "templates", "Card"),
+            self.refused(read, found, "templates", "Card"),
             f"{self.path('templates/Card.md')}: name 'Card': want [a-z0-9-]+",
         )
         found = self.with_dir({"roles/Poet.md": POET, "tasks/Verse.md": VERSE}, "caps")
@@ -431,7 +437,7 @@ class TeamDirs(Fake):
             f"{self.path('roles/Poet.md', 'caps')}: name 'Poet': want [a-z0-9-]+",
         )
         self.assertEqual(
-            self.refused(found.read, "tasks", "Verse"),
+            self.refused(read, found, "tasks", "Verse"),
             f"{self.path('tasks/Verse.md', 'caps')}: name 'Verse': want [a-z0-9-]+",
         )
         self.assertEqual(self.refused(self.tasks_of, "Nobody", found), "unknown role 'Nobody'")
@@ -446,7 +452,7 @@ class TeamDirs(Fake):
             }
         )
         self.assertEqual(self.tasks_of("writer", found), BUILT_IN["writer"])
-        self.refused(found.check_all, self.cfg())
+        self.refused(check_all, found, self.cfg())
 
     def test_roles_without_a_charter(self):
         self.local("[roles.ghost]\ntier = 3\n")
@@ -473,7 +479,7 @@ class TeamDirs(Fake):
             (
                 {"templates/card.md": FRONT + "# Card\n"},
                 "templates/card.md",
-                lambda found: found.read("templates", "card"),
+                lambda found: read(found, "templates", "card"),
             ),
         ):
             with self.subTest(rel=rel):
@@ -529,10 +535,10 @@ class TeamDirs(Fake):
         for role in ("writer", "editor"):
             with self.subTest(role=role):
                 self.assertEqual(self.tasks_of(role, other), self.tasks_of(role))
-        self.assertEqual(team(self.root).used("writer", ["note"]), [])
-        self.assertEqual(other.used("writer", ["note"]), [])
+        self.assertEqual(used(team(self.root), "writer", ["note"]), [])
+        self.assertEqual(used(other, "writer", ["note"]), [])
         self.assertEqual(
-            other.used("poet", ["note", "card"]),
+            used(other, "poet", ["note", "card"]),
             [
                 self.path("roles/poet.md"),
                 self.path("tasks/verse.md"),
@@ -553,10 +559,10 @@ class TeamDirs(Fake):
             (poet, poet, True),
         )
         self.assertEqual(
-            found.read("tasks", "long-note"),
+            read(found, "tasks", "long-note"),
             ("# Long Note\n\nWrite a long note.\n", "tasks/long-note.md"),
         )
-        self.assertEqual(self.refused(found.read, "tasks", "nope"), "missing file tasks/nope.md")
+        self.assertEqual(self.refused(read, found, "tasks", "nope"), "missing file tasks/nope.md")
 
 
 class TeamDirChecks(Fake):

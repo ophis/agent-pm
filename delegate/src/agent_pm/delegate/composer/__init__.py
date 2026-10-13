@@ -19,16 +19,17 @@ from agent_pm.delegate.composer.base import SCHEMA, TEAM
 from agent_pm.delegate.composer.prompt import render
 from agent_pm.delegate.composer.run import access, resolve, trusted_dirs
 from agent_pm.delegate.composer.teams import (
-    Team,
     catalog,
+    check_all,
     check_overlap,
     check_team_dirs,
     index,
+    lookup,
     team,
     team_dirs,
     team_paths,
 )
-from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams
+from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 
 __all__ = [
@@ -43,6 +44,8 @@ __all__ = [
     "team",
     "team_dirs",
     "index",
+    "lookup",
+    "check_all",
     "catalog",
     "check_team_dirs",
     "check_overlap",

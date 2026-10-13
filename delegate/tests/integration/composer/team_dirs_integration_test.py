@@ -33,14 +33,14 @@ TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
 CATALOG = """from agent_pm.utils.config_file import read_project
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-team.check_all(read_project("delegate"))
+composer.check_all(team, read_project("delegate"))
 params = composer.RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
 rows = {}
 for role, tasks in composer.catalog(team).items():
     run = composer.resolve(role, team=team)
     composer.render(run, params, team=team)
-    rows[role] = [run.output["type"], team.source(team.lookup("roles", role)),
-                  {t: [what, team.source(team.lookup("tasks", t))] for t, what in tasks.items()}]
+    rows[role] = [run.output["type"], team.source(composer.lookup(team, "roles", role)),
+                  {t: [what, team.source(composer.lookup(team, "tasks", t))] for t, what in tasks.items()}]
 print(json.dumps(rows))
 """
 

@@ -4,19 +4,20 @@ commands and gate, so a caller passes only operator-controlled config as one."""
 
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from agent_pm.delegate.composer.base import CONFIG, fill, title_of
 from agent_pm.delegate.composer.teams import (
-    Team,
+    charter,
+    config_of,
     index,
+    misnamed_error,
     no_charter,
-    read,
     role_tables,
     tasks_path,
     team_or_default,
 )
-from agent_pm.delegate.composer.types import ConfigError, RunConfig
+from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.utils.config_file import LOCAL
 from agent_pm.utils.paths import real_dirs
@@ -39,18 +40,6 @@ RUN_KEYS = frozenset(
 )
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
-
-
-@dataclass(frozen=True)
-class Intent:
-    dirs: tuple[str, ...]
-    reads: tuple[str, ...]
-    writes: tuple[str, ...]
-    commands: tuple[str, ...]
-    gate: str
-    env: Mapping[str, str]
-    cwd: str
-    project: bool
 
 
 def lookup(layer: Mapping, role: str, key: str):
@@ -89,7 +78,7 @@ def resolve(
             _check_overlay(overlay, known, where)
         except ConfigError as e:
             raise ConfigError(f"{source}: {e}") from None
-    cfg = read(config, local, cfg)
+    cfg = config_of(config, local, cfg)
     _check(cfg)
     values = _run_keys(cfg, role)
     run = RunConfig(
@@ -102,21 +91,21 @@ def resolve(
     )
     for overlay in overlays:
         run = replace(run, **_run_keys(overlay, role))
-    if not (charter := team.charter(role)):
+    if not (found := charter(team, role)):
         raise no_charter(role, cfg, team)
     tasks = index(role, team, config, local, cfg=cfg)
     if task and task not in tasks:
-        raise team.misnamed_error("tasks", task) or ConfigError(
+        raise misnamed_error(team, "tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
         )
-    return replace(run, role_title=title_of(*charter))
+    return replace(run, role_title=title_of(*found))
 
 
 def trusted_dirs(
     config: str = CONFIG, local: str = LOCAL, *, cfg: Mapping | None = None
 ) -> frozenset[str]:
     try:
-        return real_dirs(read(config, local, cfg).get("trusted_dirs", []), "trusted_dirs")
+        return real_dirs(config_of(config, local, cfg).get("trusted_dirs", []), "trusted_dirs")
     except ValueError as e:
         raise ConfigError(str(e)) from None
 

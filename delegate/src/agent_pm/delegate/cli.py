@@ -181,16 +181,16 @@ def _stop(signum, frame):
 def listing(team: Team) -> str:
     """Each role and its tasks with their sources; checks every file and prompt, writing nothing."""
     composer.check_team_dirs(team.dirs, writes=[])
-    team.check_all({})
+    composer.check_all(team, {})
     lines = []
     for role, tasks in composer.catalog(team).items():
         config = composer.resolve(role, team=team)
         composer.render(config, LIST_PARAMS, team=team)
         lines.append(
-            f"{role}  {config.output['type']}  {team.source(team.lookup('roles', role))}\n"
+            f"{role}  {config.output['type']}  {team.source(composer.lookup(team, 'roles', role))}\n"
         )
         lines += [
-            f"  {t}: {what}  [{team.source(team.lookup('tasks', t))}]\n"
+            f"  {t}: {what}  [{team.source(composer.lookup(team, 'tasks', t))}]\n"
             for t, what in tasks.items()
         ]
     return "".join(lines)
