@@ -52,14 +52,13 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 
 from session.tests import fake_adapter
-from session.tests.case import Case
+from session.tests.case import SPAWNS, Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 PYTHONPATH = "/child"
 TMUX = "/opt/tmux/bin/tmux"
 BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", 5)
-SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 
 
 class BlankAdapter(fake_adapter.FakeAdapter):
