@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -763,11 +764,37 @@ class CloseStopTest(Base):
         held, remove = [], shutil.rmtree
         self.host.kill.side_effect = lambda _name: held.append(self.locked())
         with mock.patch.object(
-            shutil, "rmtree", lambda path: (held.append(self.locked()), remove(path))
+            shutil,
+            "rmtree",
+            lambda path, **kwargs: (held.append(self.locked()), remove(path, **kwargs)),
         ):
             tui.close(NAME, host=self.host)
         self.assertEqual((held, self.locked()), ([True, True], False))
         self.assertNoSessionDir()
+
+    def test_close_prevents_a_late_hook_from_recreating_files_during_removal(self):
+        self.started()
+        remove, hooks = os.rmdir, []
+        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
+
+        def remove_after_hook(path, *args, **kwargs):
+            hooks.append(
+                subprocess.run(
+                    [sys.executable, "-I", hook, self.dir, "stop"],
+                    input=b"{}",
+                    capture_output=True,
+                    check=True,
+                    timeout=5,
+                )
+            )
+            return remove(path, *args, **kwargs)
+
+        with mock.patch.object(os, "rmdir", remove_after_hook):
+            tui.close(NAME, host=self.host)
+        self.assertEqual(len(hooks), 1)
+        self.assertIn(b"session.json", hooks[0].stderr)
+        self.assertNoSessionDir()
+        self.assertEqual(os.listdir(self.root), [f"{NAME}.lock"])
 
     def test_close_of_an_absent_session_removes_its_dir(self):
         self.started()

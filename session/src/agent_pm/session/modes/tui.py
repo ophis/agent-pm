@@ -6,7 +6,6 @@ import contextlib
 import fcntl
 import json
 import os
-import shutil
 import signal
 import stat
 import sys
@@ -107,7 +106,9 @@ def _remove(path: str, made: os.stat_result | None = None) -> None:
     except FileNotFoundError:
         return
     if stat.S_ISDIR(st.st_mode) and (made is None or os.path.samestat(st, made)):
-        shutil.rmtree(path)
+        # A hook may outlive its pane; retire its public path before deleting files.
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(path), prefix=".closed-") as retired:
+            os.rename(path, retired)
 
 
 def _tui_dir() -> None:
@@ -192,7 +193,7 @@ class TuiMode:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
                     raise DriverError(f"{mode.dir}: not a directory")
-                shutil.rmtree(mode.dir)
+                _remove(mode.dir)
             os.mkdir(mode.dir, 0o700)
             mode._made = os.lstat(mode.dir)
         except FileExistsError:
