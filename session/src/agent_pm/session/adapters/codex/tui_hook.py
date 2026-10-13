@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import runpy
 import os
+import runpy
 import sys
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
@@ -30,14 +30,13 @@ def bind(label, value, workdir, sid, *, root=None):
     ):
         return False
     try:
-        state = sessions.load_session(workdir, sid, root=root)
+        store = sessions.SessionStore(root)
+        state = store.load(workdir, sid)
         if state is None:
             raise sessions.RecoveryError("missing Codex recovery state")
         if os.path.realpath(value["cwd"]) != state.snapshot["cwd"]:
             return False
-        sessions.bind_session(
-            workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5, root=root
-        )
+        store.bind(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
     except (sessions.RecoveryError, OSError, ValueError) as exc:
         print(f"codex hook: {exc}", file=sys.stderr)
         return False

@@ -82,7 +82,7 @@ def hook_trust(
     listing=None,
 ) -> str:
     listing = hooks_list if listing is None else listing
-    root = sessions.store_directory(create=False, root=root)
+    root = sessions.SessionStore(root).directory(create=False)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
     lock = os.path.join(
@@ -190,7 +190,7 @@ def _start(argv, termination, trust):
     data = _launch_data(argv)
     commands = data["commands"]
     sessions.absolute_path(data["store"], "store")
-    state = sessions.load_session(data["workdir"], data["sid"], root=data["store"])
+    state = sessions.SessionStore(data["store"]).load(data["workdir"], data["sid"])
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     env = {**os.environ, "CODEX_HOME": state.snapshot["codex_home"]}

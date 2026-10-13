@@ -44,7 +44,7 @@ class HookTest(Base):
         state = {
             "workdir": str(self.work),
             "sid": self.spec.sid,
-            "adapter_state": {"store": sessions.store_root()},
+            "adapter_state": {"store": sessions.SessionStore().root},
         }
         self.assertTrue(tui_hook.on_hook("Stop", payload, state))
         self.assertEqual(payload["hook_event_name"], "Stop")
@@ -69,7 +69,7 @@ class HookTest(Base):
             "words": {},
             "tmux_path": sys.executable,
             "adapter_hook": tui_hook.__file__,
-            "adapter_state": {"store": sessions.store_root()},
+            "adapter_state": {"store": sessions.SessionStore().root},
         }
         (folder / "session.json").write_text(json.dumps(state))
         result = subprocess.run(
@@ -123,7 +123,7 @@ class HookTest(Base):
 
     def test_explicit_caller_store_survives_configured_runtime_home(self):
         self.prepare()
-        store = sessions.store_root()
+        store = sessions.SessionStore().root
         runtime_home = self.root / "runtime-home"
         runtime_home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
@@ -167,26 +167,25 @@ class HookTest(Base):
         runtime_home = self.cwd / "runtime-home"
         runtime_home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
-            self.assertEqual(sessions.recovery_snapshot(state, root=store), state.snapshot)
-            self.assertEqual(sessions.read_state(str(record), root=store), state)
+            self.assertEqual(sessions.SessionStore(store).snapshot(state), state.snapshot)
+            self.assertEqual(sessions.SessionStore(store)._read(str(record)), state)
             self.assertEqual(
-                sessions.load_session(str(self.work), self.spec.sid, root=store), state
+                sessions.SessionStore(store).load(str(self.work), self.spec.sid), state
             )
-            bound = sessions.bind_session(str(self.work), self.spec.sid, NATIVE, root=store)
+            bound = sessions.SessionStore(store).bind(str(self.work), self.spec.sid, NATIVE)
             self.assertEqual(bound.native_id, NATIVE)
             self.assertTrue(
                 tui_hook.bind("Stop", self.payload(), str(self.work), self.spec.sid, root=store)
             )
-            fresh = sessions.create_session(
+            fresh = sessions.SessionStore(store).create(
                 str(self.work),
                 "explicit-store",
                 state.snapshot,
                 state.writable_roots,
                 persist=False,
-                root=store,
             )
-            self.assertEqual(sessions.save_session(fresh, root=store), fresh)
-            self.assertEqual(sessions.load_session(str(self.work), fresh.sid, root=store), fresh)
+            self.assertEqual(sessions.SessionStore(store).save(fresh), fresh)
+            self.assertEqual(sessions.SessionStore(store).load(str(self.work), fresh.sid), fresh)
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         self.assertFalse((runtime_home / ".agent-pm").exists())
 
@@ -201,14 +200,14 @@ class HookTest(Base):
         copied.chmod(0o600)
         root = str(unsafe)
         calls = (
-            lambda: sessions.recovery_snapshot(state, root=root),
-            lambda: sessions.read_state(str(copied), root=root),
-            lambda: sessions.load_session(str(self.work), self.spec.sid, root=root),
-            lambda: sessions.bind_session(str(self.work), self.spec.sid, NATIVE, root=root),
-            lambda: sessions.create_session(
-                str(self.work), "unsafe-store", state.snapshot, state.writable_roots, root=root
+            lambda: sessions.SessionStore(root).snapshot(state),
+            lambda: sessions.SessionStore(root)._read(str(copied)),
+            lambda: sessions.SessionStore(root).load(str(self.work), self.spec.sid),
+            lambda: sessions.SessionStore(root).bind(str(self.work), self.spec.sid, NATIVE),
+            lambda: sessions.SessionStore(root).create(
+                str(self.work), "unsafe-store", state.snapshot, state.writable_roots
             ),
-            lambda: sessions.save_session(state, root=root),
+            lambda: sessions.SessionStore(root).save(state),
         )
         for call in calls:
             with (

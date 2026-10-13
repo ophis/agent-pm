@@ -13,7 +13,7 @@ from unittest import mock
 
 from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.codex.sessions import store_root
+from agent_pm.session.adapters.codex.sessions import SessionStore
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
@@ -140,7 +140,7 @@ class HeadlessSessions(Case):
         return records.read(records.path(str(self.work)))
 
     def record(self):
-        return next(Path(store_root()).glob("*.json"))
+        return next(Path(SessionStore().root).glob("*.json"))
 
     def expected_args(self, prompt, *, resume=False, sandbox="danger-full-access"):
         args = [
@@ -491,7 +491,7 @@ class HeadlessLaunchIntegrationTest(HeadlessSessions):
     def test_configured_tmpdir_store_overlap_refused_before_fresh_spawn(self):
         alias = self.root / "home-alias"
         alias.symlink_to(self.home)
-        store = Path(store_root())
+        store = Path(SessionStore().root)
         for index, root in enumerate((self.home, self.home / ".agent-pm", store, alias)):
             with self.subTest(root=root):
                 self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(root)

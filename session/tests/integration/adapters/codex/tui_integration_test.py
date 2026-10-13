@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import tui_start
-from agent_pm.session.adapters.codex.sessions import store_root
+from agent_pm.session.adapters.codex.sessions import SessionStore
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
@@ -209,7 +209,7 @@ class Live(Case):
         return self.common.load(str(self.work), sid or self.sid)
 
     def record(self):
-        return next(Path(store_root()).glob("*.json"))
+        return next(Path(SessionStore().root).glob("*.json"))
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
@@ -813,7 +813,7 @@ class TuiLaunchIntegrationTest(Live):
         fresh = self.driver.writable_dirs("codex", self.spec)
         self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
-        self.assertFalse(Path(store_root()).parent.exists())
+        self.assertFalse(Path(SessionStore().root).parent.exists())
         self.assertEqual(self.logged(), [])
         first = self.start()
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
@@ -876,7 +876,7 @@ class TuiRecoveryIntegrationTest(Live):
         )
         self.assertEqual(self.calls()[-1]["argv"][:2], ["resume", native])
         self.assertEqual(
-            list(Path(store_root()).glob("*.json")),
+            list(Path(SessionStore().root).glob("*.json")),
             [self.record()],
         )
 

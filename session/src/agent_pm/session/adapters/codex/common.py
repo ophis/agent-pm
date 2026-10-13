@@ -6,7 +6,7 @@ import re
 import sys
 from dataclasses import replace
 from datetime import datetime
-from functools import wraps
+from functools import cached_property, wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.codex.sessions import (
@@ -14,24 +14,17 @@ from agent_pm.session.adapters.codex.sessions import (
     RecoveryError,
     SessionFile,
     SessionState,
+    SessionStore,
     absolute_path,
     added_dirs,
-    bind_session,
     check_writable_roots,
-    create_session,
     implicit_writable_roots,
     inside,
-    load_session,
     native_id,
     read_metadata,
-    read_state,
-    recovery_snapshot,
-    save_session,
     session_file,
     session_identity,
     session_paths,
-    store_directory,
-    store_root,
     validate_snapshot,
 )
 from agent_pm.session.adapters.common import check, number, resume_command
@@ -241,6 +234,10 @@ class CodexCommon:
         self.config = dict(config)
         check(config, TABLE)
 
+    @cached_property
+    def store(self) -> SessionStore:
+        return SessionStore()
+
     def _mapped(self, name, value):
         if value is None:
             return None
@@ -257,10 +254,10 @@ class CodexCommon:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
-            snapshot = recovery_snapshot(state)
+            snapshot = self.store.snapshot(state)
             refuse(tuple(snapshot["flags"]))
             check_writable_roots(
-                store_root(), implicit_writable_roots({**os.environ, **snapshot["env"]})
+                self.store.root, implicit_writable_roots({**os.environ, **snapshot["env"]})
             )
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
@@ -275,7 +272,7 @@ class CodexCommon:
             **spec.access.env,
             **spec.env,
         }
-        check_writable_roots(store_root(), implicit_writable_roots(environment))
+        check_writable_roots(self.store.root, implicit_writable_roots(environment))
         roots = self._new_roots(spec)
         workdir, sid = session_identity(spec.workdir, spec.sid)
         cwd, home, *_ = roots
@@ -294,7 +291,7 @@ class CodexCommon:
                 "env": {**self.config.get("env", {}), **spec.access.env, **spec.env},
             }
         )
-        return create_session(workdir, sid, snapshot, roots, persist=persist)
+        return self.store.create(workdir, sid, snapshot, roots, persist=persist)
 
     def _new_roots(self, spec) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")
@@ -336,15 +333,15 @@ class CodexCommon:
 
     @_recover
     def save(self, state: SessionState) -> SessionState:
-        return save_session(state)
+        return self.store.save(state)
 
     @_recover
     def load(self, workdir: str, sid: object) -> SessionState | None:
-        return load_session(workdir, sid)
+        return self.store.load(workdir, sid)
 
     @_recover
     def bind(self, workdir: str, sid: str, identifier: str) -> SessionState:
-        return bind_session(workdir, sid, identifier)
+        return self.store.bind(workdir, sid, identifier)
 
     def environment(self, snapshot: dict, *, interactive: bool = False) -> dict[str, str]:
         return {
@@ -393,20 +390,7 @@ class CodexCommon:
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
-        cwd = absolute_path(cwd, "cwd")
-        root = store_directory(create=False)
-        if root is None:
-            return None
-        matches = []
-        with os.scandir(root) as entries:
-            for entry in entries:
-                if entry.name.endswith(".json"):
-                    state = read_state(entry.path)
-                    if state is not None and state.sid == sid and state.snapshot["cwd"] == cwd:
-                        matches.append(state)
-        if len(matches) > 1:
-            raise ConfigError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")
-        return matches[0] if matches else None
+        return self.store.lookup(sid, cwd)
 
     @_recover
     def last_active(self, state: SessionState, found: SessionFile) -> float:
