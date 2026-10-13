@@ -1070,23 +1070,52 @@ class MainTest(WorkerCase):
                     self.assertNotIn("config", err)
             self.api = workers
 
-    def test_non_start_command_does_not_read_session_configuration(self):
+    def test_non_start_commands_do_not_read_session_configuration(self):
         roster.ensure(self.directory)
-        self.local("x = \n")
-        out, err = io.StringIO(), io.StringIO()
         process = mock.MagicMock()
         process.__enter__.return_value = process
         process.communicate.return_value = ("", "no server running")
         process.poll.return_value = process.returncode = 1
-        with (
-            mock.patch.object(subprocess, "Popen", return_value=process),
-            contextlib.redirect_stdout(out),
-            contextlib.redirect_stderr(err),
-        ):
-            code = crew.main(["release", "--manager", "m1"])
-        self.assertEqual(code, 0, err.getvalue())
-        self.assertEqual(err.getvalue(), "")
-        self.assertEqual(out.getvalue(), f"workers: released {self.directory}\n")
+        event = "10:00:01 w1-drive outcome done"
+        cases = (
+            (["release", "--manager", "m1"], 0, f"workers: released {self.directory}\n", ""),
+            (["note", "w1", "new", "--manager", "m1"], 0, "", ""),
+            (["stop", "w1", "--manager", "m1"], 0, "", ""),
+            (["forget", "w1", "--manager", "m1"], 0, "", ""),
+            (
+                ["stop-all", "--dry-run"],
+                1,
+                "",
+                "workers: stop-all: not in tmux: run it in the manager's tmux session\n",
+            ),
+            (
+                ["next-event", "--manager", "m1", "--after", "0", "--gen", "0"],
+                0,
+                nl(f"1 {event}"),
+                "",
+            ),
+        )
+        for config in ("x = \n", '[hosts]\ndefault = "nope"\n'):
+            self.local(config)
+            for argv, expected_code, expected_out, expected_err in cases:
+                with self.subTest(config=config, command=argv[0]):
+                    with roster.locked(self.directory) as data:
+                        data.update(
+                            holder=None, cursor=0, gen=0, entries={"w1": entry(cwd=self.dir)}
+                        )
+                    with open(roster.events(self.directory), "w") as file:
+                        file.write(event + "\n")
+                    out, err = io.StringIO(), io.StringIO()
+                    with (
+                        mock.patch.object(subprocess, "Popen", return_value=process),
+                        contextlib.redirect_stdout(out),
+                        contextlib.redirect_stderr(err),
+                    ):
+                        code = crew.main(argv)
+                    self.assertEqual(
+                        (code, out.getvalue(), err.getvalue()),
+                        (expected_code, expected_out, expected_err),
+                    )
 
     def test_reply(self):
         for reply, want in (("done", (0, "done\n", "")), ("", (0, "", "")), (None, (0, "", ""))):
