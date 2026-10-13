@@ -41,12 +41,11 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.session.engine.validation import sid_error
 from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.utils import STATE, printable_abs
+from agent_pm.utils import STATE, printable_abs, sid_error
 
 
 @dataclass(frozen=True, kw_only=True)

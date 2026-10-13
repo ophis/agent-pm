@@ -9,8 +9,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from agent_pm.session.adapters.errors import ConfigError
-from agent_pm.session.engine.validation import clean_string, env_ok, sid_error, string_tuple
-from agent_pm.utils import printable_abs
+from agent_pm.utils import printable_abs, sid_error
 
 __all__ = [
     "Access",
@@ -41,6 +40,21 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TAG = re.compile(r"[A-Za-z0-9_-]+")
 
 
+def _string_tuple(value) -> bool:
+    return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
+
+
+def _clean_string(value) -> bool:
+    return isinstance(value, str) and "\0" not in value
+
+
+def _env_ok(env) -> bool:
+    return isinstance(env, Mapping) and all(
+        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
+        for k, v in env.items()
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class Access:
     dirs: tuple[str, ...] = ()
@@ -52,9 +66,9 @@ class Access:
 
     def __post_init__(self):
         for name in ("dirs", "commands", "reads"):
-            if not string_tuple(getattr(self, name)):
+            if not _string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
-        if not env_ok(self.env):
+        if not _env_ok(self.env):
             raise ConfigError(
                 "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
             )
@@ -93,9 +107,9 @@ class Spec:
         self._validate_invocation()
 
     def _validate_invocation(self) -> None:
-        if not (isinstance(self.flags, tuple) and all(map(clean_string, self.flags))):
+        if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
             raise ConfigError("flags must be a tuple of strings without NUL")
-        if not env_ok(self.env):
+        if not _env_ok(self.env):
             raise ConfigError("env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if self.name is not None and not isinstance(self.name, str):
@@ -136,13 +150,13 @@ class Launch:
             raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
-            ("argv", isinstance(self.argv, tuple) and all(map(clean_string, self.argv))),
+            ("argv", isinstance(self.argv, tuple) and all(map(_clean_string, self.argv))),
             (
                 "env",
                 isinstance(env, Mapping)
-                and all(clean_string(k) and clean_string(v) for k, v in env.items()),
+                and all(_clean_string(k) and _clean_string(v) for k, v in env.items()),
             ),
-            ("unset", isinstance(self.unset, tuple) and all(map(clean_string, self.unset))),
+            ("unset", isinstance(self.unset, tuple) and all(map(_clean_string, self.unset))),
         ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")

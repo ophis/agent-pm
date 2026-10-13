@@ -17,6 +17,7 @@ from agent_pm.utils.repos import NAME, OWNER, Invalid, Repo, check_slug, checkou
 from agent_pm.utils.shell import LONG, SHORT, Runner, err_text, redact, sh
 from agent_pm.utils.text import printable
 from agent_pm.utils.types import ConfinedFileError, ConfinedReason
+from agent_pm.utils.validation import sid_error
 
 __all__ = [
     "CLASS_PATH",
@@ -58,6 +59,7 @@ __all__ = [
     "resolve",
     "save",
     "sh",
+    "sid_error",
     "temp_dirs",
     "under",
     "unfenced",

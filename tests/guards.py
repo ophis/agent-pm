@@ -655,7 +655,7 @@ def _data_type(node, bound):
 
 
 def types_only(repo: str) -> list[str]:
-    found = []
+    found, private = [], {}
     for project in PROJECTS:
         src = os.path.join(repo, project, "src")
         for rel, text in _files(src, ".py"):
@@ -666,9 +666,13 @@ def types_only(repo: str) -> list[str]:
             kinds = _type_kinds(tree, bound)
             for node in _module_nodes(tree):
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    found.append(
-                        f"{project}/src/{rel}:{node.lineno}: types module function {node.name}"
-                    )
+                    if _private(node.name):
+                        module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+                        private[f"{module}.{node.name}"] = f"{project}/src/{rel}"
+                    else:
+                        found.append(
+                            f"{project}/src/{rel}:{node.lineno}: types module function {node.name}"
+                        )
                 elif isinstance(node, ast.ClassDef):
                     kind = kinds.get(node.name)
                     if kind is None:
@@ -677,7 +681,26 @@ def types_only(repo: str) -> list[str]:
                         )
                     else:
                         found += _type_methods(project, rel, node, kind, bound)
-    return sorted(found)
+    return sorted([*found, *_types_private_uses(repo, private)])
+
+
+def _types_private_uses(repo, private):
+    found = set()
+    modules = _source_modules(repo, PROJECTS)
+    for rel, text in _tree_files(repo, ".py"):
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        uses = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                uses.extend((node.lineno, f"{node.module}.{a.name}") for a in node.names)
+            elif isinstance(node, ast.Name | ast.Attribute):
+                uses.append((node.lineno, _dotted(node, bound)))
+        for line, name in uses:
+            name = _resolve_boundary(name, modules)
+            if name in private and rel != private[name]:
+                found.add(f"{rel}:{line}: private types helper {name} used outside its module")
+    return found
 
 
 def _module_nodes(tree):

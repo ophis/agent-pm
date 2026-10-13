@@ -17,7 +17,6 @@ from agent_pm.session.adapters.base import (
     Tui,
 )
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine import validation
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -38,6 +37,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.utils import sid_error
 
 from session.tests.case import Case
 
@@ -636,7 +636,7 @@ class SidErrorTest(Case):
     def test_none_for_a_non_empty_printable_string_without_a_slash(self):
         for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
             with self.subTest(sid=sid):
-                self.assertIsNone(validation.sid_error(sid))
+                self.assertIsNone(sid_error(sid))
 
     def test_the_error_text_otherwise(self):
         for bad, shown in (
@@ -649,7 +649,7 @@ class SidErrorTest(Case):
         ):
             with self.subTest(bad=bad):
                 self.assertEqual(
-                    validation.sid_error(bad),
+                    sid_error(bad),
                     f'sid must be a non-empty printable string without "/", got {shown}',
                 )
 

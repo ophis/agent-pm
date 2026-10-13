@@ -334,6 +334,37 @@ class TypesOnly(Sample):
         )
         self.assertEqual(self.found("def helper(): pass\n", "logic.py"), [])
 
+    def test_private_helpers_used_inside_the_file_are_allowed(self):
+        source = (
+            "from dataclasses import dataclass\n"
+            "def _valid(value): return value > 0\n"
+            "async def _async(value): return _valid(value)\n"
+            "@dataclass\nclass Data:\n    value: int\n"
+            "    def __post_init__(self): assert _valid(self.value)\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_private_helpers_cannot_be_imported_or_used_in_other_files(self):
+        for source, line in (
+            ("from agent_pm.utils.types import _valid as valid\n", 1),
+            ("from agent_pm.utils import types as data\ndata._valid(1)\n", 2),
+            ("import agent_pm.utils.types as data\ndata._valid(1)\n", 2),
+        ):
+            with self.subTest(source=source):
+                root = self.tree(
+                    {
+                        f"{self.HOME}/types.py": "def _valid(value): return value > 0\n",
+                        f"{self.HOME}/consumer.py": source,
+                    }
+                )
+                self.assertEqual(
+                    guards.types_only(root),
+                    [
+                        f"{self.HOME}/consumer.py:{line}: private types helper "
+                        "agent_pm.utils.types._valid used outside its module"
+                    ],
+                )
+
     def test_plain_classes_are_reported(self):
         self.assertEqual(
             self.found("class Worker:\n    pass\n"),
