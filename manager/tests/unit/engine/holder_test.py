@@ -3,6 +3,7 @@
 import contextlib
 import errno
 import json
+import multiprocessing
 import os
 import select
 import signal
@@ -16,6 +17,16 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held
 
 from manager.tests.case import PY, Case, child_env
+
+
+def _hold_contender(directory, barrier, release, outcomes):
+    barrier.wait(timeout=10)
+    try:
+        with Roster(directory).hold(str(os.getpid())) as lease:
+            outcomes.put(("held", os.getpid(), lease.id, lease.generation))
+            release.wait()
+    except Held:
+        outcomes.put(("refused", os.getpid(), None, None))
 
 
 class HolderTest(Case):
@@ -177,6 +188,49 @@ class HolderTest(Case):
         self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
         with self.roster.hold("challenger") as lease:
             self.assertEqual(lease.generation, 2)
+
+    def test_simultaneous_native_processes_allow_exactly_one_holder(self):
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(3)
+        release = context.Event()
+        outcomes = context.Queue()
+        self.addCleanup(outcomes.join_thread)
+        self.addCleanup(outcomes.close)
+
+        def finish(process):
+            if process.is_alive():
+                process.terminate()
+            process.join(3)
+            if process.is_alive():
+                process.kill()
+                process.join(10)
+            self.assertFalse(process.is_alive())
+
+        contenders = [
+            context.Process(
+                target=_hold_contender, args=(self.directory, barrier, release, outcomes)
+            )
+            for _ in range(2)
+        ]
+        for process in contenders:
+            process.start()
+            self.addCleanup(finish, process)
+        self.addCleanup(release.set)
+        barrier.wait(timeout=10)
+        results = [outcomes.get(timeout=10), outcomes.get(timeout=10)]
+        self.assertCountEqual([result[0] for result in results], ["held", "refused"])
+        winner = next(result for result in results if result[0] == "held")
+        self.assertTrue(
+            any(process.pid == winner[1] and process.is_alive() for process in contenders)
+        )
+        ledger = json.loads(Path(self.roster.path).read_text())
+        self.assertEqual(ledger["holder"]["id"], winner[2])
+        self.assertEqual(ledger["lease_gen"], winner[3])
+        self.assertEqual(winner[3], 1)
+        release.set()
+        for process in contenders:
+            process.join(10)
+            self.assertEqual(process.exitcode, 0)
 
     def test_child_cannot_keep_dead_wrappers_lock(self):
         ready = Path(self.home, "ready")
