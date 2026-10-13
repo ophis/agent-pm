@@ -23,6 +23,7 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
+from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import api
 from agent_pm.utils.config_file import LOCAL, read_project
 
@@ -68,15 +69,7 @@ MANAGER_DIR = "manager directory"
 WORKER_DIR = "worker directory"
 
 
-class RosterError(Exception):
-    pass
-
-
 class Held(RosterError):
-    pass
-
-
-class Stale(RosterError):
     pass
 
 
