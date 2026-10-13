@@ -9,8 +9,8 @@ from agent_pm.session.adapters.codex.common.types import (
     native_id,
     reset_at,
 )
+from agent_pm.session.adapters.codex.persistence.snapshot import split_flags
 from agent_pm.session.adapters.codex.persistence.types import SessionState
-from agent_pm.session.adapters.codex.sessions import split_flags
 from agent_pm.session.adapters.types import Headless
 from agent_pm.session.engine.types import (
     Activity,
