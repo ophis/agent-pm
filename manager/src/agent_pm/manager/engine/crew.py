@@ -525,14 +525,14 @@ def _reopen(
 ) -> tuple[dict, list]:
     shown, opened = {}, []
     for name in sorted(panes):
-        session, e = panes[name], entries[name]
-        if live[session].shown is not None:
-            shown[name] = live[session].shown or "a terminal"
+        live_name, e = panes[name], entries[name]
+        if live[live_name].shown is not None:
+            shown[name] = live[live_name].shown or "a terminal"
             continue
-        print(f"tui: session {session}: {driver.attach_command(session)}", file=sys.stderr)
+        print(f"tui: session {live_name}: {driver.attach_command(live_name)}", file=sys.stderr)
         with _driver():
-            driver.show(session, split=e["split"], split_from=e["split_from"])
-        opened.append((name, e["kind"], e["sid"], session))
+            driver.show(live_name, split=e["split"], split_from=e["split_from"])
+        opened.append((name, e["kind"], e["sid"], live_name))
     return shown, opened
 
 
@@ -607,10 +607,10 @@ def attach(
         if opened:
             live = _live()
             with roster.locked(directory) as r:
-                for name, kind, sid, session in opened:
+                for name, kind, sid, live_name in opened:
                     e = r["entries"].get(name)
-                    if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
-                        _place(r, name, live[session])
+                    if e is not None and (e["kind"], e["sid"]) == (kind, sid) and live_name in live:
+                        _place(r, name, live[live_name])
         table = _table(r["entries"], shown)
     except RosterError as e:
         raise WorkersError(str(e)) from e
@@ -732,10 +732,10 @@ def stop_all(own: str | None, *, dry_run: bool = False) -> tuple[list[str], list
             pass
     read: dict[str, dict] = {}
 
-    def entries(session: str):
-        if session not in read:
-            read[session] = _entries(roster.directory(session))
-        return read[session]
+    def entries(manager: str):
+        if manager not in read:
+            read[manager] = _entries(roster.directory(manager))
+        return read[manager]
 
     chosen = opened(own, _live(), entries)
     pipelines = {k for es in read.values() for k, e in es.items() if e["kind"] == "pipeline"}
