@@ -32,44 +32,20 @@ from agent_pm.manager.engine.types import RosterError, Stale
 from agent_pm.session import Driver, DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
 
-
-class Held(RosterError):
-    pass
-
-
+ROOT = f"{STATE}/managers"
+WORKERS = f"{STATE}/workers"
 NAME = re.compile(r"[A-Za-z0-9_-]+")
-
-
 SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-
-
 VERSION = 1
-
-
 KINDS = ("worker", "role", "pipeline")
-
-
 STATES = ("working", "done", "blocked", "dead", "gone", "waiting", "finished")
-
-
 SPLITS = ("right", "below")
-
-
 SCRIPTS = ("crew.py", "drive.py", "router.py")
-
-
+# Old script and module names still validate; recovery rewrites them to CREW_MODULE.
 LEGACY = "workers.py"
-
-
-LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
-
-
+CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
 CREW_MODULE = ("-P", "-m", "agent_pm.manager.engine.crew")
-
-
 TOP = ("version", "holder", "cursor", "gen", "entries")
-
-
 FIELDS = (
     "kind",
     "sid",
@@ -84,177 +60,21 @@ FIELDS = (
     "state",
     "started",
 )
-
-
 NOTE_MAX = 500
-
-
 ID_MAX = 200
-
-
-def printable(text: str) -> bool:
-    # so a printed field stays one table cell or one command
-    return not any(unicodedata.category(c) == "Cc" or c in "\u2028\u2029" for c in text)
-
-
-def _or(words) -> str:
-    return f"{', '.join(words[:-1])} or {words[-1]}"
-
-
-def _match(pattern: re.Pattern, value) -> bool:
-    return isinstance(value, str) and pattern.fullmatch(value) is not None
-
-
-def _text(value) -> bool:
-    return isinstance(value, str) and printable(value)
-
-
-def _id(value) -> bool:
-    return value is None or (
-        _text(value) and 0 < len(value) <= ID_MAX and not any(c.isspace() for c in value)
-    )
-
-
-_TIME = "an ISO 8601 time with a UTC offset"
-
-
-def _time(value) -> bool:
-    if not _text(value):
-        return False
-    try:
-        return datetime.datetime.fromisoformat(value).utcoffset() is not None
-    except ValueError:
-        return False
-
-
-def _want(field: str, value, want) -> str:
-    return f"{field}: {value!r}: want {want}"
-
-
-def _keys(value: dict, want: tuple) -> str | None:
-    missing, extra = (
-        sorted(set(want) - set(value), key=str),
-        sorted(set(value) - set(want), key=str),
-    )
-    parts = [
-        *([f"missing {missing!r}"] if missing else []),
-        *([f"unexpected {extra!r}"] if extra else []),
-    ]
-    return f"keys: {', '.join(parts)}" if parts else None
-
-
-_NAME_OR_NULL = (lambda v: v is None or _match(NAME, v), "a session name or null")
-
-
-_ID = (_id, f"null or a printable string of 1–{ID_MAX} characters without whitespace")
-
-
-_CHECKS = {
-    "kind": (lambda v: v in KINDS, _or(KINDS)),
-    "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
-    "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
-    "note": (
-        lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
-        f"null or a printable string of at most {NOTE_MAX} characters",
-    ),
-    "opener": _ID,
-    "pane": _ID,
-    "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
-    "split_from": _NAME_OR_NULL,
-    "tui": _NAME_OR_NULL,
-    "state": (lambda v: v in STATES, _or(STATES)),
-    "started": (_time, _TIME),
-}
-
-
-def _resume_fault(resume) -> str | None:
-    if not (isinstance(resume, list) and len(resume) >= 2 and all(_text(x) for x in resume)):
-        return _want("resume", resume, "a list of 2 or more printable strings")
-    if not os.path.isabs(resume[0]):
-        return _want("resume[0]", resume[0], "an absolute path")
-    if tuple(resume[1:4]) in (CREW_MODULE, LEGACY_MODULE):
-        return None
-    if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
-        want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
-        return _want("resume[1]", resume[1], want)
-    return None
-
-
-def _value_fault(value) -> str | None:
-    if not isinstance(value, dict):
-        return _want("value", value, "an object")
-    if bad := _keys(value, FIELDS):
-        return bad
-    for field in FIELDS:
-        if field == "resume":
-            bad = _resume_fault(value[field])
-        else:
-            ok, want = _CHECKS[field]
-            bad = None if ok(value[field]) else _want(field, value[field], want)
-        if bad:
-            return bad
-    return None
-
-
-def _fault(name, value) -> str | None:
-    if not _match(NAME, name):
-        return f"name: want {NAME.pattern}"
-    return _value_fault(value)
-
-
-def _holder_fault(holder) -> str | None:
-    if holder is None:
-        return None
-    if not isinstance(holder, dict):
-        return "holder: want null or an object with session and since"
-    if bad := _keys(holder, ("session", "since")):
-        return f"holder: {bad}"
-    if not _match(NAME, holder["session"]):
-        return _want("holder.session", holder["session"], "a session name")
-    if not _time(holder["since"]):
-        return _want("holder.since", holder["since"], _TIME)
-    return None
-
-
-def _top_fault(data) -> str | None:
-    if not isinstance(data, dict):
-        return "want a JSON object"
-    if bad := _keys(data, TOP):
-        return bad
-    if type(data["version"]) is not int or data["version"] != VERSION:
-        return _want("version", data["version"], VERSION)
-    if bad := _holder_fault(data["holder"]):
-        return bad
-    for field in ("cursor", "gen"):
-        if type(data[field]) is not int or data[field] < 0:
-            return _want(field, data[field], "a non-negative integer")
-    return None if isinstance(data["entries"], dict) else "entries: want an object"
-
-
-def _validated(data, path: str, *, strict: bool) -> dict:
-    if bad := _top_fault(data):
-        raise RosterError(f"{path}: {bad}")
-    entries = {}
-    for name, value in data["entries"].items():
-        if bad := _fault(name, value):
-            if strict:
-                raise RosterError(f"{path}: entry {name!r}: {bad}")
-            print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
-        else:
-            entries[name] = value
-    return {**data, "entries": entries}
-
-
-ROOT = f"{STATE}/managers"
-
-
-WORKERS = f"{STATE}/workers"
-
-
+ROSTER_MAX = 1 << 20
+EVENTS_MAX = 1 << 20
+SETTLE = 1
+BLOCK = 1 << 16
+LOCK_TIMEOUT = 30
+POLL = 0.1
+CONTINUE = "Continue the unfinished task."
 MANAGER_DIR = "manager directory"
-
-
 WORKER_DIR = "worker directory"
+
+
+class Held(RosterError):
+    pass
 
 
 @overload
@@ -334,41 +154,6 @@ def default_runtime(local: str = LOCAL) -> str:
     return runtime
 
 
-def home(name: str | None, events: str | None, *, driver=None) -> str | None:
-    d = directory(name, driver=driver)
-    if d is None or not os.path.isdir(d) or events is None:
-        return None
-    return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
-
-
-def _configure():
-    return Driver.from_config(read_project("session"))
-
-
-CREW = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "crew.py"))
-
-
-ROSTER_MAX = 1 << 20
-
-
-EVENTS_MAX = 1 << 20
-
-
-SETTLE = 1
-
-
-BLOCK = 1 << 16
-
-
-LOCK_TIMEOUT = 30
-
-
-POLL = 0.1
-
-
-CONTINUE = "Continue the unfinished task."
-
-
 def events(directory: str, *, create: bool = True) -> str:
     directory = os.path.abspath(directory)
     path = os.path.join(directory, "events")
@@ -379,8 +164,121 @@ def events(directory: str, *, create: bool = True) -> str:
     return path
 
 
+def home(name: str | None, events: str | None, *, driver=None) -> str | None:
+    d = directory(name, driver=driver)
+    if d is None or not os.path.isdir(d) or events is None:
+        return None
+    return d if os.path.realpath(events) == os.path.realpath(os.path.join(d, "events")) else None
+
+
+def printable(text: str) -> bool:
+    # so a printed field stays one table cell or one command
+    return not any(unicodedata.category(c) == "Cc" or c in "\u2028\u2029" for c in text)
+
+
 def now() -> str:
     return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+
+
+def _or(words) -> str:
+    return f"{', '.join(words[:-1])} or {words[-1]}"
+
+
+def _match(pattern: re.Pattern, value) -> bool:
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _text(value) -> bool:
+    return isinstance(value, str) and printable(value)
+
+
+def _id(value) -> bool:
+    return value is None or (
+        _text(value) and 0 < len(value) <= ID_MAX and not any(c.isspace() for c in value)
+    )
+
+
+_TIME = "an ISO 8601 time with a UTC offset"
+
+
+def _time(value) -> bool:
+    if not _text(value):
+        return False
+    try:
+        return datetime.datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
+def _want(field: str, value, want) -> str:
+    return f"{field}: {value!r}: want {want}"
+
+
+def _keys(value: dict, want: tuple) -> str | None:
+    missing, extra = (
+        sorted(set(want) - set(value), key=str),
+        sorted(set(value) - set(want), key=str),
+    )
+    parts = [
+        *([f"missing {missing!r}"] if missing else []),
+        *([f"unexpected {extra!r}"] if extra else []),
+    ]
+    return f"keys: {', '.join(parts)}" if parts else None
+
+
+_NAME_OR_NULL = (lambda v: v is None or _match(NAME, v), "a session name or null")
+_ID = (_id, f"null or a printable string of 1–{ID_MAX} characters without whitespace")
+_CHECKS = {
+    "kind": (lambda v: v in KINDS, _or(KINDS)),
+    "sid": (lambda v: v is None or _match(SID, v), "a session id or null"),
+    "cwd": (lambda v: _text(v) and os.path.isabs(v), "an absolute printable path"),
+    "note": (
+        lambda v: v is None or _text(v) and len(v) <= NOTE_MAX,
+        f"null or a printable string of at most {NOTE_MAX} characters",
+    ),
+    "opener": _ID,
+    "pane": _ID,
+    "split": (lambda v: v is None or v in SPLITS, _or([*SPLITS, "null"])),
+    "split_from": _NAME_OR_NULL,
+    "tui": _NAME_OR_NULL,
+    "state": (lambda v: v in STATES, _or(STATES)),
+    "started": (_time, _TIME),
+}
+
+
+def _resume_fault(resume) -> str | None:
+    if not (isinstance(resume, list) and len(resume) >= 2 and all(_text(x) for x in resume)):
+        return _want("resume", resume, "a list of 2 or more printable strings")
+    if not os.path.isabs(resume[0]):
+        return _want("resume[0]", resume[0], "an absolute path")
+    if tuple(resume[1:4]) in (CREW_MODULE, LEGACY_MODULE):
+        return None
+    if not (os.path.isabs(resume[1]) and os.path.basename(resume[1]) in (*SCRIPTS, LEGACY)):
+        want = f"{' '.join(CREW_MODULE)} or an absolute path named {_or(SCRIPTS)}"
+        return _want("resume[1]", resume[1], want)
+    return None
+
+
+def _value_fault(value) -> str | None:
+    if not isinstance(value, dict):
+        return _want("value", value, "an object")
+    if bad := _keys(value, FIELDS):
+        return bad
+    for field in FIELDS:
+        if field == "resume":
+            bad = _resume_fault(value[field])
+        else:
+            ok, want = _CHECKS[field]
+            bad = None if ok(value[field]) else _want(field, value[field], want)
+        if bad:
+            return bad
+    return None
+
+
+def _fault(name, value) -> str | None:
+    if not _match(NAME, name):
+        return f"name: want {NAME.pattern}"
+    return _value_fault(value)
 
 
 _NOT_REGULAR = "not a regular file owned by you"
@@ -733,6 +631,9 @@ def _refill(path: str, old: str, cursor: int, sleep) -> None:
             view = view[os.write(fd, view) :]
 
 
+LEGACY_MODULE = ("-P", "-m", "agent_pm.crew")
+
+
 def rotate(r: dict, directory: str, *, sleep=None) -> bool:
     if not due(r, directory):
         return False
@@ -760,3 +661,50 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         print(f"manager: rotate: {e}: lines after {cursor} of {old} not copied", file=sys.stderr)
     r["cursor"], r["gen"] = 0, r["gen"] + 1
     return True
+
+
+def _validated(data, path: str, *, strict: bool) -> dict:
+    if bad := _top_fault(data):
+        raise RosterError(f"{path}: {bad}")
+    entries = {}
+    for name, value in data["entries"].items():
+        if bad := _fault(name, value):
+            if strict:
+                raise RosterError(f"{path}: entry {name!r}: {bad}")
+            print(f"manager: roster.json: entry {name!r}: {bad}", file=sys.stderr)
+        else:
+            entries[name] = value
+    return {**data, "entries": entries}
+
+
+def _configure():
+    return Driver.from_config(read_project("session"))
+
+
+def _holder_fault(holder) -> str | None:
+    if holder is None:
+        return None
+    if not isinstance(holder, dict):
+        return "holder: want null or an object with session and since"
+    if bad := _keys(holder, ("session", "since")):
+        return f"holder: {bad}"
+    if not _match(NAME, holder["session"]):
+        return _want("holder.session", holder["session"], "a session name")
+    if not _time(holder["since"]):
+        return _want("holder.since", holder["since"], _TIME)
+    return None
+
+
+def _top_fault(data) -> str | None:
+    if not isinstance(data, dict):
+        return "want a JSON object"
+    if bad := _keys(data, TOP):
+        return bad
+    if type(data["version"]) is not int or data["version"] != VERSION:
+        return _want("version", data["version"], VERSION)
+    if bad := _holder_fault(data["holder"]):
+        return bad
+    for field in ("cursor", "gen"):
+        if type(data[field]) is not int or data[field] < 0:
+            return _want(field, data[field], "a non-negative integer")
+    return None if isinstance(data["entries"], dict) else "entries: want an object"

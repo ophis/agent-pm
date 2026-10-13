@@ -49,8 +49,33 @@ from agent_pm.session import (
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import printable_abs, read_project, save
 
+NAME = re.compile(r"[A-Za-z0-9_-]+")
+EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
+EARLY = 5
+REPORT_LINES = 20
+REPLY_LINES = 80
+PANE_LINES = 40
+RUN_TAIL = 1 << 20
+ENDED = {"done": "finished", "failed": "finished", "needs_input": "waiting"}
+HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
 ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
+RECORD = "worker.json"
+STARTS = ("start", "restart", "attach", "reply")
+RECORD_MAX = 64 << 10
+FIELDS = (
+    "version",
+    "name",
+    "sid",
+    "runtime",
+    "cwd",
+    "flags",
+    "env",
+    "events",
+    "manager",
+    "split",
+    "split_from",
+)
 
 
 class WorkersError(Exception):
@@ -59,9 +84,6 @@ class WorkersError(Exception):
 
 class NotAWorker(WorkersError):
     pass
-
-
-NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class Refused(WorkersError):
@@ -101,323 +123,6 @@ def _caller(*, driver=None) -> SessionRow | None:
 def _own(*, driver=None) -> str | None:
     row = _caller(driver=driver)
     return None if row is None else row.name
-
-
-def _placed(e: dict, row: SessionRow) -> dict:
-    for key in ("pane", "opener"):
-        if getattr(row, key) is not None:
-            with contextlib.suppress(RosterError):
-                e = roster.entry(**{**e, key: getattr(row, key)})
-    return e
-
-
-def _place(r: dict, name: str, row: SessionRow) -> None:
-    r["entries"][name] = _placed(r["entries"][name], row)
-
-
-def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
-    pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
-    return (pane if pane in live else None), (driver if driver in live else None)
-
-
-@contextlib.contextmanager
-def _leased(directory: str, own: str | None, *, write: bool = True, driver=None):
-    try:
-        with roster.locked(directory, write=write) as r:
-            roster.check(r, directory, own, driver=driver)
-            yield r
-    except RosterError as e:
-        raise WorkersError(str(e)) from e
-
-
-def _directory(name: str | None, *, driver=None) -> str:
-    try:
-        directory = roster.directory(name, driver=driver)
-    except RosterError as e:
-        raise WorkersError(str(e)) from e
-    if directory is None:
-        raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
-    return directory
-
-
-def _configure() -> Driver:
-    try:
-        return Driver.from_config(read_project("session"))
-    except (OSError, ValueError, ConfigError) as e:
-        raise WorkersError(f"config: {e}") from None
-
-
-EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
-
-
-REPLY_LINES = 80
-
-
-PANE_LINES = 40
-
-
-RUN_TAIL = 1 << 20
-
-
-ENDED = {"done": "finished", "failed": "finished", "needs_input": "waiting"}
-
-
-HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
-
-
-def next_event(events: str, after: int | None) -> tuple[int, str]:
-    offset = lines = 0
-    ident = None
-    skip = after
-    while True:
-        try:
-            with open(events, "rb") as f:
-                st = os.fstat(f.fileno())
-                if ident is None:
-                    ident = (st.st_dev, st.st_ino)
-                elif ident != (st.st_dev, st.st_ino):
-                    raise WorkersError(f"events file {events}: replaced")
-                if st.st_size < offset:
-                    raise WorkersError(f"events file {events}: shrank")
-                f.seek(offset)
-                data = f.read()
-        except FileNotFoundError:
-            data = b""
-        except OSError as e:
-            raise WorkersError(f"events file {events}: {e.strerror or e}") from e
-        complete = data[: data.rfind(b"\n") + 1]
-        offset += len(complete)
-        batch = complete.split(b"\n")[:-1]
-        if skip is None:
-            skip = len(batch)
-        for raw in batch:
-            lines += 1
-            text = raw.decode("utf-8", errors="replace")
-            if lines > skip and EVENT.fullmatch(text):
-                return lines, text
-        time.sleep(0.5)
-
-
-def content(event: str, *, driver=None) -> str:
-    driver = _configure() if driver is None else driver
-    name, kind = event.split(" ")[1:3]
-    if kind not in ("done", "blocked", "dead"):
-        return ""
-    if kind == "done":
-        driver = _configure() if driver is None else driver
-        try:
-            text = driver.attach(name).reply
-        except (ConfigError, DriverError):
-            text = None
-        if text is not None:
-            return "\n".join(text.split("\n")[:REPLY_LINES])
-    row = _row(name, driver=driver)
-    if row is None:
-        raise WorkersError(f"{name}: no tmux session")
-    if row.state == "dead":
-        return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
-    driver = _configure() if driver is None else driver
-    with _driver():
-        return driver.attach(name).screen(PANE_LINES)
-
-
-def _status(cwd: str) -> str | None:
-    try:
-        fd = os.open(os.path.join(cwd, "run.jsonl"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return None
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            return None
-        with os.fdopen(fd, "rb", closefd=False) as f:
-            at = max(0, st.st_size - RUN_TAIL)
-            f.seek(max(0, at - 1))
-            # from the byte before the tail: its first piece is the line the tail cuts, or empty
-            lines = f.read(RUN_TAIL + 1).split(b"\n")[1 if at else 0 :]
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    for raw in reversed(lines):
-        try:
-            line = json.loads(raw)
-        except (ValueError, RecursionError):
-            continue
-        if isinstance(line, dict) and line.get("kind") == "result":
-            outcome = line.get("outcome")
-            status = outcome.get("status") if isinstance(outcome, dict) else None
-            return status if isinstance(status, str) else None
-    return None
-
-
-def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
-    entries = r["entries"]
-    for name in sorted(entries):
-        sid = entries[name]["sid"]
-        if entries[name]["kind"] == "worker" and sid is not None and name not in live:
-            to = [n for n, row in live.items() if row.sid == sid]
-            if len(to) == 1 and to[0] not in entries:
-                entries[to[0]] = entries.pop(name)
-    panes = {}
-    for name in sorted(entries):
-        e = entries[name]
-        pane, driver = _sessions(name, e, live)
-        if pane is None and driver is None:
-            status = None if e["kind"] == "worker" else _status(e["cwd"])
-            e["state"] = ENDED.get(status, "gone") if status is not None else "gone"
-            continue
-        e["state"] = live[pane].state if pane else "working"
-        if pane:
-            _place(r, name, live[pane])
-            panes[name] = pane
-    return panes
-
-
-def _reopen(
-    panes: dict, entries: dict, live: dict[str, SessionRow], *, driver=None
-) -> tuple[dict, list]:
-    driver = _configure() if driver is None else driver
-    shown, opened = {}, []
-    for name in sorted(panes):
-        session, e = panes[name], entries[name]
-        if live[session].shown is not None:
-            shown[name] = live[session].shown or "a terminal"
-            continue
-        print(f"tui: session {session}: {driver.attach_command(session)}", file=sys.stderr)
-        with _driver():
-            driver.show(session, split=e["split"], split_from=e["split_from"])
-        opened.append((name, e["kind"], e["sid"], session))
-    return shown, opened
-
-
-def _pythonpath(argv: list[str]) -> dict[str, str]:
-    if tuple(argv[1:4]) != roster.CREW_MODULE:
-        return {}
-    user = os.environ.get("PYTHONPATH")
-    return {"PYTHONPATH": os.pathsep.join(filter(None, (PYTHONPATH, user)))}
-
-
-def _command(argv: list[str]) -> str:
-    env = "".join(f"{k}={shlex.quote(v)} " for k, v in _pythonpath(argv).items())
-    return (f"env {env}" if env else "") + shlex.join(argv)
-
-
-def _recovery(e: dict) -> str:
-    argv = roster.recovery(e)
-    if argv is None:
-        return "none (no sid)"
-    return (
-        f"cd {shlex.quote(e['cwd'])} && {_command(argv)}" if e["kind"] == "role" else _command(argv)
-    )
-
-
-def _table(entries: dict, shown: dict) -> str:
-    lines = [HEADER]
-    for name in sorted(entries):
-        e = entries[name]
-        cells = [name, *("-" if e[k] is None else e[k] for k in HEADER.split("\t")[1:])]
-        lines.append("\t".join(cells + ([f"shown in {shown[name]}"] if name in shown else [])))
-    lines += [
-        f"resume {name}: {_recovery(entries[name])}"
-        for name in sorted(entries)
-        if entries[name]["state"] == "gone"
-    ]
-    return "".join(f"{line}\n" for line in lines)
-
-
-def _backlog(events: str, cursor: int) -> list[str]:
-    texts = (
-        raw.decode("utf-8", errors="replace")
-        for raw in roster.following(events, cursor).split(b"\n")[:-1]
-    )
-    return [f"{n} {text}" for n, text in enumerate(texts, cursor + 1) if EVENT.fullmatch(text)]
-
-
-def attach(
-    directory: str,
-    own: str | None,
-    *,
-    after: int | None = None,
-    gen: int | None = None,
-    driver=None,
-) -> tuple[str, dict]:
-    try:
-        events = roster.events(directory)
-        with roster.locked(directory) as r:
-            roster.take(r, directory, own, driver=driver)
-            if own is None:
-                print(
-                    f"workers: not in tmux: no lease on {directory}; another manager may attach",
-                    file=sys.stderr,
-                )
-            if after is not None:
-                roster.advance(r, directory, after, gen)
-            # before the rotation: a raise after its rename would drop the new cursor and gen
-            live = _live(driver=driver)
-            roster.rotate(r, directory)
-            panes = _sync(r, live)
-            backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
-        shown, opened = _reopen(panes, r["entries"], live, driver=driver)
-        if opened:
-            live = _live(driver=driver)
-            with roster.locked(directory) as r:
-                for name, kind, sid, session in opened:
-                    e = r["entries"].get(name)
-                    if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
-                        _place(r, name, live[session])
-        table = _table(r["entries"], shown)
-    except RosterError as e:
-        raise WorkersError(str(e)) from e
-    me, name = (
-        _command(["python3", *roster.CREW_MODULE]),
-        shlex.quote(os.path.basename(os.path.dirname(events))),
-    )
-    arm = [
-        f"N={cursor} GEN={gen}",
-        f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
-        f"monitor expired: {me} attach --manager {name} --after LINE --gen {gen} --resume",
-        f"next-event: {me} next-event --manager {name} --after {cursor} --gen {gen}",
-    ]
-    return table + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
-
-
-def _record(
-    directory: str, own: str | None, after: int | None, gen: int, *, driver=None
-) -> tuple[str, int, bool]:
-    with _leased(directory, own, driver=driver) as r:
-        try:
-            after = roster.advance(r, directory, after, gen)
-        except Stale as e:
-            raise Refused(str(e)) from e
-        return roster.events(directory, create=False), after, roster.due(r, directory)
-
-
-EARLY = 5
-
-
-REPORT_LINES = 20
-
-
-RECORD = "worker.json"
-
-
-RECORD_MAX = 64 << 10
-
-
-FIELDS = (
-    "version",
-    "name",
-    "sid",
-    "runtime",
-    "cwd",
-    "flags",
-    "env",
-    "events",
-    "manager",
-    "split",
-    "split_from",
-)
 
 
 def _text(value) -> bool:
@@ -692,6 +397,240 @@ def reply(name: str, *, driver=None) -> str | None:
         return driver.attach(name).reply
 
 
+def next_event(events: str, after: int | None) -> tuple[int, str]:
+    offset = lines = 0
+    ident = None
+    skip = after
+    while True:
+        try:
+            with open(events, "rb") as f:
+                st = os.fstat(f.fileno())
+                if ident is None:
+                    ident = (st.st_dev, st.st_ino)
+                elif ident != (st.st_dev, st.st_ino):
+                    raise WorkersError(f"events file {events}: replaced")
+                if st.st_size < offset:
+                    raise WorkersError(f"events file {events}: shrank")
+                f.seek(offset)
+                data = f.read()
+        except FileNotFoundError:
+            data = b""
+        except OSError as e:
+            raise WorkersError(f"events file {events}: {e.strerror or e}") from e
+        complete = data[: data.rfind(b"\n") + 1]
+        offset += len(complete)
+        batch = complete.split(b"\n")[:-1]
+        if skip is None:
+            skip = len(batch)
+        for raw in batch:
+            lines += 1
+            text = raw.decode("utf-8", errors="replace")
+            if lines > skip and EVENT.fullmatch(text):
+                return lines, text
+        time.sleep(0.5)
+
+
+def content(event: str, *, driver=None) -> str:
+    driver = _configure() if driver is None else driver
+    name, kind = event.split(" ")[1:3]
+    if kind not in ("done", "blocked", "dead"):
+        return ""
+    if kind == "done":
+        driver = _configure() if driver is None else driver
+        try:
+            text = driver.attach(name).reply
+        except (ConfigError, DriverError):
+            text = None
+        if text is not None:
+            return "\n".join(text.split("\n")[:REPLY_LINES])
+    row = _row(name, driver=driver)
+    if row is None:
+        raise WorkersError(f"{name}: no tmux session")
+    if row.state == "dead":
+        return "\n".join((row.last_lines or "").split("\n")[-PANE_LINES:])
+    driver = _configure() if driver is None else driver
+    with _driver():
+        return driver.attach(name).screen(PANE_LINES)
+
+
+def _status(cwd: str) -> str | None:
+    try:
+        fd = os.open(os.path.join(cwd, "run.jsonl"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            at = max(0, st.st_size - RUN_TAIL)
+            f.seek(max(0, at - 1))
+            # from the byte before the tail: its first piece is the line the tail cuts, or empty
+            lines = f.read(RUN_TAIL + 1).split(b"\n")[1 if at else 0 :]
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    for raw in reversed(lines):
+        try:
+            line = json.loads(raw)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(line, dict) and line.get("kind") == "result":
+            outcome = line.get("outcome")
+            status = outcome.get("status") if isinstance(outcome, dict) else None
+            return status if isinstance(status, str) else None
+    return None
+
+
+def _placed(e: dict, row: SessionRow) -> dict:
+    for key in ("pane", "opener"):
+        if getattr(row, key) is not None:
+            with contextlib.suppress(RosterError):
+                e = roster.entry(**{**e, key: getattr(row, key)})
+    return e
+
+
+def _place(r: dict, name: str, row: SessionRow) -> None:
+    r["entries"][name] = _placed(r["entries"][name], row)
+
+
+def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
+    pane, driver = (name, None) if e["kind"] == "worker" else (e["tui"], name)
+    return (pane if pane in live else None), (driver if driver in live else None)
+
+
+def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
+    entries = r["entries"]
+    for name in sorted(entries):
+        sid = entries[name]["sid"]
+        if entries[name]["kind"] == "worker" and sid is not None and name not in live:
+            to = [n for n, row in live.items() if row.sid == sid]
+            if len(to) == 1 and to[0] not in entries:
+                entries[to[0]] = entries.pop(name)
+    panes = {}
+    for name in sorted(entries):
+        e = entries[name]
+        pane, driver = _sessions(name, e, live)
+        if pane is None and driver is None:
+            status = None if e["kind"] == "worker" else _status(e["cwd"])
+            e["state"] = ENDED.get(status, "gone") if status is not None else "gone"
+            continue
+        e["state"] = live[pane].state if pane else "working"
+        if pane:
+            _place(r, name, live[pane])
+            panes[name] = pane
+    return panes
+
+
+def _reopen(
+    panes: dict, entries: dict, live: dict[str, SessionRow], *, driver=None
+) -> tuple[dict, list]:
+    driver = _configure() if driver is None else driver
+    shown, opened = {}, []
+    for name in sorted(panes):
+        session, e = panes[name], entries[name]
+        if live[session].shown is not None:
+            shown[name] = live[session].shown or "a terminal"
+            continue
+        print(f"tui: session {session}: {driver.attach_command(session)}", file=sys.stderr)
+        with _driver():
+            driver.show(session, split=e["split"], split_from=e["split_from"])
+        opened.append((name, e["kind"], e["sid"], session))
+    return shown, opened
+
+
+def _pythonpath(argv: list[str]) -> dict[str, str]:
+    if tuple(argv[1:4]) != roster.CREW_MODULE:
+        return {}
+    user = os.environ.get("PYTHONPATH")
+    return {"PYTHONPATH": os.pathsep.join(filter(None, (PYTHONPATH, user)))}
+
+
+def _command(argv: list[str]) -> str:
+    env = "".join(f"{k}={shlex.quote(v)} " for k, v in _pythonpath(argv).items())
+    return (f"env {env}" if env else "") + shlex.join(argv)
+
+
+def _recovery(e: dict) -> str:
+    argv = roster.recovery(e)
+    if argv is None:
+        return "none (no sid)"
+    return (
+        f"cd {shlex.quote(e['cwd'])} && {_command(argv)}" if e["kind"] == "role" else _command(argv)
+    )
+
+
+def _table(entries: dict, shown: dict) -> str:
+    lines = [HEADER]
+    for name in sorted(entries):
+        e = entries[name]
+        cells = [name, *("-" if e[k] is None else e[k] for k in HEADER.split("\t")[1:])]
+        lines.append("\t".join(cells + ([f"shown in {shown[name]}"] if name in shown else [])))
+    lines += [
+        f"resume {name}: {_recovery(entries[name])}"
+        for name in sorted(entries)
+        if entries[name]["state"] == "gone"
+    ]
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _backlog(events: str, cursor: int) -> list[str]:
+    texts = (
+        raw.decode("utf-8", errors="replace")
+        for raw in roster.following(events, cursor).split(b"\n")[:-1]
+    )
+    return [f"{n} {text}" for n, text in enumerate(texts, cursor + 1) if EVENT.fullmatch(text)]
+
+
+def attach(
+    directory: str,
+    own: str | None,
+    *,
+    after: int | None = None,
+    gen: int | None = None,
+    driver=None,
+) -> tuple[str, dict]:
+    try:
+        events = roster.events(directory)
+        with roster.locked(directory) as r:
+            roster.take(r, directory, own, driver=driver)
+            if own is None:
+                print(
+                    f"workers: not in tmux: no lease on {directory}; another manager may attach",
+                    file=sys.stderr,
+                )
+            if after is not None:
+                roster.advance(r, directory, after, gen)
+            # before the rotation: a raise after its rename would drop the new cursor and gen
+            live = _live(driver=driver)
+            roster.rotate(r, directory)
+            panes = _sync(r, live)
+            backlog, cursor, gen = _backlog(events, r["cursor"]), r["cursor"], r["gen"]
+        shown, opened = _reopen(panes, r["entries"], live, driver=driver)
+        if opened:
+            live = _live(driver=driver)
+            with roster.locked(directory) as r:
+                for name, kind, sid, session in opened:
+                    e = r["entries"].get(name)
+                    if e is not None and (e["kind"], e["sid"]) == (kind, sid) and session in live:
+                        _place(r, name, live[session])
+        table = _table(r["entries"], shown)
+    except RosterError as e:
+        raise WorkersError(str(e)) from e
+    me, name = (
+        _command(["python3", *roster.CREW_MODULE]),
+        shlex.quote(os.path.basename(os.path.dirname(events))),
+    )
+    arm = [
+        f"N={cursor} GEN={gen}",
+        f"monitor: tail -n +{cursor + 1} -F {shlex.quote(events)}",
+        f"monitor expired: {me} attach --manager {name} --after LINE --gen {gen} --resume",
+        f"next-event: {me} next-event --manager {name} --after {cursor} --gen {gen}",
+    ]
+    return table + "".join(f"{line}\n" for line in backlog + arm), r["entries"]
+
+
 def recover(entries: dict) -> Iterator[tuple[bool, str]]:
     for name in sorted(entries):
         e = entries[name]
@@ -729,6 +668,16 @@ def recover(entries: dict) -> Iterator[tuple[bool, str]]:
             res.returncode == 0,
             f"resumed {name}: exit {res.returncode}" + (f": {last}" if last else ""),
         )
+
+
+@contextlib.contextmanager
+def _leased(directory: str, own: str | None, *, write: bool = True, driver=None):
+    try:
+        with roster.locked(directory, write=write) as r:
+            roster.check(r, directory, own, driver=driver)
+            yield r
+    except RosterError as e:
+        raise WorkersError(str(e)) from e
 
 
 def release(directory: str, own: str | None, *, driver=None) -> None:
@@ -827,15 +776,31 @@ def stop_all(own: str | None, *, dry_run: bool = False, driver=None) -> tuple[li
 def forget(directory: str, own: str | None, name: str, *, driver=None) -> None:
     _check(name)
     with _leased(directory, own, driver=driver) as r:
-        pane, session_driver = _sessions(
-            name, roster.remove(r, name), _live(driver=driver)
-        )
+        pane, session_driver = _sessions(name, roster.remove(r, name), _live(driver=driver))
         live_session = pane or session_driver
         if live_session is not None:
             raise WorkersError(f"{name}: session {live_session} is live")
 
 
-STARTS = ("start", "restart", "attach", "reply")
+def _directory(name: str | None, *, driver=None) -> str:
+    try:
+        directory = roster.directory(name, driver=driver)
+    except RosterError as e:
+        raise WorkersError(str(e)) from e
+    if directory is None:
+        raise WorkersError("no manager directory: run inside tmux or give --manager <name>")
+    return directory
+
+
+def _record(
+    directory: str, own: str | None, after: int | None, gen: int, *, driver=None
+) -> tuple[str, int, bool]:
+    with _leased(directory, own, driver=driver) as r:
+        try:
+            after = roster.advance(r, directory, after, gen)
+        except Stale as e:
+            raise Refused(str(e)) from e
+        return roster.events(directory, create=False), after, roster.due(r, directory)
 
 
 def _after(value: str) -> int | None:
@@ -859,7 +824,22 @@ def _drop_import_root() -> None:
         os.environ["PYTHONPATH"] = user
 
 
-def _start_arguments(sub) -> None:
+def _configure() -> Driver:
+    try:
+        return Driver.from_config(read_project("session"))
+    except (OSError, ValueError, ConfigError) as e:
+        raise WorkersError(f"config: {e}") from None
+
+
+def main(argv=None, *, driver=None, event_source=None) -> int:
+    _drop_import_root()
+    argv = sys.argv[1:] if argv is None else list(argv)
+    flags = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, flags = argv[:i], argv[i + 1 :]
+    ap = argparse.ArgumentParser(prog="crew.py")
+    sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("start")
     p.add_argument("name")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
@@ -881,9 +861,6 @@ def _start_arguments(sub) -> None:
     p.add_argument("--note", help="its roster note, as crew.py note sets it")
     p.add_argument("--split-from")
     p.add_argument("--split", choices=("right", "below"))
-
-
-def _monitor_arguments(sub) -> None:
     p = sub.add_parser("next-event")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
     p.add_argument("--after", type=_after, required=True)
@@ -904,9 +881,6 @@ def _monitor_arguments(sub) -> None:
     p.add_argument(
         "--resume", action="store_true", help="then run each gone entry's recovery command"
     )
-
-
-def _roster_arguments(sub) -> None:
     p = sub.add_parser("release")
     p.add_argument("--manager", help="manager directory to release (default: your tmux session's)")
     p = sub.add_parser("note")
@@ -923,27 +897,8 @@ def _roster_arguments(sub) -> None:
     p = sub.add_parser("forget")
     p.add_argument("name")
     p.add_argument("--manager", help="manager directory to use (default: your tmux session's)")
-
-
-def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="crew.py")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    _start_arguments(sub)
-    _monitor_arguments(sub)
-    _roster_arguments(sub)
     for cmd in ("restart", "reply"):
         sub.add_parser(cmd).add_argument("name")
-    return ap
-
-
-def main(argv=None, *, driver=None, event_source=None) -> int:
-    _drop_import_root()
-    argv = sys.argv[1:] if argv is None else list(argv)
-    flags = []
-    if "--" in argv:
-        i = argv.index("--")
-        argv, flags = argv[:i], argv[i + 1 :]
-    ap = _parser()
     a = ap.parse_args(argv)
     if a.cmd == "attach" and (a.after is None) != (a.gen is None):
         ap.error("--after and --gen go together")
