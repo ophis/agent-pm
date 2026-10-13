@@ -48,12 +48,35 @@ def rule(path):
     return next(each for each in (TESTS, SOURCE) if each.pattern.search(path))
 
 
+class BudgetError(ValueError):
+    def __init__(self, path, detail):
+        super().__init__(f"{path}: {detail}")
+
+    @classmethod
+    def git(cls, detail):
+        return cls("git ls-files failed", detail)
+
+
 def tracked(root):
     listed = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--", "*.py"], capture_output=True, text=True
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-C",
+            str(root),
+            "ls-files",
+            "-z",
+            "--",
+            "*.py",
+        ],
+        capture_output=True,
+        text=True,
     )
     if listed.returncode:
-        raise ValueError(f"git ls-files failed: {listed.stderr.strip()}")
+        raise BudgetError.git(listed.stderr.strip())
     return sorted(path for path in listed.stdout.split("\0") if path and (root / path).is_file())
 
 
@@ -70,7 +93,7 @@ def main(root=ROOT):
                 with tokenize.open(root / path) as file:
                     comment, docstring, code = measure(file.read())
             except (OSError, SyntaxError, ValueError, tokenize.TokenError) as error:
-                raise ValueError(f"{path}: {error}") from error
+                raise BudgetError(path, error) from error
             total = groups[rule(path)].setdefault(path.rpartition("/")[0] or ".", [0, 0])
             total[0] += comment + docstring
             total[1] += code

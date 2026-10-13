@@ -1,4 +1,4 @@
-name: test
+name: CI
 
 on:
   push:
@@ -8,101 +8,133 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONPATH: ${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/linear-orchestrator/tests
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
-  comment-budget:
-    name: Comment budget v2.0 (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.11"
+      - name: Install pinned tools
+        run: python3 -m pip install ruff==0.16.9 pyright==1.1.414 import-linter==2.15 vulture==2.16 pylint==4.1.3
       - name: Comment budget
         run: python3 .github/comment_budget.py
-      - name: Integration job assignment
+      - name: Ruff
+        if: ${{ !cancelled() }}
+        run: |
+          ruff check --no-cache --output-format=github
+          ruff format --check --no-cache
+      - name: Pyright
+        if: ${{ !cancelled() }}
+        run: pyright
+      - name: Import contracts
+        if: ${{ !cancelled() }}
+        run: lint-imports --no-cache
+      - name: Vulture
+        if: ${{ !cancelled() }}
+        run: vulture manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Pylint
+        if: ${{ !cancelled() }}
+        run: pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Repository design and test boundaries
+        if: ${{ !cancelled() }}
+        run: python3 -m tests.checks
+      - name: Integration duration assignment
+        if: ${{ !cancelled() }}
         run: python3 .github/integration_jobs.py --check
-      - name: .github tests
-        run: python3 -m unittest discover -v -s .github -p "*_test.py"
-
-  ruff:
-    name: Ruff v2.0 (Python 3.11)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check out
-        uses: actions/checkout@v7
+      - name: Install actionlint 1.7.12
+        if: ${{ !cancelled() }}
+        run: |
+          curl --fail --location --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar -xz -C "$RUNNER_TEMP" actionlint
+      - name: Actionlint
+        if: ${{ !cancelled() }}
+        run: '"$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes='
+      - name: Typos
+        if: ${{ !cancelled() }}
+        uses: crate-ci/typos@v1.47.0
         with:
-          persist-credentials: false
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-      - name: Install Ruff
-        id: ruff
-        run: pip install ruff==0.16.9
-      - name: Ruff check
-        run: ruff check --output-format=github
-      - name: Ruff format
-        if: ${{ !cancelled() && steps.ruff.outcome == 'success' }}
-        run: ruff format --check
+          config: pyproject.toml
 
   unit:
-    name: Unit ${{ matrix.project }} v2.0 (Python 3.11)
-    runs-on: ubuntu-latest
+    name: Unit
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {project: repo, tests: tests}
-          - {project: delegate, tests: delegate/tests}
-          - {project: session, tests: session/tests}
-          - {project: utils, tests: utils/tests}
-          - {project: manager, tests: manager/tests}
-          - {project: linear-orchestrator, tests: linear-orchestrator/tests}
-    env:
-      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.11"
+      - name: Protect shipped source
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Unit tests
-        run: python3 -X faulthandler .github/run_tests.py 'Unit ${{ matrix.project }}' '${{ matrix.tests }}/unit'
+        run: python3 -X faulthandler .github/run_tests.py Unit --unit
+      - name: Require unchanged checkout
+        if: ${{ always() }}
+        run: |
+          status=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --porcelain)
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
 
   integration:
-    name: Integration ${{ matrix.job }} v2.0 (Python 3.11)
-    runs-on: ubuntu-latest
+    name: Integration ${{ matrix.job }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        job: ["session 1", "session 2", "delegate", "linear-orchestrator", "manager 1", "manager 2", "manager 3", "repo"]
-    env:
-      PYTHONPATH: ${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src
+        job: ["1", "2", "3", "4", "5", "6", "7", "8"]
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5.6.0
         with:
           python-version: "3.11"
       - name: Install tmux
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tmux
+      - name: Protect shipped source
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Integration tests
         run: python3 -X faulthandler .github/integration_jobs.py '${{ matrix.job }}'
+      - name: Require unchanged checkout
+        if: ${{ always() }}
+        run: |
+          status=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --porcelain)
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
+
+  ci:
+    name: CI
+    needs: [lint, unit, integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check and test job
+        run: |
+          test '${{ needs.lint.result }}' = success
+          test '${{ needs.unit.result }}' = success
+          test '${{ needs.integration.result }}' = success

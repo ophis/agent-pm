@@ -178,6 +178,7 @@ def unit_directories(root):
             str(path.relative_to(root))
             for pattern in ("*/tests/unit", "*/tests/*/unit")
             for path in root.glob(pattern)
+            if (path / "__init__.py").is_file()
         ),
         ".github",
     ]
