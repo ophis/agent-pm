@@ -17,6 +17,7 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine.types import (
     Config,
     ConfigError,
+    CoreConfig,
     Docs,
     Role,
     Task,
@@ -206,7 +207,7 @@ def _load(cfg, root, work, local, core):
         core_cfg = utils.read_project("delegate", path=core, local=local)
     except (OSError, ValueError) as e:
         raise ConfigError.core(e) from None
-    roles = _runnable(cfg, root, work, core, core_cfg, local)
+    roles = _runnable(cfg, root, work, CoreConfig(core, local, core_cfg))
     docs = _docs(roles, local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
@@ -259,6 +260,15 @@ def _load_config(cfg, root, local):
         raise ConfigError.invalid_harness_key(hk)
     if extra := sorted(set(cfg) - TOP_KEYS):
         raise ConfigError.unknown_keys(", ".join(extra))
+    _role_fields(cfg)
+    _next_chains(cfg["roles"])
+    _project_repos(cfg)
+    _local_clones(cfg)
+    _work_dir(cfg, root, cfg["local_clones"])
+    _task_labels(cfg)
+
+
+def _role_fields(cfg):
     roles = cfg.setdefault("roles", {})
     for name, p in roles.items():
         if extra := sorted(set(p) - ROLE_KEYS):
@@ -269,6 +279,9 @@ def _load_config(cfg, root, local):
         n = p.get("max_runs", 1)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
             raise ConfigError.invalid_max_runs(name, n)
+
+
+def _next_chains(roles):
     for name in roles:
         nxt, seen = roles[name].get("next"), {name}
         while nxt:
@@ -276,12 +289,18 @@ def _load_config(cfg, root, local):
                 raise ConfigError.next_cycle(name)
             seen.add(nxt)
             nxt = roles.get(nxt, {}).get("next")
+
+
+def _project_repos(cfg):
     projects = cfg.setdefault("project_repos", {})
     if not isinstance(projects, dict):
         raise ConfigError.invalid_projects_table()
     for k, v in projects.items():
         if not _uuid(k) or not repo_slug(v):
             raise ConfigError.invalid_project_repo(k, v)
+
+
+def _local_clones(cfg):
     clones = cfg.setdefault("local_clones", {})
     if not isinstance(clones, dict):
         raise ConfigError.invalid_clones_table()
@@ -298,7 +317,9 @@ def _load_config(cfg, root, local):
             raise ConfigError.duplicate_clone(seen[k.lower()], k)
         seen[k.lower()] = k
         clones[k] = os.path.realpath(os.path.expanduser(v))
-    _work_dir(cfg, root, clones)
+
+
+def _task_labels(cfg):
     labels = cfg.setdefault("task_labels", {})
     if not isinstance(labels, dict):
         raise ConfigError.invalid_labels_table()
@@ -325,18 +346,24 @@ def _fill_root(value: Any, root: str) -> Any:
     return value
 
 
-def _runnable(cfg, root, work, core, core_cfg, local):
+def _runnable(cfg, root, work, core: CoreConfig):
     try:
-        core_roles = core_cfg.get("roles", {})
-        trusted = delegate.trusted_dirs(core, local, cfg=core_cfg)
+        trusted = delegate.trusted_dirs(core.path, core.local, cfg=core.values)
     except (OSError, ValueError, delegate.ComposerConfigError) as e:
         raise ConfigError.core(e) from None
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError.work_trusted(d, work)
-    overlay, out = _fill_root(cfg.get("core", {}), root), {}
+    out = _resolve_roles(cfg, _fill_root(cfg.get("core", {}), root), core)
+    _role_links(cfg, out)
+    _runnable_inputs(cfg, out)
+    return out
+
+
+def _resolve_roles(cfg, overlay, core: CoreConfig):
+    out = {}
     for name, p in cfg["roles"].items():
-        if name not in core_roles:
+        if name not in core.values.get("roles", {}):
             raise ConfigError.undefined_delegate_role(name)
         if name not in TASKS:
             raise ConfigError.undefined_task_role(name)
@@ -346,11 +373,13 @@ def _runnable(cfg, root, work, core, core_cfg, local):
                 None,
                 overlays=[overlay],
                 label=("linear-orchestrator/config.toml", "core"),
-                config=core,
-                local=local,
-                cfg=core_cfg,
+                config=core.path,
+                local=core.local,
+                cfg=core.values,
             )
-            tasks = tuple(delegate.task_index(name, config=core, local=local, cfg=core_cfg))
+            tasks = tuple(
+                delegate.task_index(name, config=core.path, local=core.local, cfg=core.values)
+            )
         except delegate.ComposerConfigError as e:
             raise ConfigError.core(e) from None
         out[name] = Role(
@@ -362,6 +391,10 @@ def _runnable(cfg, root, work, core, core_cfg, local):
             p.get("require_instructions", True),
             run,
         )
+    return out
+
+
+def _role_links(cfg, out):
     owner = {}
     for name, r in out.items():
         if r.key == cfg["harness_key"]:
@@ -376,14 +409,16 @@ def _runnable(cfg, root, work, core, core_cfg, local):
             raise ConfigError.undefined_next_role(name, r.next)
         if not TASKS[r.next].prefix:
             raise ConfigError.next_without_prefix(name, r.next)
-    tasks = {t for r in out.values() for t in r.tasks}
+
+
+def _runnable_inputs(cfg, roles):
+    tasks = {t for r in roles.values() for t in r.tasks}
     for task in cfg["task_labels"]:
         if task not in tasks:
             raise ConfigError.undefined_task(task)
     for key, path in cfg["local_clones"].items():
         if reason := clone_error(path, key):
             raise ConfigError.local_clones(key, reason)
-    return out
 
 
 def _docs(roles, local):

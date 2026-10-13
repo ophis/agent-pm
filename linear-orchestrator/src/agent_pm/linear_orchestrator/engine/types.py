@@ -4,7 +4,7 @@ import os
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_pm import delegate
 from agent_pm.session import Driver
@@ -395,6 +395,13 @@ class Docs:
     repo: str
     branch: str
     dirs: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class CoreConfig:
+    path: str
+    local: str
+    values: dict[str, Any]
 
 
 @dataclass(frozen=True)
