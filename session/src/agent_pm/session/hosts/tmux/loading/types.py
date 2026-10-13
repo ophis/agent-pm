@@ -36,3 +36,18 @@ def load_file(name: str, path: str) -> ModuleType:
         del sys.modules[name]
         raise
     return module
+
+
+def load_siblings(directory: str, *dependencies: tuple[str, str]) -> tuple[ModuleType, ...]:
+    return tuple(
+        load_file(name, os.path.join(directory, relative)) for name, relative in dependencies
+    )
+
+
+def load_controls(directory: str) -> tuple[ModuleType, ...]:
+    return load_siblings(
+        directory,
+        ("agent_pm.session.hosts.tmux.commands", "commands.py"),
+        ("agent_pm.session.hosts.tmux.errors.types", "errors/types.py"),
+        ("agent_pm.session.hosts.tmux.model.types", "model/types.py"),
+    )

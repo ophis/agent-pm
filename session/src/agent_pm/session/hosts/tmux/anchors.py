@@ -3,66 +3,27 @@
 from __future__ import annotations
 
 import os
-import runpy
 import subprocess
+from os.path import dirname, join
+from runpy import run_path
 from typing import TYPE_CHECKING
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
-
-
 if TYPE_CHECKING:
-    from agent_pm.session.hosts.tmux.commands import (
-        call_tmux,
-        checked_tmux,
-    )
-    from agent_pm.session.hosts.tmux.errors.types import (
-        TuiError,
-    )
-    from agent_pm.session.hosts.tmux.model.types import (
-        CLIENTS,
-        GRID_PANES,
-        GRID_ROW,
-        NAME,
-        OPENER,
-        PANE,
-        PANES,
-        SESSION_ID,
-        SESSIONS,
-        Anchor,
-    )
+    from agent_pm.session.hosts.tmux import commands as _commands
+    from agent_pm.session.hosts.tmux.errors import types as _errors
+    from agent_pm.session.hosts.tmux.model import types as _model
 else:
-    _load_file = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["load_file"]
-    _commands = _load_file(
-        "agent_pm.session.hosts.tmux.commands", os.path.join(DIRECTORY, "commands.py")
-    )
-    call_tmux = _commands.call_tmux
-    checked_tmux = _commands.checked_tmux
-    _errors_types = _load_file(
-        "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
-    )
-    TuiError = _errors_types.TuiError
-    _model_types = _load_file(
-        "agent_pm.session.hosts.tmux.model.types", os.path.join(DIRECTORY, "model/types.py")
-    )
-    Anchor = _model_types.Anchor
-    CLIENTS = _model_types.CLIENTS
-    GRID_PANES = _model_types.GRID_PANES
-    GRID_ROW = _model_types.GRID_ROW
-    NAME = _model_types.NAME
-    OPENER = _model_types.OPENER
-    PANE = _model_types.PANE
-    PANES = _model_types.PANES
-    SESSIONS = _model_types.SESSIONS
-    SESSION_ID = _model_types.SESSION_ID
+    load_controls = run_path(join(dirname(__file__), "loading/types.py"))["load_controls"]
+    _commands, _errors, _model = load_controls(dirname(__file__))
 
 
 def list_sessions(proc) -> list[list[str]]:
-    res = call_tmux(["list-sessions", "-F", SESSIONS], proc)
+    res = _commands.call_tmux(["list-sessions", "-F", _model.SESSIONS], proc)
     lines = res.stdout.split("\n") if res.returncode == 0 else []
     return [
         f
         for f in (line.split("\t") for line in lines)
-        if len(f) == 5 and SESSION_ID.fullmatch(f[0])
+        if len(f) == 5 and _model.SESSION_ID.fullmatch(f[0])
     ]
 
 
@@ -70,12 +31,12 @@ def pane_window(
     pane: str, manager: str | None, proc
 ) -> tuple[str, str | None, dict[str, int], str] | None:
     """pane's window id, manager, pane areas and socket; None when tmux fails."""
-    res = call_tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
+    res = _commands.call_tmux(["list-panes", "-t", pane, "-F", _model.GRID_PANES], proc)
     rows = []
     if res.returncode:
         return None
     for line in res.stdout.splitlines():
-        match = GRID_ROW.fullmatch(line)
+        match = _model.GRID_ROW.fullmatch(line)
         if match is None:
             return None
         rows.append(match)
@@ -91,13 +52,13 @@ def own_session(*, proc=subprocess.run) -> str | None:
     if not os.environ.get("TMUX"):
         return None
     pane = os.environ.get("TMUX_PANE", "")
-    if not PANE.fullmatch(pane):
-        raise TuiError.invalid_own_pane(pane)
-    name = checked_tmux(
+    if not _model.PANE.fullmatch(pane):
+        raise _errors.TuiError.invalid_own_pane(pane)
+    name = _commands.checked_tmux(
         ["display-message", "-p", "-t", pane, "#{session_name}"], proc
     ).stdout.strip()
-    if not NAME.fullmatch(name):
-        raise TuiError.invalid_own_session(name)
+    if not _model.NAME.fullmatch(name):
+        raise _errors.TuiError.invalid_own_session(name)
     return name
 
 
@@ -114,28 +75,28 @@ def find_opener(proc) -> str:
         return own
     value = os.environ.get("ITERM_SESSION_ID", "")
     if not value or os.environ.get("TERM_PROGRAM") != "iTerm.app":
-        raise TuiError.no_anchor()
-    if ":" not in value or not OPENER.fullmatch(value):
-        raise TuiError.invalid_iterm_session(value, OPENER.pattern)
+        raise _errors.TuiError.no_anchor()
+    if ":" not in value or not _model.OPENER.fullmatch(value):
+        raise _errors.TuiError.invalid_iterm_session(value, _model.OPENER.pattern)
     return value
 
 
-def anchor(split_from: str | None = None, *, proc=subprocess.run) -> Anchor:
+def anchor(split_from: str | None = None, *, proc=subprocess.run) -> _model.Anchor:
     """split_from's shown pane, else the caller's session's, else (iTerm.app only)
     $ITERM_SESSION_ID's; TuiError when none.
     """
     if split_from is not None:
         found = shown_pane(split_from, proc, own=False)
         if found is None:
-            raise TuiError.unshown_session(split_from)
+            raise _errors.TuiError.unshown_session(split_from)
         return found
     own = own_session(proc=proc)
     return iterm_pane("not in tmux") if own is None else opener_pane(own, proc, own=True)
 
 
-def opener_pane(opener: str, proc, *, own: bool | None) -> Anchor:
+def opener_pane(opener: str, proc, *, own: bool | None) -> _model.Anchor:
     if ":" in opener:
-        return Anchor(("id", [opener.partition(":")[2]]))
+        return _model.Anchor(("id", [opener.partition(":")[2]]))
     if own is None:
         own = own_session(proc=proc) == opener
     return shown_pane(opener, proc, own=own) or iterm_pane(
@@ -143,7 +104,7 @@ def opener_pane(opener: str, proc, *, own: bool | None) -> Anchor:
     )
 
 
-def shown_pane(session: str, proc, *, own: bool) -> Anchor | None:
+def shown_pane(session: str, proc, *, own: bool) -> _model.Anchor | None:
     """The pane the most recent client shows the session in: a nested client's host pane, $TMUX_PANE
     when own, else the client's; a control-mode client gets its tmux pane only.
     """
@@ -153,22 +114,26 @@ def shown_pane(session: str, proc, *, own: bool) -> Anchor | None:
     _, tty, pane, control, socket = clients[0]
     pane = os.environ["TMUX_PANE"] if own else pane
     if control == "1":
-        return Anchor(None, pane, socket, session)
+        return _model.Anchor(None, pane, socket, session)
     hosts = {
         f[1]: f[2]
         for f in (
             line.split(" ", 2)
-            for line in checked_tmux(["list-panes", "-a", "-F", PANES], proc).stdout.splitlines()
+            for line in _commands.checked_tmux(
+                ["list-panes", "-a", "-F", _model.PANES], proc
+            ).stdout.splitlines()
         )
         if len(f) == 3 and f[0] != "1"
     }
-    if PANE.fullmatch(hosts.get(tty, "")):
-        return Anchor(None, hosts[tty], socket, session)
-    return Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
+    if _model.PANE.fullmatch(hosts.get(tty, "")):
+        return _model.Anchor(None, hosts[tty], socket, session)
+    return _model.Anchor(("tty", [c[1] for c in clients if c[3] == "0"]), pane, socket, session)
 
 
 def list_clients(session: str, proc) -> list[list[str]]:
-    out = checked_tmux(["list-clients", "-t", f"={session}", "-F", CLIENTS], proc).stdout
+    out = _commands.checked_tmux(
+        ["list-clients", "-t", f"={session}", "-F", _model.CLIENTS], proc
+    ).stdout
     return sorted(
         (
             c
@@ -176,7 +141,7 @@ def list_clients(session: str, proc) -> list[list[str]]:
             if len(c) == 5
             and c[0].isdigit()
             and c[1]
-            and PANE.fullmatch(c[2])
+            and _model.PANE.fullmatch(c[2])
             and c[3] in ("0", "1")
             and c[4]
         ),
@@ -185,8 +150,8 @@ def list_clients(session: str, proc) -> list[list[str]]:
     )
 
 
-def iterm_pane(why: str) -> Anchor:
+def iterm_pane(why: str) -> _model.Anchor:
     unique = os.environ.get("ITERM_SESSION_ID", "").partition(":")[2]
     if not unique or not (os.environ.get("TMUX") or os.environ.get("TERM_PROGRAM") == "iTerm.app"):
-        raise TuiError.no_anchor(why)
-    return Anchor(("id", [unique]))
+        raise _errors.TuiError.no_anchor(why)
+    return _model.Anchor(("id", [unique]))

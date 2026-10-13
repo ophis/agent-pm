@@ -34,11 +34,11 @@ read = _commands.read
 attach_command = _commands.attach_command
 session_name = _commands.session_name
 
-_errors_types = _load_file(
+_errors = _load_file(
     "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
 )
-TuiError = _errors_types.TuiError
-CliError = _errors_types.CliError
+TuiError = _errors.TuiError
+CliError = _errors.CliError
 
 _grids = _load_file("agent_pm.session.hosts.tmux.grids", os.path.join(DIRECTORY, "grids.py"))
 tile = _grids.tile
@@ -49,33 +49,33 @@ _lifecycle = _load_file(
 start = _lifecycle.start
 detach = _lifecycle.detach
 
-_model_types = _load_file(
+_model = _load_file(
     "agent_pm.session.hosts.tmux.model.types", os.path.join(DIRECTORY, "model/types.py")
 )
-HOST = _model_types.HOST
-RUNNING = _model_types.RUNNING
-UNKNOWN = _model_types.UNKNOWN
-PAUSE = _model_types.PAUSE
-NAME = _model_types.NAME
-PANE = _model_types.PANE
-ITERM_ID = _model_types.ITERM_ID
-OPENER = _model_types.OPENER
-SPLITS = _model_types.SPLITS
-RETILES = _model_types.RETILES
-PER_COLUMN = _model_types.PER_COLUMN
-RETILE = _model_types.RETILE
-EXEC = _model_types.EXEC
-Anchor = _model_types.Anchor
-Cell = _model_types.Cell
-Slot = _model_types.Slot
-Command = _model_types.Command
-StartOptions = _model_types.StartOptions
-DetachOptions = _model_types.DetachOptions
-PaneOptions = _model_types.PaneOptions
-PaneServices = _model_types.PaneServices
-GridSettings = _model_types.GridSettings
-GridGeometry = _model_types.GridGeometry
-Rectangle = _model_types.Rectangle
+HOST = _model.HOST
+RUNNING = _model.RUNNING
+UNKNOWN = _model.UNKNOWN
+PAUSE = _model.PAUSE
+NAME = _model.NAME
+PANE = _model.PANE
+ITERM_ID = _model.ITERM_ID
+OPENER = _model.OPENER
+SPLITS = _model.SPLITS
+RETILES = _model.RETILES
+PER_COLUMN = _model.PER_COLUMN
+RETILE = _model.RETILE
+EXEC = _model.EXEC
+Anchor = _model.Anchor
+Cell = _model.Cell
+Slot = _model.Slot
+Command = _model.Command
+StartOptions = _model.StartOptions
+DetachOptions = _model.DetachOptions
+PaneOptions = _model.PaneOptions
+PaneServices = _model.PaneServices
+GridSettings = _model.GridSettings
+GridGeometry = _model.GridGeometry
+Rectangle = _model.Rectangle
 
 _panes = _load_file("agent_pm.session.hosts.tmux.panes", os.path.join(DIRECTORY, "panes.py"))
 show = _panes.show

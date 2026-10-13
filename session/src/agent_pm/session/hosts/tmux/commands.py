@@ -17,54 +17,15 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 
 if TYPE_CHECKING:
-    from agent_pm.session.hosts.tmux.errors.types import (
-        TuiError,
-    )
-    from agent_pm.session.hosts.tmux.model.types import (
-        ABSENT,
-        BORDER,
-        DEAD_EVENT,
-        DIED,
-        HOSTS,
-        ITERM_ID,
-        LAST_LINES,
-        LISTING,
-        MARK_TIMEOUT,
-        NAME,
-        OPENER,
-        PANE,
-        PAUSE,
-        RUNNING,
-        SHOWN,
-        UNKNOWN,
-        USER_OPTION,
-    )
+    from agent_pm.session.hosts.tmux.errors import types as _errors
+    from agent_pm.session.hosts.tmux.model import types as _model
 else:
-    _load_file = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["load_file"]
-    _errors_types = _load_file(
-        "agent_pm.session.hosts.tmux.errors.types", os.path.join(DIRECTORY, "errors/types.py")
+    load_siblings = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["load_siblings"]
+    _errors, _model = load_siblings(
+        DIRECTORY,
+        ("agent_pm.session.hosts.tmux.errors.types", "errors/types.py"),
+        ("agent_pm.session.hosts.tmux.model.types", "model/types.py"),
     )
-    TuiError = _errors_types.TuiError
-    _model_types = _load_file(
-        "agent_pm.session.hosts.tmux.model.types", os.path.join(DIRECTORY, "model/types.py")
-    )
-    ABSENT = _model_types.ABSENT
-    BORDER = _model_types.BORDER
-    DEAD_EVENT = _model_types.DEAD_EVENT
-    DIED = _model_types.DIED
-    HOSTS = _model_types.HOSTS
-    ITERM_ID = _model_types.ITERM_ID
-    LAST_LINES = _model_types.LAST_LINES
-    LISTING = _model_types.LISTING
-    MARK_TIMEOUT = _model_types.MARK_TIMEOUT
-    NAME = _model_types.NAME
-    OPENER = _model_types.OPENER
-    PANE = _model_types.PANE
-    PAUSE = _model_types.PAUSE
-    RUNNING = _model_types.RUNNING
-    SHOWN = _model_types.SHOWN
-    UNKNOWN = _model_types.UNKNOWN
-    USER_OPTION = _model_types.USER_OPTION
 
 
 def mark(
@@ -81,39 +42,43 @@ def mark(
     pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
     if not pane:
         return
-    if not PANE.fullmatch(pane):
-        raise TuiError.invalid_pane(pane)
+    if not _model.PANE.fullmatch(pane):
+        raise _errors.TuiError.invalid_pane(pane)
     mark_tmux([tmux, "set-option", "-t", pane, "@state", word], proc)
     if word not in ("done", "blocked") or events is None:
         return
     session = mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"], proc).strip()
-    if not NAME.fullmatch(session):
-        raise TuiError.invalid_shown_session(session)
+    if not _model.NAME.fullmatch(session):
+        raise _errors.TuiError.invalid_shown_session(session)
     try:
         # O_NONBLOCK: a FIFO without a reader fails instead of hanging the hook
         fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-                raise TuiError.unsafe_events(events)
+                raise _errors.TuiError.unsafe_events(events)
             os.write(fd, f"{time.strftime('%H:%M:%S')} {session} {word}\n".encode())
         finally:
             os.close(fd)
     except OSError as e:
-        raise TuiError.events_access(events, e) from e
+        raise _errors.TuiError.events_access(events, e) from e
 
 
 def mark_tmux(argv: list[str], proc) -> str:
     try:
         res = proc(
-            argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=MARK_TIMEOUT
+            argv,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=_model.MARK_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        raise TuiError.mark_timeout(MARK_TIMEOUT) from None
+        raise _errors.TuiError.mark_timeout(_model.MARK_TIMEOUT) from None
     except OSError as e:
-        raise TuiError.command_failed(e) from e
+        raise _errors.TuiError.command_failed(e) from e
     if res.returncode:
-        raise TuiError.command_failed(tmux_error(res))
+        raise _errors.TuiError.command_failed(tmux_error(res))
     return res.stdout
 
 
@@ -123,7 +88,7 @@ def events_file(path: str) -> str:
     """
     path = os.path.abspath(path)
     if "#" in path or path.endswith(";"):
-        raise TuiError.misread_events(path)
+        raise _errors.TuiError.misread_events(path)
     try:
         fd = os.open(
             path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
@@ -133,20 +98,20 @@ def events_file(path: str) -> str:
         finally:
             os.close(fd)
     except OSError as e:
-        raise TuiError.events_access(path, e) from e
+        raise _errors.TuiError.events_access(path, e) from e
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-        raise TuiError.unsafe_events(path)
+        raise _errors.TuiError.unsafe_events(path)
     return path
 
 
 def session_decorations(session: str, events: str | None, *, status_line: bool) -> list[list[str]]:
     target = f"={session}:"
-    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
+    died = _model.DIED if events is None else f"{_model.DIED} ; {_model.DEAD_EVENT}"
     return [
         *([["set-option", "-t", target, "@events", events]] if events is not None else []),
         ["set-hook", "-p", "-t", target, "pane-died", died],
         ["set-option", "-w", "-t", target, "pane-border-status", "top"],
-        ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
+        ["set-option", "-w", "-t", target, "pane-border-format", _model.BORDER],
         ["set-option", "-t", target, "status", "on" if status_line else "off"],
     ]
 
@@ -167,10 +132,10 @@ def status(target: str, *, proc=subprocess.run):
             ],
             proc,
         )
-    except TuiError:
-        return UNKNOWN
+    except _errors.TuiError:
+        return _model.UNKNOWN
     if res.returncode:
-        return None if absent(res) else UNKNOWN
+        return None if absent(res) else _model.UNKNOWN
     return exit_status(res.stdout)
 
 
@@ -179,10 +144,10 @@ def exit_status(output):
     if fields == ["", "", ""]:  # tmux (3.7) exits 0 with empty fields for a missing session
         return None
     if len(fields) != 3 or fields[0] not in ("0", "1"):
-        return UNKNOWN
+        return _model.UNKNOWN
     dead, code, sig = fields
     if dead == "0" or not (code or sig):  # dead, but not yet reaped
-        return RUNNING
+        return _model.RUNNING
     if sig:  # libc's sys_signame (macOS: "kill"), else the number
         return -(int(sig) if sig.isdigit() else getattr(signal, "SIG" + sig.upper(), 0))
     return int(code)
@@ -194,15 +159,15 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
     pane's last LAST_LINES lines; a bad or empty field None. [] when no server runs, None when tmux
     fails.
     """
-    found = read_table(["list-sessions", "-F", LISTING], 7, proc)
+    found = read_table(["list-sessions", "-F", _model.LISTING], 7, proc)
     if found is None:
         return None
     rows = sorted(
-        f for f in found if NAME.fullmatch(f[0]) and (match is None or match.fullmatch(f[0]))
+        f for f in found if _model.NAME.fullmatch(f[0]) and (match is None or match.fullmatch(f[0]))
     )
     if not rows:
         return []
-    clients = read_table(["list-clients", "-F", SHOWN], 3, proc)
+    clients = read_table(["list-clients", "-F", _model.SHOWN], 3, proc)
     if clients is None:
         return None
     recent = {}
@@ -212,7 +177,7 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
         recent[session] = tty
     hosts = {}
     if any(f[0] in recent for f in rows):
-        panes = read_table(["list-panes", "-a", "-F", HOSTS], 3, proc)
+        panes = read_table(["list-panes", "-a", "-F", _model.HOSTS], 3, proc)
         if panes is None:
             return None
         hosts = {tty: session for dead, tty, session in panes if dead != "1"}
@@ -225,10 +190,16 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
                 "sid": printable_column(sid),
                 "runtime": printable_column(runtime),
                 "state": printable_column(state),
-                "pane": pane if PANE.fullmatch(pane) or ITERM_ID.fullmatch(pane) else None,
-                "opener": opener if OPENER.fullmatch(opener) else None,
+                "pane": pane
+                if _model.PANE.fullmatch(pane) or _model.ITERM_ID.fullmatch(pane)
+                else None,
+                "opener": opener if _model.OPENER.fullmatch(opener) else None,
                 "dead": {"1": True, "0": False}.get(dead),
-                "shown": None if name not in recent else host if NAME.fullmatch(host) else "",
+                "shown": None
+                if name not in recent
+                else host
+                if _model.NAME.fullmatch(host)
+                else "",
                 "last_lines": last_lines(name, proc) if dead == "1" else None,
             }
         )
@@ -239,7 +210,7 @@ def read_table(args: list[str], width: int, proc) -> list[list[str]] | None:
     try:
         # -u: else, without a UTF-8 locale or $TMUX, tmux prints tabs as _
         res = call_tmux(["-u", *args], proc)
-    except TuiError:
+    except _errors.TuiError:
         return None
     if res.returncode:
         return [] if absent(res) else None
@@ -252,8 +223,8 @@ def printable_column(value: str) -> str | None:
 
 def last_lines(name: str, proc) -> str | None:
     try:
-        return read(name, LAST_LINES, proc=proc) or None
-    except TuiError:
+        return read(name, _model.LAST_LINES, proc=proc) or None
+    except _errors.TuiError:
         return None
 
 
@@ -269,7 +240,7 @@ def kill(target: str, *, proc=subprocess.run) -> None:
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
     paste(session, text, proc=proc)
-    sleep(PAUSE)
+    sleep(_model.PAUSE)
     keys(session, "Enter", proc=proc)
 
 
@@ -282,8 +253,8 @@ def paste(target: str, text: str, *, proc=subprocess.run) -> None:
     checked_tmux(["load-buffer", "-b", buffer, "-"], proc, text)
     try:
         checked_tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target], proc)
-    except TuiError:
-        with contextlib.suppress(TuiError):
+    except _errors.TuiError:
+        with contextlib.suppress(_errors.TuiError):
             call_tmux(["delete-buffer", "-b", buffer], proc)
         raise
 
@@ -293,20 +264,20 @@ def keys(target: str, *names: str, proc=subprocess.run) -> None:
     target = target_name(target)
     for name in names:
         if name.startswith("-") or name.endswith(";"):
-            raise TuiError.misread_argument(name)
+            raise _errors.TuiError.misread_argument(name)
     checked_tmux(["send-keys", "-t", target, *names], proc)
 
 
 def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
     """None when unset or the target absent."""
     target = target_name(target)
-    if not USER_OPTION.fullmatch(name):
-        raise TuiError.invalid_option(name, USER_OPTION.pattern)
+    if not _model.USER_OPTION.fullmatch(name):
+        raise _errors.TuiError.invalid_option(name, _model.USER_OPTION.pattern)
     res = call_tmux(["show-options", "-v", "-t", target, name], proc)
     if res.returncode:
         if tmux_error(res).startswith("invalid option:") or absent(res):
             return None
-        raise TuiError.command_failed(tmux_error(res))
+        raise _errors.TuiError.command_failed(tmux_error(res))
     return res.stdout.removesuffix("\n")
 
 
@@ -316,12 +287,12 @@ def pane(session: str, *, proc=subprocess.run) -> str | None:
     if res.returncode:
         if absent(res):
             return None
-        raise TuiError.command_failed(tmux_error(res))
+        raise _errors.TuiError.command_failed(tmux_error(res))
     found = res.stdout.strip()
     if not found:  # tmux (3.7) exits 0 printing nothing for a missing session
         return None
-    if not PANE.fullmatch(found):
-        raise TuiError.invalid_pane(found)
+    if not _model.PANE.fullmatch(found):
+        raise _errors.TuiError.invalid_pane(found)
     return found
 
 
@@ -332,7 +303,7 @@ def read(target: str, lines: int | None = None, *, proc=subprocess.run) -> str:
     args = ["capture-pane", "-p", "-J", "-t", target_name(target)]
     if lines is not None:
         if isinstance(lines, bool) or not isinstance(lines, int) or lines < 1:
-            raise TuiError.invalid_lines(lines)
+            raise _errors.TuiError.invalid_lines(lines)
         args += ["-S", f"-{lines}"]
     text = checked_tmux(args, proc).stdout.splitlines()
     while text and not text[-1].strip():
@@ -349,21 +320,21 @@ def attach_command(session: str) -> str:
 def checked_tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.CompletedProcess:
     res = call_tmux(args, proc, stdin)
     if res.returncode:
-        raise TuiError.command_failed(tmux_error(res))
+        raise _errors.TuiError.command_failed(tmux_error(res))
     return res
 
 
 def session_name(session: str) -> str:
-    if not NAME.fullmatch(session):
-        raise TuiError.invalid_session_name(session)
+    if not _model.NAME.fullmatch(session):
+        raise _errors.TuiError.invalid_session_name(session)
     return session
 
 
 def target_name(target: str, suffix: str = ":") -> str:
-    if PANE.fullmatch(target):
+    if _model.PANE.fullmatch(target):
         return target
-    if not NAME.fullmatch(target):
-        raise TuiError.invalid_target(target)
+    if not _model.NAME.fullmatch(target):
+        raise _errors.TuiError.invalid_target(target)
     return f"={target}{suffix}"
 
 
@@ -373,7 +344,7 @@ def call_tmux(args: list[str], proc, stdin: str | None = None) -> subprocess.Com
             return proc(["tmux", *args], capture_output=True, text=True, input=stdin)
         return proc(["tmux", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
-        raise TuiError.command_failed(e) from e
+        raise _errors.TuiError.command_failed(e) from e
 
 
 def tmux_error(res: subprocess.CompletedProcess) -> str:
@@ -381,4 +352,4 @@ def tmux_error(res: subprocess.CompletedProcess) -> str:
 
 
 def absent(res: subprocess.CompletedProcess) -> bool:
-    return bool(ABSENT.fullmatch(tmux_error(res)))
+    return bool(_model.ABSENT.fullmatch(tmux_error(res)))
