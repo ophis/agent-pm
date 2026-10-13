@@ -22,8 +22,10 @@ from unittest import mock
 
 import agent_pm.delegate.engine.config
 from agent_pm.manager import crew, roster
+from agent_pm.manager.engine.types import Spec
 from agent_pm.session import api
 from agent_pm.session.adapters import registry
+from agent_pm.utils import config_file
 
 from manager.tests.case import PYTHONPATH, SRC, Case
 
@@ -40,7 +42,7 @@ DEAD_TEXT = "Error: boom\n\n  \n" + "\n" * 10 + "Pane is dead (status 1)\n"
 DEAD_MSG = "w1: rt0 exited 1 at once; its pane's last lines:\nError: boom\nPane is dead (status 1)"
 MGR = {"session": "mgr", "since": WHEN}
 OTHER = {"session": "other", "since": WHEN}
-LOCAL = "local.toml"
+LOCAL = os.path.basename(config_file.LOCAL)
 WIDTH = 64
 SPAN = roster.EVENTS_MAX // WIDTH
 
@@ -183,6 +185,11 @@ class Api:
         return [c[1] if len(c) == 2 else c[1:] for c in self.calls if c[0] == what]
 
 
+def start(name, directory, *, own, **kw):
+    place = {k: kw.pop(k) for k in ("own_runtime", "split", "split_from") if k in kw}
+    return crew.start(Spec(name, **kw), directory=directory, own=own, **place)
+
+
 def started(name, *rest):
     """A worker entry's resume: crew run as a module."""
     return [PY, *MODULE, "start", name, *rest]
@@ -270,7 +277,7 @@ class WorkerCase(CrewCase):
 
     def started(self, name="w1", **kw):
         kw.setdefault("cwd", self.dir)
-        return crew.start(name, self.directory, own=None, **kw)
+        return start(name, self.directory, own=None, **kw)
 
     def entries(self):
         if not os.path.exists(self.roster):
@@ -432,7 +439,7 @@ class StartTest(WorkerCase):
             with self.subTest(msg):
                 directory = kw.pop("directory", self.directory)
                 with self.assertRaises(crew.WorkersError) as cm:
-                    crew.start("w1", directory, own=None, **{"cwd": self.dir, **kw})
+                    start("w1", directory, own=None, **{"cwd": self.dir, **kw})
                 self.assertEqual(str(cm.exception), msg)
                 self.assertEqual(self.api.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.dir, "m9")))
@@ -2021,7 +2028,7 @@ class StartEntryTest(RosterCase):
         self.seed(MGR)
 
     def start(self, **kw):
-        return crew.start("w1", self.mdir, own="mgr", cwd=self.dir, **kw)
+        return start("w1", self.mdir, own="mgr", cwd=self.dir, **kw)
 
     def resume(self, sid, *rest):
         return [

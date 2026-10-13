@@ -25,7 +25,7 @@ from collections.abc import Iterator
 
 import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
-from agent_pm.manager.engine.types import RosterError, Stale
+from agent_pm.manager.engine.types import RosterError, Spec, Stale
 from agent_pm.session import Session, api
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.files import save
@@ -254,41 +254,33 @@ def _launch(
 
 
 def start(
-    name: str,
-    directory: str,
+    spec: Spec,
     *,
+    directory: str,
     own: str | None,
-    cwd: str,
     own_runtime: str | None = None,
-    prompt: str | None = None,
-    note: str | None = None,
-    flags=(),
-    client: str | None = None,
-    overrides=(),
-    resume: str | None = None,
-    split_from: str | None = None,
     split: str | None = None,
+    split_from: str | None = None,
 ) -> str:
-    _check(name)
+    _check(spec.name)
     if split_from is not None:
         _check(split_from)
-    if resume is not None and not roster.SID.fullmatch(resume):
-        raise WorkersError(f"--resume {resume}: not a session id")
-    if note is not None:
-        note = _note_text(note)
-    env = dict(_override(item) for item in overrides)
+    if spec.resume is not None and not roster.SID.fullmatch(spec.resume):
+        raise WorkersError(f"--resume {spec.resume}: not a session id")
+    note = None if spec.note is None else _note_text(spec.note)
+    env = dict(_override(item) for item in spec.overrides)
     with _leased(directory, own, write=False):
         pass
-    cwd = os.path.abspath(cwd)
+    cwd = os.path.abspath(spec.cwd)
     if not os.path.isdir(cwd):
         raise WorkersError(f"--cwd {cwd}: not a directory")
     record = {
         "version": 1,
-        "name": name,
-        "sid": resume or str(uuid.uuid4()),
-        "runtime": _runtime(client, own_runtime),
+        "name": spec.name,
+        "sid": spec.resume or str(uuid.uuid4()),
+        "runtime": _runtime(spec.client, own_runtime),
         "cwd": cwd,
-        "flags": list(flags),
+        "flags": list(spec.flags),
         "env": env,
         "events": roster.events(directory, create=False),
         "manager": os.path.abspath(directory),
@@ -296,7 +288,14 @@ def start(
         "split_from": split_from,
     }
     workdir = _worker_dir(record["sid"])
-    _launch(record, _spec(record, workdir), own, prompt=prompt or "", resume=resume, note=note)
+    _launch(
+        record,
+        _spec(record, workdir),
+        own,
+        prompt=spec.prompt or "",
+        resume=spec.resume,
+        note=note,
+    )
     return record["sid"]
 
 
@@ -895,20 +894,23 @@ def main(argv=None) -> int:
         elif a.cmd == "start":
             directory = _directory(a.manager)
             caller = _caller()
-            sid = start(
+            spec = Spec(
                 a.name,
-                directory,
-                own=None if caller is None else caller.name,
-                own_runtime=None if caller is None else caller.runtime,
-                cwd=a.cwd or os.getcwd(),
+                a.cwd or os.getcwd(),
                 prompt=a.prompt,
                 note=a.note,
-                flags=flags,
+                flags=tuple(flags),
                 client=a.client,
-                overrides=a.env,
+                overrides=tuple(a.env),
                 resume=a.resume,
-                split_from=a.split_from,
+            )
+            sid = start(
+                spec,
+                directory=directory,
+                own=None if caller is None else caller.name,
+                own_runtime=None if caller is None else caller.runtime,
                 split=a.split,
+                split_from=a.split_from,
             )
             print(f"{a.name} {sid}")
         elif a.cmd == "restart":

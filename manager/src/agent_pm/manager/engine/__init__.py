@@ -1,1 +1,1 @@
-"""Types shared by crew.py and roster.py: types.py."""
+"""The manager's types: types.py."""
