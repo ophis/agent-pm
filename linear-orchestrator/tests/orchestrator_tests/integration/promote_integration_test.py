@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import promote
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.flow_fixtures import (
+from orchestrator_tests.integration.flows.fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,

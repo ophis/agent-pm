@@ -12,8 +12,9 @@ from urllib.parse import unquote
 from agent_pm.linear_orchestrator.engine import promote
 from agent_pm.linear_orchestrator.linear.types import Handoff
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
-from orchestrator_tests.integration.segments import BUILD, REPORT, Segment
+from orchestrator_tests.integration.flows.fixtures import HARNESS_EMAIL
+from orchestrator_tests.integration.flows.types import BUILD, REPORT, BoardChanges
+from orchestrator_tests.integration.flows.workflow import Segment
 
 REWORK = "Add a section on stale sessions."
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."
@@ -136,9 +137,11 @@ class PmToEngineer(Segment):
             )
             self.expect(
                 ident,
-                state="todo",
-                history=[("in_progress", "todo", HARNESS_EMAIL)],
-                comments=[(HARNESS_EMAIL, "interrupted")],
+                BoardChanges(
+                    state="todo",
+                    history=[("in_progress", "todo", HARNESS_EMAIL)],
+                    comments=[(HARNESS_EMAIL, "interrupted")],
+                ),
             )
         self.pm_done(ident)
 

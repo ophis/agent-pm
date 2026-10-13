@@ -14,7 +14,7 @@ import unittest
 
 from agent_pm.linear_orchestrator.engine import config
 from orchestrator_tests.case import PYTHONPATH
-from orchestrator_tests.integration.flow_fixtures import (
+from orchestrator_tests.integration.flows.fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
@@ -24,7 +24,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     Flow,
     TmuxFlow,
 )
-from orchestrator_tests.integration.segments import FIRST_WRITE, agent_calls, lookup
+from orchestrator_tests.integration.flows.types import FIRST_WRITE, agent_calls, lookup
 
 from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux

@@ -11,7 +11,7 @@ import unittest
 from datetime import UTC, datetime
 
 from agent_pm.linear_orchestrator.linear import linear
-from orchestrator_tests.integration.flow_fixtures import (
+from orchestrator_tests.integration.flows.fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,

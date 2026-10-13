@@ -47,7 +47,9 @@ MANAGER = "manager"
 TIMEOUT = 60
 TAIL = 20
 GUARD = (
-    "import json, shutil, sys\nfrom agent_pm.linear_orchestrator.engine import config\n"
+    "import json, shutil, sys, sitecustomize\n"
+    "assert sitecustomize.transport is not None\n"
+    "from agent_pm.linear_orchestrator.engine import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
 
@@ -115,7 +117,7 @@ class Flow(Case):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}, os.path.join(os.path.dirname(__file__), "transport")),
+            **child_env({}, os.path.join(os.path.dirname(os.path.dirname(__file__)), "transport")),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
@@ -286,9 +288,10 @@ class TmuxFlow(Flow):
 
         try:
             live_tmux.wait(ended, timeout, f"run.py's end #{ends} of {sid} and {driver} gone")
-            return
         except AssertionError as e:
             timed_out = str(e)
+        else:
+            return
         self.fail(
             "\n".join(
                 [

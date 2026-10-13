@@ -7,13 +7,14 @@ the issue.
 import unittest
 
 from agent_pm.linear_orchestrator.engine.routing import types as routing
-from orchestrator_tests.integration.flow_fixtures import (
+from orchestrator_tests.integration.flows.fixtures import (
     HARNESS_EMAIL,
     HUMAN,
     LIGHT_RESEARCH,
     RESEARCH_DIR,
 )
-from orchestrator_tests.integration.segments import RESEARCH, Segment
+from orchestrator_tests.integration.flows.types import RESEARCH, BoardChanges
+from orchestrator_tests.integration.flows.workflow import Segment
 
 BLOCKER = "Pick a session store"
 ANSWER = "Only harnesses that run agents in tmux."
@@ -85,10 +86,12 @@ class ResearcherToPm(Segment):
             )
             self.expect(
                 ident,
-                state="in_review",
-                history=[("todo", "in_review", HARNESS_EMAIL)],
-                comments=[(HARNESS_EMAIL, "cap")],
-                subscribers=[HUMAN],
+                BoardChanges(
+                    state="in_review",
+                    history=[("todo", "in_review", HARNESS_EMAIL)],
+                    comments=[(HARNESS_EMAIL, "cap")],
+                    subscribers=[HUMAN],
+                ),
             )
         self.assertEqual(len(self.runs()), routing.CAP)
 

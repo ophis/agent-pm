@@ -1,241 +1,47 @@
-"""The flows' Segment layer over TmuxFlow: each step changes the board (a seed, a human's move or
-comment, a router.py --issue claim or resume, an agent run behind its fake_claude gate, a promote
-tick), says what it expects of the tracked issues, runs.jsonl and Linear's failed requests, and
-verify() compares them when the step ends.
-"""
-
-import contextlib
 import copy
 import os
 import re
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.routing import types as routing
-from agent_pm.linear_orchestrator.engine.types import SERVICE_ERRORS
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.fixture_errors import StepFailure
-from orchestrator_tests.integration.flow_fixtures import (
+from orchestrator_tests.integration.flows.expectations import BoardExpectations
+from orchestrator_tests.integration.flows.fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
-    PRD_DIR,
     PROJECT,
     REPO,
     RESEARCH_DIR,
     TIMEOUT,
     TmuxFlow,
 )
+from orchestrator_tests.integration.flows.types import (
+    BUILD,
+    DIRS,
+    FIRST_WRITE,
+    INSTRUCTIONS,
+    REPORT,
+    RESEARCH,
+    RUN_KEYS,
+    RUN_STEPS,
+    RUNTIME,
+    TEXT_KINDS,
+    BoardChanges,
+    Pending,
+    Script,
+    agent_calls,
+    lookup,
+)
 
 from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
 
-ROLE_OF = {a: r for r, a in ACCOUNTS.items()}
-DIRS = {"researcher": RESEARCH_DIR, "pm": PRD_DIR}
-TEXT_KINDS = {"done": "done", "needs_input": "question", "failed": "failed"}
-RUN_STEPS = {
-    "done": "run: in review",
-    "needs_input": "run: needs input",
-    "failed": "run: failed",
-    "none": "run: no outcome",
-}
-RUNTIME = "claude"
-RUN_KEYS = ("kind", "issue", "sid", "role", "runtime")
-SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit) · ")
-# a session comment's first write: its update misses, then it is created by its id
-FIRST_WRITE = ("sessions.M_UPDATE", HARNESS_EMAIL, "error")
-HARNESS_TEXTS = {routing.CAP_COMMENT: "cap", routing.INTERRUPTED: "interrupted"}
-RESEARCH = (
-    "Session registries in agent harnesses",
-    "How do agent harnesses keep track of their sessions?",
-)
-INSTRUCTIONS = "Write the PRD for a session registry."
-REPORT = (
-    "# Session registries in agent harnesses\n\nEach harness names a tmux session after its run."
-)
-BUILD = "Build the session registry."
 
-
-def lookup(account):
-    """A resumed run's look for an unledgered comment step's comment (FR-54): not found, then
-    posted.
-    """
-    return ("linear.Q_COMMENT", account, "error")
-
-
-def agent_calls(calls):
-    """fake_claude's calls of agent runs: the usage probe's have neither --session-id nor --resume.
-    """
-    return [c for c in calls if {"--session-id", "--resume"} & set(c["argv"])]
-
-
-@dataclass
-class Want:
-    state: str
-    title: str
-    history: list = field(default_factory=list)
-    comments: list = field(default_factory=list)
-    attachments: list = field(default_factory=list)
-    subscribers: list = field(default_factory=list)
-    ledger: dict = field(default_factory=dict)
-
-
-class Script(NamedTuple):
-    outcome: str
-    steps: list
-    report: dict | None
-    texts: dict
-
-
-class Pending(NamedTuple):
-    ident: str
-    role: str
-    sid: str
-    script: Script
-    gate: str
-    resumed: bool
-
-
-class Segment(TmuxFlow):
-    def setUp(self):
-        super().setUp()
-        self.want, self.want_runs, self.want_problems, self.texts = {}, [], [], {}
-        self.n_steps = self.n_scripts = self.n_gates = 0
-        self.pending = None
-
-    @contextlib.contextmanager
-    def step(self, name):
-        self.n_steps += 1
-        n = self.n_steps
-        try:
-            yield
-            self.verify()
-        except AssertionError as e:
-            raise StepFailure(n, name, e) from e
-        except (*SERVICE_ERRORS, DriverError, SessionConfigError) as e:
-            e.add_note(f"failed at step {n} ({name})")
-            raise
-
-    def track(self, ident, **fields):
-        rec = self.issue(ident)
-        self.want[ident] = Want(
-            **{"state": fake_linear.NAMES[rec["state"]], "title": rec["title"], **fields}
-        )
-
-    def expect(
-        self,
-        ident,
-        *,
-        state=None,
-        title=None,
-        history=(),
-        comments=(),
-        attachments=(),
-        subscribers=(),
-        ledger=None,
-    ):
-        want = self.want[ident]
-        want.state = want.state if state is None else state
-        want.title = want.title if title is None else title
-        want.history += history
-        want.comments += comments
-        want.attachments += attachments
-        want.subscribers += subscribers
-        want.ledger.update(ledger or {})
-
-    def expect_session(self, ident, sid, status):
-        comments, entry = self.want[ident].comments, (HARNESS_EMAIL, f"session {sid} {status}")
-        at = next(
-            (
-                i
-                for i, (a, k) in enumerate(comments)
-                if a == HARNESS_EMAIL and k.startswith(f"session {sid} ")
-            ),
-            None,
-        )
-        if at is None:
-            comments.append(entry)
-        else:
-            comments[at] = entry
-
-    def expect_runs(self, *lines):
-        self.want_runs += lines
-
-    def expect_problem(self, *problems):
-        self.want_problems += problems
-
-    def sids(self):
-        return {line[2] for line in self.want_runs}
-
-    def session_status(self, ident, sid):
-        """The status of sid's session comment on ident, else None."""
-        prefix = f"Run {sid} · "
-        return next(
-            (
-                m[1]
-                for a, body in self.comments(ident)
-                if a == HARNESS_EMAIL
-                and body.startswith(prefix)
-                and (m := SESSION.match(body, len(prefix)))
-            ),
-            None,
-        )
-
-    def kind(self, author, body):
-        if author == HUMAN:
-            return f"human: {body}"
-        if author in ROLE_OF:
-            if body.startswith(config.TASKS[ROLE_OF[author]].start):
-                return "start"
-            if found := [k for text, k in self.texts.items() if text in body]:
-                return found[0]
-        elif author == HARNESS_EMAIL:
-            for sid in self.sids():
-                prefix = f"Run {sid} · "
-                if body.startswith(prefix) and (m := SESSION.match(body, len(prefix))):
-                    return f"session {sid} {m[1]}"
-            if m := re.fullmatch(r"Promoted to (\S+)\.", body):
-                return f"promoted {m[1]}"
-            if body in HARNESS_TEXTS:
-                return HARNESS_TEXTS[body]
-        return f"unrecognized: {body.splitlines()[0] if body else ''}"
-
-    def verify(self):
-        found = []
-        for ident, want in self.want.items():
-            actual = {
-                "state": self.state(ident),
-                "title": self.issue(ident)["title"],
-                "history": self.history(ident),
-                "comments": [(a, self.kind(a, b)) for a, b in self.comments(ident)],
-                "attachments": self.attachments(ident),
-                "subscribers": self.subscribers(ident),
-                "ledger": self.ledger(ident),
-            }
-            found += [
-                f"{ident} {item} was {value!r}, want {getattr(want, item)!r}"
-                for item, value in actual.items()
-                if value != getattr(want, item)
-            ]
-        lines = [tuple(d.get(k) for k in RUN_KEYS) for d in self.runs()]
-        overall = {
-            "runs.jsonl": (lines, self.want_runs),
-            "problems": (self.problems(), self.want_problems),
-        }
-        found += [
-            f"{item} was {value!r}, want {want!r}"
-            for item, (value, want) in overall.items()
-            if value != want
-        ]
-        if found:
-            self.fail("; ".join(found))
-
+class Segment(BoardExpectations):
     def agent_script(self, role, outcome, ident, url=None):
         """outcome: done, needs_input, failed, or none (no outcome block)."""
         self.n_scripts += 1
@@ -347,7 +153,7 @@ class Segment(TmuxFlow):
             if p.resumed:
                 posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
                 self.expect_problem(*[lookup(account)] * len(posts))
-            self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
+            self.expect(p.ident, BoardChanges(comments=comments, ledger={p.sid: steps}, **changes))
 
     def backlog_issue(self, role, title, description, labels=()):
         ident = self.fake.issue(
@@ -393,7 +199,9 @@ class Segment(TmuxFlow):
     def human_move(self, ident, to, name):
         with self.step(name):
             self.fake.move(ident, to, actor=self.ids[HUMAN])
-            self.expect(ident, state=to, history=[(self.want[ident].state, to, HUMAN)])
+            self.expect(
+                ident, BoardChanges(state=to, history=[(self.want[ident].state, to, HUMAN)])
+            )
 
     def human_say(self, ident, text, to, name):
         with self.step(name):
@@ -401,9 +209,11 @@ class Segment(TmuxFlow):
             self.fake.move(ident, to, actor=self.ids[HUMAN])
             self.expect(
                 ident,
-                state=to,
-                history=[(self.want[ident].state, to, HUMAN)],
-                comments=[(HUMAN, f"human: {text}")],
+                BoardChanges(
+                    state=to,
+                    history=[(self.want[ident].state, to, HUMAN)],
+                    comments=[(HUMAN, f"human: {text}")],
+                ),
             )
 
     def handoff(self, ident, text):
@@ -427,7 +237,8 @@ class Segment(TmuxFlow):
             )
             self.expect_runs(("start", ident, sid, role, RUNTIME))
             self.expect(
-                ident, state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)]
+                ident,
+                BoardChanges(state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)]),
             )
             self.expect_session(ident, sid, "running")
             self.expect_problem(FIRST_WRITE)
@@ -454,9 +265,11 @@ class Segment(TmuxFlow):
             child, title = self.assert_child(ident, role, nxt)
             self.expect(
                 ident,
-                state="done",
-                history=[("handoff", "done", HARNESS_EMAIL)],
-                comments=[(HARNESS_EMAIL, f"promoted {child}")],
+                BoardChanges(
+                    state="done",
+                    history=[("handoff", "done", HARNESS_EMAIL)],
+                    comments=[(HARNESS_EMAIL, f"promoted {child}")],
+                ),
             )
             self.track(child, state="todo", title=title)
         return child
@@ -562,8 +375,7 @@ class Segment(TmuxFlow):
         )
 
     def prompt(self, ident, sid):
-        """The input of sid's first run: run.jsonl's input record after sid's first session record.
-        """
+        """The first input record after sid's first session record."""
         records = self.records(ident)
         at = next(
             (i for i, r in enumerate(records) if r["kind"] == "session" and r["sid"] == sid), None

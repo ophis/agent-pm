@@ -7,7 +7,7 @@ closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows be
 import functools
 import unittest
 
-from orchestrator_tests.integration.flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
+from orchestrator_tests.integration.flows.fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
 from orchestrator_tests.unit.run.support import ID, SID, UUID
 from orchestrator_tests.unit.writeback.support import PRD
 
