@@ -163,3 +163,38 @@ class PruneScope:
 class TickTime:
     now: datetime
     hour: int
+
+
+@dataclass(frozen=True)
+class Target:
+    owner: str
+    name: str
+    branch: str = ""
+    clone: str = ""
+
+
+@dataclass(frozen=True)
+class Doc:
+    url: str
+    path: str
+    text: str | None
+
+
+@dataclass(frozen=True)
+class Sources:
+    docs: tuple[Doc, ...]
+    earlier: Doc | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class InputContext:
+    humans: tuple[str, ...]
+    target: Target | None
+    docs: Docs
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClonePaths:
+    work: str
+    clones: Mapping[str, str]
+    writable: tuple[str, ...] | None = None

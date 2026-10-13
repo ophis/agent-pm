@@ -217,9 +217,9 @@ class DocumentGathering(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             src,
-            humans=HUMANS,
-            target=target.Target("o", "r", "ENG-7-x"),
-            docs=DOCS,
+            inputs.InputContext(
+                humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS
+            ),
         )
         self.assertIn("## PRD: `Product Design/2026-08-01-PM-1-x.md`\n\n" + fenced("p1"), got)
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {url}\n", got)

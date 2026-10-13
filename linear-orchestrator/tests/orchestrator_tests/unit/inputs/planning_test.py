@@ -37,9 +37,9 @@ class ResearchInputs(Case):
             iss,
             "researcher",
             src,
-            humans=HUMANS,
-            target=target.Target("ophis", "agent-pm"),
-            docs=DOCS,
+            inputs.InputContext(
+                humans=HUMANS, target=target.Target("ophis", "agent-pm"), docs=DOCS
+            ),
         )
         self.assertEqual(
             got,
@@ -95,9 +95,7 @@ class ResearchInputs(Case):
                     issue(description),
                     "researcher",
                     inputs.Sources((), None),
-                    humans=HUMANS,
-                    target=t,
-                    docs=DOCS,
+                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
                 )
                 self.assertEqual(
                     got,
@@ -124,9 +122,7 @@ class ResearchInputs(Case):
             issue("Q", notes=ns),
             "researcher",
             inputs.Sources((), None),
-            humans=HUMANS,
-            target=None,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
         )
         self.assertIn(
             (
@@ -139,7 +135,12 @@ class ResearchInputs(Case):
 
     def test_not_found_doc_names_the_branch(self):
         src = inputs.Sources((inputs.Doc(BASE + "Research/a.md", "Research/a.md", None),), None)
-        got = inputs.render(issue("Q"), "researcher", src, humans=HUMANS, target=None, docs=DOCS)
+        got = inputs.render(
+            issue("Q"),
+            "researcher",
+            src,
+            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+        )
         self.assertTrue(
             got.endswith(
                 "## Linked documents (context)\n\n### `Research/a.md`\n\n(not found on main)"
@@ -150,7 +151,12 @@ class ResearchInputs(Case):
 class DocumentFences(Case):
     def render_doc(self, text):
         src = inputs.Sources((inputs.Doc(BASE + "Research/a.md", "Research/a.md", text),), None)
-        return inputs.render(issue("Q"), "researcher", src, humans=HUMANS, target=None, docs=DOCS)
+        return inputs.render(
+            issue("Q"),
+            "researcher",
+            src,
+            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+        )
 
     def test_fence_is_longer_than_any_backtick_run_and_trailing_newlines_add_no_blank_lines(self):
         for text, fence, shown in (
@@ -215,7 +221,9 @@ class DesignInputs(Case):
                 "# Mine",
             ),
         )
-        got = inputs.render(iss, "pm", src, humans=HUMANS, target=None, docs=DOCS)
+        got = inputs.render(
+            iss, "pm", src, inputs.InputContext(humans=HUMANS, target=None, docs=DOCS)
+        )
         self.assertEqual(
             got,
             lines(
@@ -274,9 +282,7 @@ class DesignInputs(Case):
                     issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"),
                     "pm",
                     inputs.Sources((), None),
-                    humans=HUMANS,
-                    target=t,
-                    docs=DOCS,
+                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
                 )
                 self.assertEqual(
                     got,
@@ -301,7 +307,10 @@ class DesignInputs(Case):
             (), inputs.Doc(BASE + "Product%20Design/p.md", "Product Design/p.md", None)
         )
         got = inputs.render(
-            issue("Desc", ident="PM-9", notes=ns), "pm", src, humans=HUMANS, target=None, docs=DOCS
+            issue("Desc", ident="PM-9", notes=ns),
+            "pm",
+            src,
+            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
         )
         self.assertTrue(
             got.endswith(
@@ -323,9 +332,7 @@ class DesignInputs(Case):
             issue(d, ident="PM-9"),
             "pm",
             inputs.Sources((), None),
-            humans=HUMANS,
-            target=None,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
         )
         self.assertNotIn("## Comments on", got)
         self.assertIn("## Brief\n\nCompare queues\n\nAnn, t:\nGo.", got)

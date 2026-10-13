@@ -5,24 +5,16 @@
 import json
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
-from agent_pm.linear_orchestrator.engine.types import Invalid, Transient
+from agent_pm.linear_orchestrator.engine.types import ClonePaths, Invalid, Target, Transient
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils import GUARD, NAME, OWNER, SHORT, common_dir, err_text, under
 from agent_pm.utils import checkout as clone_checkout
 
 MAPPED = "project mapping "
-
-
-@dataclass(frozen=True)
-class Target:
-    owner: str
-    name: str
-    branch: str = ""
-    clone: str = ""
 
 
 def _one(value):
@@ -106,7 +98,8 @@ def checkout(ident, owner, name, *, work) -> str:
     return clone_checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
 
 
-def _branches(ident, o, n, run, work, roles):
+def _branches(ident, repo: tuple[str, str], run, work, roles):
+    o, n = repo
     # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run
     # could have changed
     path = checkout(ident, o, n, work=work)
@@ -159,6 +152,21 @@ def _branches(ident, o, n, run, work, roles):
     ]
 
 
+def _checked_info(repo: tuple[str, str], tag, run):
+    asked = f"{tag}{repo[0]}/{repo[1]}"
+    info = _repo_info(*repo, run)
+    if isinstance(info, Invalid):
+        return Invalid(tag + info.reason)
+    if isinstance(info, Transient):
+        return info
+    _, can_push, default = info
+    if not can_push:
+        return Invalid(f"{asked}: no push permission")
+    if not isinstance(default, str) or not REF.fullmatch(default):
+        return Invalid(f"{asked}: unsafe default branch name")
+    return info
+
+
 def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transient:
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
@@ -169,19 +177,12 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
         )
     if isinstance(repo, Invalid):
         return repo
-    asked = f"{tag}{repo[0]}/{repo[1]}"
-    info = _repo_info(*repo, run)
-    if isinstance(info, Invalid):
-        return Invalid(tag + info.reason)
-    if isinstance(info, Transient):
+    info = _checked_info(repo, tag, run)
+    if isinstance(info, (Invalid, Transient)):
         return info
-    (o, n), can_push, default = info
-    if not can_push:
-        return Invalid(f"{asked}: no push permission")
-    if not isinstance(default, str) or not REF.fullmatch(default):
-        return Invalid(f"{asked}: unsafe default branch name")
+    (o, n), _, _ = info
     ident = issue.identifier
-    names = _branches(ident, o, n, run, work, roles)
+    names = _branches(ident, (o, n), run, work, roles)
     if isinstance(names, Transient):
         return names
     if len(names) > 1:
@@ -191,7 +192,8 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, clones, *, work, writable=None, run=sh_run) -> Target:
+def with_clone(t, ident, paths: ClonePaths, *, run=sh_run) -> Target:
+    work, clones, writable = paths.work, paths.clones, paths.writable
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
     # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)

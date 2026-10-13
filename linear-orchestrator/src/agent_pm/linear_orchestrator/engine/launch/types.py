@@ -88,7 +88,10 @@ class Launch:
             repo = target.research_repo(issue, cfg.project_repos)
         if repo is not None:
             repo = target.with_clone(
-                repo, a.issue, cfg.local_clones, work=cfg.runs_dir, run=self.run
+                repo,
+                a.issue,
+                target.ClonePaths(clones=cfg.local_clones, work=cfg.runs_dir),
+                run=self.run,
             )
         return repo, None
 
@@ -102,7 +105,10 @@ class Launch:
         try:
             os.makedirs(rd, exist_ok=True)
             text = inputs.render(
-                issue, self.role, sources, humans=ctx.humans, target=repo, docs=cfg.docs
+                issue,
+                self.role,
+                sources,
+                inputs.InputContext(humans=ctx.humans, target=repo, docs=cfg.docs),
             ).replace("\x00", "")
             text = text.encode("utf-8", "replace").decode()
         except SERVICE_ERRORS as e:

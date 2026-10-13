@@ -156,9 +156,13 @@ class TargetCheckout(Case):
         self.git_file(f"gitdir: {admin}\n")
         return admin
 
-    def run_(self, clones, **kw):
-        kw.setdefault("writable", ())
-        return target.with_clone(self.T, "TASK-26", clones, work=self.work, **kw)
+    def run_(self, clones, *, writable=(), run=config.sh_run):
+        return target.with_clone(
+            self.T,
+            "TASK-26",
+            target.ClonePaths(clones=clones, work=self.work, writable=writable),
+            run=run,
+        )
 
     def want(self, clone):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)

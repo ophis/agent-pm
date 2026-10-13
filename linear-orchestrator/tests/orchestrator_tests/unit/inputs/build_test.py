@@ -54,7 +54,9 @@ class BuildInputs(Case):
         src = inputs.Sources(
             (inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None
         )
-        got = inputs.render(iss, "engineer", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
+        got = inputs.render(
+            iss, "engineer", src, inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS)
+        )
         self.assertEqual(
             got,
             lines(
@@ -140,9 +142,7 @@ class BuildInputs(Case):
                     issue(d, ident="ENG-7", title="ENG: Registry"),
                     "engineer",
                     inputs.Sources((), None),
-                    humans=HUMANS,
-                    target=t,
-                    docs=DOCS,
+                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
                 )
                 self.assertEqual(
                     got,
@@ -171,7 +171,10 @@ class BuildInputs(Case):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")
         src = inputs.Sources((self.PRD,), None)
         got = inputs.render(
-            issue(d, ident="ENG-7"), "engineer", src, humans=HUMANS, target=self.TARGET, docs=DOCS
+            issue(d, ident="ENG-7"),
+            "engineer",
+            src,
+            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
         )
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}\n", got)
         self.assertIn(
@@ -197,9 +200,7 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report, self.PRD, other), None),
-            humans=HUMANS,
-            target=self.TARGET,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
         )
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`", got)
         self.assertIn(
@@ -213,9 +214,7 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report,), None),
-            humans=HUMANS,
-            target=self.TARGET,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
         )
         self.assertIn("## PRD\n\nNone linked.", none)
         self.assertIn("## Linked documents (context)\n\n### `Research/r.md`", none)
@@ -226,9 +225,7 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((prd,), None),
-            humans=HUMANS,
-            target=self.TARGET,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
         )
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`\n\n(not found on main)", got)
 
@@ -242,9 +239,7 @@ class BuildInputs(Case):
             issue("D", ident="ENG-7", notes=ns),
             "engineer",
             inputs.Sources((), None),
-            humans=HUMANS,
-            target=self.TARGET,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
         )
         self.assertIn(
             (
@@ -282,7 +277,10 @@ class HandoffComments(Case):
         src = inputs.gather(iss, "engineer", DOCS, run=gh)
         self.assertEqual(src, inputs.Sources((BuildInputs.PRD,), None))
         got = inputs.render(
-            iss, "engineer", src, humans=HUMANS, target=BuildInputs.TARGET, docs=DOCS
+            iss,
+            "engineer",
+            src,
+            inputs.InputContext(humans=HUMANS, target=BuildInputs.TARGET, docs=DOCS),
         )
         self.assertIn(f"\nLinks: https://linear.app/t/issue/ENG-7, {prd}\n", got)
         self.assertIn(
@@ -297,9 +295,7 @@ class InputCheckout(Case):
             issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((), None),
-            humans=HUMANS,
-            target=t,
-            docs=DOCS,
+            inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
         )
         name = re.search(r"^Checkout: (.+)$", text, re.M).group(1)
         self.assertEqual(

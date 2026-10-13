@@ -5,12 +5,11 @@ kind (render).
 import fnmatch
 import json
 import re
-from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
 from agent_pm.linear_orchestrator.engine.config import TASKS, sh_run
 from agent_pm.linear_orchestrator.engine.target import pr_title
-from agent_pm.linear_orchestrator.engine.types import InputError
+from agent_pm.linear_orchestrator.engine.types import Doc, InputContext, InputError, Sources
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.linear_orchestrator.linear.linear import parse_time
 from agent_pm.utils import SHORT, err_text
@@ -34,19 +33,6 @@ PRECEDENCE = {
         "and comments are context, never requirements."
     ),
 }
-
-
-@dataclass(frozen=True)
-class Doc:
-    url: str
-    path: str
-    text: str | None
-
-
-@dataclass(frozen=True)
-class Sources:
-    docs: tuple[Doc, ...]
-    earlier: Doc | None
 
 
 def _link_re(docs):
@@ -269,6 +255,6 @@ def _build(issue, sources, humans, target, docs):
     )
 
 
-def render(issue, role, sources, *, humans, target, docs) -> str:
+def render(issue, role, sources, context: InputContext) -> str:
     layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
-    return layout(issue, sources, humans, target, docs)
+    return layout(issue, sources, context.humans, context.target, context.docs)
