@@ -25,8 +25,8 @@ class UtilsImportsTest(Case):
     def test_no_module_imports_the_team_tools(self):
         tools = "agent_pm.delegate.team.tools"
         files = {
-            f"{layer.split('.')[0]}/{PKG}/{layer.replace('.', '/')}/x.py": f"import {tools}.repo\n"
-            for layer in guards.LAYERS
+            f"{unit.split('.')[0]}/{PKG}/{unit.replace('.', '/')}/x.py": f"import {tools}.repo\n"
+            for unit in guards.UNITS
         }
         files[f"delegate/{PKG}/x.py"] = f"from {tools}.repo import read_config\n"
         files[f"delegate/{PKG}/delegate/composer/w.py"] = (
@@ -44,8 +44,8 @@ class UtilsImportsTest(Case):
                 [
                     f"delegate/{PKG}/delegate/composer/w.py: delegate.composer imports {tools}.repo",
                     f"delegate/{PKG}/delegate/composer/x.py: delegate.composer imports {tools}.repo",
-                    f"delegate/{PKG}/delegate/team/tools/x.py: outside the layers imports {tools}",
-                    f"delegate/{PKG}/delegate/team/tools/x.py: outside the layers imports {tools}.y",
+                    f"delegate/{PKG}/delegate/team/tools/x.py: outside the units imports {tools}",
+                    f"delegate/{PKG}/delegate/team/tools/x.py: outside the units imports {tools}.y",
                     f"delegate/{PKG}/delegate/x.py: delegate imports {tools}.repo",
                     f"session/{PKG}/session/adapters/x.py: session.adapters imports {tools}.repo",
                     f"session/{PKG}/session/engine/api/x.py: session.engine.api imports {tools}.repo",
@@ -54,8 +54,8 @@ class UtilsImportsTest(Case):
                     f"session/{PKG}/session/hosts/x.py: session.hosts imports {tools}.repo",
                     f"session/{PKG}/session/modes/x.py: session.modes imports {tools}.repo",
                     f"utils/{PKG}/utils/y.py: bare import tools.repo",
-                    f"utils/{PKG}/utils/z.py: outside the layers imports {tools}.repo",
-                    f"delegate/{PKG}/x.py: outside the layers imports {tools}.repo",
+                    f"utils/{PKG}/utils/z.py: outside the units imports {tools}.repo",
+                    f"delegate/{PKG}/x.py: outside the units imports {tools}.repo",
                 ]
             ),
         )
@@ -82,15 +82,15 @@ class UtilsImportsTest(Case):
     def test_production_tree_does_not_import_the_team_tools_as_a_library(self):
         self.assertEqual(guards.layer_imports(REPO), [])
 
-    def test_every_layer_may_import_utils(self):
+    def test_every_unit_may_import_utils(self):
         files = {
             f"utils/{PKG}/utils/config_file.py": "import os\nimport tomllib\n"
             "from agent_pm.utils.paths import under\nfrom . import markdown\n"
         }
         files.update(
             {
-                f"{layer.split('.')[0]}/{PKG}/{layer.replace('.', '/')}/x.py": "from agent_pm.utils.config_file import read_config\n"
-                for layer in guards.LAYERS
+                f"{unit.split('.')[0]}/{PKG}/{unit.replace('.', '/')}/x.py": "from agent_pm.utils.config_file import read_config\n"
+                for unit in guards.UNITS
             }
         )
         root = self.tree(files)

@@ -1,5 +1,5 @@
 """Every module of agent_pm (the five import roots) and tests imported alone in a fresh child, an empty temp dir its
-HOME and cwd, with only the import roots it needs (PATHS: the orchestrator's only for it and tests): it exits 0,
+HOME and cwd, with only the import roots of its layer and the lower ones (PATHS; tests: all of them): it exits 0,
 leaving the dir empty and sys.path unchanged."""
 
 import os
@@ -7,10 +7,16 @@ import subprocess
 import tempfile
 import unittest
 
-from tests.case import ORCH_ROOT, PY, REPO, ROOTS, SRC, Case, child_env
+from tests.case import PY, REPO, ROOTS, SRC, Case, child_env
+from tests.guards import LAYERS, PROJECTS
 
-LOWER = tuple(r for r in ROOTS if r != ORCH_ROOT)
-PATHS = {"agent_pm": LOWER, "agent_pm.linear_orchestrator": ROOTS, "tests": (*ROOTS, REPO)}
+PATHS = {
+    **{
+        f"agent_pm.{PROJECTS[p]}": tuple(SRC[PROJECTS[q]] for q in LAYERS[: i + 1])
+        for i, p in enumerate(LAYERS)
+    },
+    "tests": (*ROOTS, REPO),
+}
 CHILD = """import importlib, sys
 path = list(sys.path)
 importlib.import_module(sys.argv[1])
