@@ -1,22 +1,20 @@
-"""CI test runner: `run_tests.py <title> <start dir>` runs the *_test.py under <start dir>, top
-level the cwd, in a -X faulthandler child. Each failure or error prints a GitHub ::error annotation
-titled with the test id and a row in $GITHUB_STEP_SUMMARY; the parent annotates a crash (a nonzero
-exit the results do not explain) with the last test started and the stderr tail. integration_jobs.py
-runs jobs through it.
-"""
+"""Run suites in a supervised child, annotate failures and optionally record durations."""
 
 import collections
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from pathlib import Path
 
 STATE = "RUN_TESTS_STATE"
 TAIL = 40
 
 
-def escape(text, prop=False):
+def escape(text, *, prop=False):
     text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     return text.replace(":", "%3A").replace(",", "%2C") if prop else text
 
@@ -38,8 +36,16 @@ class AnnotatingResult(unittest.TextTestResult):
         self.failed = []
 
     def startTest(self, test):
+        self.started = time.monotonic()
         append(STATE, f"start {test.id()}\n")
         super().startTest(test)
+
+    def stopTest(self, test):
+        append(
+            "RUN_TESTS_DURATIONS",
+            json.dumps({"test": test.id(), "seconds": time.monotonic() - self.started}) + "\n",
+        )
+        super().stopTest(test)
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
@@ -130,15 +136,64 @@ def supervise(title):
     return code
 
 
+def discovery_top(root, start):
+    root = root.resolve()
+    start = Path(start).resolve()
+    if start == root / ".github":
+        return start
+    for parent in [start, *start.parents]:
+        if (
+            parent.parent.name == "tests"
+            and parent.name not in {"unit", "integration"}
+            and (parent / "__init__.py").is_file()
+        ):
+            return parent.parent
+    return root
+
+
+class DiscoveryError(ValueError):
+    def __init__(self, errors):
+        super().__init__("\n".join(errors))
+
+
+def discover(root, directories):
+    suite = unittest.TestSuite()
+    for directory in directories:
+        start = root / directory
+        loader = unittest.TestLoader()
+        suite.addTests(
+            loader.discover(
+                str(start), pattern="*_test.py", top_level_dir=str(discovery_top(root, start))
+            )
+        )
+        if loader.errors:
+            raise DiscoveryError(loader.errors)
+    return suite
+
+
+def unit_directories(root):
+    return [
+        "tests/unit",
+        *sorted(
+            str(path.relative_to(root))
+            for pattern in ("*/tests/unit", "*/tests/*/unit")
+            for path in root.glob(pattern)
+        ),
+        ".github",
+    ]
+
+
 def main(argv):
-    if len(argv) != 2:
-        sys.exit("usage: run_tests.py <title> <start dir>")
-    title, start = argv
+    if len(argv) < 2:
+        sys.exit("usage: run_tests.py <title> <start dir>... | <title> --unit")
+    title, *directories = argv
     code = supervise(title)
     if code is not None:
         return code
-    suite = unittest.TestLoader().discover(start, pattern="*_test.py", top_level_dir=os.getcwd())
-    return run(suite, title)
+    root = Path.cwd()
+    return run(
+        discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
+    )
 
 
 if __name__ == "__main__":
