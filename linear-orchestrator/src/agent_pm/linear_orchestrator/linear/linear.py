@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import Unavailable
 from agent_pm.utils.files import append_line
 from agent_pm.utils.text import printable
 
@@ -32,13 +33,6 @@ def use_logs(path):
 
 def stamp():
     return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-class Unavailable(Exception):
-    # its text never holds the request, headers or key
-    def __init__(self, op, *, status=None, reason=None):
-        super().__init__(f"{op}: {reason}" if reason is not None else f"{op}: HTTP {status}")
-        self.op, self.status, self.reason = op, status, reason
 
 
 def operation(query):

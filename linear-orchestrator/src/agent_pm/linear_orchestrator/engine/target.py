@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 import agent_pm.utils.repos
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
+from agent_pm.linear_orchestrator.engine.types import Invalid, Transient
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils.git import GUARD, common_dir
 from agent_pm.utils.paths import under
@@ -24,16 +25,6 @@ class Target:
     name: str
     branch: str = ""
     clone: str = ""
-
-
-@dataclass(frozen=True)
-class Invalid:
-    reason: str
-
-
-@dataclass(frozen=True)
-class Transient:
-    reason: str
 
 
 def _one(value):

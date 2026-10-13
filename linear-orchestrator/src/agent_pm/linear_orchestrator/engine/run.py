@@ -12,6 +12,7 @@ import sys
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
 from agent_pm.session import api
@@ -165,7 +166,7 @@ def main(argv, *, gql=linear.linear_gql, run=delegate.run):
         return _usage(f"bad runtime: {a.runtime!r}")
     try:
         cfg = config.load()
-    except config.ConfigError as e:
+    except ConfigError as e:
         if e.logs_dir:
             linear.use_logs(e.logs_dir)
         else:

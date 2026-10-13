@@ -5,6 +5,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import ConfigError, Unavailable
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from agent_pm.linear_orchestrator.linear.linear import (
     config_error,
@@ -91,7 +92,7 @@ class Promoter:
                     if detail["state"]["id"] != self.states["handoff"]:
                         continue
                     work.append((self.moves(src, detail), src, detail, role, nxt))
-                except linear.Unavailable:
+                except Unavailable:
                     raise
                 except (Exception, SystemExit) as e:
                     self.say("handoff-error", src["identifier"], error=one_line(e))
@@ -107,7 +108,7 @@ class Promoter:
             found = [None]
             try:
                 self.promote(src, detail, role, nxt, cutoff, first, found)
-            except linear.Unavailable:
+            except Unavailable:
                 raise
             except (Exception, SystemExit) as e:
                 self.say("handoff-error", src["identifier"], error=one_line(e))
@@ -233,7 +234,7 @@ class Promoter:
         try:
             if self.comment_and_move(src, body, "handoff-failed"):
                 self.say("handoff-failed", src["identifier"], to="in_review")
-        except linear.Unavailable:
+        except Unavailable:
             raise
         except (Exception, SystemExit) as e:
             self.say(
@@ -278,7 +279,7 @@ def run_prune(gql, now, dry, team, roles, work, pruner=None):
         if pruner is None:
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
         pruner(gql, now, dry, work=work, team=team, roles=roles).run()
-    except linear.Unavailable as e:
+    except Unavailable as e:
         linear_error("prune", e, dry)
     except (Exception, SystemExit) as e:
         log("prune", "prune-error", dry=dry, error=one_line(e))
@@ -292,7 +293,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     dry = "--dry-run" in argv
     try:
         cfg = config.load(path=config_path)
-    except config.ConfigError as e:
+    except ConfigError as e:
         if not e.logs_dir:
             print(e.msg, file=sys.stderr)  # no log dir yet
             return 1
@@ -304,7 +305,7 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     try:
         promoter = Promoter(gql, cfg, now, dry, wait="--now" not in argv)
         promoter.run()
-    except linear.Unavailable as e:
+    except Unavailable as e:
         return linear_error("promote", e, dry)
     run_prune(gql, now, dry, promoter.team, promoter.roles, cfg.runs_dir, pruner)
     return 0

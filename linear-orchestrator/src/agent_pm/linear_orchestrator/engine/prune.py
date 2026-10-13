@@ -9,7 +9,7 @@
   reads refs only, so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune); a failure is
-logged and the rest goes on (run returns 3), but linear.Unavailable is raised.
+logged and the rest goes on (run returns 3), but Unavailable is raised.
 """
 
 import functools
@@ -21,10 +21,10 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
+from agent_pm.linear_orchestrator.engine.types import Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
-    Unavailable,
     call,
     last_move,
     log,
