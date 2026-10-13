@@ -306,7 +306,7 @@ class Handle:
     ):
         """spec: its sid, name (a tui session's) and workdir."""
         self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
-        self._host, self._info, self.validate_idle_timeout = (
+        self._host, self._info, self._idle = (
             host,
             info,
             idle_timeout,
@@ -336,8 +336,8 @@ class Handle:
                     yield event
                     continue
                 wait = POLL
-                if self.validate_idle_timeout is not None and not self._blocked:
-                    wait = min(POLL, last + self.validate_idle_timeout - self.clock())
+                if self._idle is not None and not self._blocked:
+                    wait = min(POLL, last + self._idle - self.clock())
                 if self._closed:
                     code = self._host.returncode(max(wait, 0))
                     if code is not None:
@@ -348,9 +348,9 @@ class Handle:
                     found, self._closed = self._host.poll(wait)
                     self._queue.extend(e for e in found if not isinstance(e, Exited))
                     continue
-                if wait <= 0 and self.validate_idle_timeout is not None:
+                if wait <= 0 and self._idle is not None:
                     last = self.clock()
-                    yield IdleTimeout(self.validate_idle_timeout)
+                    yield IdleTimeout(self._idle)
         except GeneratorExit:  # the caller closed this iterator; the session goes on
             raise
         except BaseException:
