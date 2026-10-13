@@ -29,7 +29,7 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 
 
-TMUX_HOME = "session/src/agent_pm/session/hosts/tmux/"
+TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
 
 
 PKG = "agent_pm"
@@ -688,7 +688,7 @@ def adapters_key(repo: str) -> list[str]:
 def tmux_calls(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, ".py"):
-        if not rel.startswith(TMUX_HOME):
+        if rel != TMUX_HOST:
             found.update(
                 f'{rel}:{line}: str constant "tmux"'
                 for line, s in _strings(ast.parse(text, rel))
@@ -702,10 +702,10 @@ def status_log_format(repo: str) -> list[str]:
     for top in PROJECTS:
         for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
             rel = f"{top}/src/{rel}"
-            if rel != STATUS_LOG_HOME and not rel.startswith(TMUX_HOME):
+            if rel not in (STATUS_LOG_HOME, TMUX_HOST):
                 found.update(
                     f"{rel}:{line}: status log line format outside "
-                    "session/engine/status_log.py or hosts/tmux/"
+                    "session/engine/status_log.py or hosts/tmux/tmux_host.py"
                     for line, s in _strings(ast.parse(text, rel))
                     if STATUS_LOG_CLOCK in s
                 )
