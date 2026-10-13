@@ -162,8 +162,7 @@ def _write(directory: str, path: str, text: str) -> None:
 
 @contextlib.contextmanager
 def locked(directory: str, *, write: bool = True) -> Iterator[dict]:
-    # not reentrant: never call locked() inside a block (a second flock waits for the
-    # first)
+    # not reentrant: never call locked() inside a block (a second flock waits for the first)
     directory = os.path.abspath(directory)
     if not os.path.lexists(directory):
         raise RosterError.not_attached(directory)

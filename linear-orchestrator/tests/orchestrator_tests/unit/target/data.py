@@ -36,6 +36,7 @@ def issue(description, title="ENG: Session Registry", ident="TASK-26", project=N
         notes=(),
         links=(),
         linked=(),
+        handoff=issues.parse_handoff(description),
     )
 
 

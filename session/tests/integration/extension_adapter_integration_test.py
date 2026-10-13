@@ -41,14 +41,18 @@ class ExtensionAdapterIntegration(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
+        self.src = os.path.join(self.root, "session", "src")
+        self.package("fake")
+        self.package("untabled")
         for project in PROJECTS:
             shutil.copytree(
-                os.path.join(REPO, project), os.path.join(self.root, project), ignore=SKIP
+                os.path.join(REPO, project),
+                os.path.join(self.root, project),
+                ignore=SKIP,
+                dirs_exist_ok=True,
             )
         self.srcs = os.pathsep.join(os.path.join(self.root, p, "src") for p in PROJECTS)
-        self.src = os.path.join(self.root, "session", "src")
         self.config = os.path.join(self.root, "session", "config.toml")
-        self.package("fake")
         self.home = os.path.join(self.root, "home")
         os.mkdir(self.home)
         self.work = os.path.join(self.root, "work")
@@ -126,7 +130,7 @@ class ExtensionAdapterIntegration(Case):
         )
 
     def test_a_package_without_its_table_fails_before_launch(self):
-        self.package("untabled")
+        self.assertTrue(os.path.isdir(os.path.join(self.src, "agent_pm/session/adapters/untabled")))
         self.refused("untabled", "no [adapters.untabled] table")
 
 

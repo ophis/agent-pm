@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from agent_pm.session.engine.configuration.types import ConfigError
+from agent_pm.session.adapters.errors.types import ConfigError
 from agent_pm.utils import printable_abs
 
 __all__ = [

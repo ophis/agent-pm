@@ -62,3 +62,14 @@ class Sample(Case):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         return tmp.name
+
+
+def test_suites(root, top):
+    base = Path(root, top)
+    owners = [base, *(p for p in sorted(base.iterdir()) if (p / "__init__.py").is_file())]
+    return [
+        (str(owner / kind), root if owner == base else str(base))
+        for owner in owners
+        for kind in ("unit", "integration")
+        if (owner / kind / "__init__.py").is_file()
+    ]

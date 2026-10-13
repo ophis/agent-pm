@@ -1,21 +1,17 @@
 """Linear issues as the Linear orchestrator reads them (read_issue) and the one Handoff grammar:
-handoff, Handoff.parse and head.
+handoff, parse_handoff and head.
 """
 
 import re
 
-from agent_pm.linear_orchestrator.engine.types import IssueError
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, IssueError
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.linear_orchestrator.linear.types import (
-    COMMENTS,
-    HANDOFF,
-    SECTIONS,
+    Handoff,
     Issue,
     Link,
     Linked,
     Note,
-    description_lines,
-    section_starts,
 )
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
@@ -25,6 +21,60 @@ Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title descri
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
+
+
+HANDOFF = re.compile(rf"Handoff from ({ISSUE_ID}): \S+")
+
+
+SECTIONS = ("## Source", "## Instructions", "## Comments")
+
+
+COMMENTS = re.compile(rf"^{re.escape(SECTIONS[2])}\r?$", re.M)
+
+
+def description_lines(description):
+    return re.split(r"\r?\n", description or "")
+
+
+def section_starts(lines):
+    # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
+    # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
+    # last after Instructions.
+    source, instructions, comments = SECTIONS
+
+    def find(header, after, *, last=False):
+        found = [i for i, line in enumerate(lines) if line == header and i > after]
+        return (found[-1] if last else found[0]) if found else None
+
+    src, ins = find(source, 0), find(instructions, 0)
+    if src is not None and ins is not None and src > ins:
+        src = None
+    if src is not None:
+        ins = find(instructions, src)
+    starts = {
+        source: src,
+        instructions: ins,
+        comments: find(
+            comments, max((s for s in (src, ins) if s is not None), default=0), last=True
+        ),
+    }
+    return {h: i for h, i in starts.items() if i is not None}
+
+
+def parse_handoff(description) -> Handoff | None:
+    lines = description_lines(description)
+    m = HANDOFF.fullmatch(lines[0])
+    if not m:
+        return None
+    starts = section_starts(lines)
+
+    def body(header):
+        if header not in starts:
+            return ""
+        end = min((s for s in starts.values() if s > starts[header]), default=len(lines))
+        return "\n".join(lines[starts[header] + 1 : end]).strip()
+
+    return Handoff(m.group(1), body(SECTIONS[1]), body(SECTIONS[2]))
 
 
 def read_issue(gql, ident) -> Issue:
@@ -51,12 +101,14 @@ def read_issue(gql, ident) -> Issue:
         x["issue"] for x in node["inverseRelations"]["nodes"]
     ]:
         linked.setdefault(r["identifier"], Linked(r["identifier"], r["title"], r["state"]["name"]))
+    description = node["description"] or ""
     return Issue(
         id=node["id"],
         identifier=node["identifier"],
         url=node["url"],
         title=node["title"],
-        description=node["description"] or "",
+        description=description,
+        handoff=parse_handoff(description),
         created_at=node["createdAt"],
         project_id=(node["project"] or {}).get("id"),
         notes=tuple(notes),

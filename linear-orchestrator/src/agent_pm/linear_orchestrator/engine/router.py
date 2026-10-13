@@ -36,6 +36,7 @@ from agent_pm.linear_orchestrator.engine.routing.types import Board, BoardPolicy
 from agent_pm.linear_orchestrator.engine.runs import note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
+    ConfigError,
     RouterServices,
     TickTime,
     Unavailable,
@@ -254,9 +255,12 @@ def main(
     if opts is None:
         return 2
     os.environ["PATH"] = config.path()
-    cfg = startup.configured("router", config_path, dry=opts["dry"])
-    if cfg is None:
+    try:
+        cfg = config.load(path=config_path)
+    except ConfigError as error:
+        startup.report_error("router", error, dry=opts["dry"])
         return 1
+    linear.use_logs(cfg.logs_dir)
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
     if opts["brake"] is not None:
         return requested_brake(opts["brake"], cfg)

@@ -10,7 +10,7 @@ import unittest
 from urllib.parse import unquote
 
 from agent_pm.linear_orchestrator.engine import promote
-from agent_pm.linear_orchestrator.linear.types import Handoff
+from agent_pm.linear_orchestrator.linear import issues
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flows.fixtures import HARNESS_EMAIL
 from orchestrator_tests.integration.flows.types import BUILD, REPORT, BoardChanges
@@ -52,7 +52,7 @@ class PmToEngineer(Segment):
         self.assertIn(REWORK, self.section(prompt, "The user's later words"))
         self.assertIn(PRD, self.section(prompt, f"Earlier version: `{path}`"))
         description = self.issue(child)["description"]
-        self.assertEqual(Handoff.parse(description).instructions.partition(":\n")[2], BUILD)
+        self.assertEqual(issues.parse_handoff(description).instructions.partition(":\n")[2], BUILD)
 
     def test_b3_a_failed_run_is_not_promoted(self):
         ident = self.pm_ready()

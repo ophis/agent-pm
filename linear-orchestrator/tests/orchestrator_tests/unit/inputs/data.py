@@ -72,6 +72,7 @@ def issue(description="", *, facts: IssueFacts | None = None):
         tuple(notes),
         tuple(links),
         tuple(linked),
+        handoff=issues.parse_handoff(description),
     )
 
 

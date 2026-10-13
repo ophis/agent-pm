@@ -173,4 +173,5 @@ def issue(description):
         (),
         (),
         (),
+        handoff=issues.parse_handoff(description),
     )

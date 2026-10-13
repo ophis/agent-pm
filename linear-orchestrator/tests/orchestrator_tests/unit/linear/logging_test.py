@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 from unittest import mock
 
+from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.clock import logs_at
@@ -264,3 +265,37 @@ class ApiErrors(Logs):
                     (1, self.json("router", "linear-error", op="teams", status=503)),
                 )
         self.assertFalse(os.path.exists(self.logs))
+
+
+class ConfigurationFailures(Logs):
+    def test_error_destination_deduplicates_without_changing_the_configured_log(self):
+        destination = os.path.join(self.tmp, "rejected-config")
+        error = ConfigError("invalid role", destination)
+        code, said = self.stderr(lambda: linear.config_error("router", error))
+        self.assertEqual((code, said), (1, ""))
+        code, said = self.stderr(lambda: linear.config_error("router", error), tty=True)
+        self.assertEqual((code, said), (1, "router.py: invalid role\n"))
+        text = self.text(os.path.join(destination, "orchestrator.jsonl"))
+        self.assertEqual(text, self.json("router", "config-error", reason="invalid role"))
+        self.assertEqual((linear.LOGS_DIR, self.text()), (self.logs, ""))
+
+    def test_dry_failure_prints_without_creating_either_log(self):
+        destination = os.path.join(self.tmp, "rejected-config")
+        code, said = self.stderr(
+            lambda: linear.config_error(
+                "router", ConfigError("invalid role", destination), dry=True
+            )
+        )
+        self.assertEqual(
+            (code, said), (1, self.json("router", "config-error", reason="invalid role"))
+        )
+        self.assertEqual((linear.LOGS_DIR, os.listdir(self.tmp)), (self.logs, []))
+
+    def test_a_failure_without_a_destination_does_not_use_a_previous_config(self):
+        self.stderr(lambda: linear.config_error("router", ConfigError("invalid work path")))
+        self.assertEqual((linear.LOGS_DIR, os.listdir(self.tmp)), (self.logs, []))
+
+    def test_plain_reasons_keep_the_configured_destination(self):
+        code, said = self.stderr(lambda: linear.config_error("run", "invalid task"))
+        self.assertEqual((code, said), (1, ""))
+        self.assertEqual(self.text(), self.json("run", "config-error", reason="invalid task"))

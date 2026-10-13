@@ -10,7 +10,7 @@ from pathlib import Path
 from tests import guards
 from tests.case import ORCH_ROOT, PY, REPO, SRC, Case, child_env
 from tests.checks import checks
-from tests.guard_samples import PKG, Sample, fixtures, flat, own_case
+from tests.guard_samples import PKG, Sample, fixtures, flat, own_case, test_suites
 
 OPKG = "src/agent_pm/linear_orchestrator"
 PROBE = (
@@ -79,12 +79,30 @@ class EveryTest(Sample):
     def test_is_a_case(self):
         loader, found = unittest.TestLoader(), []
         for top in guards.TESTS:
-            for suite in ("unit", "integration"):
-                start = os.path.join(REPO, top, suite)
-                if os.path.isdir(start):
-                    tests = loader.discover(start, "*_test.py", REPO)
-                    found += [test.id() for test in flat(tests) if not own_case(test, top)]
+            for start, import_root in test_suites(REPO, top):
+                tests = loader.discover(start, "*_test.py", import_root)
+                found += [test.id() for test in flat(tests) if not own_case(test, top)]
         self.assertEqual((loader.errors, found), ([], []))
+
+    def test_discovery_finds_direct_and_normalized_test_packages(self):
+        root = self.tree(
+            {
+                "project/tests/unit/__init__.py": "",
+                "project/tests/project_tests/__init__.py": "",
+                "project/tests/project_tests/integration/__init__.py": "",
+                "project/tests/empty/unit/leftover.py": "",
+            }
+        )
+        self.assertEqual(
+            test_suites(root, "project/tests"),
+            [
+                (os.path.join(root, "project/tests/unit"), root),
+                (
+                    os.path.join(root, "project/tests/project_tests/integration"),
+                    os.path.join(root, "project/tests"),
+                ),
+            ],
+        )
 
     def test_has_no_class_or_module_fixture(self):
         for tests in guards.TESTS:

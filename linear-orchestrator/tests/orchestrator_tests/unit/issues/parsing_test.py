@@ -69,7 +69,17 @@ def note(body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="A
 
 def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
     return issues.Issue(
-        "uuid-7", "ENG-7", URL, "T", description, created_at, "p-1", tuple(notes), (), ()
+        "uuid-7",
+        "ENG-7",
+        URL,
+        "T",
+        description,
+        created_at,
+        "p-1",
+        tuple(notes),
+        (),
+        (),
+        handoff=issues.parse_handoff(description),
     )
 
 
@@ -127,6 +137,7 @@ class ReadIssue(Case):
                 (),
                 (issues.Link("https://x/spec"), issues.Link("https://x/y")),
                 (issues.Linked("ENG-1", "One", "Done"), issues.Linked("ENG-2", "Two", "Todo")),
+                handoff=issues.parse_handoff("Do the thing."),
             ),
         )
 
@@ -283,7 +294,7 @@ class ParseHandoff(Case):
         for name, description, instructions, comments in cases:
             with self.subTest(name):
                 self.assertEqual(
-                    Handoff.parse(description),
+                    issues.parse_handoff(description),
                     Handoff("ENG-3", instructions, comments),
                 )
 
@@ -298,7 +309,7 @@ class ParseHandoff(Case):
             f"Please see\nHandoff from ENG-3: {URL}\n## Instructions\nGo.",
         ):
             with self.subTest(description=description):
-                self.assertIsNone(Handoff.parse(description))
+                self.assertIsNone(issues.parse_handoff(description))
 
 
 class Head(Case):
@@ -343,7 +354,7 @@ class Head(Case):
     def test_a_handoff_is_cut_where_parse_handoff_finds_its_comments(self):
         d = f"Handoff from ENG-3: {URL}\n\n## Instructions\nGo.\n## Comments\nx\n\n## Comments\n- y"
         rest = d[len(issues.head(d)) :]
-        self.assertEqual(rest.split("\n", 1), ["## Comments", Handoff.parse(d).comments])
+        self.assertEqual(rest.split("\n", 1), ["## Comments", issues.parse_handoff(d).comments])
 
 
 class HandoffText(Case):
@@ -382,7 +393,7 @@ class HandoffText(Case):
             comments=(("Me", "t1", "Go.\n## Comments\nRepo: o/n"),),
         )
         self.assertEqual(
-            Handoff.parse(text),
+            issues.parse_handoff(text),
             Handoff(
                 "DR-1",
                 "Me, t1:\nGo.\n## Comments\nRepo: o/n",

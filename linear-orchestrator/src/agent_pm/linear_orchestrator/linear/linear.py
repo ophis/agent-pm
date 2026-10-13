@@ -122,12 +122,18 @@ WINDOW = timedelta(hours=24)
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, **fields):
-    line = {
+    _log(_line(src, kind, issue, **fields), LOGS_DIR, once=once, dry=dry)
+
+
+def _line(src, kind, issue=None, **fields):
+    return {
         k: v
         for k, v in {"ts": stamp(), "src": src, "kind": kind, "issue": issue, **fields}.items()
         if v is not None
     }
-    logs = LOGS_DIR
+
+
+def _log(line, logs, *, once, dry):
     path, key = os.path.join(logs, "orchestrator.jsonl") if logs else None, _key(line)
     if once and not dry and path and key in _recent_keys(path):
         return
@@ -147,7 +153,8 @@ def log(src, kind, issue=None, *, once=False, dry=False, **fields):
 
 def config_error(src, e, *, dry=False):
     reason = one_line(str(e) if isinstance(e, (LinearError, ConfigError)) else e)
-    return _stop(src, "config-error", reason, dry, reason=reason)
+    logs = e.logs_dir if isinstance(e, ConfigError) else LOGS_DIR
+    return _stop(src, "config-error", reason, dry, logs=logs, reason=reason)
 
 
 def linear_error(src, e, *, dry=False):
@@ -156,14 +163,15 @@ def linear_error(src, e, *, dry=False):
         "linear-error",
         f"Linear unavailable: {e}",
         dry,
+        logs=LOGS_DIR,
         op=e.op,
         status=e.status,
         reason=e.reason,
     )
 
 
-def _stop(src, kind, message, dry, **fields):
-    log(src, kind, once=True, dry=dry, **fields)
+def _stop(src, kind, message, dry, *, logs, **fields):
+    _log(_line(src, kind, **fields), logs, once=True, dry=dry)
     try:
         if sys.stderr.isatty() and not dry:  # under a scheduler stderr is the log
             print(f"{src}.py: {message}", file=sys.stderr, flush=True)
