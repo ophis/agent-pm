@@ -1,18 +1,16 @@
 """Codex runtime dialogue, access grants, validated recovery and usage inspection."""
 
 import json
-import math
 import os
 import re
-import shlex
 import sys
 from dataclasses import replace
 from datetime import datetime
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent_pm.session.adapters.common import check, number, resume_command
 from agent_pm.session.engine.types import (
-    EFFORTS,
     ConfigError,
     Launch,
     SessionInfo,
@@ -49,7 +47,6 @@ from .sessions import (
 )
 
 TABLE = "[adapters.codex]"
-TIERS = ("1", "2", "3", "4")
 LIMIT_PREFIXES = (
     "You've hit your usage limit.",
     "You've hit your usage limit for ",
@@ -193,18 +190,11 @@ def flags(snapshot: dict, *, interactive: bool) -> list[str]:
     return result
 
 
-def _number(value) -> bool:
-    try:
-        return type(value) in (int, float) and math.isfinite(value)
-    except OverflowError:
-        return False
-
-
 def _window(window: dict) -> Window | None:
-    percent, reset = window.get("usedPercent"), window.get("resetsAt")
-    if not _number(percent) or percent < 0:
+    percent, reset = number(window.get("usedPercent")), number(window.get("resetsAt"))
+    if percent is None or percent < 0:
         return None
-    return Window(float(percent), float(reset) if _number(reset) and reset >= 0 else None)
+    return Window(percent, reset if reset is not None and reset >= 0 else None)
 
 
 def _usage(snapshot) -> Usage | None:
@@ -242,28 +232,7 @@ class CodexCommon:
     def __init__(self, config, *, selector):
         self.selector = selector
         self.config = dict(config)
-        for name, keys in (("tiers", TIERS), ("efforts", EFFORTS)):
-            values = config.get(name, {})
-            if not isinstance(values, dict) or any(
-                not isinstance(key, str)
-                or key not in keys
-                or not isinstance(value, str)
-                or not value.strip()
-                or not value.isprintable()
-                for key, value in values.items()
-            ):
-                raise ConfigError(f"{TABLE}.{name} must map {', '.join(keys)} to printable text")
-        env = config.get("env", {})
-        if not isinstance(env, dict) or any(
-            not isinstance(key, str)
-            or not key
-            or "=" in key
-            or "\0" in key
-            or not isinstance(value, str)
-            or "\0" in value
-            for key, value in env.items()
-        ):
-            raise ConfigError(f"{TABLE}.env must map environment names to strings without NUL")
+        check(config, TABLE)
 
     def _mapped(self, name, value):
         if value is None:
@@ -402,21 +371,18 @@ class CodexCommon:
         snapshot = state.snapshot
         selection = self.selector(state.native_id, True)
         _, literal = split_flags(snapshot["flags"])
-        command = shlex.join(
-            [
-                "codex",
-                *selection[:-1],
-                *flags(snapshot, interactive=True),
-                *selection[-1:],
-                *literal,
-            ]
-        )
+        argv = [
+            "codex",
+            *selection[:-1],
+            *flags(snapshot, interactive=True),
+            *selection[-1:],
+            *literal,
+        ]
         env = {
             "CODEX_HOME": snapshot["codex_home"],
             **{k: v for k, v in snapshot["env"].items() if k != "CODEX_HOME"},
         }
-        assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
-        return f"cd {shlex.quote(snapshot['cwd'])} && {assign}{command}"
+        return resume_command(snapshot["cwd"], env, argv)
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:

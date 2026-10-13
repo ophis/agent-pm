@@ -1,17 +1,15 @@
 """Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
 
 import json
-import math
 import os
 import re
-import shlex
 import stat
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
-from agent_pm.session.adapters.selection import UUID
+from agent_pm.session.adapters import common
+from agent_pm.session.adapters.selection import UUID, scan
 from agent_pm.session.engine.types import (
-    EFFORTS,
     ConfigError,
     Launch,
     SessionStatus,
@@ -22,7 +20,6 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils.paths import printable_abs
 
 TABLE = "[adapters.claude]"
-TIERS = ("1", "2", "3", "4")
 NOT_LITERAL = "*?[]{}()\\,"
 
 
@@ -32,15 +29,7 @@ def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     """Each --add-dir X or --add-dir=X's X before "--"."""
-    i = 0
-    while i < len(flags) and flags[i] != "--":
-        word, eq, value = flags[i].partition("=")
-        if word == "--add-dir":
-            if not eq:
-                i += 1
-                value = flags[i] if i < len(flags) else ""
-            yield value
-        i += 1
+    return (value for _, word, value in scan(flags, ("--add-dir",)) if word == "--add-dir")
 
 
 def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
@@ -66,19 +55,9 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
     return {"hooks": dict(hooks)}, flags
 
 
-def number(value) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        value = float(value)
-    except OverflowError:
-        return None
-    return value if math.isfinite(value) else None
-
-
 def _window(value) -> Window | None:
-    used = number(value.get("utilization")) if isinstance(value, dict) else None
-    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
+    used = common.number(value.get("utilization")) if isinstance(value, dict) else None
+    return None if used is None else Window(100 * used, common.number(value.get("resetsAt")))
 
 
 def _full(window: Window | None, resets: float | None) -> Window:
@@ -107,30 +86,10 @@ def _read_rules(reads: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(f"Read(/{d.rstrip('/')}/**)" for d in dirs))
 
 
-def _table(value, keys=None) -> bool:
-    return isinstance(value, Mapping) and all(
-        isinstance(k, str) and (keys is None or k in keys) and isinstance(v, str)
-        for k, v in value.items()
-    )
-
-
-def _environment(value) -> bool:
-    return _table(value) and all(
-        key and "=" not in key and "\0" not in key and "\0" not in item
-        for key, item in value.items()
-    )
-
-
 CHECKS = (
     ("flags", _strings, "a list of strings"),
     ("allow", _strings, "a list of strings"),
-    ("tiers", lambda v: _table(v, TIERS), 'a table from tier "1"–"4" to a model name'),
-    (
-        "efforts",
-        lambda v: _table(v, EFFORTS),
-        f"a table from effort ({', '.join(EFFORTS)}) to a string",
-    ),
-    ("env", _environment, "a table of environment names to strings without NUL"),
+    *common.CHECKS,
 )
 
 
@@ -170,9 +129,7 @@ class ClaudeCommon:
 
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        for key, ok, what in CHECKS:
-            if key in config and not ok(config[key]):
-                raise ConfigError(f"{TABLE}.{key} must be {what}")
+        common.check(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         if any(flag.startswith("--setting-sources") for flag in self.flags):
             raise ConfigError(f"--setting-sources is the Driver's: remove it from {TABLE}.flags")
@@ -217,10 +174,8 @@ class ClaudeCommon:
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
-        assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        argv = ("claude", *self.selector(sid, True), *added)
-        return f"cd {shlex.quote(cwd)} && {assign}{shlex.join(argv)}"
+        return common.resume_command(cwd, env, ("claude", *self.selector(sid, True), *added))
 
     @staticmethod
     def uuid(sid) -> str:
@@ -302,7 +257,7 @@ class ClaudeCommon:
         )
         weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
-            resets = number(info.get("resetsAt"))
+            resets = common.number(info.get("resetsAt"))
             kind = info.get("rateLimitType")
             if isinstance(kind, str) and kind.startswith("seven_day"):
                 weekly = _full(weekly, resets)

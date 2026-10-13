@@ -72,7 +72,6 @@ class Adapter(ABC):
         return None
 
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
-        """Refresh metadata; preserve identity."""
         return info
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:

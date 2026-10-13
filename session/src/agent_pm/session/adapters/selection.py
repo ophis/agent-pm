@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterator
 
 from agent_pm.session.engine.types import ConfigError
 
@@ -18,11 +19,21 @@ def select(
     return (*prefix, native) if prefix else ()
 
 
-def check(flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str, ...] = ()) -> None:
+def scan(flags: tuple[str, ...], valued: tuple[str, ...] = ()) -> Iterator[tuple[str, str, str]]:
+    """(arg, --name or -x, value) per arg before "--"; a bare `valued` word takes the next."""
     i = 0
     while i < len(flags) and flags[i] != "--":
         flag = flags[i]
-        word, eq, _ = flag.partition("=") if flag.startswith("--") else (flag[:2], flag[2:], "")
+        word, eq, value = flag.partition("=") if flag.startswith("--") else (flag[:2], "", flag[2:])
+        eq = eq or value
+        if word in valued and not eq:
+            i += 1
+            value = flags[i] if i < len(flags) else ""
+        yield flag, word, value
+        i += 1
+
+
+def check(flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str, ...] = ()) -> None:
+    for flag, word, _ in scan(flags, valued):
         if flag in forbidden or word in forbidden:
             raise ConfigError(f"{flag}: picks the session; use sid= or resume=")
-        i += 2 if word in valued and not eq else 1

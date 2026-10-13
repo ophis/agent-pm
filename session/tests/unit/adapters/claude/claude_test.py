@@ -96,7 +96,7 @@ WHAT = {
     "flags": "a list of strings",
     "allow": "a list of strings",
     "tiers": 'a table from tier "1"–"4" to a model name',
-    "efforts": "a table from effort (low, medium, high, xhigh, max) to a string",
+    "efforts": "a table from effort (low, medium, high, xhigh, max) to a printable value",
     "env": "a table of environment names to strings without NUL",
 }
 
@@ -154,6 +154,8 @@ class ConfigTest(Base):
             ("tiers", {"5": "SECRET"}),
             ("tiers", {"0": "SECRET"}),
             ("tiers", {1: "SECRET"}),
+            ("tiers", {"1": " "}),
+            ("efforts", {"low": "a\nb"}),
             ("efforts", "SECRET"),
             ("efforts", {"low": 1}),
             ("efforts", {"turbo": "SECRET"}),
