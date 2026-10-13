@@ -48,7 +48,9 @@ from agent_pm.linear_orchestrator.linear.linear import (
     team,
 )
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, api
+from agent_pm.session import DriverError, attach_command, detach
+from agent_pm.session import sessions as tui_sessions
+from agent_pm.session import usage as runtime_usage
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -96,7 +98,7 @@ def attempt_count(entries, issue, since=None):
 
 def live_sessions(roles):
     try:
-        names = [row.name for row in api.sessions(re.escape(SESSIONS) + ".*")]
+        names = [row.name for row in tui_sessions(re.escape(SESSIONS) + ".*")]
     except DriverError:
         return None
     live = {}
@@ -129,7 +131,7 @@ def exhausted(usage, max_5h=MAX_5H):
 
 def read_usage(runtime):
     try:
-        return api.usage(runtime)
+        return runtime_usage(runtime)
     except Exception:
         return None
 
@@ -541,7 +543,7 @@ def outer(a, cfg, *, gql, run, keychain):
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
     try:
-        api.detach(
+        detach(
             config.session(role, a.issue),
             [
                 sys.executable,
@@ -685,7 +687,7 @@ def run_issue(opts, cfg, gql, now, start):
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            attach = api.attach_command(config.session(role, ident))
+            attach = attach_command(config.session(role, ident))
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)

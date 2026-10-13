@@ -22,7 +22,6 @@ syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
 namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
 package_top(repo)     a LAYERS package but utils' holds only TOP, SUBPACKAGES and TOP_EXCEPTIONS
-session_api_uses(repo) UPPER uses api.X only for an api __all__ name not session's
 shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
                       is in a *.types module or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
@@ -150,9 +149,6 @@ TOP_EXCEPTIONS = {
     ORCH_PROJECT: {"cli.py", "linear"},  # until TASK-372
     "manager": {"cli.py", "crew.py", "roster.py"},  # until TASK-371
 }
-UPPER = LAYERS[LAYERS.index(SESSION) + 1 :]
-SESSION_PKG = f"{PKG}.{SESSION}"
-API_PATHS = (f"{SESSION_PKG}.api", f"{SESSION_PKG}.engine.api")
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 TREES = (*PROJECTS, "tests")
 TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
@@ -328,25 +324,6 @@ def package_top(repo: str) -> list[str]:
             f"{rel}/{e}: not __init__.py, cli.py, engine/ or a listed subpackage"
             for e in have - TOP - SUBPACKAGES.get(project, set()) - exempt
         )
-    return sorted(found)
-
-
-def session_api_uses(repo: str) -> list[str]:
-    exported = _all(os.path.join(repo, SESSION, "src", PKG, SESSION, "engine", "api.py"))
-    public = _all(os.path.join(repo, SESSION, "src", PKG, SESSION, "__init__.py"))
-    found = set()
-    for project in UPPER:
-        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
-            tree = ast.parse(text, rel)
-            bound = _bindings(tree)
-            found.update(
-                f"{project}/src/{rel}:{n.lineno}: uses api.{n.attr}"
-                + (f", not agent_pm.session.{n.attr}" if n.attr in public else "")
-                for n in ast.walk(tree)
-                if isinstance(n, ast.Attribute)
-                and _dotted(n.value, bound) in API_PATHS
-                and (n.attr not in exported or n.attr in public)
-            )
     return sorted(found)
 
 

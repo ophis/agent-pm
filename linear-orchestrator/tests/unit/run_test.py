@@ -15,7 +15,7 @@ from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
 from agent_pm.linear_orchestrator.engine import config, run
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
-from agent_pm.session import DriverError, api
+from agent_pm.session import SIGNALS, DriverError
 from agent_pm.session.adapters import registry
 
 from .board_ids import STATES
@@ -275,7 +275,7 @@ class Inner(Case):
             self.assertEqual(self.main(), 0)
         self.assertEqual(
             seen,
-            [(signal.SIG_UNBLOCK, api.SIGNALS, {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})],
+            [(signal.SIG_UNBLOCK, SIGNALS, {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})],
         )
 
     def test_a_task_reaches_the_delegate(self):

@@ -18,8 +18,8 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.session import Session, api
-from agent_pm.session.engine import records
+from agent_pm.session import Session
+from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -46,7 +46,7 @@ fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
 sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from agent_pm.session import api
+from agent_pm.session.engine import api
 from agent_pm.session import IdleTimeout, Session
 Session.configure(**json.loads(config))
 handle = api.attach(name)
@@ -55,9 +55,9 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import api; api.close(sys.argv[1])"
+CLOSE = "import sys; from agent_pm.session.engine import api; api.close(sys.argv[1])"
 SLOW_CLOSE = """import sys, time
-from agent_pm.session import api
+from agent_pm.session.engine import api
 from agent_pm.session.modes import tui
 remove = tui._remove
 def slow(*args):

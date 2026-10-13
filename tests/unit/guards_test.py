@@ -79,7 +79,6 @@ class RealTree(Case):
             (guards.import_hygiene, REPO),
             (guards.namespace_package, REPO),
             (guards.package_top, REPO),
-            (guards.session_api_uses, REPO),
             (guards.shared_types, REPO),
             (guards.python_commands, REPO),
             (guards.test_layers, REPO),
@@ -1545,34 +1544,6 @@ class PackageTop(Sample):
         files = self.package("delegate", "__init__.py", "cli.py")
         self.assertIn(
             f"delegate/{PKG}/delegate/engine: missing", guards.package_top(self.tree(files))
-        )
-
-
-class SessionApiUses(Sample):
-    API = f"session/{PKG}/session/engine/api.py"
-    PUBLIC = f"session/{PKG}/session/__init__.py"
-
-    def test_only_api_names_with_no_public_session_path(self):
-        root = self.tree(
-            {
-                self.API: '__all__ = ["start", "Spec", "Handle"]\n',
-                self.PUBLIC: '__all__ = ["api", "Spec"]\n',
-                f"delegate/{PKG}/delegate/x.py": "from agent_pm.session import api\n"
-                "api.start()\napi.Handle\napi.records.path()\napi.Spec\n",
-                f"manager/{PKG}/manager/x.py": "import agent_pm.session.api as a\na.session()\n",
-                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py": "import agent_pm.session\n"
-                "agent_pm.session.api.session_info()\n",
-                f"session/{PKG}/session/x.py": "from agent_pm.session import api\napi.records\n",
-            }
-        )
-        self.assertEqual(
-            guards.session_api_uses(root),
-            [
-                f"delegate/{PKG}/delegate/x.py:4: uses api.records",
-                f"delegate/{PKG}/delegate/x.py:5: uses api.Spec, not agent_pm.session.Spec",
-                f"{guards.ORCH_PROJECT}/{PKG}/linear_orchestrator/x.py:2: uses api.session_info",
-                f"manager/{PKG}/manager/x.py:2: uses api.session",
-            ],
         )
 
 

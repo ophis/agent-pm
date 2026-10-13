@@ -13,6 +13,7 @@ from agent_pm.session import (
     Displayable,
     DriverError,
     Exited,
+    Handle,
     Host,
     HostProcess,
     IdleTimeout,
@@ -51,6 +52,7 @@ NAMES = (
 )
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, SessionBound, Stderr, TurnEnd}
 ALLOWED_CONCRETE = {
+    Handle,
     SessionStatusLog,
     Usage,
     Window,

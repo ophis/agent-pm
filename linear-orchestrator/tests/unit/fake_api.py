@@ -1,9 +1,10 @@
-"""A fake Driver api for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) on session.engine.api."""
+"""A fake Driver for the orchestrator's unit tests; `FakeApi.patch()` puts its calls (NAMES) in the orchestrator's modules."""
 
 import re
-from unittest import mock
 
-from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window, api
+from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window
+
+from session.tests.patch import Patched
 
 NAMES = (
     "sessions",
@@ -26,7 +27,7 @@ def _answer(value):
 
 class FakeApi:
     """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default resumable yes),
-    `usages` (per runtime, default LOW) and `shown`: a value or an exception to raise; `records`: api.session_record's per sid;
+    `usages` (per runtime, default LOW) and `shown`: a value or an exception to raise; `records`: session_record's per sid;
     detach raises `detach_error`, else its name goes live. `order` logs the sessions, close, show and detach calls."""
 
     def __init__(self, order=None, gql=None):
@@ -79,4 +80,4 @@ class FakeApi:
         return f"attach {name}"
 
     def patch(self):
-        return mock.patch.multiple(api, **{n: getattr(self, n) for n in NAMES})
+        return Patched("agent_pm.linear_orchestrator", **{n: getattr(self, n) for n in NAMES})

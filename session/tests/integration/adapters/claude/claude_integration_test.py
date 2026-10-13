@@ -16,8 +16,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.session import api
-from agent_pm.session.engine import records
+from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -63,7 +62,7 @@ PROBE = [
 # A caller: argv[1] is the claude table, argv[2] the workdir. It prints each event's name; on a KeyboardInterrupt
 # (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.session import api
+from agent_pm.session.engine import api
 from agent_pm.session import Session, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
 Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
