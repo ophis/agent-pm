@@ -6,7 +6,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, promote
-from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY

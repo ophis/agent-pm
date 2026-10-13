@@ -691,16 +691,7 @@ class OuterBase(TickBase):
         expected = {
             **os.environ,
             "PATH": config.path(),
-            "PYTHONPATH": os.pathsep.join(
-                dict.fromkeys(
-                    os.path.abspath(p)
-                    for p in [
-                        *PYTHONPATH.split(os.pathsep),
-                        *os.environ.get("PYTHONPATH", "").split(os.pathsep),
-                    ]
-                    if p
-                )
-            ),
+            "PYTHONPATH": PYTHONPATH,
         }
         self.assertEqual(set(env), set(expected))
         for key, value in expected.items():

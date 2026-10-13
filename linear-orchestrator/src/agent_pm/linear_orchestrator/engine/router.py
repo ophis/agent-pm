@@ -639,19 +639,7 @@ def outer(a, cfg, *, gql, run, keychain):
                 f"--input={text}",
             ],
             cwd=rd,
-            env={
-                **os.environ,
-                "PYTHONPATH": os.pathsep.join(
-                    dict.fromkeys(
-                        os.path.abspath(path)
-                        for path in (
-                            *PYTHONPATH.split(os.pathsep),
-                            *os.environ.get("PYTHONPATH", "").split(os.pathsep),
-                        )
-                        if path
-                    )
-                ),
-            },
+            env={**os.environ, "PYTHONPATH": PYTHONPATH},
         )
     except (SessionConfigError, DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))

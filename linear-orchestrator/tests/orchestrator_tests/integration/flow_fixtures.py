@@ -23,7 +23,7 @@ from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 
 RUN, PROMOTE, ROUTER = (
-    ("-m", f"agent_pm.linear_orchestrator.engine.{n}") for n in ("run", "promote", "router")
+    (os.path.join(os.path.dirname(__file__), "entry.py"), n) for n in ("run", "promote", "router")
 )
 
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
@@ -64,8 +64,7 @@ TIMEOUT = 60
 TAIL = 20
 
 GUARD = (
-    "import json, shutil, sys, sitecustomize\n"
-    "assert sitecustomize.transport is not None\n"
+    "import json, shutil, sys\n"
     "from agent_pm.linear_orchestrator.engine import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
@@ -134,7 +133,7 @@ class Flow(Case):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}, os.path.dirname(__file__)),
+            **child_env({}, os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
