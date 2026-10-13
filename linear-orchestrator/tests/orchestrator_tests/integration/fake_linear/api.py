@@ -8,11 +8,22 @@ from http import HTTPStatus
 
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.linear_orchestrator.linear import linear
-from orchestrator_tests.integration.fake_linear.data import IDS, KINDS, _errors, _key, stamp
+from orchestrator_tests.integration.fake_linear.data import (
+    IDS,
+    KINDS,
+    credential_key,
+    error_payload,
+    stamp,
+)
 from orchestrator_tests.integration.fake_linear.operations import Operations
 from orchestrator_tests.integration.fake_linear.projection import project, selection
 from orchestrator_tests.integration.fake_linear.registry import OPS, TABLE, texts
-from orchestrator_tests.integration.fake_linear.types import HttpReply, IssueSeed, Request, _Failure
+from orchestrator_tests.integration.fake_linear.types import (
+    HttpReply,
+    InjectedFailure,
+    IssueSeed,
+    Request,
+)
 from orchestrator_tests.integration.fixture_errors import FakeCredentialError, FixtureError, Problem
 
 
@@ -36,7 +47,11 @@ class FakeLinear(Operations):
 
     def keys(self):
         with self.lock:
-            return {u["service"]: _key(u["service"]) for u in self.users.values() if u["service"]}
+            return {
+                u["service"]: credential_key(u["service"])
+                for u in self.users.values()
+                if u["service"]
+            }
 
     def label_group(self, id, name, labels):
         with self.lock:
@@ -112,31 +127,39 @@ class FakeLinear(Operations):
                 )
             ):
                 raise FixtureError.invalid_failure(op, kind, account, times)
-            self.failures.append(_Failure(op, kind, account, times, seconds))
+            self.failures.append(InjectedFailure(op, kind, account, times, seconds))
 
     def answer(self, query, variables, key):
         with self.lock:
             caller = next(
-                (u for u in self.users.values() if u["service"] and _key(u["service"]) == key), None
+                (
+                    u
+                    for u in self.users.values()
+                    if u["service"] and credential_key(u["service"]) == key
+                ),
+                None,
             )
             account = caller and caller["email"]
             if not isinstance(query, str) or not isinstance(variables, (dict, type(None))):
                 return self._log(
                     Request(None, account, {}, "error"),
                     HttpReply(
-                        400, _errors("fake: bad request: not a query string and a variables object")
+                        400,
+                        error_payload(
+                            "fake: bad request: not a query string and a variables object"
+                        ),
                     ),
                 )
             variables, op = variables or {}, self.ops.get(query)
             if caller is None:
                 return self._log(
                     Request(op or query, None, variables, "unauthorized"),
-                    HttpReply(401, _errors("fake: unauthorized")),
+                    HttpReply(401, error_payload("fake: unauthorized")),
                 )
             if op is None:
                 return self._log(
                     Request(query, account, variables, "unknown"),
-                    HttpReply(200, _errors("fake: unknown query")),
+                    HttpReply(200, error_payload("fake: unknown query")),
                 )
             failure = self._failure(op, account)
             kind = failure.kind if failure else "ok"
@@ -144,7 +167,8 @@ class FakeLinear(Operations):
                 return self._log(
                     Request(op, account, variables, kind),
                     HttpReply(
-                        int(kind) if kind == "503" else 200, _errors(f"fake: {op}: injected {kind}")
+                        int(kind) if kind == "503" else 200,
+                        error_payload(f"fake: {op}: injected {kind}"),
                     ),
                 )
             try:
@@ -159,7 +183,7 @@ class FakeLinear(Operations):
                     str(e) if isinstance(e, Problem) else f"fake: {op}: {type(e).__name__}: {e}"
                 )
                 return self._log(
-                    Request(op, account, variables, "error"), HttpReply(200, _errors(message))
+                    Request(op, account, variables, "error"), HttpReply(200, error_payload(message))
                 )
             return self._log(
                 Request(op, account, variables, kind),

@@ -4,7 +4,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from orchestrator_tests.integration.fake_linear.data import _errors
+from orchestrator_tests.integration.fake_linear.data import error_payload
 
 
 class _Server(ThreadingHTTPServer):
@@ -14,7 +14,7 @@ class _Server(ThreadingHTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/graphql":
-            return self._send(404, _errors("fake: not found"))
+            return self._send(404, error_payload("fake: not found"))
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
         except ValueError:
@@ -28,7 +28,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(status, body)
 
     def do_GET(self):
-        self._send(405, _errors("fake: POST only"))
+        self._send(405, error_payload("fake: POST only"))
 
     do_PUT = do_PATCH = do_DELETE = do_GET
 

@@ -72,13 +72,13 @@ def stamp(t=None):
     return t.strftime("%Y-%m-%dT%H:%M:%S.") + f"{t.microsecond // 1000:03d}Z"
 
 
-def _key(service):
+def credential_key(service):
     return "lin_api_" + hashlib.sha256(service.encode()).hexdigest()[:32]
 
 
-def _errors(message):
+def error_payload(message):
     return {"data": None, "errors": [{"message": message}]}
 
 
-def _newest(nodes):
+def newest(nodes):
     return sorted(reversed(nodes), key=lambda n: n["createdAt"], reverse=True)

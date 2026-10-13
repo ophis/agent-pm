@@ -9,7 +9,7 @@ from orchestrator_tests.integration.fake_linear.data import (
     NAMES,
     TITLES,
     TYPES,
-    _newest,
+    newest,
     stamp,
 )
 from orchestrator_tests.integration.fixture_errors import Problem
@@ -111,12 +111,12 @@ class Operations:
             "assignee": self._person(rec["assignee"], caller),
             "labels": {"nodes": [self._label(i) for i in rec["labels"]]},
             "comments": {
-                "nodes": _newest(
+                "nodes": newest(
                     [{**c, "user": self._person(c["user"], caller)} for c in rec["comments"]]
                 )
             },
             "attachments": {"nodes": rec["attachments"]},
-            "history": {"nodes": _newest(rec["history"])},
+            "history": {"nodes": newest(rec["history"])},
             "relations": {
                 "nodes": [
                     {"type": t, "issue": self._brief(a), "relatedIssue": self._brief(b)}
@@ -169,7 +169,7 @@ class Operations:
                     return False
         return True
 
-    def _issue(self, caller, v):
+    def handle_issue(self, caller, v):
         return {"issue": self._view(self._get(v["i"]), caller)}
 
     def _comment_of(self, cid):
@@ -177,7 +177,7 @@ class Operations:
             ((i, c) for i in self.issues.values() for c in i["comments"] if c["id"] == cid), None
         )
 
-    def _users(self, caller, v):
+    def handle_users(self, caller, v):
         return {
             "users": {
                 "nodes": [
@@ -188,19 +188,19 @@ class Operations:
             }
         }
 
-    def _teams(self, _caller, v):
+    def handle_teams(self, _caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
-    def _label_group(self, _caller, v):
+    def handle_label_group(self, _caller, v):
         if v["i"] not in self.labels:
             raise Problem.missing_entity("IssueLabel")
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
         return {"issueLabel": {**self._label(v["i"]), "children": {"nodes": children}}}
 
-    def _board(self, caller, v):
+    def handle_board(self, caller, v):
         return self._list(caller, v.get("f") or {}, 100)
 
-    def _handoff(self, caller, v):
+    def handle_handoff(self, caller, v):
         return self._list(
             caller,
             {
@@ -212,10 +212,10 @@ class Operations:
             100,
         )
 
-    def _child(self, caller, v):
+    def handle_child(self, caller, v):
         return self._list(caller, {"id": {"eq": v["c"]}}, 50, archived=True)
 
-    def _finished(self, caller, v):
+    def handle_finished(self, caller, v):
         return self._list(
             caller,
             {
@@ -227,14 +227,14 @@ class Operations:
             v.get("c"),
         )
 
-    def _comment_create(self, caller, v, cid=None):
+    def handle_comment_create(self, caller, v, cid=None):
         self._comment(self._get(v["i"]), caller["id"], v["b"], stamp(), cid)
         return {"commentCreate": {"success": True}}
 
-    def _comment_create_id(self, caller, v):
-        return self._comment_create(caller, v, v["c"])
+    def handle_comment_create_id(self, caller, v):
+        return self.handle_comment_create(caller, v, v["c"])
 
-    def _comment_by_id(self, caller, v):
+    def handle_comment_by_id(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
             raise Problem.missing_entity("Comment")
         rec, c = found
@@ -242,7 +242,7 @@ class Operations:
             "comment": {**c, "issue": {"id": rec["id"]}, "user": self._person(c["user"], caller)}
         }
 
-    def _comment_update(self, caller, v):
+    def handle_comment_update(self, caller, v):
         if (found := self._comment_of(v["c"])) is None:
             raise Problem.missing_entity("Comment")
         _, c = found
@@ -251,18 +251,18 @@ class Operations:
         c["body"] = v["b"]
         return {"commentUpdate": {"success": True}}
 
-    def _set_state(self, caller, v):
+    def handle_set_state(self, caller, v):
         if v["s"] not in NAMES:
             raise Problem.missing_entity("WorkflowState")
         self._move(self._get(v["i"]), v["s"], caller["id"], stamp())
         return {"issueUpdate": {"success": True}}
 
-    def _set_title(self, _caller, v):
+    def handle_set_title(self, _caller, v):
         rec = self._get(v["i"])
         rec["title"], rec["updatedAt"] = v["t"], stamp()
         return {"issueUpdate": {"success": True}}
 
-    def _subscribe(self, _caller, v):
+    def handle_subscribe(self, _caller, v):
         rec = self._get(v["i"])
         user = next((u for u in self.users.values() if u["email"].lower() == v["e"].lower()), None)
         if user is None:
@@ -271,21 +271,21 @@ class Operations:
             rec["subscribers"].append(user["email"])
         return {"issueSubscribe": {"success": True}}
 
-    def _attach(self, _caller, v):
+    def handle_attach(self, _caller, v):
         rec = self._get(v["i"])
         if all(a["url"] != v["u"] for a in rec["attachments"]):
             rec["attachments"].append({"url": v["u"], "title": v.get("t")})
         return {"attachmentLinkURL": {"success": True}}
 
-    def _archive(self, _caller, v):
+    def handle_archive(self, _caller, v):
         self._get(v["i"])["archived"] = True
         return {"issueArchive": {"success": True}}
 
-    def _unarchive(self, _caller, v):
+    def handle_unarchive(self, _caller, v):
         self._get(v["i"])["archived"] = False
         return {"issueUnarchive": {"success": True}}
 
-    def _create(self, caller, v):
+    def handle_create(self, caller, v):
         new, now = v["in"], stamp()
         pid, uid, sid = (
             new.get("projectId"),
@@ -316,7 +316,7 @@ class Operations:
         )
         return {"issueCreate": {"success": True, "issue": self._view(rec, caller)}}
 
-    def _relate(self, _caller, v):
+    def handle_relate(self, _caller, v):
         new = v["in"]
         self.relations.append(
             (new["type"], self._get(new["issueId"])["id"], self._get(new["relatedIssueId"])["id"])

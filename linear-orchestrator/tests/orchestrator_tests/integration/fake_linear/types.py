@@ -10,7 +10,7 @@ class Request:
 
 
 @dataclass
-class _Failure:
+class InjectedFailure:
     op: str
     kind: str
     account: str | None

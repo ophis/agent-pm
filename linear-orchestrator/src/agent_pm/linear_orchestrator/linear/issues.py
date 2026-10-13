@@ -14,8 +14,8 @@ from agent_pm.linear_orchestrator.linear.types import (
     Link,
     Linked,
     Note,
-    _lines,
-    _starts,
+    description_lines,
+    section_starts,
 )
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
@@ -67,11 +67,11 @@ def read_issue(gql, ident) -> Issue:
 
 def head(description) -> str:
     text = description or ""
-    lines = _lines(text)
+    lines = description_lines(text)
     if not HANDOFF.fullmatch(lines[0]):
         m = COMMENTS.search(text)
         return text[: m.start()] if m else text
-    i = _starts(lines).get(SECTIONS[2])
+    i = section_starts(lines).get(SECTIONS[2])
     return text if i is None else text[: list(re.finditer(r"\r?\n", text))[i - 1].end()]
 
 

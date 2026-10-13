@@ -78,11 +78,11 @@ class Handoff:
 
     @classmethod
     def parse(cls, description) -> "Handoff | None":
-        lines = _lines(description)
+        lines = description_lines(description)
         m = HANDOFF.fullmatch(lines[0])
         if not m:
             return None
-        starts = _starts(lines)
+        starts = section_starts(lines)
 
         def body(header):
             if header not in starts:
@@ -120,11 +120,11 @@ SECTIONS = ("## Source", "## Instructions", "## Comments")
 COMMENTS = re.compile(rf"^{re.escape(SECTIONS[2])}\r?$", re.M)
 
 
-def _lines(description):
+def description_lines(description):
     return re.split(r"\r?\n", description or "")
 
 
-def _starts(lines):
+def section_starts(lines):
     # Only Instructions carry unquoted user text, which may hold header lines: Source is the first
     # one (unless it comes after Instructions' first), Instructions the first after it, Comments the
     # last after Instructions.
