@@ -210,6 +210,74 @@ runpy.run_path(path, run_name="__main__")
         self.assertNothingWritten()
 
 
+class ErrorLoggingTest(HookBase):
+    def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
+        callback = os.path.join(self.root, "adapter.py")
+        with open(callback, "w") as file:
+            file.write(
+                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
+            )
+        self.state["adapter_hook"] = callback
+        write_state(self.dir, self.state)
+        error_log = os.path.join(self.dir, "hook.log")
+        for count in (1, 2):
+            self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
+            with open(error_log) as file:
+                trace = file.read()
+            self.assertEqual(trace.count("Traceback (most recent call last):"), count)
+            self.assertEqual(trace.count("RuntimeError: first\nsecond\n"), count)
+            self.assertIn(callback, trace)
+            self.assertIn("in on_hook", trace)
+            self.assertNothingWritten()
+
+    def test_unusable_or_invalid_session_dirs_keep_one_stderr_line(self):
+        for folder in (
+            os.path.join(self.root, "missing"),
+            os.path.join(self.dir, "session.json"),
+            "relative",
+        ):
+            with self.subTest(folder=folder):
+                self.assertError(self.hook("stop", args=[folder, "stop"]), "tui_hook")
+                self.assertFalse(os.path.exists(os.path.join(folder, "hook.log")))
+        self.assertNothingWritten()
+
+    def test_unusable_log_file_keeps_one_stderr_line(self):
+        os.mkdir(os.path.join(self.dir, "hook.log"))
+        os.unlink(os.path.join(self.dir, "session.json"))
+        self.assertError(self.hook("stop"), "session.json")
+        self.assertNothingWritten()
+
+    def test_failed_file_write_keeps_one_stderr_line(self):
+        script = """import io, logging, runpy, sys
+from unittest import mock
+class BrokenFile(io.StringIO):
+    def write(self, value):
+        raise OSError("disk full")
+path, folder = sys.argv[1:]
+sys.argv = [path, folder, "stop"]
+with mock.patch("logging.FileHandler._open", return_value=BrokenFile()):
+    runpy.run_path(path, run_name="__main__")
+"""
+        os.unlink(os.path.join(self.dir, "session.json"))
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", script, HOOK, self.dir],
+            input=b"{}",
+            capture_output=True,
+            env=self.env,
+            check=True,
+        )
+        self.assertEqual(result.stdout, b"")
+        self.assertError(result.stderr.decode(), "session.json")
+        self.assertNothingWritten()
+
+    def test_success_keeps_the_journal_and_mark_without_an_error_log(self):
+        self.assertEqual(self.hook("stop", {"text": "success"}), "")
+        self.assertFalse(os.path.lexists(os.path.join(self.dir, "hook.log")))
+        self.assertEqual(self.records()[0]["payload"], {"text": "success"})
+        self.assertEqual(self.calls()[0], ["set-option", "-t", PANE, "@state", "done"])
+        self.assertRegex(self.lines(), LINE % "done")
+
+
 class PayloadTest(HookBase):
     def test_strs_over_4096_chars_are_cut_unless_the_word_is_done(self):
         long = "\u00e9" * 5000
