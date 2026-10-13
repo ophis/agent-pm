@@ -19,7 +19,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import printable_abs
+from agent_pm.utils import json_records, printable_abs
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
@@ -249,12 +249,8 @@ class ClaudeCommon:
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
         info = None
-        for line in output.splitlines():
-            try:
-                record = json.loads(line)
-            except (ValueError, RecursionError):
-                continue
-            if isinstance(record, dict) and record.get("type") == "rate_limit_event":
+        for record in json_records(output.splitlines()):
+            if record.get("type") == "rate_limit_event":
                 info = record.get("rate_limit_info")
         if not isinstance(info, dict):
             return None
