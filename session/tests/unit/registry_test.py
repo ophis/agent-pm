@@ -116,6 +116,8 @@ class ConfigureTest(Base):
             ({"adapters": 1}, tables),
             ({"adapters": ["fake"]}, tables),
             ({"adapters": {"fake": 1}}, tables),
+            ({"adapters": {1: {}}}, tables),
+            ({"hosts": {**HOSTS, 2: {}}}, "[hosts] 2: want a string key"),
             ({"hosts": 1}, hosts),
             ({"hosts": {**HOSTS, "default": {}}}, hosts),
             ({"hosts": {"tmux": 1}}, "[hosts] tmux: want default or a [hosts.<name>] table"),

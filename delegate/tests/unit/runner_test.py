@@ -36,7 +36,8 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.event.outcome import save
-from agent_pm.session import api
+from agent_pm.session import Session, api
+from agent_pm.session.adapters import registry
 from agent_pm.utils import text as text_utils
 
 from delegate.tests.case import Case
@@ -224,6 +225,20 @@ class Base(Case):
         patch = mock.patch.object(runner, "save", wraps=save)
         self.addCleanup(patch.stop)
         return patch.start()
+
+
+class Configures(Base):
+    def test_run_never_configures_the_session_the_callers_settings_reach_it(self):
+        with mock.patch.object(Session, "configure") as configure:
+            r = self.go(said(START, block(DONE)))
+        configure.assert_not_called()
+        self.assertEqual((r.outcome.status, len(self.launches())), ("done", 1))
+
+    def test_unconfigured_it_starts_nothing(self):
+        registry.reset()
+        with self.assertRaisesRegex(ConfigError, "not configured"):
+            self.go(said(START, block(DONE)))
+        self.assertFalse(os.path.exists(self.log))
 
 
 class Callbacks(Base):

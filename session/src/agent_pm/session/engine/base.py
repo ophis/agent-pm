@@ -94,6 +94,11 @@ class Session(ABC):
         return registry.settings(config)
 
     @classmethod
+    def parse_hosts(cls, table):
+        """The [hosts] parser: an already-read [hosts] table as Hosts(default, tables); else ValueError."""
+        return registry.parse_hosts(table)
+
+    @classmethod
     def start(
         cls,
         runtime: str,

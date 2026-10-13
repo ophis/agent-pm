@@ -16,6 +16,7 @@ from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import config, run
 from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import api
+from agent_pm.session.adapters import registry
 
 from .board_ids import STATES
 from .config_test import GATE
@@ -211,6 +212,13 @@ class Inner(Case):
         self.assertEqual(self.api.info, [(RUNTIME, SID, self.rd)] * 2)
         self.assertEqual(os.environ["PATH"], config.path())
         self.assertEqual([o for o in self.order if o[0] == "show"], [])
+
+    def test_main_configures_the_session_before_the_run(self):
+        registry.reset()
+        seen = []
+        self.done(lambda: seen.append(registry.configured()))
+        self.assertEqual(self.main(), 0)
+        self.assertIn("claude", seen[0])
 
     def test_no_outcome_leaves_the_issue(self):
         self.assertEqual(self.main(), 0)

@@ -45,6 +45,9 @@ class Settings:
 _settings: Settings | None = None
 
 
+parse_hosts = tables.parse
+
+
 def settings(config: Mapping) -> dict:
     found = tables.parse(config.get("hosts"))
     return {
@@ -57,7 +60,7 @@ def settings(config: Mapping) -> dict:
 def configure(*, adapters: Mapping, hosts: Mapping, default_host: str) -> None:
     global _settings
     if not isinstance(adapters, Mapping) or not all(
-        isinstance(t, Mapping) for t in adapters.values()
+        isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
     ):
         raise ConfigError("adapters: want a mapping of [adapters.<name>] tables")
     if not isinstance(hosts, Mapping) or "default" in hosts:

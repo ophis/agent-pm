@@ -15,8 +15,8 @@ from unittest import mock
 
 from agent_pm.delegate import Progress, composer, run
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
-from agent_pm.session import api
-from agent_pm.session.adapters import registry
+from agent_pm.session import Session, api
+from agent_pm.utils.config_file import read_project
 
 from delegate.tests.integration.cli_integration_test import (
     DONE,
@@ -75,7 +75,7 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        registry.reset()
+        Session.configure(**Session.settings(read_project("session")))
 
     def go(self, on_event=None, **scenario):
         """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each callback, self.err the

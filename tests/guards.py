@@ -49,7 +49,6 @@ MODES = "session.modes"
 RECORDS = "session.engine.records"
 HOSTS = "session.hosts"
 HOST_ABC = f"{HOSTS}.base"  # the Host ABC: outside the layers, in unit SESSION
-HOST_TABLES = f"{HOSTS}.tables"
 LAYERS = (
     "session.adapters",
     SESSION_API,
@@ -73,7 +72,6 @@ ALLOWED = {
     ("session.adapters", SESSION_TYPES),
     ("session.adapters.registry", HOSTS),  # until TASK-368
     ("session.engine.base", "session.adapters"),  # Session.configure stores into the registry
-    (CONFIG, HOSTS),  # the [hosts] parser; PURE narrows it to HOST_TABLES
     (OUTSIDE, SESSION),
     (OUTSIDE, SESSION_API),
     (OUTSIDE, SESSION_TYPES),
@@ -84,7 +82,7 @@ ORCH = "linear_orchestrator"
 UNITS = (*LAYERS, *SHARED, TOOLS)
 PURE = {
     "utils": ("utils",),
-    CONFIG: ("utils", CONFIG, HOST_TABLES),
+    CONFIG: ("utils", CONFIG),
     "delegate.event": SHARED,
     "delegate.event.outcome": (*SHARED, "delegate.composer"),
     TOOLS: ("utils", CONFIG),

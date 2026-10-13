@@ -1,5 +1,5 @@
-"""parse(table): an already-read [hosts] table as Hosts(default, tables), the [hosts] parser's only home; else
-ValueError. An implementation is checked only for the module.path:Class form, never imported."""
+"""parse(table): an already-read [hosts] table as Hosts(default, tables), the [hosts] parser's only home (callers:
+Session.parse_hosts); else ValueError. An implementation is checked only for the module.path:Class form, never imported."""
 
 import re
 from collections.abc import Mapping
@@ -23,6 +23,8 @@ def parse(table) -> Hosts:
     for key, value in table.items():
         if key == "default":
             continue
+        if not isinstance(key, str):
+            raise ValueError(f"[hosts] {key!r}: want a string key")
         if not isinstance(value, Mapping):
             raise ValueError(f"[hosts] {key}: want default or a [hosts.<name>] table")
         if not NAME.match(key):

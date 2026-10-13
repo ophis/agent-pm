@@ -380,31 +380,12 @@ class Config(ConfigFile, Case):
             cfg = self.load(PIPELINE + "[core.roles.pm]\ntier = 1\n")
         overlay = {"roles": {"pm": {"tier": 1}}}
         roles = ["researcher", "pm", "engineer"]
+        core = config_file.read_project("delegate")
         self.assertEqual(
             resolve.call_args_list,
-            [
-                mock.call(
-                    r,
-                    None,
-                    overlays=[overlay],
-                    label=LABEL,
-                    config=agent_pm.delegate.engine.config.CONFIG,
-                    local=config_file.LOCAL,
-                )
-                for r in roles
-            ],
+            [mock.call(r, None, overlays=[overlay], label=LABEL, cfg=core) for r in roles],
         )
-        self.assertEqual(
-            index.call_args_list,
-            [
-                mock.call(
-                    r,
-                    config=agent_pm.delegate.engine.config.CONFIG,
-                    local=config_file.LOCAL,
-                )
-                for r in roles
-            ],
-        )
+        self.assertEqual(index.call_args_list, [mock.call(r, cfg=core) for r in roles])
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
             {r: composer.resolve(r, overlays=[overlay], label=LABEL) for r in roles},
@@ -603,17 +584,14 @@ class OtherRoot(ConfigFile, Case):
         with mock.patch.object(
             composer,
             "index",
-            side_effect=lambda r, config, local: (
-                {"deep-research": ""} if r == "researcher" else index(r, config=config, local=local)
+            side_effect=lambda r, cfg: (
+                {"deep-research": ""} if r == "researcher" else index(r, cfg=cfg)
             ),
         ) as fake:
             self.assertEqual(self.load(PIPELINE).roles["researcher"].tasks, ("deep-research",))
+        core = config_file.read_project("delegate", path=self.core_path)
         self.assertEqual(
-            fake.call_args_list,
-            [
-                mock.call(r, config=self.core_path, local=config_file.LOCAL)
-                for r in ("researcher", "pm", "engineer")
-            ],
+            fake.call_args_list, [mock.call(r, cfg=core) for r in ("researcher", "pm", "engineer")]
         )
 
     def test_reads_only_the_paths_passed_and_the_projects_config_files(self):
@@ -633,6 +611,22 @@ class OtherRoot(ConfigFile, Case):
         )
         engineer = cfg.roles["engineer"]
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
+
+    def test_load_reads_each_config_once_passing_the_read_table_on(self):
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
+        write(path, PIPELINE)
+        write(local, "")
+        with (
+            mock.patch.object(config_file, "open", create=True, side_effect=open) as opened,
+            mock.patch.object(config_file, "read_project", wraps=config_file.read_project) as read,
+        ):
+            config.load(self.root, path=path, local=local, core=self.core_path)
+        paths = [c.args[0] for c in opened.call_args_list]
+        self.assertEqual([paths.count(p) for p in (path, self.core_path)], [1, 1], paths)
+        self.assertEqual(
+            sorted(c.args[0] for c in read.call_args_list),
+            ["delegate", "linear-orchestrator", "session"],
+        )
 
     def test_an_index_error_stops_the_caller(self):
         error = composer.ConfigError("roles/researcher.md: lists 'ghost' without tasks/ghost.md")
@@ -673,6 +667,15 @@ class OtherRoot(ConfigFile, Case):
         self.load(PIPELINE)
         self.assertEqual(registry.configured(), ["a", "claude", "codex", "print_prompt"])
         self.assertEqual(registry.tui(), registry.TuiSettings(True, 3, "open-close"))
+
+    def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "local.toml"))
+        write(path, PIPELINE)
+        write(local, "[hosts.tmux]\nstatus_line = true\n")
+        pm = config.load(self.root, path=path, local=local, core=self.core_path).roles["pm"]
+        work = os.path.join(self.dir, "work")
+        delegate.plan(pm.run, None, "x", work, runtime="claude", mode="headless", cwd=work)
+        self.assertTrue(registry.tui().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
         write(os.path.join(self.agent_pm, "local.toml"), '[hosts]\ndefault = "nope"\n')

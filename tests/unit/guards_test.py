@@ -406,7 +406,7 @@ class LayerImports(Sample):
 
 
 class PureUtils(Sample):
-    def test_config_imports_only_the_standard_library_utils_and_the_hosts_parser(self):
+    def test_config_imports_only_the_standard_library_and_utils(self):
         root = self.tree(
             {
                 guards.CONFIG_FILE: "import os\nfrom agent_pm.utils.paths import under\n"
@@ -422,6 +422,7 @@ class PureUtils(Sample):
                 f"{unit}.delegate.engine.plan",
                 f"{unit}.manager.crew",
                 f"{unit}.session.api",
+                f"{unit}.session.hosts.tables",
                 f"{unit}.session.hosts.tmux",
             ],
         )

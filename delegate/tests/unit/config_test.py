@@ -1,12 +1,12 @@
-"""delegate/src/agent_pm/delegate/engine/config.py: its paths; hosts(), a read delegate config's [delegates]
-harness_host checked against Session.settings' hosts (their cases: session/host_tables_test.py)."""
+"""delegate/src/agent_pm/delegate/engine/config.py: its paths; harness_host(), a read delegate config's [delegates]
+harness_host checked against Session.parse_hosts' names (their cases: session/host_tables_test.py)."""
 
 import os
 import tomllib
 import unittest
 
 import agent_pm.delegate.engine.config
-from agent_pm.delegate.engine.config import CONFIG, DELEGATE, IMPORT_ROOTS, PYTHONPATH, Hosts, hosts
+from agent_pm.delegate.engine.config import CONFIG, DELEGATE, IMPORT_ROOTS, PYTHONPATH, harness_host
 from agent_pm.session import Session
 from agent_pm.utils.config_file import read_project
 
@@ -24,7 +24,7 @@ per_column = 2
 implementation = "pkg.b:BHost"
 """
 NAMES = "a, b_2"
-SETTINGS = Session.settings(tomllib.loads(TWO))
+HOSTS = Session.parse_hosts(tomllib.loads(TWO)["hosts"]).tables
 
 
 def parsed(text: str = "") -> dict:
@@ -46,35 +46,23 @@ class PathsTest(Case):
             self.assertEqual({"hosts", "adapters"} & set(tomllib.load(f)), set())
 
 
-class HostsTest(Case):
+class HarnessHostTest(Case):
     def refused(self, config, message):
         with self.assertRaises(ValueError) as caught:
-            hosts(config, SETTINGS)
+            harness_host(config, HOSTS)
         self.assertEqual(str(caught.exception), message)
 
-    def test_the_default_its_tables_and_no_harness_host(self):
-        self.assertEqual(
-            hosts({}, SETTINGS),
-            Hosts(
-                "a",
-                {
-                    "a": {"implementation": "pkg.mod:AHost", "per_column": 2},
-                    "b_2": {"implementation": "pkg.b:BHost"},
-                },
-                None,
-            ),
-        )
-        for text in ("[delegates]\n", '[delegates]\nharness_host = ""\n'):
+    def test_unset_is_none(self):
+        for text in ("", "[delegates]\n", '[delegates]\nharness_host = ""\n'):
             with self.subTest(text):
-                self.assertIsNone(hosts(parsed(text), SETTINGS).harness)
+                self.assertIsNone(harness_host(parsed(text), HOSTS))
 
     def test_harness_host(self):
-        found = hosts(parsed('[delegates]\nharness_host = "b_2"\n'), SETTINGS)
-        self.assertEqual((found.default, found.harness), ("a", "b_2"))
+        self.assertEqual(harness_host(parsed('[delegates]\nharness_host = "b_2"\n'), HOSTS), "b_2")
 
     def test_the_committed_config_has_no_harness_host(self):
-        settings = Session.settings(read_project("session"))
-        self.assertIsNone(hosts(read_project("delegate"), settings).harness)
+        hosts = Session.parse_hosts(read_project("session")["hosts"]).tables
+        self.assertIsNone(harness_host(read_project("delegate"), hosts))
 
     def test_delegates_takes_only_harness_host(self):
         self.refused(

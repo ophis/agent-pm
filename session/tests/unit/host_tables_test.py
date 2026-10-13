@@ -1,9 +1,11 @@
-"""session/hosts/tables.py: parse(), an already-read [hosts] table's default and [hosts.<name>] tables."""
+"""session/hosts/tables.py: parse(), an already-read [hosts] table's default and [hosts.<name>] tables, as
+Session.parse_hosts gives it."""
 
 import tomllib
 import unittest
 from unittest import mock
 
+from agent_pm.session import Session
 from agent_pm.session.hosts.tables import Hosts, parse
 from agent_pm.utils import registry
 
@@ -43,6 +45,15 @@ class ParseTest(Case):
                 },
             ),
         )
+
+    def test_session_parse_hosts_is_this_parser(self):
+        self.assertEqual(Session.parse_hosts(table()), parse(table()))
+        with self.assertRaisesRegex(ValueError, r"^\[hosts\]: missing$"):
+            Session.parse_hosts(None)
+
+    def test_a_non_string_key_is_a_value_error(self):
+        found = {**table(), 1: {"implementation": "pkg.c:CHost"}}
+        self.refused(found, "[hosts] 1: want a string key")
 
     def test_the_tables_are_copies(self):
         found = table()

@@ -12,7 +12,8 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, Finished, Limit, Progress, composer, run
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session.adapters import registry
+from agent_pm.session import Session
+from agent_pm.utils.config_file import read_project
 
 from delegate.tests.case import Case
 from delegate.tests.integration.cli_integration_test import (
@@ -54,7 +55,7 @@ class Base(Case):
                 },
             )
         )
-        registry.reset()
+        Session.configure(**Session.settings(read_project("session")))
 
     def go(self, steps, **scenario):
         """run() with the fake's `steps`; self.events gets each callback."""

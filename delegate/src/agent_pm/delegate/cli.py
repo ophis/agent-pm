@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The Delegate's command line: one role's run in a Driver Mode (--mode: headless, the default, tui or in_process), its
-plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in one and the core config's team_dirs).
+plan as JSON (--dry-run, writing nothing) or the team (--list: the built-in one and the core config's team_dirs). All
+but --list first configure the session from the session config.
 --task unset: the agent run picks one from its index. --out -: a valid outcome's deliverable goes to stdout, control
 characters dropped but newlines and tabs; --out PATH: stderr names it once it holds the deliverable. A run's stdout is
 otherwise empty. --detach --events FILE: the run goes on in Driver session `<role>-<sid8>-drive` as this CLI's driver
@@ -23,8 +24,9 @@ from agent_pm.delegate import Begun, ConfigError, Plan, composer, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import printable
-from agent_pm.session import api
+from agent_pm.session import Session, api
 from agent_pm.utils.args import Once
+from agent_pm.utils.config_file import read_project
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -93,6 +95,7 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
             print(listing(team), end="")
             return 0, None
         config = composer.resolve(a.role, a.task, team=team)
+        _configure()
         text = sys.stdin.read() if a.input == "-" and a.driver is None else a.input
         given = (config, a.task, text, a.workdir)
         kw = {
@@ -125,6 +128,13 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
             _say(f"delegate: deliverable {out}")
     _say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
+
+
+def _configure() -> None:
+    try:
+        Session.configure(**Session.settings(read_project("session")))
+    except (OSError, ValueError, api.ConfigError) as e:
+        raise ConfigError(f"session config: {e}") from None
 
 
 def _check_detach(a: argparse.Namespace) -> None:

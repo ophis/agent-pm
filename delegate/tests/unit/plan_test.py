@@ -21,7 +21,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import api
+from agent_pm.session import Session, api
 from agent_pm.session.adapters import registry
 from agent_pm.utils.paths import temp_dirs, under
 
@@ -102,15 +102,14 @@ class ReplyTags(Base):
 
 
 class Configures(Base):
-    def test_plan_configures_the_session_from_the_core_config_first(self):
+    def test_plan_never_configures_the_session(self):
         registry.reset()
-        got, _ = self.planned()
+        with mock.patch.object(Session, "configure") as configure:
+            got, _ = self.planned()
         self.assertEqual(got.runtime, "fake")
-        self.assertIn("fake", registry.configured())
-
-    def test_a_core_config_error_refuses_the_plan(self):
-        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
-            self.assertEqual(self.refused(), "[hosts]: missing")
+        configure.assert_not_called()
+        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+            registry.configured()
 
 
 class Cwd(Base):

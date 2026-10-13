@@ -219,6 +219,32 @@ class List(Base):
         self.assertEqual(done.stdout, self.cli("--list")[1])
 
 
+class Configures(Base):
+    def test_a_run_configures_the_session_before_starting_it(self):
+        registry.reset()
+        seen, start = [], api.start
+        with mock.patch.object(
+            api, "start", lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
+        ):
+            code, _, err = self.runs()
+        self.assertEqual((code, len(seen)), (0, 1), err)
+        self.assertIn("fake", seen[0])
+
+    def test_a_session_config_error_exits_2_and_starts_nothing(self):
+        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
+            code, out, err = self.runs()
+        self.assertEqual((code, out, err), (2, "", "delegate: session config: [hosts]: missing\n"))
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
+    def test_list_never_configures_and_works_with_a_bad_session_config(self):
+        registry.reset()
+        with mock.patch.object(registry, "settings", side_effect=ValueError("[hosts]: missing")):
+            code, _, err = self.cli("--list")
+        self.assertEqual((code, err), (0, ""))
+        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+            registry.configured()
+
+
 class Usage(Base):
     def test_a_run_needs_input_out_and_workdir(self):
         for argv in (
@@ -337,7 +363,7 @@ class DryRun(Base):
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
 
-    def test_main_configures_the_session_through_the_plan(self):
+    def test_a_dry_run_configures_the_session(self):
         registry.reset()
         code, _, err = self.runs("--dry-run")
         self.assertEqual(code, 0, err)
@@ -701,6 +727,14 @@ class Detach(Base):
         self.layout.assert_called_once_with("below", "mgr")
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
+    def test_detach_configures_the_session_before_reaching_it(self):
+        registry.reset()
+        seen = []
+        self.started.side_effect = lambda *a, **kw: seen.append(registry.configured())
+        code, _, err = self.detaches()
+        self.assertEqual((code, len(seen)), (0, 1), err)
+        self.assertIn("fake", seen[0])
+
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
         self.assertEqual(code, 0, err)
@@ -763,6 +797,14 @@ class DriverForm(Base):
             return result
 
         return mock.patch.object(cli, "run", side_effect=run)
+
+    def test_the_driver_form_configures_the_session_before_its_run(self):
+        registry.reset()
+        seen = []
+        with self.ran(effect=lambda: seen.append(registry.configured())):
+            code, _, err = self.drives()
+        self.assertEqual((code, len(seen)), (0, 1), err)
+        self.assertIn("fake", seen[0])
 
     def test_the_handler_on_each_signal_unblocked_for_the_run_blocked_for_the_outcome_line(self):
         with self.ran():

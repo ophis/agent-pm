@@ -11,13 +11,14 @@ from agent_pm.delegate.composer.teams import (
     Team,
     index,
     no_charter,
+    read,
     role_tables,
     tasks_path,
     team_or_default,
 )
 from agent_pm.delegate.composer.types import ConfigError, RunConfig
 from agent_pm.delegate.engine.config import PYTHONPATH
-from agent_pm.utils.config_file import LOCAL, read_project
+from agent_pm.utils.config_file import LOCAL
 from agent_pm.utils.paths import real_dirs
 
 RUN_KEYS = frozenset(
@@ -76,9 +77,10 @@ def resolve(
     team: Team | None = None,
     config: str = CONFIG,
     local: str = LOCAL,
+    cfg: Mapping | None = None,
 ) -> RunConfig:
     overlays, team = tuple(overlays), team_or_default(team)
-    known = set(role_tables(config, local)) | {name for kind, name in team.files if kind == "roles"}
+    known = set(role_tables(config, local, cfg)) | {n for kind, n in team.files if kind == "roles"}
     if role not in known:
         raise no_charter(role, {}, team)
     source, where = label
@@ -87,7 +89,7 @@ def resolve(
             _check_overlay(overlay, known, where)
         except ConfigError as e:
             raise ConfigError(f"{source}: {e}") from None
-    cfg = read_project("delegate", path=config, local=local)
+    cfg = read(config, local, cfg)
     _check(cfg)
     values = _run_keys(cfg, role)
     run = RunConfig(
@@ -102,7 +104,7 @@ def resolve(
         run = replace(run, **_run_keys(overlay, role))
     if not (charter := team.charter(role)):
         raise no_charter(role, cfg, team)
-    tasks = index(role, team, config, local)
+    tasks = index(role, team, config, local, cfg=cfg)
     if task and task not in tasks:
         raise team.misnamed_error("tasks", task) or ConfigError(
             f"task {task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
@@ -110,12 +112,11 @@ def resolve(
     return replace(run, role_title=title_of(*charter))
 
 
-def trusted_dirs(config: str = CONFIG, local: str = LOCAL) -> frozenset[str]:
+def trusted_dirs(
+    config: str = CONFIG, local: str = LOCAL, *, cfg: Mapping | None = None
+) -> frozenset[str]:
     try:
-        return real_dirs(
-            read_project("delegate", path=config, local=local).get("trusted_dirs", []),
-            "trusted_dirs",
-        )
+        return real_dirs(read(config, local, cfg).get("trusted_dirs", []), "trusted_dirs")
     except ValueError as e:
         raise ConfigError(str(e)) from None
 

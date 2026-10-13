@@ -7,7 +7,9 @@ import os
 import tempfile
 import unittest
 from dataclasses import fields, replace
+from unittest import mock
 
+from agent_pm.delegate import composer
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
@@ -402,8 +404,15 @@ class Runtime(Fake):
     def test_resolve_takes_no_runtime_client_or_trust(self):
         self.assertEqual(
             list(inspect.signature(resolve).parameters),
-            ["role", "task", "overlays", "label", "team", "config", "local"],
+            ["role", "task", "overlays", "label", "team", "config", "local", "cfg"],
         )
+
+    def test_a_read_config_given_is_used_reading_no_file(self):
+        cfg = config_file.read_project("delegate")
+        want = (resolve("pm"), trusted_dirs(), composer.index("pm"))
+        with mock.patch.object(config_file, "open", create=True, side_effect=OSError("read")):
+            got = (resolve("pm", cfg=cfg), trusted_dirs(cfg=cfg), composer.index("pm", cfg=cfg))
+        self.assertEqual(got, want)
 
 
 class TeamRoles(Fake):

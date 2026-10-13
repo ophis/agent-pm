@@ -6,7 +6,8 @@ reopens the unshown and prints the table, the backlog and how to arm a monitor. 
 error. Follow-ups go through the Driver's tmux_host.py send. Run as `env PYTHONPATH=<the import roots>[:U] python3
 -P -m agent_pm.manager.crew …`, the form of each crew command it prints. main first sets PYTHONPATH to U, the caller's minus
 each entry resolving to one (unset when empty): what workers and recovered role or pipeline entries get; then
-configures the session from the session config. The import roots (delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it
+configures the session from the session config before a subcommand of STARTS (those that start, show or attach a
+session). The import roots (delegate.engine.config.IMPORT_ROOTS), then U, appear only in a command running crew: each one it
 prints (U as at print time) and a recovered worker entry."""
 
 import argparse
@@ -42,6 +43,7 @@ HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tpane"
 ROTATE_MSG = "rotate: run crew.py attach, then arm with its N and GEN"
 UNPRINTABLE = "want printable text (no control character, U+2028 or U+2029)"
 RECORD = "worker.json"
+STARTS = ("start", "restart", "attach", "reply", "next-event")
 RECORD_MAX = 64 << 10
 FIELDS = (
     "version",
@@ -860,7 +862,8 @@ def main(argv=None) -> int:
     if a.cmd == "attach" and (a.after is None) != (a.gen is None):
         ap.error("--after and --gen go together")
     try:
-        _configure()
+        if a.cmd in STARTS:
+            _configure()
         if a.cmd == "attach":
             text, entries = attach(_directory(a.manager), _own(), after=a.after, gen=a.gen)
             print(text, end="", flush=True)

@@ -422,8 +422,9 @@ def _fill_root(value, root):
 
 def _runnable(cfg, root, work, core, local):
     try:
-        core_roles = config_file.read_project("delegate", path=core, local=local).get("roles", {})
-        trusted = composer.trusted_dirs(config=core, local=local)
+        core_cfg = config_file.read_project("delegate", path=core, local=local)
+        core_roles = core_cfg.get("roles", {})
+        trusted = composer.trusted_dirs(cfg=core_cfg)
     except (OSError, ValueError, composer.ConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
@@ -445,10 +446,9 @@ def _runnable(cfg, root, work, core, local):
                 None,
                 overlays=[overlay],
                 label=("linear-orchestrator/config.toml", "core"),
-                config=core,
-                local=local,
+                cfg=core_cfg,
             )
-            tasks = tuple(composer.index(name, config=core, local=local))
+            tasks = tuple(composer.index(name, cfg=core_cfg))
         except composer.ConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(

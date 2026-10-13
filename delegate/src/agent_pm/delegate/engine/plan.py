@@ -1,6 +1,5 @@
-"""One run's plan: its cwd, Spec, sid and prompt, every check before anything starts, writing nothing; first it
-configures the session from the session config (the Delegate's start). A refusal is ConfigError, a Composer or Driver one
-keeping its message."""
+"""One run's plan: its cwd, Spec, sid and prompt, every check before anything starts, writing nothing; the caller
+configured the session. A refusal is ConfigError, a Composer or Driver one keeping its message."""
 
 import functools
 import os
@@ -12,7 +11,7 @@ from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Session, api
+from agent_pm.session import api
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.paths import under
 
@@ -34,13 +33,6 @@ def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
         return spec.flags, dict(spec.env)
     except (OSError, ValueError, api.ConfigError) as exc:
         raise ConfigError(f"policy.{runtime}: {exc}") from None
-
-
-def _configure() -> None:
-    try:
-        Session.configure(**Session.settings(read_project("session")))
-    except (OSError, ValueError) as e:
-        raise ConfigError(str(e)) from None
 
 
 def _own(f):
@@ -103,7 +95,6 @@ def plan(
     team: Team | None = None,
 ) -> Plan:
     """`team` None: the built-in team, the configured team dirs checked for overlap only."""
-    _configure()
     if mode not in api.MODES:
         raise ConfigError(f"mode must be one of {', '.join(api.MODES)}, got {mode!r}")
     if mode != "tui" and name is not None:

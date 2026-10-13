@@ -985,6 +985,12 @@ class MainTest(WorkerCase):
             self.assertEqual(self.run_main("reply", "w1"), (0, "done\n", ""))
         self.assertEqual(seen, [["claude", "codex", "print_prompt"]])
 
+    def test_start_configures_the_session_before_starting_it(self):
+        seen, start = [], self.api.start
+        self.api.start = lambda *a, **kw: seen.append(registry.configured()) or start(*a, **kw)
+        rc, _, err = self.run_main("start", "w1", "--manager", "m1")
+        self.assertEqual((rc, seen), (0, [["claude", "codex", "print_prompt"]]), err)
+
     def test_a_config_error_exits_1(self):
         for text in ("x = \n", "bogus = 1\n"):
             with self.subTest(text):
@@ -2184,6 +2190,16 @@ class RosterCommandsTest(RosterCase):
                         (1, "", self.not_attached()),
                     )
                     self.assertEqual(self.made(), [])
+
+    def test_session_free_commands_never_configure_and_work_with_a_bad_session_config(self):
+        self.local('[hosts]\ndefault = "nope"\n')
+        self.seed(MGR, w1=entry(), w2=entry(sid=SID2))
+        for cmd in (["note", "w1", "x"], ["forget", "w2"], ["stop", "w1"], ["release"]):
+            with self.subTest(cmd=cmd[0]):
+                fake = Api(rows=[row("w1", SID)])
+                self.assertEqual(self.main_with(fake, *cmd)[0], 0)
+        with self.assertRaisesRegex(api.ConfigError, "not configured"):
+            registry.configured()
 
     def test_release_by_the_holder_keeps_the_cursor(self):
         self.seed(MGR, cursor=7, w1=entry())

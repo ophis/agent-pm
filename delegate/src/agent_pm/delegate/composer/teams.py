@@ -200,11 +200,16 @@ def roles(team: Team, cfg: Mapping) -> list[str]:
 
 
 def index(
-    role: str, team: Team | None = None, config: str = CONFIG, local: str = LOCAL
+    role: str,
+    team: Team | None = None,
+    config: str = CONFIG,
+    local: str = LOCAL,
+    *,
+    cfg: Mapping | None = None,
 ) -> dict[str, str]:
     team = team_or_default(team)
     if not (charter := team.charter(role)):
-        raise no_charter(role, read_project("delegate", path=config, local=local), team)
+        raise no_charter(role, read(config, local, cfg), team)
     text, rel = charter
     m = INDEX.search(text)
     section = m.group(1).strip() if m else ""
@@ -247,10 +252,15 @@ def catalog(
     }
 
 
-def role_tables(config: str, local: str) -> Mapping:
-    if not os.path.isfile(config):
+def read(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
+    """`cfg`, the caller's already-read delegate config, else `config` with `local` read."""
+    return read_project("delegate", path=config, local=local) if cfg is None else cfg
+
+
+def role_tables(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
+    if cfg is None and not os.path.isfile(config):
         raise ConfigError(f"no core config {config}")
-    roles = read_project("delegate", path=config, local=local).get("roles")
+    roles = read(config, local, cfg).get("roles")
     if not isinstance(roles, Mapping):
         raise ConfigError(f"malformed [roles] table in {config}")
     for role, table in roles.items():

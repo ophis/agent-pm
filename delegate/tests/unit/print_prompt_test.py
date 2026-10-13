@@ -11,7 +11,7 @@ from contextlib import redirect_stderr
 from agent_pm.delegate import Begun, ConfigError, Finished, Progress, composer, plan, run
 from agent_pm.delegate.event.reply import marks
 
-from delegate.tests.case import Case
+from delegate.tests.case import Case, committed
 from delegate.tests.unit.runner_test import no_child
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -34,6 +34,7 @@ class PrintPrompt(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
+        self.configure_session(committed())
 
     def given(self, role, **kw):
         """(args, kw) for run() and plan(): print_prompt in_process, sid SID, the cwd the workdir, unless `kw`."""
