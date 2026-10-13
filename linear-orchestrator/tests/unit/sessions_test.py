@@ -1,5 +1,5 @@
 """orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id, numbered
-`#<seq>`, repaired at the end after a late write; the resume command is the Driver's session_info."""
+`#<seq>`, repaired at the end after a late write; the resume command is the Driver's session_status."""
 
 import functools
 import subprocess
@@ -11,7 +11,7 @@ from unittest import mock
 
 from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.linear import linear, sessions
-from agent_pm.session import api
+from agent_pm.session import ConfigError, SessionStatus, api
 
 from .. import case
 
@@ -118,12 +118,12 @@ def bounded(limit):
 
 class Case(case.Case):
     def setUp(self):
-        patch = mock.patch.multiple(api, session=mock.DEFAULT, session_info=mock.DEFAULT)
+        patch = mock.patch.multiple(api, session_record=mock.DEFAULT, session_status=mock.DEFAULT)
         mocks = patch.start()
         self.addCleanup(patch.stop)
-        self.session, self.info = mocks["session"], mocks["session_info"]
+        self.session, self.info = mocks["session_record"], mocks["session_status"]
         self.session.return_value = None
-        self.info.return_value = api.SessionStatus("yes", None, CMD)
+        self.info.return_value = SessionStatus("yes", None, CMD)
 
 
 class Record(Case):
@@ -295,7 +295,7 @@ class Command(Case):
         rec = record()
         rec["command"] = "rm -rf ~"
         self.assertEqual(sessions.body(rec), text(f"running · #1 · {T1}"))
-        self.info.return_value = api.SessionStatus("yes", None, "resume it")
+        self.info.return_value = SessionStatus("yes", None, "resume it")
         self.assertEqual(
             sessions.body(rec), f"Run {SID} · running · #2 · {T1}\n\n```\nresume it\n```"
         )
@@ -303,9 +303,9 @@ class Command(Case):
 
     def test_no_command_block(self):
         for name, effect in (
-            ("raises", api.ConfigError("bad sid")),
-            ("unknown", api.SessionStatus("unknown", None, CMD)),
-            ("empty", api.SessionStatus("yes", None, "")),
+            ("raises", ConfigError("bad sid")),
+            ("unknown", SessionStatus("unknown", None, CMD)),
+            ("empty", SessionStatus("yes", None, "")),
         ):
             with self.subTest(name):
                 self.info.side_effect = effect if isinstance(effect, Exception) else None
@@ -317,7 +317,7 @@ class Command(Case):
 
 class Status(Case):
     def test_the_drivers_status_at_the_records_cwd_else_the_workdir(self):
-        st = api.SessionStatus("no", 5.0, "")
+        st = SessionStatus("no", 5.0, "")
         self.info.return_value = st
         for entry, cwd in ((None, WORKDIR), ({"kind": "session", "cwd": "/data/r"}, "/data/r")):
             with self.subTest(entry=entry):
@@ -331,8 +331,8 @@ class Status(Case):
         for target in (self.session, self.info):
             with self.subTest(target=target):
                 self.session.side_effect = self.info.side_effect = None
-                target.side_effect = api.ConfigError("bad")
-                with self.assertRaises(api.ConfigError):
+                target.side_effect = ConfigError("bad")
+                with self.assertRaises(ConfigError):
                     sessions.status(WORKDIR, RUNTIME, SID)
 
 

@@ -1,4 +1,4 @@
-"""session/engine/records.py: run.jsonl writes, reads and attempt completeness."""
+"""session/engine/records.py: run.jsonl writes and reads."""
 
 import errno
 import io
@@ -180,7 +180,7 @@ class Session(Base):
             {**first, "project": 1},
             {k: v for k, v in first.items() if k != "project"},
         )
-        self.assertEqual(records.session(self.dir, SID), latest)
+        self.assertEqual(records.session_record(self.dir, SID), latest)
 
     def test_metadata_updates_only_the_matching_latest_session(self):
         first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
@@ -190,38 +190,15 @@ class Session(Base):
             {"kind": "session_metadata", "sid": SID, "transcript": "/t", "resume": "resume"},
         )
         self.assertEqual(
-            records.session(self.dir, SID), {**first, "transcript": "/t", "resume": "resume"}
+            records.session_record(self.dir, SID), {**first, "transcript": "/t", "resume": "resume"}
         )
         self.write(first, {"kind": "session_metadata", "sid": SID, "transcript": "/t"}, first)
-        self.assertEqual(records.session(self.dir, SID), first)
+        self.assertEqual(records.session_record(self.dir, SID), first)
 
     def test_none_without_a_valid_session_record(self):
-        self.assertIsNone(records.session(self.dir, SID))
+        self.assertIsNone(records.session_record(self.dir, SID))
         self.write(b"", {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": "yes"})
-        self.assertIsNone(records.session(self.dir, SID))
-
-
-class Complete(Base):
-    SESSION = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
-    RESULT = {"kind": "result", "outcome": {"status": "done"}}
-    END = {"kind": "end", "sid": SID, "rc": 0}
-
-    def test_a_result_after_the_last_session_record(self):
-        needs = {"kind": "result", "outcome": {"status": "needs_input"}}
-        for lines, want in (
-            ((self.SESSION, needs, self.END, self.SESSION), False),
-            ((self.SESSION, self.RESULT, self.END), True),
-            ((self.SESSION,), False),
-            ((self.RESULT, self.END), False),
-        ):
-            with self.subTest([r["kind"] for r in lines]):
-                self.write(*lines)
-                self.assertIs(records.complete(self.dir), want)
-
-    def test_missing_or_empty_is_not_complete(self):
-        self.assertIs(records.complete(self.dir), False)
-        self.write()
-        self.assertIs(records.complete(self.dir), False)
+        self.assertIsNone(records.session_record(self.dir, SID))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,8 @@ from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.config import harness_host
 from agent_pm.delegate.engine.runner import printable
-from agent_pm.session import Session, api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, Session, api
 from agent_pm.utils.args import Once
 from agent_pm.utils.config_file import read_project
 
@@ -129,7 +130,7 @@ def _main(a: argparse.Namespace) -> tuple[int, str | None]:
     if deliverable := result.outcome.deliverable:
         if a.out == "-":
             print("\n".join(map(printable, deliverable.split("\n"))), end="", flush=True)
-        elif api.records.holds(out := os.path.abspath(a.out), deliverable):
+        elif api.holds(out := os.path.abspath(a.out), deliverable):
             _say(f"delegate: deliverable {out}")
     _say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
@@ -149,7 +150,7 @@ def _configure() -> None:
 def _config(name: str) -> Iterator[None]:
     try:
         yield
-    except (OSError, ValueError, api.ConfigError) as e:
+    except (OSError, ValueError, SessionConfigError) as e:
         raise ConfigError(f"{name} config: {e}") from None
 
 
@@ -173,7 +174,7 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
         return 0
     try:
         d = detach.detach(p, events=a.events, split=a.split, split_from=a.split_from)
-    except api.DriverError as e:
+    except DriverError as e:
         _say(f"delegate: {e}")
         return 3
     _say(f"delegate: session {p.spec.sid}")
@@ -236,7 +237,7 @@ def _begun(a: argparse.Namespace, tui: str | None, event) -> None:
         try:
             if command := api.show(tui, a.split, a.split_from, a.opener):
                 _say(command)
-        except (api.ConfigError, api.DriverError) as e:
+        except (SessionConfigError, DriverError) as e:
             _say(f"delegate: show {tui}: {e}")
 
 

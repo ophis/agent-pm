@@ -11,7 +11,9 @@ from agent_pm.delegate import composer
 from agent_pm.delegate.composer import RunConfig, RunParams, Team
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import api
+from agent_pm.session import Access, api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.paths import under
 
@@ -29,9 +31,9 @@ def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
         flags, env = value.get("flags", []), value.get("env", {})
         if not isinstance(flags, list):
             raise ConfigError(f"policy.{runtime}.flags must be a list of strings without NUL")
-        spec = api.Spec(workdir="/", flags=tuple(flags), env=env)
+        spec = SessionSpec(workdir="/", flags=tuple(flags), env=env)
         return spec.flags, dict(spec.env)
-    except (OSError, ValueError, api.ConfigError) as exc:
+    except (OSError, ValueError, SessionConfigError) as exc:
         raise ConfigError(f"policy.{runtime}: {exc}") from None
 
 
@@ -40,7 +42,7 @@ def _own(f):
     def wrapped(*args, **kw):
         try:
             return f(*args, **kw)
-        except api.ConfigError as e:
+        except SessionConfigError as e:
             raise ConfigError(str(e)) from None
 
     return wrapped
@@ -54,7 +56,7 @@ def place(
     workdir, trusted = os.path.abspath(workdir), composer.trusted_dirs()
     if resume_sid is not None:
         # The agent run can append to run.jsonl: this re-check limits a forged record.
-        entry = api.session(workdir, resume_sid)
+        entry = api.session_record(workdir, resume_sid)
         here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
         if project and not under(os.path.realpath(here), trusted):
             raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
@@ -113,7 +115,7 @@ def plan(run: RunConfig, spec: Spec) -> Plan:
     resume = spec.sid if spec.resume else None
     here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
     intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo, team=team)
-    access = api.Access(
+    access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),
         cwd=here,
@@ -122,7 +124,7 @@ def plan(run: RunConfig, spec: Spec) -> Plan:
         env=intent.env,
     )
     flags, env = policy(spec.runtime)
-    session = api.Spec(
+    session = SessionSpec(
         workdir=workdir,
         access=access,
         tier=run.tier,
@@ -149,7 +151,7 @@ def _check_team_dirs(
     write_dirs: tuple[str, ...],
     *,
     runtime: str,
-    spec: api.Spec,
+    spec: SessionSpec,
     resume: str | None,
 ) -> None:
     """Every dir the run can write counts, those `runtime` can write itself (api.writable_dirs) last; spec.access.reads,

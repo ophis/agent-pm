@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.types import Begun, Finished, Progress, Result
 from agent_pm.delegate.event.outcome import Outcome
-from agent_pm.session import Usage, api
+from agent_pm.session import SessionStatus, Usage
 from agent_pm.utils.record import Record, Status
 
 
@@ -66,7 +66,7 @@ class Delegate(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
-    def session_info(self) -> api.SessionStatus: ...
+    def session_info(self) -> SessionStatus: ...
 
     @abstractmethod
     def resume(self) -> Record: ...

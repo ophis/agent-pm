@@ -24,7 +24,8 @@ from agent_pm.delegate.engine.types import (
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE, InvalidOutcome, Outcome
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import marks, outcome_block
-from agent_pm.session import api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, api
 from agent_pm.utils.files import save
 from agent_pm.utils.text import printable
 
@@ -107,7 +108,7 @@ class Tui(Headless):
             self.nudged = True
             try:
                 handle.send(NUDGE)
-            except api.DriverError as e:
+            except DriverError as e:
                 _say(f"delegate: tui: {e}")
             self.note("nudge")
             return None
@@ -165,12 +166,12 @@ def _resets(at: float | None) -> str:
 class _Attempts:
     def __init__(self, p: Plan, on_event: Callable[[Event], None]):
         self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.spec.mode](self.note)
-        self.channel = api.records.path(p.spec.workdir)
+        self.workdir = p.spec.workdir
         self.seen: set[str] = set()
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        api.records.note(self.channel, kind, **fields)
+        api.note(self.workdir, kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
@@ -184,10 +185,10 @@ class _Attempts:
         p = self.plan
         try:
             handle = self.policy.start(p)
-        except api.ConfigError as e:
+        except SessionConfigError as e:
             self.refused = True
             raise ConfigError(str(e)) from None
-        except api.DriverError as e:
+        except DriverError as e:
             self.drop_stale_out()
             self.note("input", text=p.params.input)
             return Result(1, None, f"{p.spec.mode}: {e}")
@@ -215,7 +216,7 @@ class _Attempts:
                     _say(f"delegate: invalid outcome: {e}; resuming once")
                     try:
                         handle = self.policy.fix(handle, p, FIX.format(error=e))
-                    except (api.ConfigError, api.DriverError) as failed:
+                    except (SessionConfigError, DriverError) as failed:
                         return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
                     fixed = True
                     continue
@@ -228,7 +229,7 @@ class _Attempts:
         """A DriverError is printed, not raised; False then, the session maybe running."""
         try:
             handle.stop()
-        except api.DriverError as e:
+        except DriverError as e:
             _say(f"delegate: {self.plan.spec.mode}: {e}")
             return False
         return True
@@ -250,9 +251,9 @@ class _Attempts:
         rc = last = limit = replied = None
         for event in handle.events():
             answer = None
-            if isinstance(event, api.Reply):
+            if isinstance(event, Reply):
                 last = replied = self.reply(event.text)
-            elif isinstance(event, api.TurnEnd):
+            elif isinstance(event, TurnEnd):
                 if (
                     event.reply and event.reply != replied
                 ):  # a headless turn's Reply comes again at its end
@@ -260,18 +261,18 @@ class _Attempts:
                 replied = None
                 if not limit:
                     answer = self.policy.turn_end(handle, last or "", event.pending)
-            elif isinstance(event, api.Stderr):
+            elif isinstance(event, Stderr):
                 _say(event.text)
-            elif isinstance(event, api.IdleTimeout):
+            elif isinstance(event, IdleTimeout):
                 self.note("idle", seconds=event.seconds)
                 if not limit:
                     answer = self.policy.idle(event.seconds)
-            elif isinstance(event, api.LimitHit):
+            elif isinstance(event, LimitHit):
                 self.note("limit", resets_at=event.resets_at)
                 limit = Limit(event.resets_at)
                 if not self.stop(handle):
                     break
-            elif isinstance(event, api.Exited):
+            elif isinstance(event, Exited):
                 rc = event.returncode
             if isinstance(answer, GiveUp):
                 self.note("give_up", reason=answer.reason)
@@ -298,9 +299,7 @@ class _Attempts:
     def finish(self, outcome: Outcome, rc: int) -> Result:
         s, kind = self.plan.spec, self.plan.run.output["type"]
         if outcome.deliverable and s.out:
-            if not api.records.holds(
-                s.out, outcome.deliverable
-            ):  # else the agent run wrote it there
+            if not api.holds(s.out, outcome.deliverable):  # else the agent run wrote it there
                 try:
                     save(s.out, outcome.deliverable)
                 except OSError as e:

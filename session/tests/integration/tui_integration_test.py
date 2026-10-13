@@ -20,7 +20,16 @@ from unittest import mock
 
 from agent_pm.session import Session, api
 from agent_pm.session.engine import records
-from agent_pm.session.engine.types import Activity, Blocked, Exited, SessionBound, TurnEnd
+from agent_pm.session.engine.types import (
+    Activity,
+    Blocked,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    SessionBound,
+    Spec,
+    TurnEnd,
+)
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
@@ -38,12 +47,12 @@ spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", 
 sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 from agent_pm.session import api
-from agent_pm.session import Session
+from agent_pm.session import IdleTimeout, Session
 Session.configure(**json.loads(config))
 handle = api.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
-event = next(e for e in handle.events() if not isinstance(e, api.IdleTimeout))
+event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
 CLOSE = "import sys; from agent_pm.session import api; api.close(sys.argv[1])"
@@ -90,7 +99,7 @@ class Stream:
                 continue
             if isinstance(item, BaseException):
                 raise item
-            if idle or not isinstance(item, api.IdleTimeout):
+            if idle or not isinstance(item, IdleTimeout):
                 return item
 
     def until_exited(self) -> list:
@@ -141,7 +150,7 @@ class Live(Case):
             "fake",
             "tui",
             "hello",
-            api.Spec(workdir=self.workdir, name=name, sid=sid),
+            Spec(workdir=self.workdir, name=name, sid=sid),
             **{"events": self.events, **kwargs},
         )
         self.addCleanup(handle.stop)
@@ -191,7 +200,7 @@ class TuiTest(Live):
         stream = Stream(handle)
         self.assertEqual(
             [stream.next() for _ in range(4)],
-            [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), api.IdleTimeout(IDLE)],
+            [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)],
         )
         self.lines("w1 done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
@@ -241,7 +250,7 @@ class TuiTest(Live):
         mode = os.stat(self.server.socket).st_mode
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
-        with self.assertRaisesRegex(api.DriverError, "^tmux sessions unknown: "):
+        with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: "):
             api.sessions("w.*")
         self.assertEqual(handle.state(), "unknown")
         stream.quiet(1.0)
@@ -305,7 +314,7 @@ class SameNameTest(Live):
         def run():
             try:
                 results.append(
-                    api.start("fake", "tui", "hello", api.Spec(workdir=self.workdir, name="w6"))
+                    api.start("fake", "tui", "hello", Spec(workdir=self.workdir, name="w6"))
                 )
             except Exception as e:
                 results.append(e)

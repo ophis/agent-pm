@@ -1,5 +1,5 @@
 """session/engine/api.py: start()'s checks, its session record, sid and Runtime note, a headless Handle's surface, usage(),
-session_info() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
+session_status() and writable_dirs(), the session env (Access.env) reaching a session but not its usage probe, over the
 fake adapter and test adapters registered in-process (sys.modules) with [adapters.<name>] tables given to
 Session.configure. Wherever nothing may start, subprocess.Popen is patched to fail; usage()'s probe is headless.probe
 patched, but for a spawn error. An in_process start over the in_process-only fake, SPAWNS patched to fail during its
@@ -24,11 +24,31 @@ import unittest
 import uuid
 from unittest import mock
 
+import agent_pm.session as session_pkg
 from agent_pm.session import api
-from agent_pm.session.adapters import base, selection
+from agent_pm.session.adapters import selection
 from agent_pm.session.engine import records
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.types import Access, DriverError, Launch
+from agent_pm.session.engine.types import (
+    Access,
+    Activity,
+    Blocked,
+    ConfigError,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    Launch,
+    Reply,
+    SessionBound,
+    SessionInfo,
+    SessionRow,
+    SessionStatus,
+    Spec,
+    Stderr,
+    TurnEnd,
+    Usage,
+    Window,
+)
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import headless, in_process, tui
 
@@ -109,7 +129,7 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return engine_types.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
 
 
-LAUNCHED: list[api.Spec] = []
+LAUNCHED: list[Spec] = []
 
 
 class InnerAdapter(fake_adapter.FakeAdapter):
@@ -224,8 +244,8 @@ class Base(Case):
         tables[runtime].update(extra)
         self.configure_session(tables, settings or {})
 
-    def spec(self, **fields) -> api.Spec:
-        return api.Spec(workdir=self.workdir, **fields)
+    def spec(self, **fields) -> Spec:
+        return Spec(workdir=self.workdir, **fields)
 
     def start(
         self, runtime="fake", mode="headless", prompt="hello", spec=None, **kwargs
@@ -260,7 +280,7 @@ class Base(Case):
     def run_once(self, **kwargs) -> tuple[api.Handle, list[str]]:
         """A started session run to its end, and the argv its runtime logged."""
         handle = self.start(**kwargs)
-        self.assertEqual(self.drain(handle), [api.Exited(0)])
+        self.assertEqual(self.drain(handle), [Exited(0)])
         with open(self.log, encoding="utf-8") as f:
             (entry,) = [json.loads(line) for line in f]
         return handle, entry["argv"]
@@ -284,7 +304,7 @@ class ChecksTest(Base):
         for bad in ("pane", "", "Headless", None):
             with self.subTest(bad=bad):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f"mode must be one of headless, tui, in_process, got {bad!r}",
                     lambda: self.start(mode=bad),
                 )
@@ -293,7 +313,7 @@ class ChecksTest(Base):
         for bad in (0, -1, 0.0, -0.5, float("nan"), True, False, "1"):
             with self.subTest(bad=bad):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f"idle_timeout must be a positive number of seconds, got {bad!r}",
                     lambda: self.start(idle_timeout=bad),
                 )
@@ -302,7 +322,7 @@ class ChecksTest(Base):
         for bad in ("", 1, b"x" * 100):
             with self.subTest(bad=bad):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f"resume must be a session id, got {bad!r:.80}",
                     lambda: self.start(resume=bad),
                 )
@@ -317,14 +337,14 @@ class ChecksTest(Base):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f'sid must be a non-empty printable string without "/", got {shown}',
                     lambda: self.start(sid=bad),
                 )
 
     def test_refuses_a_sid_other_than_resume(self):
         self.refused(
-            api.ConfigError,
+            ConfigError,
             "sid 's1' differs from resume 'r1'",
             lambda: self.start(sid="s1", resume="r1"),
         )
@@ -338,7 +358,7 @@ class ChecksTest(Base):
         for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
             with self.subTest(mode=mode):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     "name: tui mode only",
                     lambda: self.start(runtime, mode, spec=self.spec(name="w1")),
                 )
@@ -347,7 +367,7 @@ class ChecksTest(Base):
         for runtime, mode in (("fake", "headless"), ("checked", "in_process")):
             with self.subTest(mode=mode):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     "protect: tui mode only",
                     lambda: self.start(runtime, mode, spec=self.spec(protect=("/p",))),
                 )
@@ -378,7 +398,7 @@ class ChecksTest(Base):
             for flag in flags:
                 with self.subTest(runtime=runtime, flag=flag):
                     self.refused(
-                        api.ConfigError,
+                        ConfigError,
                         f"{flag}: picks the session; use sid= or resume=",
                         lambda: self.start(
                             runtime=runtime, spec=self.spec(flags=("--verbose", flag, SID))
@@ -403,7 +423,7 @@ class ChecksTest(Base):
         ):
             with self.subTest(flags=flags):
                 selection.check(flags, CodexAdapter.forbidden_selection, CodexAdapter.valued_flags)
-        with self.assertRaisesRegex(api.ConfigError, "fork: picks the session"):
+        with self.assertRaisesRegex(ConfigError, "fork: picks the session"):
             selection.check(
                 ("--add-dir", "safe", "fork"),
                 CodexAdapter.forbidden_selection,
@@ -419,37 +439,35 @@ class ChecksTest(Base):
         for native in ("abc", SID.upper(), SID + "\n"):
             with (
                 self.subTest(native=native),
-                self.assertRaisesRegex(api.ConfigError, "session ids are UUIDs"),
+                self.assertRaisesRegex(ConfigError, "session ids are UUIDs"),
             ):
                 selection.select(native, False, syntax, uuid=True)
 
     def test_a_registry_error_passes_through(self):
         self.refused(
-            api.ConfigError,
+            ConfigError,
             "no [adapters.nope] table in the configured adapters",
             lambda: self.start(runtime="nope"),
         )
         self.configure(model="m")
         self.refused(
-            api.ConfigError, "unknown key 'model' in FakeAdapter's config", lambda: self.start()
+            ConfigError, "unknown key 'model' in FakeAdapter's config", lambda: self.start()
         )
 
     def test_tui_on_a_runtime_without_it_is_unsupported(self):
         self.refused(
-            api.ConfigError,
+            ConfigError,
             "runtime 'fake' does not support tui mode",
             lambda: self.start(mode="tui"),
         )
 
     def test_headless_takes_no_name_or_events(self):
-        self.refused(api.ConfigError, "name: tui mode only", lambda: self.start(name="w1"))
-        self.refused(
-            api.ConfigError, "events: tui mode only", lambda: self.start(events=self.scenario)
-        )
+        self.refused(ConfigError, "name: tui mode only", lambda: self.start(name="w1"))
+        self.refused(ConfigError, "events: tui mode only", lambda: self.start(events=self.scenario))
 
     def test_refuses_a_launch_without_a_command(self):
         self.refused(
-            api.ConfigError, "runtime 'blank' gave no command", lambda: self.start(runtime="blank")
+            ConfigError, "runtime 'blank' gave no command", lambda: self.start(runtime="blank")
         )
 
     def test_an_exception_from_launch_propagates(self):
@@ -472,7 +490,7 @@ class SpawnTest(Base):
             with self.subTest(error=error):
                 self.workdir = os.path.join(self.dir, type(error).__name__)
                 with mock.patch("subprocess.Popen", side_effect=error) as popen:
-                    with self.assertRaises(api.DriverError) as caught:
+                    with self.assertRaises(DriverError) as caught:
                         self.start()
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")
                 popen.assert_called_once()
@@ -528,16 +546,16 @@ class HandleTest(Base):
             (lambda: handle.send("x"), "send: tui mode only"),
             (handle.screen, "screen: tui mode only"),
         ):
-            with self.subTest(message=message), self.assertRaises(api.DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
                 call()
             self.assertEqual(str(caught.exception), message)
-        self.assertEqual(self.drain(handle), [api.Exited(0)])
+        self.assertEqual(self.drain(handle), [Exited(0)])
 
     def test_state_is_live_while_the_process_runs_then_absent(self):
         self.steps({"sleep": 1})
         handle = self.start()
         self.assertEqual(handle.state(), "live")
-        self.assertEqual(self.drain(handle), [api.Exited(0)])
+        self.assertEqual(self.drain(handle), [Exited(0)])
         self.assertEqual(handle.state(), "absent")
 
     def test_attributes_info_reply_and_usage(self):
@@ -545,13 +563,13 @@ class HandleTest(Base):
         os.mkdir(cwd)
         handle = self.start(spec=self.spec(access=Access(cwd=cwd, project=True)), sid="s1")
         self.assertEqual((handle.sid, handle.runtime, handle.mode), ("s1", "fake", "headless"))
-        info = api.SessionInfo(
+        info = SessionInfo(
             "s1", "", cwd, True, os.path.join(self.workdir, "fake-s1.jsonl"), "fake --resume s1"
         )
         self.assertEqual(handle.info(), info)
         self.assertIsNone(handle.reply)
         self.assertIsNone(handle.usage())
-        self.assertEqual(self.drain(handle), [api.Exited(0)])
+        self.assertEqual(self.drain(handle), [Exited(0)])
         (session,) = self.written()
         self.assertEqual(
             {k: v for k, v in session.items() if k != "ts"},
@@ -569,9 +587,9 @@ class HandleTest(Base):
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         handle = self.start(runtime="probe")
         with mock.patch.object(headless, "probe", return_value="7") as probe:
-            self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
+            self.assertEqual(handle.usage(), Usage(Window(7.0, None), None))
         probe.assert_called_once()
-        self.assertEqual(self.drain(handle), [api.Exited(0)])
+        self.assertEqual(self.drain(handle), [Exited(0)])
 
 
 class InProcessTest(Base):
@@ -600,7 +618,7 @@ class InProcessTest(Base):
         LAUNCHED.clear()
         spec = self.spec(flags=("--custom", "v"), env={"CUSTOM": "value"})
         _, found = self.run_in_process(runtime="checked", spec=spec)
-        self.assertEqual(found, [api.Exited(0)])
+        self.assertEqual(found, [Exited(0)])
         self.assertEqual((LAUNCHED[0].flags, dict(LAUNCHED[0].env)), (spec.flags, dict(spec.env)))
 
     def test_records_the_session_its_cwd_access_cwd_else_the_workdir_then_runs_it(self):
@@ -612,12 +630,12 @@ class InProcessTest(Base):
                 handle, found = self.run_in_process(
                     spec=self.spec(access=Access(cwd=given, project=project)), sid=SID
                 )
-                self.assertEqual(found, [api.Exited(0)])
+                self.assertEqual(found, [Exited(0)])
                 self.assertEqual(
                     (handle.sid, handle.runtime, handle.mode, handle.name),
                     (SID, "fake", "in_process", None),
                 )
-                info = api.SessionInfo(SID, "", given or self.workdir, project, "", "")
+                info = SessionInfo(SID, "", given or self.workdir, project, "", "")
                 self.assertEqual(handle.info(), info)
                 (session,) = self.written()
                 self.assertEqual(
@@ -635,7 +653,7 @@ class InProcessTest(Base):
     def test_runs_in_this_process_on_another_thread_with_no_child_process(self):
         self.steps({"out": {"type": "message", "text": "hi"}})
         _, found = self.run_in_process()
-        self.assertEqual(found, [api.Reply("hi"), api.Exited(0)])
+        self.assertEqual(found, [Reply("hi"), Exited(0)])
         (entry,) = self.logged()
         self.assertEqual(entry["pid"], os.getpid())
         self.assertNotEqual(entry["thread"], threading.get_ident())
@@ -654,11 +672,11 @@ class InProcessTest(Base):
         self.assertEqual(
             found,
             [
-                api.SessionBound("n1"),
-                api.Reply("hi"),
-                api.Stderr("warn"),
-                api.TurnEnd("done", 0),
-                api.Exited(0),
+                SessionBound("n1"),
+                Reply("hi"),
+                Stderr("warn"),
+                TurnEnd("done", 0),
+                Exited(0),
             ],
         )
         self.assertEqual(
@@ -705,7 +723,7 @@ class InProcessTest(Base):
             "threading.Thread.start", side_effect=AssertionError("run started")
         ) as thread:
             self.refused(
-                api.ConfigError,
+                ConfigError,
                 "tier 4 is unmapped",
                 lambda: self.start(runtime="checked", mode="in_process", spec=self.spec(tier=4)),
             )
@@ -713,10 +731,10 @@ class InProcessTest(Base):
 
     def test_takes_no_name_or_events(self):
         self.refused(
-            api.ConfigError, "name: tui mode only", lambda: self.start(mode="in_process", name="w1")
+            ConfigError, "name: tui mode only", lambda: self.start(mode="in_process", name="w1")
         )
         self.refused(
-            api.ConfigError,
+            ConfigError,
             "events: tui mode only",
             lambda: self.start(mode="in_process", events=self.scenario),
         )
@@ -725,7 +743,7 @@ class InProcessTest(Base):
         for mode in ("headless", "tui"):
             with self.subTest(mode=mode):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f"runtime 'fake' does not support {mode} mode",
                     lambda: self.start(mode=mode),
                 )
@@ -740,7 +758,7 @@ class InProcessTest(Base):
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
                 self.refused(
-                    api.ConfigError,
+                    ConfigError,
                     f"runtime {runtime!r} does not support in_process mode",
                     lambda: self.start(runtime=runtime, mode="in_process"),
                 )
@@ -752,15 +770,15 @@ class InProcessTest(Base):
             {"out": {"type": "message", "text": "b"}},
         )
         _, found = self.run_in_process(idle_timeout=0.1)
-        self.assertEqual(found[0], api.Reply("a"))
-        self.assertEqual(set(found[1:-2]), {api.IdleTimeout(0.1)})
-        self.assertEqual(found[-2:], [api.Reply("b"), api.Exited(0)])
+        self.assertEqual(found[0], Reply("a"))
+        self.assertEqual(set(found[1:-2]), {IdleTimeout(0.1)})
+        self.assertEqual(found[-2:], [Reply("b"), Exited(0)])
 
     def test_a_failed_run_start_is_a_driver_error_after_the_session_record(self):
         with mock.patch(
             "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
         ):
-            with self.assertRaises(api.DriverError) as caught:
+            with self.assertRaises(DriverError) as caught:
                 self.start(mode="in_process")
         self.assertEqual(
             str(caught.exception), "cannot start the in_process run: can't start new thread"
@@ -850,10 +868,10 @@ class HandleOverAModeTest(Case):
         return api.Handle(
             "fake",
             "tui",
-            api.Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
+            Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
             host=self.mode,
             idle_timeout=idle_timeout,
-            info=api.SessionInfo("s1", "", self.dir, False, "", ""),
+            info=SessionInfo("s1", "", self.dir, False, "", ""),
             **kwargs,
         )
 
@@ -866,16 +884,15 @@ class HandleOverAModeTest(Case):
         adapter = fake_adapter.FakeAdapter({})
         resolver = mock.Mock(side_effect=lambda info: dataclasses.replace(info, resume="resume n1"))
         adapter.session_metadata = resolver
-        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        handle = self.handle((0, [SessionBound("n1")], True), adapter=adapter)
         records.note(records.path(self.dir), "session", sid="s1", cwd=self.dir, project=False)
-        self.assertEqual(self.events(handle), [api.SessionBound("n1"), api.Exited(0)])
+        self.assertEqual(self.events(handle), [SessionBound("n1"), Exited(0)])
         self.assertEqual(handle.info().resume, "resume n1")
-        self.assertEqual(records.session(self.dir, "s1")["resume"], "resume n1")
+        self.assertEqual(records.session_record(self.dir, "s1")["resume"], "resume n1")
         records.note(records.path(self.dir), "result", outcome={"status": "done"})
         resolver.side_effect = lambda info: dataclasses.replace(info, transcript="/late")
         self.assertEqual(handle.info().transcript, "/late")
-        self.assertEqual(records.session(self.dir, "s1")["transcript"], "/late")
-        self.assertTrue(records.complete(self.dir))
+        self.assertEqual(records.session_record(self.dir, "s1")["transcript"], "/late")
         self.assertEqual(
             sum(e["kind"] == "session" for e in records.read(records.path(self.dir))), 1
         )
@@ -885,7 +902,7 @@ class HandleOverAModeTest(Case):
 
     def test_binding_record_failure_remains_fatal(self):
         adapter = fake_adapter.FakeAdapter({})
-        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        handle = self.handle((0, [SessionBound("n1")], True), adapter=adapter)
         with mock.patch.object(records, "note", side_effect=OSError("binding failed")):
             with self.assertRaisesRegex(OSError, "binding failed"):
                 self.events(handle)
@@ -897,20 +914,20 @@ class HandleOverAModeTest(Case):
         adapter.session_metadata = lambda info: dataclasses.replace(
             info, sid="other", native_id="other", cwd="/other", project=True, transcript="/t"
         )
-        handle = self.handle((0, [api.SessionBound("n1")], True), adapter=adapter)
+        handle = self.handle((0, [SessionBound("n1")], True), adapter=adapter)
         self.events(handle)
-        self.assertEqual(handle.info(), api.SessionInfo("s1", "n1", self.dir, False, "/t", ""))
+        self.assertEqual(handle.info(), SessionInfo("s1", "n1", self.dir, False, "/t", ""))
 
     def test_events_in_order_the_modes_exited_dropped_exited_last_in_poll_slices(self):
         handle = self.handle(
-            (0, [api.Activity("a"), api.Exited(9)], False),
-            (1, [api.TurnEnd("done")], False),
-            (2, [api.Stderr("e")], True),
+            (0, [Activity("a"), Exited(9)], False),
+            (1, [TurnEnd("done")], False),
+            (2, [Stderr("e")], True),
             code=3,
         )
         self.assertEqual(
             self.events(handle),
-            [api.Activity("a"), api.TurnEnd("done"), api.Stderr("e"), api.Exited(3)],
+            [Activity("a"), TurnEnd("done"), Stderr("e"), Exited(3)],
         )
         self.assertEqual(self.events(handle), [])
         self.assertEqual(handle.reply, "done")
@@ -919,32 +936,32 @@ class HandleOverAModeTest(Case):
 
     def test_each_idle_span_yields_idle_timeout(self):
         handle = self.handle(
-            (0, [api.Activity()], False),
-            (5, [api.Reply("r")], False),
+            (0, [Activity()], False),
+            (5, [Reply("r")], False),
             (5.5, [], True),
             idle_timeout=2,
         )
         self.assertEqual(
             self.events(handle),
-            [api.Activity(), api.IdleTimeout(2), api.IdleTimeout(2), api.Reply("r"), api.Exited(0)],
+            [Activity(), IdleTimeout(2), IdleTimeout(2), Reply("r"), Exited(0)],
         )
 
     def test_after_blocked_no_idle_timeout_until_an_event_but_stderr(self):
         handle = self.handle(
-            (0, [api.Blocked("ask")], False),
-            (0.5, [api.Stderr("x")], False),
-            (3, [api.Activity()], False),
+            (0, [Blocked("ask")], False),
+            (0.5, [Stderr("x")], False),
+            (3, [Activity()], False),
             (4.5, [], True),
             idle_timeout=1,
         )
         self.assertEqual(
             self.events(handle),
             [
-                api.Blocked("ask"),
-                api.Stderr("x"),
-                api.Activity(),
-                api.IdleTimeout(1),
-                api.Exited(0),
+                Blocked("ask"),
+                Stderr("x"),
+                Activity(),
+                IdleTimeout(1),
+                Exited(0),
             ],
         )
 
@@ -987,7 +1004,7 @@ class UsageTest(Base):
 
     def test_the_probes_stdout_as_the_adapter_parses_it(self):
         found, probe = self.usage("42.5")
-        self.assertEqual(found, api.Usage(api.Window(42.5, None), None))
+        self.assertEqual(found, Usage(Window(42.5, None), None))
         probe.assert_called_once_with(
             ("probe-cmd", "-x"), cwd=self.probe_dir, env=mock.ANY, timeout=api.PROBE_TIMEOUT
         )
@@ -1006,7 +1023,7 @@ class UsageTest(Base):
     def test_a_reading_without_windows_is_a_usage(self):
         with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
             found, probe = self.usage()
-        self.assertEqual(found, api.Usage(None, None))
+        self.assertEqual(found, Usage(None, None))
         probe.assert_called_once()
 
     def test_no_reading_is_none(self):
@@ -1029,7 +1046,7 @@ class UsageTest(Base):
         self.assertTrue(stat.S_ISDIR(mode))
         self.assertEqual(stat.S_IMODE(mode), 0o700)
         found, probe = self.usage()
-        self.assertEqual(found, api.Usage(api.Window(42.5, None), None))
+        self.assertEqual(found, Usage(Window(42.5, None), None))
         self.assertEqual(probe.call_args.kwargs["cwd"], self.probe_dir)
 
     def test_a_symlink_or_non_directory_at_the_probe_dir_is_none_and_runs_nothing(self):
@@ -1062,46 +1079,44 @@ class UsageTest(Base):
         self.assertFalse(os.path.exists(self.probe_dir))
 
     def test_a_registry_error_raises(self):
-        with self.assertRaises(api.ConfigError):
+        with self.assertRaises(ConfigError):
             api.usage("nope")
 
 
 class SessionInfoTest(Base):
     def test_the_adapters_session_status(self):
         self.assertEqual(
-            api.session_info("probe", "s1", self.dir),
-            api.SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
+            api.session_status("probe", "s1", self.dir),
+            SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
         )
 
     def test_unknown_by_default(self):
-        self.assertEqual(
-            api.session_info("fake", "s1", "/c"), api.SessionStatus("unknown", None, "")
-        )
+        self.assertEqual(api.session_status("fake", "s1", "/c"), SessionStatus("unknown", None, ""))
 
     def test_an_os_error_from_the_adapter_is_unknown(self):
         with mock.patch.object(
             ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(
-                api.session_info("probe", "s1", self.dir), api.SessionStatus("unknown", None, "")
+                api.session_status("probe", "s1", self.dir), SessionStatus("unknown", None, "")
             )
 
     def test_refuses_a_bad_sid_or_cwd_and_passes_registry_errors(self):
         for sid, shown in (("", "''"), ("a/b", "'a/b'"), (5, "5")):
-            with self.subTest(sid=sid), self.assertRaises(api.ConfigError) as caught:
-                api.session_info("probe", sid, self.dir)
+            with self.subTest(sid=sid), self.assertRaises(ConfigError) as caught:
+                api.session_status("probe", sid, self.dir)
             self.assertEqual(
                 str(caught.exception),
                 f'sid must be a non-empty printable string without "/", got {shown}',
             )
         for cwd, shown in (("rel", "'rel'"), ("", "''"), ("/c\n", r"'/c\n'"), (None, "None")):
-            with self.subTest(cwd=cwd), self.assertRaises(api.ConfigError) as caught:
-                api.session_info("probe", "s1", cwd)
+            with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as caught:
+                api.session_status("probe", "s1", cwd)
             self.assertEqual(
                 str(caught.exception), f"cwd must be a printable absolute path, got {shown}"
             )
-        with self.assertRaises(api.ConfigError) as caught:
-            api.session_info("nope", "s1", self.dir)
+        with self.assertRaises(ConfigError) as caught:
+            api.session_status("nope", "s1", self.dir)
         self.assertEqual(
             str(caught.exception),
             "no [adapters.nope] table in the configured adapters",
@@ -1139,7 +1154,7 @@ class WritableDirsTest(Base):
             with (
                 self.subTest(spec_sid=spec_sid, resume=resume, runtime=runtime),
                 self.dirs() as dirs,
-                self.assertRaises(api.ConfigError) as caught,
+                self.assertRaises(ConfigError) as caught,
             ):
                 api.writable_dirs(runtime, self.spec(sid=spec_sid), resume)
             self.assertEqual(str(caught.exception), message)
@@ -1147,7 +1162,7 @@ class WritableDirsTest(Base):
 
     def test_an_os_error_from_the_adapter_is_a_config_error(self):
         with self.dirs(side_effect=PermissionError(13, "denied")):
-            with self.assertRaises(api.ConfigError) as caught:
+            with self.assertRaises(ConfigError) as caught:
                 api.writable_dirs("probe", self.spec())
         self.assertEqual(str(caught.exception), "probe's writable dirs: [Errno 13] denied")
         self.assertIsInstance(caught.exception.__cause__, PermissionError)
@@ -1193,7 +1208,7 @@ class TuiBase(Base):
     def name_refused(self, call, bad=(*BAD_NAMES, None)):
         """call(name) refuses each bad name before any tmux call or path use."""
         for name in bad:
-            with self.subTest(name=name), self.assertRaises(api.ConfigError) as caught:
+            with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call(name)
             self.assertEqual(
                 str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}"
@@ -1229,7 +1244,7 @@ class TuiStartTest(TuiBase):
                     name=f"project-{project}", spec=self.spec(access=Access(project=not project))
                 )
             self.assertIs(handle.info().project, project)
-            self.assertIs(records.session(self.workdir, handle.sid)["project"], project)
+            self.assertIs(records.session_record(self.workdir, handle.sid)["project"], project)
             self.assertIs(tui.read_state(handle.name)["project"], project)
 
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
@@ -1251,7 +1266,7 @@ class TuiStartTest(TuiBase):
         self.assertEqual(
             (handle.name, handle.sid, handle.runtime, handle.mode), ("w1", SID, "fake", "tui")
         )
-        self.assertEqual(handle.info(), api.SessionInfo(SID, "", self.workdir, False, "", ""))
+        self.assertEqual(handle.info(), SessionInfo(SID, "", self.workdir, False, "", ""))
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
@@ -1286,7 +1301,7 @@ class TuiStartTest(TuiBase):
 
     def test_no_tmux_on_path_is_a_driver_error_with_nothing_started(self):
         self.host.tmux_path.return_value = None
-        self.refused(api.DriverError, "tmux not found", lambda: self.tui(name="w1"))
+        self.refused(DriverError, "tmux not found", lambda: self.tui(name="w1"))
         self.assertEqual(self.host.mock_calls, [mock.call.tmux_path()])
         self.assertFalse(os.path.lexists(self.root))
 
@@ -1307,7 +1322,7 @@ class TuiStartTest(TuiBase):
         self.tui(name="w1")
         locked()
         self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
-        with self.assertRaises(api.DriverError):
+        with self.assertRaises(DriverError):
             self.tui(name="w1")
         locked()
         self.assertEqual(held, [True, True, False, True, False])
@@ -1322,8 +1337,8 @@ class TuiStartTest(TuiBase):
 
     def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_tmux_or_a_path(self):
         self.name_refused(lambda name: self.tui(name=name), BAD_NAMES[:-1])
-        self.refused(api.ConfigError, "name must be None or a string", lambda: self.tui(name=5))
-        with self.assertRaises(api.ConfigError) as caught:
+        self.refused(ConfigError, "name must be None or a string", lambda: self.tui(name=5))
+        with self.assertRaises(ConfigError) as caught:
             self.tui(sid="a b")
         self.assertEqual(str(caught.exception), "name must match [A-Za-z0-9_-]+, got 'fake-a b'")
         self.nothing_hosted()
@@ -1339,7 +1354,7 @@ class TuiStartTest(TuiBase):
             ("/a\nb", r"events must be a printable path, got '/a\nb'"),
         ):
             with self.subTest(bad=bad):
-                self.refused(api.ConfigError, message, lambda: self.tui(name="w1", events=bad))
+                self.refused(ConfigError, message, lambda: self.tui(name="w1", events=bad))
         self.host.status.assert_not_called()
         self.assertFalse(os.path.lexists(self.root))
 
@@ -1350,12 +1365,12 @@ class TuiStartTest(TuiBase):
         ):
             with self.subTest(status=status):
                 self.host.status.return_value = status
-                self.refused(api.DriverError, message, lambda: self.tui(name="w1"))
+                self.refused(DriverError, message, lambda: self.tui(name="w1"))
         self.host.start.assert_not_called()
 
     def test_a_failed_tmux_start_is_a_driver_error_after_the_record_removing_the_session_dir(self):
         self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             self.tui(name="w1")
         self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
         self.assertEqual([e["kind"] for e in self.written()], ["session"])
@@ -1368,9 +1383,7 @@ class TuiStartTest(TuiBase):
 
     def test_a_bad_tui_setting_is_refused_before_anything(self):
         self.configure(tui=True, settings={"status_line": "yes"})
-        self.refused(
-            api.ConfigError, "status_line: want true or false", lambda: self.tui(name="w1")
-        )
+        self.refused(ConfigError, "status_line: want true or false", lambda: self.tui(name="w1"))
         self.nothing_hosted()
 
     def test_the_handles_state_screen_send_and_stop_are_the_tui_modes(self):
@@ -1460,8 +1473,9 @@ class EnvironmentTest(TuiBase):
             tui=True, tables={"broken": {"implementation": "adapters.broken:BrokenAdapter"}}
         )
         self.refused(
-            api.ConfigError,
-            "adapter 'broken' has no package adapters.broken",
+            ConfigError,
+            "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
+            "agent_pm.session.adapters.broken: No module named 'agent_pm.session.adapters.broken'",
             lambda: self.tui(runtime="inner", name="w1"),
         )
         self.host.start.assert_not_called()
@@ -1480,7 +1494,7 @@ class SessionEnvTest(TuiBase):
             (entry,) = [json.loads(line) for line in f]
         self.assertEqual(entry["env"]["PYTHONPATH"], PYTHONPATH)
         with mock.patch.object(headless, "probe", return_value="7") as probe:
-            self.assertEqual(handle.usage(), api.Usage(api.Window(7.0, None), None))
+            self.assertEqual(handle.usage(), Usage(Window(7.0, None), None))
         self.assertEqual(probe.call_args.kwargs["env"]["PYTHONPATH"], "/parent")
 
     def test_a_tui_session_gets_it(self):
@@ -1511,7 +1525,7 @@ class AttachTest(TuiBase):
             (handle.name, handle.sid, handle.runtime, handle.mode, handle.reply),
             ("w1", SID, "fake", "tui", "r1"),
         )
-        self.assertEqual(handle.info(), api.SessionInfo(SID, "n1", self.workdir, False, "", ""))
+        self.assertEqual(handle.info(), SessionInfo(SID, "n1", self.workdir, False, "", ""))
         self.assertEqual(
             self.host.mock_calls,
             [
@@ -1524,7 +1538,7 @@ class AttachTest(TuiBase):
             f.write(
                 json.dumps({"ts": "", "label": "stop", "payload": {"last_message": "r2"}}) + "\n"
             )
-        self.assertEqual(next(handle.events()), api.TurnEnd("r2", 0))
+        self.assertEqual(next(handle.events()), TurnEnd("r2", 0))
         self.assertEqual(handle.reply, "r2")
 
     def test_attach_refreshes_bound_metadata_without_starting_a_session(self):
@@ -1538,18 +1552,17 @@ class AttachTest(TuiBase):
         with mock.patch.object(fake_adapter.FakeAdapter, "session_metadata", metadata):
             handle = api.attach("w1")
         self.assertEqual(handle.info().transcript, "/attached")
-        self.assertEqual(records.session(self.workdir, SID)["resume"], "resume n1")
-        self.assertTrue(records.complete(self.workdir))
+        self.assertEqual(records.session_record(self.workdir, SID)["resume"], "resume n1")
         self.assertEqual(sum(e["kind"] == "session" for e in self.written()), 1)
 
     def test_attached_while_blocked_no_idle_timeout_until_its_next_event(self):
         """On a fake clock (time.monotonic, time.sleep), a tool record comes at 10 s."""
         hooks = os.path.join(self.root, "w1", "hooks.jsonl")
         for hooked, state, first in (
-            ((("tool", {}), ("ask", {})), None, (api.Activity(""), 10)),
-            ((), "blocked", (api.Activity(""), 10)),
-            ((("ask", {}), ("tool", {})), None, (api.IdleTimeout(1), 1)),
-            ((("ask", {}), ("stop", {})), "working", (api.IdleTimeout(1), 1)),
+            ((("tool", {}), ("ask", {})), None, (Activity(""), 10)),
+            ((), "blocked", (Activity(""), 10)),
+            ((("ask", {}), ("tool", {})), None, (IdleTimeout(1), 1)),
+            ((("ask", {}), ("stop", {})), "working", (IdleTimeout(1), 1)),
         ):
             with self.subTest(hooked=hooked, state=state):
                 self.host.status.return_value = None
@@ -1577,7 +1590,7 @@ class AttachTest(TuiBase):
     def test_a_bad_name_or_idle_timeout_is_refused_before_tmux_or_a_path(self):
         self.name_refused(api.attach)
         for bad in (0, -1, True, "1"):
-            with self.subTest(bad=bad), self.assertRaises(api.ConfigError) as caught:
+            with self.subTest(bad=bad), self.assertRaises(ConfigError) as caught:
                 api.attach("w1", idle_timeout=bad)
             self.assertEqual(
                 str(caught.exception),
@@ -1586,13 +1599,13 @@ class AttachTest(TuiBase):
         self.nothing_hosted()
 
     def test_no_session_dir_or_another_sid_is_no_tui_session(self):
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.attach("w1")
         self.assertTrue(str(caught.exception).startswith("no tui session w1: "), caught.exception)
         self.nothing_hosted()
         self.started()
         for found in ("other", None):
-            with self.subTest(found=found), self.assertRaises(api.DriverError) as caught:
+            with self.subTest(found=found), self.assertRaises(DriverError) as caught:
                 self.host.option.side_effect = lambda name, key: found
                 api.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
@@ -1604,7 +1617,7 @@ class AttachTest(TuiBase):
             "no tui session w1: runtime 'fake' has no tui mode",
             "no tui session w1: no [adapters.fake] table in the configured adapters",
         ):
-            with self.subTest(message=message), self.assertRaises(api.DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
                 api.attach("w1")
             self.assertEqual(str(caught.exception), message)
             self.configure_session({})
@@ -1638,7 +1651,7 @@ class SessionsTest(TuiBase):
             listed("w5", runtime="fake9_", state="other", dead=None),
         ]
         self.host.own_session.return_value = "mgr"
-        row = api.SessionRow
+        row = SessionRow
         self.assertEqual(
             api.sessions(),
             [
@@ -1671,28 +1684,28 @@ class SessionsTest(TuiBase):
             ("(", "match '(': missing ), unterminated subpattern at position 0"),
             ("[", "match '[': unterminated character set at position 0"),
         ):
-            with self.subTest(bad=bad), self.assertRaises(api.ConfigError) as caught:
+            with self.subTest(bad=bad), self.assertRaises(ConfigError) as caught:
                 api.sessions(bad)
             self.assertEqual(str(caught.exception), message)
         self.nothing_hosted()
 
     def test_tmux_failing_or_a_bad_tmux_pane_is_a_driver_error_never_no_rows(self):
         self.host.listing.return_value = None
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.sessions()
         self.assertEqual(str(caught.exception), "tmux sessions unknown: tmux failed")
         self.host.listing.return_value = [listed("w1")]
         self.host.own_session.side_effect = tmux_host.TuiError("bad $TMUX_PANE 'x'")
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.sessions()
         self.assertEqual(str(caught.exception), "tmux sessions unknown: bad $TMUX_PANE 'x'")
 
     def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
-            [f.name for f in dataclasses.fields(api.SessionRow)],
+            [f.name for f in dataclasses.fields(SessionRow)],
             ["name", "sid", "runtime", "state", "pane", "opener", "shown", "last_lines", "own"],
         )
-        found = api.SessionRow("w1", None, None, "working", None, None, None, None, False)
+        found = SessionRow("w1", None, None, "working", None, None, None, None, False)
         with self.assertRaises(dataclasses.FrozenInstanceError):
             found.state = "done"
 
@@ -1766,7 +1779,7 @@ class ShowTest(TuiBase):
 
     def test_an_absent_session_is_a_driver_error(self):
         self.host.status.return_value = None
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.show("w1")
         self.assertEqual(str(caught.exception), "no tmux session w1")
         self.host.open_pane.assert_not_called()
@@ -1774,11 +1787,11 @@ class ShowTest(TuiBase):
     def test_a_bad_name_placement_opener_or_setting_is_refused_before_tmux(self):
         self.name_refused(api.show)
         for kwargs, message in (*PLACEMENTS, *(({"opener": o}, m) for o, m in OPENERS)):
-            with self.subTest(kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
+            with self.subTest(kwargs=kwargs), self.assertRaises(ConfigError) as caught:
                 api.show("w1", **kwargs)
             self.assertEqual(str(caught.exception), message)
         self.configure(tui=True, settings={"grid_retile": "never"})
-        with self.assertRaises(api.ConfigError) as caught:
+        with self.assertRaises(ConfigError) as caught:
             api.show("w1")
         self.assertEqual(str(caught.exception), "grid_retile: want one of all, open-close, off")
         self.nothing_hosted()
@@ -1815,17 +1828,17 @@ class LayoutTest(TuiBase):
             with self.subTest(split_from=split_from, anchor=anchor):
                 self.host.anchor.side_effect = anchor and tmux_host.TuiError(anchor)
                 self.host.opener.side_effect = opener and tmux_host.TuiError(opener)
-                with self.assertRaises(api.DriverError) as caught:
+                with self.assertRaises(DriverError) as caught:
                     api.layout(split_from=split_from)
                 self.assertEqual(str(caught.exception), f"no pane to show the TUI beside {message}")
 
     def test_a_bad_split_or_split_from_or_an_absent_one_is_refused(self):
         for kwargs, message in PLACEMENTS:
-            with self.subTest(kwargs=kwargs), self.assertRaises(api.ConfigError) as caught:
+            with self.subTest(kwargs=kwargs), self.assertRaises(ConfigError) as caught:
                 api.layout(**kwargs)
             self.assertEqual(str(caught.exception), message)
         self.nothing_hosted()
-        with self.assertRaises(api.ConfigError) as caught:
+        with self.assertRaises(ConfigError) as caught:
             api.layout(split_from="m1")
         self.assertEqual(str(caught.exception), "no tmux session m1")
         self.assertEqual(self.host.mock_calls, [mock.call.status("m1")])
@@ -1872,7 +1885,7 @@ class DetachTest(TuiBase):
         ):
             with (
                 self.subTest(args=args, kwargs=kwargs),
-                self.assertRaises(api.ConfigError) as caught,
+                self.assertRaises(ConfigError) as caught,
             ):
                 api.detach("d1", *args, {}, **kwargs)
             self.assertEqual(str(caught.exception), message)
@@ -1880,71 +1893,59 @@ class DetachTest(TuiBase):
 
     def test_a_tmux_failure_is_a_driver_error(self):
         self.host.detach.side_effect = tmux_host.TuiError("session d1 exists")
-        with self.assertRaises(api.DriverError) as caught:
+        with self.assertRaises(DriverError) as caught:
             api.detach("d1", ["tool"], self.dir, {})
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
 
 class ExportsTest(Case):
-    def test_reexports_and_constants(self):
-        for name in (
-            "Access",
-            "Spec",
-            "SessionInfo",
-            "ConfigError",
-            "SessionBound",
-            "Activity",
-            "Reply",
-            "TurnEnd",
-            "Blocked",
-            "LimitHit",
-            "Exited",
-            "Event",
-            "Stderr",
-            "Usage",
-            "Window",
-            "SessionStatus",
-        ):
-            with self.subTest(name=name):
-                self.assertIs(getattr(api, name), getattr(engine_types, name))
-        self.assertIs(api.RESUMABLE, base.RESUMABLE)
-        self.assertIs(api.records, records)
-        self.assertIs(api.session, records.session)
-        self.assertIs(api.DriverError, DriverError)
-        for name in (
-            "LimitHit",
-            "Usage",
-            "Window",
-            "SessionStatus",
-            "RESUMABLE",
-            "usage",
-            "session_info",
-            "session",
-            "DriverError",
-            "Mode",
-            "SessionRow",
-            "attach",
-            "close",
-            "sessions",
-            "SIGNALS",
-            "attach_command",
-            "detach",
-            "layout",
-            "show",
-            "writable_dirs",
-        ):
-            with self.subTest(name=name):
-                self.assertIn(name, api.__all__)
+    def test_api_exports_functions_and_constants_only(self):
+        self.assertEqual(
+            sorted(api.__all__),
+            [
+                "Handle",
+                "MODES",
+                "SIGNALS",
+                "attach",
+                "attach_command",
+                "close",
+                "detach",
+                "holds",
+                "layout",
+                "note",
+                "session_record",
+                "session_status",
+                "sessions",
+                "show",
+                "start",
+                "usage",
+                "writable_dirs",
+            ],
+        )
         self.assertEqual([name for name in api.__all__ if not hasattr(api, name)], [])
-        self.assertFalse(hasattr(api, "NO_TUI"))
-        self.assertFalse(hasattr(api, "Sessions"))
+        self.assertIs(api.session_record, records.session_record)
+
+    def test_types_have_one_public_path(self):
+        for name in session_pkg.__all__:
+            with self.subTest(name=name):
+                self.assertNotIn(name, api.__all__)
+                if hasattr(engine_types, name):
+                    self.assertIs(getattr(session_pkg, name), getattr(engine_types, name))
+
+    def test_constants(self):
         self.assertEqual(
             (api.MODES, api.STATES, api.POLL),
             (("headless", "tui", "in_process"), ("live", "absent", "unknown"), 0.5),
         )
         self.assertEqual((api.PROBE_DIR, api.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
-        self.assertEqual(api.IdleTimeout(0.3).seconds, 0.3)
         self.assertEqual(api.SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
+
+    def test_note_appends_to_the_workdir_run_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            api.note(d, "x", a=1)
+            self.assertEqual(
+                [(e["kind"], e["a"]) for e in records.read(records.path(d))], [("x", 1)]
+            )
 
 
 if __name__ == "__main__":

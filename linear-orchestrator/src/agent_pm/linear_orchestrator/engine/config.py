@@ -15,7 +15,8 @@ from typing import Literal
 from agent_pm import delegate
 from agent_pm.delegate import composer
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.session import Session, api
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Session
 from agent_pm.utils import config_file, repos
 from agent_pm.utils.git import GUARD
 from agent_pm.utils.paths import STATE, import_roots, temp_dirs, under
@@ -171,7 +172,7 @@ def _configure(local, core_cfg):
     try:
         table = config_file.read_project("session", local=local)
         hosts = Session.parse_hosts(table.get("hosts")).tables
-    except (OSError, ValueError, api.ConfigError) as e:
+    except (OSError, ValueError, SessionConfigError) as e:
         raise ConfigError(f"session: {e}") from None
     try:
         delegate.harness_host(core_cfg, hosts)
@@ -179,7 +180,7 @@ def _configure(local, core_cfg):
         raise ConfigError(f"core: {e}") from None
     try:
         Session.configure_from(table)
-    except api.ConfigError as e:
+    except SessionConfigError as e:
         raise ConfigError(f"session: {e}") from None
 
 

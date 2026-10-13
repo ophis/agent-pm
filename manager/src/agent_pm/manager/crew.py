@@ -27,7 +27,18 @@ from collections.abc import Iterator
 import agent_pm.delegate.engine.config
 from agent_pm.manager import roster
 from agent_pm.manager.engine.types import RosterError, Spec, Stale
-from agent_pm.session import Session, api
+from agent_pm.session import (
+    Access,
+    Blocked,
+    ConfigError,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    Session,
+    SessionRow,
+    api,
+)
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils.config_file import read_project
 from agent_pm.utils.files import save
 from agent_pm.utils.paths import printable_abs
@@ -77,7 +88,7 @@ class Refused(WorkersError):
 def _driver() -> Iterator[None]:
     try:
         yield
-    except (api.ConfigError, api.DriverError) as e:
+    except (ConfigError, DriverError) as e:
         raise WorkersError(str(e)) from e
 
 
@@ -86,20 +97,20 @@ def _check(name: str) -> None:
         raise WorkersError(f"bad name {name!r}: use [A-Za-z0-9_-]+")
 
 
-def _rows(match: str | None = None) -> list[api.SessionRow]:
+def _rows(match: str | None = None) -> list[SessionRow]:
     with _driver():
         return api.sessions(match)
 
 
-def _row(name: str) -> api.SessionRow | None:
+def _row(name: str) -> SessionRow | None:
     return next(iter(_rows(re.escape(name))), None)
 
 
-def _live() -> dict[str, api.SessionRow]:
+def _live() -> dict[str, SessionRow]:
     return {row.name: row for row in _rows()}
 
 
-def _caller() -> api.SessionRow | None:
+def _caller() -> SessionRow | None:
     return next((row for row in _rows() if row.own), None)
 
 
@@ -147,14 +158,14 @@ def _worker_dir(sid: str) -> str:
         raise WorkersError(str(e)) from e
 
 
-def _spec(record: dict, workdir: str) -> api.Spec:
+def _spec(record: dict, workdir: str) -> SessionSpec:
     protect = (roster.ROOT, roster.WORKERS, roster.CREW)
     with _driver():
-        return api.Spec(
+        return SessionSpec(
             workdir=workdir,
             sid=record["sid"],
             name=record["name"],
-            access=api.Access(cwd=record["cwd"], project=True),
+            access=Access(cwd=record["cwd"], project=True),
             flags=tuple(record["flags"]),
             env=record["env"],
             protect=tuple(os.path.realpath(os.path.expanduser(p)) for p in protect),
@@ -217,17 +228,17 @@ def _early(name: str, runtime: str, handle: api.Handle) -> None:
     deadline = time.monotonic() + EARLY
     with _driver():
         for event in handle.events():
-            if isinstance(event, api.Exited):
+            if isinstance(event, Exited):
                 raise WorkersError(_died(name, runtime, event.returncode))
-            if isinstance(event, api.Blocked):
+            if isinstance(event, Blocked):
                 print(f"workers: {name}: waits on a dialog: {event.reason}", file=sys.stderr)
                 return
-            if isinstance(event, api.IdleTimeout) or time.monotonic() >= deadline:
+            if isinstance(event, IdleTimeout) or time.monotonic() >= deadline:
                 return
 
 
 def _launch(
-    record: dict, spec: api.Spec, own: str | None, *, prompt: str, resume: str | None, note
+    record: dict, spec: SessionSpec, own: str | None, *, prompt: str, resume: str | None, note
 ) -> None:
     name = record["name"]
     with _driver():
@@ -244,7 +255,7 @@ def _launch(
     try:
         save(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
     except OSError as e:
-        with contextlib.suppress(api.DriverError):
+        with contextlib.suppress(DriverError):
             api.close(name)
         raise WorkersError(f"{path}: {e.strerror or e}; start undone") from e
     print(f"tui: session {name}: {api.attach_command(name)}", file=sys.stderr)
@@ -409,7 +420,7 @@ def content(event: str) -> str:
         _configure()
         try:
             text = api.attach(name).reply
-        except (api.ConfigError, api.DriverError):
+        except (ConfigError, DriverError):
             text = None
         if text is not None:
             return "\n".join(text.split("\n")[:REPLY_LINES])
@@ -453,7 +464,7 @@ def _status(cwd: str) -> str | None:
     return None
 
 
-def _placed(e: dict, row: api.SessionRow) -> dict:
+def _placed(e: dict, row: SessionRow) -> dict:
     for key in ("pane", "opener"):
         if getattr(row, key) is not None:
             with contextlib.suppress(RosterError):
@@ -461,7 +472,7 @@ def _placed(e: dict, row: api.SessionRow) -> dict:
     return e
 
 
-def _place(r: dict, name: str, row: api.SessionRow) -> None:
+def _place(r: dict, name: str, row: SessionRow) -> None:
     r["entries"][name] = _placed(r["entries"][name], row)
 
 
@@ -470,7 +481,7 @@ def _sessions(name: str, e: dict, live: dict) -> tuple[str | None, str | None]:
     return (pane if pane in live else None), (driver if driver in live else None)
 
 
-def _sync(r: dict, live: dict[str, api.SessionRow]) -> dict[str, str]:
+def _sync(r: dict, live: dict[str, SessionRow]) -> dict[str, str]:
     entries = r["entries"]
     for name in sorted(entries):
         sid = entries[name]["sid"]
@@ -492,7 +503,7 @@ def _sync(r: dict, live: dict[str, api.SessionRow]) -> dict[str, str]:
     return panes
 
 
-def _reopen(panes: dict, entries: dict, live: dict[str, api.SessionRow]) -> tuple[dict, list]:
+def _reopen(panes: dict, entries: dict, live: dict[str, SessionRow]) -> tuple[dict, list]:
     shown, opened = {}, []
     for name in sorted(panes):
         session, e = panes[name], entries[name]
@@ -664,7 +675,7 @@ def stop(directory: str, own: str | None, name: str) -> None:
         roster.stop(r, name)
 
 
-def opened(own: str, live: dict[str, api.SessionRow], entries=lambda session: {}) -> list[str]:
+def opened(own: str, live: dict[str, SessionRow], entries=lambda session: {}) -> list[str]:
     depth, level, todo = {}, 0, {own}
     while todo:
         level += 1
@@ -712,7 +723,7 @@ def stop_all(own: str | None, *, dry_run: bool = False) -> tuple[list[str], list
     if not dry_run:
         verb = "stopped"
         for name in chosen:
-            with contextlib.suppress(api.DriverError):
+            with contextlib.suppress(DriverError):
                 api.close(name)
         after = _live()
         left = [n for n in chosen if n in after]
@@ -788,7 +799,7 @@ def _drop_import_root() -> None:
 def _configure() -> None:
     try:
         Session.configure_from(read_project("session"))
-    except (OSError, ValueError, api.ConfigError) as e:
+    except (OSError, ValueError, ConfigError) as e:
         raise WorkersError(f"config: {e}") from None
 
 
