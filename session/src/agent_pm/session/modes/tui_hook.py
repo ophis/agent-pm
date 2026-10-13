@@ -1,11 +1,4 @@
-"""The command each hook of a tui session runs: `<python> -I tui_hook.py <session dir> <label>`, the
-payload JSON on stdin. Checks session.json, calls its optional adapter_hook on_hook(label, payload,
-state), then appends {"ts", "label", "payload"} to hooks.jsonl, then marks the pane with the label's
-word (tmux_host.mark) through session.json's tmux_path, never a tmux on PATH. Payload strs are cut
-to CUT chars unless the word is done. Never prints on stdout and always exits 0 (a runtime may read
-both). stdlib only, standalone. False from the callback skips recording and marking; overflow drains
-stdin and stops the hook.
-"""
+"""Standalone unified runtime hook: bounded payload, adapter binding, journal and tmux marking."""
 
 from __future__ import annotations
 
@@ -17,17 +10,128 @@ import re
 import runpy
 import stat
 import sys
+from collections.abc import Callable
 from datetime import datetime
+from logging import ERROR, Handler, Logger, LogRecord
+from types import SimpleNamespace
+
+
+class HookError(Exception):
+    """One stderr line; the hook stops."""
+
+    @classmethod
+    def unloadable_host(cls, path) -> HookError:
+        return cls(f"tmux hook helper {path}: cannot load Python module")
+
+    @classmethod
+    def usage(cls) -> HookError:
+        return cls("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
+
+    @classmethod
+    def oversized_payload(cls, limit: int) -> HookError:
+        return cls(f"payload: over {limit} bytes")
+
+    @classmethod
+    def non_regular(cls, path: str) -> HookError:
+        return cls(f"{path}: not a regular file")
+
+    @classmethod
+    def file_access(cls, path: str, cause: OSError) -> HookError:
+        return cls(f"{path}: {cause.strerror}")
+
+    @classmethod
+    def oversized_state(cls, path: str, limit: int) -> HookError:
+        return cls(f"{path}: over {limit} bytes")
+
+    @classmethod
+    def non_object_state(cls, path: str) -> HookError:
+        return cls(f"{path}: not a JSON object")
+
+    @classmethod
+    def invalid_state_field(cls, path: str, field: str) -> HookError:
+        return cls(f"{path}: bad {field}")
+
+    @classmethod
+    def adapter_access(cls, path: str, cause: OSError) -> HookError:
+        return cls(f"adapter hook {path}: {cause.strerror}")
+
+    @classmethod
+    def unsafe_adapter(cls, path: str) -> HookError:
+        return cls(f"adapter hook {path}: not a regular file owned by you or root")
+
+    @classmethod
+    def unloadable_adapter(cls, path: str) -> HookError:
+        return cls(f"adapter hook {path}: cannot load Python module")
+
+    @classmethod
+    def missing_callback(cls, path: str) -> HookError:
+        return cls(f"adapter hook {path}: missing on_hook callback")
+
+    @classmethod
+    def unavailable_tmux(cls, path: str, cause: OSError) -> HookError:
+        return cls(f"tmux {path}: {cause.strerror}")
+
+    @classmethod
+    def unsafe_tmux(cls, path: str) -> HookError:
+        return cls(f"tmux {path}: not a regular executable file owned by you or root")
+
+    @classmethod
+    def short_write(cls, path: str) -> HookError:
+        return cls(f"{path}: short write")
+
+
+class EventHandler(Handler):
+    def __init__(self, deliver: Callable[[BaseException], None]):
+        super().__init__()
+        self.deliver = deliver
+
+    def emit(self, record: LogRecord) -> None:
+        if record.exc_info and record.exc_info[1] is not None:
+            self.deliver(record.exc_info[1])
+
+
+class FailureReport:
+    def __init__(self, name: str, error: BaseException, receive: Callable[[BaseException], None]):
+        self.error, self.receive, self.delivered = error, receive, False
+        self.logger = Logger(name, ERROR)
+        self.logger.propagate = False
+        self.handler = EventHandler(self._deliver)
+
+    def _deliver(self, error: BaseException) -> None:
+        self.receive(error)
+        self.delivered = True
+
+    def __enter__(self) -> Logger:
+        self.logger.addHandler(self.handler)
+        return self.logger
+
+    def __exit__(self, kind, _value, _traceback) -> None:
+        try:
+            if kind is None and not self.delivered:
+                self.receive(self.error)
+        finally:
+            self.logger.removeHandler(self.handler)
+            self.handler.close()
+
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
+
 STATE_MAX = 1 << 20  # bytes of session.json read
+
 BLOCK = 1 << 16
+
 CUT = 4096
+
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
 RUNTIME = re.compile(r"[a-z][a-z0-9_]*")
+
 WORDS = ("done", "blocked", "working")
+
 STATE = "session.json"
+
 HOOKS = "hooks.jsonl"
+
 TMUX_HOST = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosts/tmux/tmux_host.py"
 )
@@ -51,19 +155,6 @@ SESSION_STATE = {
     "resume": lambda v: isinstance(v, str),
     "tmux_path": _abs,
 }
-
-
-_load_file = runpy.run_path(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../hosts/tmux/loading/types.py")
-)["load_file"]
-HookError = _load_file(
-    "agent_pm.session.modes.hooks.types",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "hooks/types.py"),
-).HookError
-FailureReport = _load_file(
-    "agent_pm.session.modes.reporting.types",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "reporting/types.py"),
-).FailureReport
 
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
@@ -213,12 +304,7 @@ def append(path: str, record: dict) -> None:
 
 def load_tmux_host():
     """Load the host by path, without changing the search path or caching the host module."""
-    spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
-    if spec is None or spec.loader is None:
-        raise HookError.unloadable_host(TMUX_HOST)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return SimpleNamespace(**runpy.run_path(TMUX_HOST))
 
 
 def say(text: str) -> None:

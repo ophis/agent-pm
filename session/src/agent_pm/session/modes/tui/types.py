@@ -27,9 +27,9 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.errors.types import TuiError
+from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.hooks.types import HookError
+from agent_pm.session.modes.tui_hook import HookError
 from agent_pm.utils import STATE, json_records, read_regular
 
 TUI_DIR = f"{STATE}/tui"

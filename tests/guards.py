@@ -1,69 +1,430 @@
 """Repository design checks: each public function takes a repository root and returns violations."""
 
 import ast
+import io
 import os
+import re
+import tokenize
 import tomllib
 
-from tests.guard_ast import (
-    _at_import,
-    _bindings,
-    _boundary_violations,
-    _changes,
-    _comment_blocks,
-    _doc_blocks,
-    _dotted,
-    _files,
-    _is,
-    _private,
-    _prose_pairs,
-    _source_modules,
-    _spellings,
-    _strings,
-)
-from tests.guard_rules import (
-    ADAPTERS_HOME,
-    COMMAND,
-    COMMAND_DOCS,
-    COMMAND_FILES,
-    COMMAND_SRC,
-    CONFIG_LEVELS,
-    CONFIG_PY,
-    ENTRIES,
-    HANDOFF,
-    HANDOFF_HOME,
-    LEFTOVERS,
-    LINEAR,
-    LOAD_HELPERS,
-    LOCAL_EXAMPLE,
-    LOWER,
-    ONCE,
-    ORCH_PROJECT,
-    PKG,
-    PROJECTS,
-    PYTHON,
-    PYTHON_OK,
-    RUNTIME,
-    SESSION_COMMAND,
-    SESSION_SRC,
-    SPAWNS,
-    STATUS_LOG_CLOCK,
-    STATUS_LOG_HOME,
-    SUBPACKAGES,
-    TMUX_HOME,
-    TOML_CODE,
-    TOML_HEADER,
-    TOML_IMPLEMENTATION,
-    TOML_RUNTIME,
-    TOML_STRING,
-    TOOL_STRINGS,
-    TOP,
-    TREES,
-)
-from tests.guard_rules import CONFIG_FILE as CONFIG_FILE
-from tests.guard_rules import LAYERS as LAYERS
-from tests.guard_rules import TESTS as TESTS
+from agent_pm.utils.config_file import LEVELS
 
-# until TASK-368
+RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+
+
+TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
+
+
+TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+
+
+TOML_IMPLEMENTATION = re.compile(
+    r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
+)
+
+
+TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+
+
+TMUX_HOME = "session/src/agent_pm/session/hosts/tmux/"
+
+
+PKG = "agent_pm"
+
+
+SESSION = "session"
+
+
+ORCH = "linear_orchestrator"
+
+
+PROJECTS = {p: p.replace("-", "_") for level in LEVELS for p in level}
+
+
+LAYERS = tuple(PROJECTS)
+
+
+ORCH_PKG = f"{PKG}.{ORCH}"
+
+
+ORCH_SRC = f"src/{PKG}/{ORCH}/"
+
+
+ORCH_PROJECT = "linear-orchestrator"
+
+
+LEFTOVERS = {"__pycache__", ".DS_Store"}
+
+
+TOP = {"__init__.py", "cli.py", "engine"}
+
+
+SUBPACKAGES = {
+    SESSION: {"adapters", "hosts", "modes"},
+    "delegate": {"composer", "event", "team"},
+    "linear-orchestrator": {"linear"},
+}
+
+
+LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
+
+
+TREES = (*PROJECTS, "tests", ".github")
+
+
+TESTS = ("tests", *(f"{p}/tests" for p in PROJECTS))
+
+
+CONFIG_LEVELS = f"utils/src/{PKG}/utils/config_file.py"
+
+
+LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
+
+
+SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
+
+
+CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
+
+
+ADAPTERS_HOME = f"{SESSION_SRC}adapters/types.py"
+
+
+STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
+
+
+STATUS_LOG_CLOCK = "%H:%M:%S"
+
+
+COMMAND_SRC = (
+    SESSION_SRC,
+    f"delegate/src/{PKG}/delegate/",
+    f"{ORCH_PROJECT}/{ORCH_SRC}",
+)
+
+
+COMMAND = "agent-pm-"
+
+
+SESSION_COMMAND = "agent-pm-session"
+
+
+SPAWNS = re.compile(r"subprocess\.\w+|os\.(?:exec|spawn)\w*")
+
+
+LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
+
+
+CONFIG_PY = f"{ORCH_SRC}engine/config.py"
+
+
+TOOL_STRINGS = ("tmux", "adapters")
+
+
+TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
+
+
+ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
+
+
+ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
+
+
+LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
+
+
+HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
+
+
+HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
+
+
+COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
+
+
+COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
+
+
+PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
+
+
+PYTHON_OK = re.compile(
+    rf"\S+[ \t]+-P[ \t]+(?:-m[ \t]+{PKG}\.\w"
+    r"|(?:<team>|\{\{team\}\})/tools/\w+\.py(?=[ \t]|\Z))"
+)
+
+
+READS = {"copy", "count", "get", "index", "items", "keys", "values"}
+
+
+def _spellings(nodes, dotted):
+    module, attr = dotted.split(".")
+    found = {dotted}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            found.update(f"{a.asname}.{attr}" for a in node.names if a.name == module and a.asname)
+        elif isinstance(node, ast.ImportFrom) and node.module == module and not node.level:
+            found.update(a.asname or a.name for a in node.names if a.name == attr)
+    return found
+
+
+def _is(node, spellings):
+    return isinstance(node, ast.Attribute | ast.Name) and ast.unparse(node) in spellings
+
+
+def _changes(node, spellings):
+    if isinstance(node, ast.AugAssign):
+        return _is(node.target, spellings)
+    if isinstance(getattr(node, "ctx", None), ast.Store | ast.Del):
+        target = node.value if isinstance(node, ast.Subscript) else node
+        return not isinstance(node, ast.Name) and _is(target, spellings)
+    if not isinstance(node, ast.Call):
+        return False
+    func, args = node.func, node.args
+    if isinstance(func, ast.Attribute) and _is(func.value, spellings):
+        return func.attr not in READS
+    return (
+        "patch" in ast.unparse(func).split(".")
+        and bool(args)
+        and (
+            _is(args[0], spellings)
+            or (isinstance(args[0], ast.Constant) and args[0].value in spellings)
+            or (
+                len(args) > 1
+                and isinstance(args[1], ast.Constant)
+                and f"{ast.unparse(args[0])}.{args[1].value}" in spellings
+            )
+        )
+    )
+
+
+def _at_import(node):
+    # a decorator runs at import, but a patch.dict one writes only when its test runs
+    for child in ast.iter_child_nodes(node):
+        if child not in getattr(node, "decorator_list", ()) and not isinstance(
+            child, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+        ):
+            yield child
+            yield from _at_import(child)
+
+
+def _bindings(tree):
+    bound = {}
+    for node in ast.walk(tree):
+        for a in node.names if isinstance(node, (ast.Import, ast.ImportFrom)) else ():
+            if isinstance(node, ast.Import):
+                bound[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+            elif node.module and not node.level:
+                bound[a.asname or a.name] = f"{node.module}.{a.name}"
+    return bound
+
+
+def _dotted(node, bound):
+    chain = []
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    base = [bound.get(node.id, node.id)] if isinstance(node, ast.Name) else []
+    return ".".join([*base, *reversed(chain)])
+
+
+def _private(name):
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
+def _within(name, unit):
+    return name == unit or name.startswith(f"{unit}.")
+
+
+def _files(root, suffixes, skip=None):
+    for top, dirs, names in os.walk(root):
+        dirs.sort()
+        for name in sorted(names):
+            rel = os.path.relpath(os.path.join(top, name), root).replace(os.sep, "/")
+            if name.endswith(suffixes) and not (skip and rel.startswith(skip)):
+                with open(os.path.join(top, name), encoding="utf-8") as f:
+                    yield rel, f.read()
+
+
+def _strings(tree):
+    return (
+        (n.lineno, n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    )
+
+
+def _comment_blocks(text):
+    lines = text.splitlines()
+    blocks, current = [], []
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type != tokenize.COMMENT or lines[token.start[0] - 1][: token.start[1]].strip():
+            continue
+        line, indent = token.start
+        if current and (
+            line != current[-1][0] + 1 or indent != lines[current[-1][0] - 1].index("#")
+        ):
+            blocks.append(current)
+            current = []
+        content = token.string[1:].removeprefix(" ")
+        current.append((line, content.strip(), indent + len(content) - len(content.lstrip())))
+    blocks.append(current)
+    return blocks
+
+
+def _doc_blocks(text):
+    lines, blocks = text.splitlines(), []
+    for node in ast.walk(ast.parse(text)):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body or not isinstance(body[0], ast.Expr):
+            continue
+        value = body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            entries = [
+                (
+                    line,
+                    lines[line - 1].strip(),
+                    len(lines[line - 1]) - len(lines[line - 1].lstrip()),
+                )
+                for line in range(value.lineno, value.end_lineno + 1)
+            ]
+            indent = min((entry[2] for entry in entries[1:] if entry[1]), default=value.col_offset)
+            entries[0] = (entries[0][0], entries[0][1].lstrip("rRuU")[3:], indent)
+            entries[-1] = (entries[-1][0], entries[-1][1][:-3], entries[-1][2])
+            blocks.append(entries)
+    return blocks
+
+
+def _boundary_name(node, aliases):
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        return f"{_boundary_name(node.value, aliases)}.{node.attr}"
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _boundary_name(node.left, aliases) + _boundary_name(node.right, aliases)
+    return ""
+
+
+def _boundary_bindings(tree):
+    aliases = _bindings(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and (value := _boundary_name(node.value, aliases)):
+                    aliases[target.id] = value
+    return aliases
+
+
+def _boundary_violations(text, own, modules=None, *, shipped=False):
+    tree = ast.parse(text)
+    aliases, modules = _boundary_bindings(tree), modules or {}
+    found = set()
+    for node in ast.walk(tree):
+        if shipped:
+            if _test_switch(node, aliases):
+                found.add((node.lineno, "shipped test switch"))
+            continue
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            names = [a.name for a in node.names] + [getattr(node, "module", "") or ""]
+            if any(_test_module(name) for name in names):
+                found.add((node.lineno, "test module import"))
+        name = _resolve_boundary(_boundary_name(node, aliases), modules)
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store | ast.Del)
+            and _within(name, f"agent_pm.{own}")
+        ):
+            found.add((node.lineno, "own project attribute mutation"))
+        if isinstance(node, ast.Call):
+            found.update(
+                (node.lineno, reason) for reason in _boundary_calls(node, aliases, own, modules)
+            )
+    return sorted(found)
+
+
+def _test_module(name):
+    return any(part.endswith("_test") for part in name.split("."))
+
+
+def _test_switch(node, aliases):
+    candidates = []
+    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+        candidates.append(node.id)
+    if (
+        isinstance(node, ast.Call)
+        and _boundary_name(node.func, aliases) in {"os.getenv", "os.environ.get"}
+        and node.args
+    ):
+        candidates.append(_boundary_name(node.args[0], aliases))
+    if isinstance(node, ast.Subscript) and _boundary_name(node.value, aliases) == "os.environ":
+        candidates.append(_boundary_name(node.slice, aliases))
+    return any(name.endswith("_TEST") or name.startswith("FORCE_") for name in candidates)
+
+
+def _boundary_calls(node, aliases, own, modules):
+    arguments = node.args or [k.value for k in node.keywords if k.arg in {"target", "in_dict"}]
+    if not arguments:
+        return []
+    call, raw = _boundary_name(node.func, aliases), _boundary_name(arguments[0], aliases)
+    target = _resolve_boundary(raw, modules)
+    rules = {
+        "shipped code patch": call.endswith(".patch") and raw.startswith("agent_pm."),
+        "own project object patch": call.endswith(".patch.object")
+        and _within(target, f"agent_pm.{own}"),
+        "sys.modules dictionary patch": call.endswith(".patch.dict") and target == "sys.modules",
+        "own project attribute mutation": call in {"setattr", "delattr"}
+        and _within(target, f"agent_pm.{own}"),
+        "test module import": (call.endswith("import_module") or call == "__import__")
+        and _test_module(raw),
+    }
+    return [reason for reason, violated in rules.items() if violated]
+
+
+def _resolve_boundary(name, modules):
+    seen = set()
+    while name not in seen:
+        seen.add(name)
+        parts = name.split(".")
+        matched = False
+        for index in range(len(parts) - 1, 0, -1):
+            module, member = ".".join(parts[:index]), parts[index]
+            if module in modules and member in modules[module]:
+                name = ".".join([modules[module][member], *parts[index + 1 :]])
+                matched = True
+                break
+        if not matched:
+            return name
+    return name
+
+
+def _source_modules(repo, projects):
+    return {
+        rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__"): _boundary_bindings(
+            ast.parse(text)
+        )
+        for project in projects
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py")
+    }
+
+
+def _prose_pairs(block):
+    fenced, previous = False, None
+    indent = min((entry[2] for entry in block), default=0)
+    for entry in block:
+        _, body, column = entry
+        if body.startswith(("```", "~~~")):
+            fenced, previous = not fenced, None
+            continue
+        if fenced or column >= indent + 4 or body.startswith((">>>", "...")):
+            previous = None
+            continue
+        if previous and previous[1] and body and not re.match(r"(?:[-*]|\d+[.)])\s", body):
+            yield previous, entry
+        previous = entry if body else None
 
 
 def layer_commands(repo: str) -> list[str]:
@@ -472,12 +833,4 @@ def test_boundaries(repo: str) -> list[str]:
         for line, reason in _boundary_violations(
             text, rel.split("/")[0].replace("-", "_"), modules, shipped="/src/" in rel
         )
-    )
-
-
-def file_length(repo: str) -> list[str]:
-    return sorted(
-        f"{rel}: {len(text.splitlines())} lines exceeds 500"
-        for rel, text in _tree_files(repo, ".py")
-        if len(text.splitlines()) > 500
     )

@@ -17,7 +17,7 @@ from agent_pm.session.adapters.codex.common.types import (
     reset_at,
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
-from agent_pm.session.adapters.codex.persistence.snapshot import split_flags
+from agent_pm.session.adapters.codex.sessions import split_flags
 from agent_pm.session.adapters.types import Tui
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, SessionRequest
 from agent_pm.utils import import_roots

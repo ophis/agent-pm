@@ -12,9 +12,9 @@ import unittest
 import unittest.mock
 from contextlib import contextmanager
 
-from agent_pm.session.hosts.tmux import layout as tmux_layout
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.model import types as tmux_model
+from agent_pm.session.hosts.tmux import tmux_host as tmux_layout
+from agent_pm.session.hosts.tmux import tmux_host as tmux_model
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 

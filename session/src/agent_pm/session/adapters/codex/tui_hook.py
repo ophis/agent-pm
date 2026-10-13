@@ -5,14 +5,13 @@ from __future__ import annotations
 import os
 import runpy
 import sys
+from types import SimpleNamespace
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
+sessions = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "sessions.py")))
+HOOKS = runpy.run_path(os.path.join(DIRECTORY, "hook_schema.py"))["HOOKS"]
 
-_sibling = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["sibling"]
-
-sessions = _sibling("sessions")
-HOOKS = _sibling("hook_schema").HOOKS
 
 LABELS = {label for label, _, _ in HOOKS}
 

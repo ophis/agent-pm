@@ -9,27 +9,26 @@ import runpy
 import signal
 import sys
 import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agent_pm.session.adapters.codex.server.types import ProcessRequest
+from types import SimpleNamespace
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
+sessions = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "sessions.py")))
+app_server = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "app_server.py")))
+ProcessRequest = app_server.ProcessRequest
+HOOKS = runpy.run_path(os.path.join(DIRECTORY, "hook_schema.py"))["HOOKS"]
 
-_sibling = runpy.run_path(os.path.join(DIRECTORY, "loading/types.py"))["sibling"]
-
-sessions = _sibling("sessions")
-app_server = _sibling("app_server")
-HOOKS = _sibling("hook_schema").HOOKS
-if not TYPE_CHECKING:
-    ProcessRequest = app_server.ProcessRequest
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
+
 LOCK_WAIT = 30
+
 ANSWER_WAIT = 20
+
 RETRY = 1
+
 POLL = 0.1
+
 ANSWER_MAX = 64 << 20
 
 

@@ -1,3 +1,5 @@
+"""Codex recovery records, persistence and snapshot validation; standard library only."""
+
 from __future__ import annotations
 
 import fcntl
@@ -5,47 +7,286 @@ import fnmatch
 import hashlib
 import json
 import os
-import runpy
+import re
 import stat
 import tempfile
 import time
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agent_pm.session.adapters.codex.persistence.snapshot import (
-        absolute_path,
-        added_dirs,
-        validate_snapshot,
-    )
-    from agent_pm.session.adapters.codex.persistence.types import (
-        CreationOptions,
-        SessionFile,
-        SessionState,
-    )
+from dataclasses import dataclass
 
 
-_load_file = runpy.run_path(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../hosts/tmux/loading/types.py")
-)["load_file"]
-_records = _load_file(
-    "agent_pm.session.adapters.codex.persistence.types",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/types.py"),
-)
-RecoveryError = _records.RecoveryError
-private_file = _records.private_file
-if not TYPE_CHECKING:
-    SessionFile, SessionState = _records.SessionFile, _records.SessionState
-    CreationOptions = _records.CreationOptions
-    _snapshot = _load_file(
-        "agent_pm.session.adapters.codex.persistence.snapshot",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/snapshot.py"),
+@dataclass(frozen=True, kw_only=True)
+class CreationOptions:
+    root: str | None = None
+    persist: bool = True
+
+
+class RecoveryError(Exception):
+    @classmethod
+    def identity(cls) -> RecoveryError:
+        return cls("invalid recovery state identity")
+
+    @classmethod
+    def absolute_path(cls, label: str) -> RecoveryError:
+        return cls(f"invalid Codex recovery {label}: expected an absolute path")
+
+    @classmethod
+    def snapshot_field(cls, field: str) -> RecoveryError:
+        return cls(f"invalid Codex recovery snapshot {field}")
+
+    @classmethod
+    def unreadable_session_file(cls, path: str, cause: OSError) -> RecoveryError:
+        return cls(f"cannot read Codex session file {path}: {cause}")
+
+    @classmethod
+    def unsafe_session_file(cls, path: str) -> RecoveryError:
+        return cls(f"unsafe Codex session file: {path}")
+
+    @classmethod
+    def malformed_metadata(cls, path: str) -> RecoveryError:
+        return cls(f"malformed Codex session metadata: {path}")
+
+    @classmethod
+    def mismatched_metadata(cls, path: str) -> RecoveryError:
+        return cls(f"mismatched Codex session metadata: {path}")
+
+    @classmethod
+    def codex_native_id(cls) -> RecoveryError:
+        return cls("invalid Codex recovery native ID")
+
+    @classmethod
+    def duplicate_session_files(cls, identifier: str) -> RecoveryError:
+        return cls(f"duplicate Codex session files for native ID {identifier}")
+
+    @classmethod
+    def mismatched_native_metadata(cls, identifier: str, path: str) -> RecoveryError:
+        return cls(f"mismatched Codex session metadata for native ID {identifier}: {path}")
+
+    @classmethod
+    def ungranted_path(cls, path: str) -> RecoveryError:
+        return cls(f"invalid Codex recovery writable grants: no recorded root covers {path}")
+
+    @classmethod
+    def non_json_state(cls) -> RecoveryError:
+        return cls("invalid recovery snapshot: expected JSON-safe state")
+
+    @classmethod
+    def non_object_state(cls) -> RecoveryError:
+        return cls("invalid recovery snapshot: expected a JSON object")
+
+    @classmethod
+    def run_id(cls) -> RecoveryError:
+        return cls("invalid recovery run ID")
+
+    @classmethod
+    def malformed_state(cls, path: str | None = None) -> RecoveryError:
+        return cls(
+            "malformed recovery state" if path is None else f"malformed recovery state: {path}"
+        )
+
+    @classmethod
+    def native_id(cls) -> RecoveryError:
+        return cls("invalid recovery native ID")
+
+    @classmethod
+    def writable_roots(cls) -> RecoveryError:
+        return cls("invalid recovery writable roots")
+
+    @classmethod
+    def symlink(cls, path: str) -> RecoveryError:
+        return cls(f"recovery state path has a symlink: {path}")
+
+    @classmethod
+    def unsafe_directory(cls, path: str) -> RecoveryError:
+        return cls(f"unsafe recovery state directory mode or owner: {path}")
+
+    @classmethod
+    def noncanonical_store(cls) -> RecoveryError:
+        return cls("invalid Codex recovery store: expected a canonical path")
+
+    @classmethod
+    def writable_store(cls, root: str, path: str) -> RecoveryError:
+        return cls(f"recovery state directory {root} is inside writable root {path}")
+
+    @classmethod
+    def unreadable_state(cls, path: str, cause: OSError) -> RecoveryError:
+        return cls(f"cannot read recovery state {path}: {cause}")
+
+    @classmethod
+    def unsafe_state_file(cls, path: str) -> RecoveryError:
+        return cls(f"unsafe recovery state file mode or owner: {path}")
+
+    @classmethod
+    def oversized_state_file(cls, path: str) -> RecoveryError:
+        return cls(f"malformed recovery state: file too large: {path}")
+
+    @classmethod
+    def lock_timeout(cls) -> RecoveryError:
+        return cls("Codex recovery state lock timed out")
+
+    @classmethod
+    def oversized_state(cls) -> RecoveryError:
+        return cls("recovery state is too large")
+
+    @classmethod
+    def existing_state(cls, sid: str) -> RecoveryError:
+        return cls(f"recovery state already exists for run ID {sid!r}")
+
+    @classmethod
+    def missing_state(cls, sid: str | None = None) -> RecoveryError:
+        return cls(
+            "missing Codex recovery state"
+            if sid is None
+            else f"missing recovery state for run ID {sid!r}"
+        )
+
+    @classmethod
+    def already_bound(cls, sid: str) -> RecoveryError:
+        return cls(f"recovery run ID {sid!r} is already bound to a different native ID")
+
+    @classmethod
+    def writable_dependency(cls, root: str, path: str) -> RecoveryError:
+        return cls(f"Codex tui writable root {root} could rewrite hook dependency {path}")
+
+
+@dataclass(frozen=True)
+class SessionFile:
+    path: str
+    mtime: float
+    metadata: dict
+
+
+@dataclass(frozen=True)
+class SessionState:
+    workdir: str
+    sid: str
+    snapshot: dict
+    writable_roots: list[str]
+    native_id: str | None = None
+
+
+def private_file(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o600
     )
-    absolute_path = _snapshot.absolute_path
-    added_dirs = _snapshot.added_dirs
-    validate_snapshot = _snapshot.validate_snapshot
+
+
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+VALUED = {
+    "-c": "-c",
+    "--config": "-c",
+    "-C": "-C",
+    "--cd": "-C",
+    "-p": "-p",
+    "--profile": "-p",
+    "--enable": "--enable",
+    "--disable": "--disable",
+    "--add-dir": "--add-dir",
+}
+
+
+def split_flags(flags) -> tuple[list[str], list[str]]:
+    index = flags.index("--") if "--" in flags else len(flags)
+    return list(flags[:index]), list(flags[index:])
+
+
+def options(flags):
+    i = 0
+    while i < len(flags) and flags[i] != "--":
+        flag = flags[i]
+        if flag.startswith("--"):
+            word, eq, value = flag.partition("=")
+        else:
+            word, value = flag[:2], flag[2:].removeprefix("=")
+            eq = flag[2:]
+        name = VALUED.get(word)
+        if name is None:
+            yield (word if flag.startswith("--") else flag), None, flag
+        elif eq:
+            yield name, value, flag
+        else:
+            i += 1
+            value = flags[i] if i < len(flags) else ""
+            yield name, value, f"{flag} {value}"
+        i += 1
+
+
+def added_dirs(flags, cwd: str) -> list[str]:
+    return [
+        os.path.join(cwd, value)
+        for name, value, _ in options(flags)
+        if name == "--add-dir" and value is not None
+    ]
+
+
+def absolute_path(path: object, label: str) -> str:
+    if not isinstance(path, str) or not path or not os.path.isabs(path) or "\x00" in path:
+        raise RecoveryError.absolute_path(label)
+    return os.path.realpath(path)
+
+
+def validate_snapshot(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise RecoveryError.snapshot_field("fields")
+    if set(value) != {
+        "cwd",
+        "project",
+        "dirs",
+        "commands",
+        "model",
+        "effort",
+        "codex_home",
+        "flags",
+        "env",
+    }:
+        raise RecoveryError.snapshot_field("fields")
+    env, flags = _snapshot_inputs(value)
+    paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
+    if type(value["project"]) is not bool:
+        raise RecoveryError.snapshot_field("project")
+    for key in ("dirs", "commands"):
+        if not isinstance(value[key], list):
+            raise RecoveryError.snapshot_field(key)
+    dirs = [absolute_path(item, "dir") for item in value["dirs"]]
+    commands = value["commands"]
+    if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
+        raise RecoveryError.snapshot_field("commands")
+    for key in ("model", "effort"):
+        if value[key] is not None and (
+            not isinstance(value[key], str) or not value[key] or not value[key].isprintable()
+        ):
+            raise RecoveryError.snapshot_field(key)
+    validated = {
+        **paths,
+        "project": value["project"],
+        "dirs": dirs,
+        "commands": commands.copy(),
+        "model": value["model"],
+        "effort": value["effort"],
+        "flags": list(flags),
+        "env": dict(env),
+    }
+    if validated != value:
+        raise RecoveryError.snapshot_field("path")
+    return validated
+
+
+def _snapshot_inputs(value):
+    env = value["env"]
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise RecoveryError.snapshot_field("env")
+    flags = value["flags"]
+    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
+        raise RecoveryError.snapshot_field("flags")
+    return env, flags
 
 
 def inside(path: str, root: str) -> bool:
@@ -137,9 +378,7 @@ def native_id(value) -> bool:
 
 _SESSION_VERSION = 1
 
-
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
-
 
 _MAX_SESSION_BYTES = 64 * 1024
 

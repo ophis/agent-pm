@@ -44,23 +44,21 @@ class SiblingTest(Case):
                     text=True,
                     check=True,
                 )
-                self.assertEqual(json.loads(result.stdout), [SIBLINGS, True])
+                self.assertEqual(json.loads(result.stdout), [[], True])
 
-    def test_a_private_name_holding_another_file_is_refused(self):
+    def test_registered_private_names_do_not_override_path_dependencies(self):
         foreign = types.ModuleType(SIBLINGS[1])
         foreign.__file__ = os.path.join(self.home, "sessions.py")
         for name in SCRIPTS:
-            with (
-                self.subTest(name=name),
-                module_slot(SIBLINGS[1], foreign),
-                self.assertRaisesRegex(ImportError, SIBLINGS[1]),
-            ):
-                runpy.run_path(str(DIRECTORY / name))
+            with self.subTest(name=name), module_slot(SIBLINGS[1], foreign):
+                loaded = runpy.run_path(str(DIRECTORY / name))
+                self.assertEqual(loaded["sessions"].__file__, str(DIRECTORY / "sessions.py"))
+                self.assertIs(sys.modules[SIBLINGS[1]], foreign)
 
-    def test_both_scripts_share_the_registered_siblings(self):
-        self.assertIs(tui_start.sessions, tui_hook.sessions)
-        self.assertIs(sys.modules[SIBLINGS[1]], tui_start.sessions)
-        self.assertEqual(tui_start.sessions.__file__, str(DIRECTORY / "sessions.py"))
+    def test_scripts_load_dependencies_without_registration(self):
+        for script in (tui_start, tui_hook):
+            self.assertEqual(script.sessions.__file__, str(DIRECTORY / "sessions.py"))
+        self.assertNotIn(SIBLINGS[1], sys.modules)
 
     def test_run_by_path_isolated_it_reports_bad_launch_data_without_a_traceback(self):
         result = subprocess.run(

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.flows.fixtures import (
+from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
@@ -22,8 +22,8 @@ from orchestrator_tests.integration.flows.fixtures import (
     steps,
 )
 from orchestrator_tests.unit.board_ids import STATES
-from orchestrator_tests.unit.run.support import ID, SESSION, SID, UUID
-from orchestrator_tests.unit.writeback.support import APPROVE_MAPPED, DOC, PR, PRD
+from orchestrator_tests.unit.run_fixtures import ID, SESSION, SID, UUID
+from orchestrator_tests.unit.writeback_fixtures import APPROVE_MAPPED, DOC, PR, PRD
 
 from delegate.tests.replies import block, mark, option
 

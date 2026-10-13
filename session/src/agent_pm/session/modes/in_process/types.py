@@ -12,7 +12,7 @@ import traceback
 
 from agent_pm.session.adapters.types import InProcess
 from agent_pm.session.engine.types import DriverError, Event, SessionRequest, Stderr
-from agent_pm.session.modes.reporting.types import FailureReport
+from agent_pm.session.modes.tui_hook import FailureReport
 
 END = object()
 

@@ -1,47 +1,73 @@
-"""The Codex app-server JSON-RPC client, stdlib only (tui_start.py loads it by path). Run by path,
-it is the account probe: prints the account/rateLimits/read result, or null on any failure
-(--timeout S, 0 < S <= 10).
-"""
+"""Standalone standard-library Codex app-server JSON-RPC client and account probe."""
 
 from __future__ import annotations
 
 import contextlib
 import json
 import os
-import runpy
 import select
 import signal
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Protocol
 
-if TYPE_CHECKING:
-    from agent_pm.session.adapters.codex.server.types import (
-        Error,
-        Exited,
-        ProcessRequest,
-        RpcOptions,
-    )
+
+class Termination(Protocol):
+    signum: int
+
+    def check(self) -> None: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProcessRequest:
+    exe: str
+    args: list[str]
+    cwd: str
+    env: dict[str, str]
+
+
+@dataclass(frozen=True, kw_only=True)
+class RpcOptions:
+    env: dict[str, str]
+    wait: float
+    limit: int
+    cwd: str | None = None
+    termination: Termination | None = None
+    exit_wait: float = 5
+
+
+class Error(Exception):
+    @classmethod
+    def unavailable(cls, exe: str, cause: OSError) -> Error:
+        return cls(f"{exe}: {cause.strerror}")
+
+    @classmethod
+    def timeout(cls, seconds: float) -> Error:
+        return cls(f"no answer in {seconds} s")
+
+    @classmethod
+    def oversized_answer(cls, limit: int) -> Error:
+        return cls(f"an answer over {limit} bytes")
+
+    @classmethod
+    def failed_answer(cls, method: str, error: object) -> Error:
+        detail = error.get("message") if isinstance(error, dict) else error
+        return cls(f"{method} failed: {detail}")
+
+
+class Exited(Exception):
+    pass
+
 
 POLL = 0.1
+
 BLOCK = 1 << 16
+
 EXIT_WAIT = 5
+
 PROBE_MAX = 1 << 20
-
-
-if not TYPE_CHECKING:
-    _load_file = runpy.run_path(
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "../../hosts/tmux/loading/types.py"
-        )
-    )["load_file"]
-    _types = _load_file(
-        "agent_pm.session.adapters.codex.server.types",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "server/types.py"),
-    )
-    Error, Exited, RpcOptions = _types.Error, _types.Exited, _types.RpcOptions
-    ProcessRequest = _types.ProcessRequest
 
 
 def call(

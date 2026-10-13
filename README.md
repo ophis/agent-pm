@@ -200,4 +200,6 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
-Commands, test placement and CI checks: `AGENTS.md` › Tests.
+Run project and repository unit tests with `python3 .github/run_tests.py Unit --unit`; integration
+shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
+shards; its required `CI` job succeeds only when every dependency succeeds.

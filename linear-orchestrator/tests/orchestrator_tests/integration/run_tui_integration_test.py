@@ -8,9 +8,9 @@ import functools
 import unittest
 
 from orchestrator_tests.integration import fake_linear
-from orchestrator_tests.integration.flows.fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
-from orchestrator_tests.unit.run.support import ID, SID, UUID
-from orchestrator_tests.unit.writeback.support import PRD
+from orchestrator_tests.integration.flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
+from orchestrator_tests.unit.run_fixtures import ID, SID, UUID
+from orchestrator_tests.unit.writeback_fixtures import PRD
 
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux

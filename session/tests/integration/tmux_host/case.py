@@ -12,7 +12,7 @@ import time
 from unittest import mock
 
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.model import types as tmux_model
+from agent_pm.session.hosts.tmux import tmux_host as tmux_model
 
 from session.tests import live_tmux
 from session.tests.case import Case
