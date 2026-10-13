@@ -7,13 +7,13 @@ import json
 import os
 import posixpath
 import re
-import stat
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlsplit
 
 from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
 
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
 SAVES_DELIVERABLE = (
@@ -159,28 +159,24 @@ def _file(path, workdir: str) -> str:
     return str(real)
 
 
-def _contents(real, workdir, cap):
-    with os.fdopen(os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
-        opened = os.fstat(source.fileno())
-        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
-            raise InvalidOutcome.not_regular(real)
-        if not Path(os.path.realpath(real)).is_relative_to(os.path.realpath(workdir)):
-            raise InvalidOutcome.relocated(real)
-        current = os.stat(real)
-        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
-            raise InvalidOutcome.replaced(real)
-        return source.read(cap + 1)
-
-
 def _read_file(real: str, workdir: str) -> str:
     """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
     cap = 4 * _schema()["properties"]["deliverable"]["maxLength"]
     try:
-        data = _contents(real, workdir, cap)
+        data = read_confined(real, workdir, limit=cap)
+    except ConfinedFileError as error:
+        errors = {
+            ConfinedReason.REGULAR: InvalidOutcome.not_regular,
+            ConfinedReason.SINGLE_LINK: InvalidOutcome.not_regular,
+            ConfinedReason.SUFFIX: InvalidOutcome.file,
+            ConfinedReason.OUTSIDE: InvalidOutcome.relocated,
+            ConfinedReason.REPLACED: InvalidOutcome.replaced,
+        }
+        if error.reason is ConfinedReason.TOO_LARGE:
+            raise InvalidOutcome.large_file(real, cap) from None
+        raise errors[error.reason](real) from None
     except OSError as error:
         raise InvalidOutcome.unreadable(real, error) from None
-    if len(data) > cap:
-        raise InvalidOutcome.large_file(real, cap)
     try:
         return data.decode()
     except UnicodeDecodeError:
