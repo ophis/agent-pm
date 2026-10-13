@@ -68,7 +68,7 @@ ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create iss
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
-def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target=None):
+def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
     return Context(
         ident=ident,
         issue_id=issue_id,

@@ -470,12 +470,37 @@ class Status(Base):
                 self.assertIn("unsafe base branch name", err)
 
     def test_malformed_pull_requests_are_one_line_command_errors(self):
-        for payload in ({}, [None], [{"author": {"login": 7}, "isCrossRepository": False}]):
+        for payload in ({}, [None]):
             with self.subTest(payload=payload):
                 code, error, _ = self.status(pr_list(payload))
                 self.assertEqual(code, 1)
                 self.assertTrue(error.startswith("repo.py: gh"), error)
                 self.assertEqual(len(error.splitlines()), 1)
+
+    def test_missing_author_logins_are_ignored_for_pull_requests(self):
+        for author in (None, {}, "deleted", [], {"login": ""}, {"login": 7}):
+            with self.subTest(author=author):
+                code, result, _ = self.status(pr_list([{**pr(), "author": author}]), info())
+                self.assertEqual(code, 0, result)
+                self.assertIsNone(result["pr"])
+
+    def test_missing_feedback_logins_are_anonymous(self):
+        for author in (None, {}, "deleted", [], {"login": ""}, {"login": 7}):
+            with self.subTest(author=author):
+                comment = {
+                    "created_at": "2026-10-03T00:00:00Z",
+                    "user": author,
+                    "body": "feedback",
+                }
+                code, result, _ = self.status(
+                    pr_list([pr()]),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps([[comment]]))),
+                    NO_FEEDBACK,
+                )
+                self.assertEqual(code, 0, result)
+                self.assertEqual(result["user"], [])
+                self.assertEqual(len(result["others"]), 1)
+                self.assertIsNone(result["others"][0]["author"])
 
     def test_malformed_comments_are_one_line_command_errors(self):
         for payload in (

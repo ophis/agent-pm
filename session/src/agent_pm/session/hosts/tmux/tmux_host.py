@@ -577,7 +577,8 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
         hosts = {tty: session for dead, tty, session in panes if dead != "1"}
     out = []
     for name, dead, sid, runtime, state, pane, opener in rows:
-        host = hosts.get(recent.get(name, ""), "")
+        tty = recent.get(name)
+        host = "" if tty is None else hosts.get(tty, "")
         out.append(
             {
                 "name": name,

@@ -290,13 +290,8 @@ def plan_docs(wt: str, branch: str) -> list[dict]:
 
 def _author(row: dict, key: str) -> str | None:
     who = row.get(key)
-    if who is None:
-        return None
-    if not isinstance(who, dict) or (
-        who.get("login") is not None and not isinstance(who["login"], str)
-    ):
-        raise RepoCommandError("gh: invalid author login")
-    return who.get("login")
+    login = who.get("login") if isinstance(who, dict) else None
+    return login if isinstance(login, str) and login else None
 
 
 def _oldest_first(entries: list[dict]) -> list[dict]:
