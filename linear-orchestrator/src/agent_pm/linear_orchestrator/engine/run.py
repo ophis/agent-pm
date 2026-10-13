@@ -47,11 +47,7 @@ def _close_tuis(a, role, cfg):
             log("run", "tui-closed", a.issue, session=name)
 
 
-def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
-    os.environ["PATH"] = config.path()
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, _stop)
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # session.detach blocked them until now
+def _run_role(a, cfg):
     role = config.role_for(cfg.roles, a.assignee)
     if role is None:
         reason = f"{a.assignee!r} is not a role account"
@@ -64,6 +60,51 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     if reason:
         log("run", "config-error", a.issue, reason=reason)
         log("run", "end", a.issue, sid=a.sid, exit=1)
+        return None
+    return role
+
+
+def _event(a, cfg, ctx, post, event):
+    name = config.tui_name(ctx.role, a.issue, a.sid) if a.tui else None
+    if isinstance(event, delegate.Begun):
+        post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
+        if name is not None:
+            try:
+                if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
+                    print(printable(command), file=sys.stderr, flush=True)
+            except (SessionConfigError, DriverError) as e:
+                log("run", "tui-error", a.issue, session=name, msg=one_line(e))
+    elif isinstance(event, delegate.Progress):
+        writeback.progress(ctx, event)
+    elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
+        writeback.finish(ctx, event.result.outcome)
+
+
+def _report_outcome(a, cfg, ctx, result):
+    if result and result.limit:
+        at = result.limit.resets_at
+        writeback.limit(ctx, at)
+        try:
+            runs.note_limit(
+                cfg.runs_log,
+                issue=a.issue,
+                sid=a.sid,
+                runtime=a.runtime,
+                resets_at=writeback.local_time(at),
+            )
+        except SERVICE_ERRORS as e:
+            log("run", "run-error", a.issue, error=one_line(e))
+    elif not (result and result.outcome):
+        log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
+
+
+def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
+    os.environ["PATH"] = config.path()
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, _stop)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # session.detach blocked them until now
+    role = _run_role(a, cfg)
+    if role is None:
         return 1
     log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
     _close_tuis(a, role, cfg)
@@ -81,20 +122,6 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         ):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
 
-    def on_event(event):
-        if isinstance(event, delegate.Begun):
-            post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
-            if name is not None:
-                try:
-                    if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
-                        print(printable(command), file=sys.stderr, flush=True)
-                except (SessionConfigError, DriverError) as e:
-                    log("run", "tui-error", a.issue, session=name, msg=one_line(e))
-        elif isinstance(event, delegate.Progress):
-            writeback.progress(ctx, event)
-        elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
-            writeback.finish(ctx, event.result.outcome)
-
     rc, result = 1, None
     try:
         os.makedirs(rd, exist_ok=True)
@@ -111,7 +138,12 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
             out=os.path.join(rd, "out.md"),
             cwd=rd,
         )
-        result = run(cfg.roles[role].run, spec, driver=cfg.driver, on_event=on_event)
+        result = run(
+            cfg.roles[role].run,
+            spec,
+            driver=cfg.driver,
+            on_event=functools.partial(_event, a, cfg, ctx, post),
+        )
         rc = result.returncode
     except (*SERVICE_ERRORS, delegate.ConfigError, SessionConfigError, DriverError, Stopped) as e:
         if isinstance(e, Stopped):
@@ -120,21 +152,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
             log("run", "run-error", a.issue, error=one_line(e))
     finally:
         log("run", "end", a.issue, sid=a.sid, exit=rc)
-        if result and result.limit:
-            at = result.limit.resets_at
-            writeback.limit(ctx, at)
-            try:
-                runs.note_limit(
-                    cfg.runs_log,
-                    issue=a.issue,
-                    sid=a.sid,
-                    runtime=a.runtime,
-                    resets_at=writeback.local_time(at),
-                )
-            except SERVICE_ERRORS as e:
-                log("run", "run-error", a.issue, error=one_line(e))
-        elif not (result and result.outcome):
-            log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
+        _report_outcome(a, cfg, ctx, result)
         post(rc, outcome=result.outcome if result else None, limit=bool(result and result.limit))
         if error := sessions.repair(a.issue, a.uuid, rec, gql=harness):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
