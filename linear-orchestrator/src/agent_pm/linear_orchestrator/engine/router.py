@@ -672,7 +672,9 @@ def choose(board, gate, live_ids, full, counts):
     return "new", issue, str(uuid.uuid4()), role, task, runtime
 
 
-def tick(opts, cfg, gql, *, start, now, hour, clock=datetime.now):
+def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
+    now = clock().astimezone(UTC)
+    hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -721,7 +723,8 @@ def tick(opts, cfg, gql, *, start, now, hour, clock=datetime.now):
             return start_run(start, a, walk)
 
 
-def run_issue(opts, cfg, gql, now, start, *, clock=datetime.now):
+def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
+    now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 1
     with lock(runs, dry) as free:
@@ -832,16 +835,14 @@ def main(
         return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     start = start or functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain)
-    current = now().astimezone(UTC)
     try:
         if opts["issue"]:
-            return run_issue(opts, cfg, gql, current, start, clock=now)
+            return run_issue(opts, cfg, gql, start, clock=now)
         return tick(
             opts,
             cfg,
             gql,
-            now=current,
-            hour=current.astimezone().hour if hour is None else hour,
+            hour=hour,
             start=start,
             clock=now,
         )
