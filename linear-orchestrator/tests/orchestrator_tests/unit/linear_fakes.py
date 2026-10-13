@@ -2,7 +2,7 @@ from orchestrator_tests.unit.linear_data import FIELDS, IN_PROGRESS, NAMES
 
 
 class Gql:
-    def __init__(self, state=IN_PROGRESS, fail=lambda name, v: None):
+    def __init__(self, state=IN_PROGRESS, fail=lambda _name, _v: None):
         self.state, self.fail, self.calls = state, fail, []
 
     def __call__(self, query, **v):

@@ -28,13 +28,13 @@ class RoleIds(Case):
     def test_role_ids(self):
         roles = {r: SimpleNamespace(account=a) for r, a in ACCOUNTS.items()}
 
-        def gql(query, **variables):
+        def gql(_query, **variables):
             return {"users": {"nodes": [{"id": "u-" + variables["e"]}]}}
 
         self.assertEqual(linear.role_ids(gql, roles), {f"u-{a}": r for r, a in ACCOUNTS.items()})
         with self.assertRaises(LinearError) as cm:
             linear.role_ids(
-                lambda q, **v: {"users": {"nodes": []}}, {"engineer": roles["engineer"]}
+                lambda _q, **_v: {"users": {"nodes": []}}, {"engineer": roles["engineer"]}
             )
         self.assertEqual(
             str(cm.exception),
@@ -47,7 +47,7 @@ class RoleIds(Case):
 
 class Humans(Case):
     def test_humans(self):
-        def gql(q, **v):
+        def gql(_q, **v):
             return {"users": {"nodes": [{"id": "u-" + v["e"]}] if v["e"] != "x@y.z" else []}}
 
         self.assertEqual(linear.humans(gql, SimpleNamespace(human_members=("a@b.c",))), ["u-a@b.c"])

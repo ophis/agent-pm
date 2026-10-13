@@ -230,7 +230,7 @@ class Outer(OuterBase):
         for gql, reason in (
             (Gql(), "IssueError: TASK-7: issue not found"),
             (
-                Gql(lambda n, v: LinearError("linear api error: boom"), node()),
+                Gql(lambda _n, _v: LinearError("linear api error: boom"), node()),
                 "LinearError: linear api error: boom",
             ),
         ):
@@ -274,7 +274,7 @@ class Outer(OuterBase):
     def test_bounce_failure_is_transient(self):
         self.run_.table = [(("gh", "api"), ok(code=1, stderr="HTTP 404"))]
         self.gql = Gql(
-            lambda n, v: LinearError("linear api error: boom") if n == "post" else None, node()
+            lambda n, _v: LinearError("linear api error: boom") if n == "post" else None, node()
         )
         self.assertEqual(self.outer(), 3)
         self.assertEqual(

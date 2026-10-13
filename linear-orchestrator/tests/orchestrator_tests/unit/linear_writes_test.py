@@ -66,7 +66,7 @@ class Writes(Case):
         self.assertEqual(gql.calls, [("comment", {"i": "I", "b": "x"})])
         with self.assertRaises(LinearError) as cm:
             linear.call(
-                Gql(fail=lambda name, v: False), linear.M_COMMENT, "commentCreate", i="I", b="x"
+                Gql(fail=lambda _name, _v: False), linear.M_COMMENT, "commentCreate", i="I", b="x"
             )
         self.assertEqual(str(cm.exception), "commentCreate: success: false")
 
@@ -79,7 +79,7 @@ class Writes(Case):
             [("comment", {"i": "I", "b": "x"}), ("comment_id", {"c": "c-1", "i": "I", "b": "y"})],
         )
         with self.assertRaises(LinearError):
-            linear.comment(Gql(fail=lambda name, v: False), "I", "y", cid="c-1")
+            linear.comment(Gql(fail=lambda _name, _v: False), "I", "y", cid="c-1")
 
     def test_move(self):
         for state, want, calls in (
@@ -123,7 +123,7 @@ class Writes(Case):
                 )
                 self.assertEqual([n for n, _ in gql.calls], ["subscribe", "read"])
         gql = Gql(
-            fail=lambda name, v: LinearError("linear api error: boom") if name == "move" else None
+            fail=lambda name, _v: LinearError("linear api error: boom") if name == "move" else None
         )
         with self.assertRaises(LinearError):
             linear.comment_and_move(gql, "I", "body", IN_REVIEW, IN_PROGRESS)
@@ -155,7 +155,7 @@ class Writes(Case):
         self.assertEqual(linear.subscribe(Gql(), "I", ("a@x.com",)), "")
 
     def test_signal_exit_reraised(self):
-        gql = Gql(fail=lambda name, v: Stopped(130) if name == "subscribe" else None)
+        gql = Gql(fail=lambda name, _v: Stopped(130) if name == "subscribe" else None)
         with self.assertRaises(Stopped) as cm:
             linear.comment_and_move(
                 gql, "I", "body", IN_REVIEW, IN_PROGRESS, ("a@x.com", "b@x.com")

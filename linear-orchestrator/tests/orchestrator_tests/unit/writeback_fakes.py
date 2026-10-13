@@ -6,7 +6,7 @@ class Gql:
         self,
         states=(STATES["in_progress"],),
         attachments=(),
-        fail=lambda name, v: None,
+        fail=lambda _name, _v: None,
         issue=None,
         comments=None,
     ):

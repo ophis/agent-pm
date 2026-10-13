@@ -118,7 +118,7 @@ class UsageLimit(Base):
         self.assertEqual(self.lines(), [f"step {ID} step=limit"])
 
     def test_a_failed_comment_stops_before_the_move(self):
-        gql = Gql(fail=lambda name, v: False if name == "comment" else None)
+        gql = Gql(fail=lambda name, _v: False if name == "comment" else None)
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.limit(ctx, T))
         self.assertEqual(gql.calls[-1][0], "comment")
@@ -139,7 +139,7 @@ class UsageLimit(Base):
             ("subscribe", Stopped(143), "step=limit error=Stopped: 143"),
         ):
             with self.subTest(name=name):
-                gql = Gql(fail=lambda n, v: err if n == name else None)
+                gql = Gql(fail=lambda n, _v, *, err=err, name=name: err if n == name else None)
                 self.assertFalse(writeback.limit(self.ctx(gql=gql), T))
                 self.assertEqual(gql.calls[-1][0], name)
                 self.assertEqual(self.lines()[-1], f"step-error {ID} {line}")
@@ -161,7 +161,7 @@ class FinishSteps(Base):
         ):
             with self.subTest(text=text):
                 err = LinearError(f"linear api error: [{{'message': '{text}'}}]")
-                gql = Gql(fail=lambda name, v: err if name == "attach" else None)
+                gql = Gql(fail=lambda name, _v, *, err=err: err if name == "attach" else None)
                 ctx = self.ctx(gql=gql)
                 self.assertTrue(
                     writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
@@ -171,7 +171,9 @@ class FinishSteps(Base):
 
     def test_other_attach_error_stops(self):
         gql = Gql(
-            fail=lambda name, v: LinearError("linear api error: boom") if name == "attach" else None
+            fail=lambda name, _v: (
+                LinearError("linear api error: boom") if name == "attach" else None
+            )
         )
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
@@ -269,7 +271,7 @@ class FileRecheck(Base):
         os.link(spec, os.path.join(ctx.workdir, "copy.md"))
         return spec
 
-    def outside(self, ctx):
+    def outside(self, _ctx):
         outside = os.path.join(self.tmp, "outside.md")
         with open(outside, "w") as f:
             f.write("secret")

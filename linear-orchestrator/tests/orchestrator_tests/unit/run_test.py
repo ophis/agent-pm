@@ -175,7 +175,7 @@ class Inner(Case):
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=resume sid={SID}")
 
     def test_a_failed_session_comment_is_a_registry_error(self):
-        self.gql = Gql(lambda name, v: RuntimeError("down") if name == "update" else None)
+        self.gql = Gql(lambda name, _v: RuntimeError("down") if name == "update" else None)
         self.assertEqual(self.main(), 0)
         error = f"run registry-error TASK-7 sid={SID} error=RuntimeError: down"
         self.assertEqual(

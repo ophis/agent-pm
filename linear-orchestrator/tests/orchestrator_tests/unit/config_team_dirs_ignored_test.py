@@ -208,7 +208,7 @@ class CloneError(Clones):
             UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
         ):
 
-            def run(argv, timeout):
+            def run(_argv, _timeout, *, error=error):
                 raise error
 
             with self.subTest(type(error).__name__):

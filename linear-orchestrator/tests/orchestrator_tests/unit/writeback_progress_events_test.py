@@ -92,7 +92,7 @@ class ProgressEvents(Base):
         self.assertEqual(self.ledger(ctx), {SID: steps})
 
     def test_swallows_system_exit_and_retries_later(self):
-        gql = Gql(fail=lambda name, v: LinearError("linear api error: down"))
+        gql = Gql(fail=lambda _name, _v: LinearError("linear api error: down"))
         ctx = self.ctx(gql=gql)
         writeback.progress(ctx, START)
         self.assertEqual(
@@ -103,7 +103,7 @@ class ProgressEvents(Base):
         self.assertEqual(ok.calls, [post("start", "Build started: x")])
 
     def test_signal_exit_passes_through(self):
-        gql = Gql(fail=lambda name, v: Stopped(129))
+        gql = Gql(fail=lambda _name, _v: Stopped(129))
         ctx = self.ctx(gql=gql)
         with self.assertRaises(Stopped) as cm:
             writeback.progress(ctx, START)
@@ -112,7 +112,7 @@ class ProgressEvents(Base):
         self.assertEqual(self.lines(), [])
 
     def test_never_raises(self):
-        gql = Gql(fail=lambda name, v: RuntimeError("boom"))
+        gql = Gql(fail=lambda _name, _v: RuntimeError("boom"))
         open(os.path.join(self.tmp, "file"), "w").close()
         with logs_at(os.path.join(self.tmp, "file", "logs")):
             writeback.progress(self.ctx(gql=gql), START)
@@ -128,7 +128,7 @@ class FinishNeverRaises(Base):
     def test_signal_exit_stops_the_steps(self):
         for name in ("read", "subscribe", "comment", "attach"):
             with self.subTest(name=name):
-                gql = Gql(fail=lambda n, v: Stopped(143) if n == name else None)
+                gql = Gql(fail=lambda n, _v, *, name=name: Stopped(143) if n == name else None)
                 ctx = self.ctx(gql=gql)
                 self.assertFalse(
                     writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR))
@@ -216,7 +216,7 @@ class Bounce(Base):
                 gql = Gql(
                     issue=self.src(),
                     states=self.DONE,
-                    fail=lambda name, v: err if name == "unarchive" else None,
+                    fail=lambda name, _v, *, err=err: err if name == "unarchive" else None,
                 )
                 writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
                 self.assertEqual(gql.calls[-1], move("canceled"))
@@ -292,18 +292,21 @@ class Bounce(Base):
     def test_signal_exit_raises(self):
         for name in ("unarchive", "subscribe"):
             with self.subTest(name=name):
-                gql = Gql(issue=self.src(), fail=lambda n, v: Stopped(129) if n == name else None)
+                gql = Gql(
+                    issue=self.src(),
+                    fail=lambda n, _v, *, name=name: Stopped(129) if n == name else None,
+                )
                 with self.assertRaises(Stopped):
                     writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
                 self.assertEqual(gql.calls[-1][0], name)
 
     def test_other_failures_raise(self):
-        gql = Gql(issue=self.src(), fail=lambda name, v: False if name == "comment" else None)
+        gql = Gql(issue=self.src(), fail=lambda name, _v: False if name == "comment" else None)
         with self.assertRaises(LinearError):
             writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
         self.assertEqual(gql.calls[-1], comment(self.text("r"), SRC_UUID))
         gql = Gql(
-            fail=lambda name, v: LinearError("linear api error: x") if name == "state" else None
+            fail=lambda name, _v: LinearError("linear api error: x") if name == "state" else None
         )
         with self.assertRaises(LinearError):
             writeback.bounce(self.ctx(gql=gql), issue("x"), "r")

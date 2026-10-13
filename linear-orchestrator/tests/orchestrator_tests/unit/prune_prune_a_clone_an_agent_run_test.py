@@ -61,7 +61,7 @@ class PruneACloneAnAgentRun(PruneScenario):
                 os.path.join(self.work, "TASK-49", "src", "o", "n"),
             )
 
-        def failing(argv, timeout):
+        def failing(argv, _timeout):
             return subprocess.CompletedProcess(argv, 1, "", "fatal: boom")
 
         code, out = self.prune(
@@ -329,7 +329,7 @@ class PruneACloneAnAgentRun(PruneScenario):
     def test_prune_failure_leaves_handoff_alone(self):
         clone = self.mkc("TASK-49", "src", "o", "repo")
 
-        def down(query, **v):
+        def down(_query, **_v):
             raise LinearError("linear api error: down")
 
         code, state, out = self.tick(down)

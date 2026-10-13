@@ -265,7 +265,7 @@ class FinishLedger(Base):
 
     def test_read_error_stops(self):
         gql = Gql(
-            fail=lambda name, v: LinearError("linear api error: down") if name == "read" else None
+            fail=lambda name, _v: LinearError("linear api error: down") if name == "read" else None
         )
         ctx = self.ctx(gql=gql)
         self.assertFalse(writeback.finish(ctx, outcome("done", "ENG-7: x", "Ready.", url=PR)))
@@ -390,7 +390,7 @@ class CommentIds(Base):
         )
 
     def test_a_resume_after_a_failed_post_finds_then_posts_once(self):
-        broken = Gql(fail=lambda name, v: False if name == "comment" else None)
+        broken = Gql(fail=lambda name, _v: False if name == "comment" else None)
         ctx = self.ctx(gql=broken)
         done = outcome("failed", "ENG-7: x", "push not permitted")
         self.assertFalse(writeback.finish(ctx, done))
@@ -420,7 +420,10 @@ class CommentIds(Base):
             ),
         ):
             with self.subTest(name):
-                gql = Gql(comments=comments, fail=lambda n, v: fail if n == "find" else None)
+                gql = Gql(
+                    comments=comments,
+                    fail=lambda n, _v, *, fail=fail: fail if n == "find" else None,
+                )
                 ctx = self.ctx(gql=gql, resume=True)
                 self.assertFalse(
                     writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted"))

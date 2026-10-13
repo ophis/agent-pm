@@ -246,7 +246,9 @@ class Outage(Base):
                 down = failing(error, gql=fake, ops={"issue"})
                 self.assertEqual(
                     self.run_main(
-                        gql=lambda q, **v: (down if v.get("i") == "DR-2" else fake)(q, **v)
+                        gql=lambda q, *, down=down, fake=fake, **v: (
+                            down if v.get("i") == "DR-2" else fake
+                        )(q, **v)
                     ),
                     1,
                 )

@@ -52,7 +52,7 @@ class Entry(OuterBase):
                 self.todo["state"], self.fake.mutations, self.api.detached = "Todo", [], []
                 lines, detach = [], self.api.detach
 
-                def at_detach(*args, **kw):
+                def at_detach(*args, lines=lines, detach=detach, **kw):
                     with open(self.runs) as f:
                         lines.append(f.read())
                     return detach(*args, **kw)

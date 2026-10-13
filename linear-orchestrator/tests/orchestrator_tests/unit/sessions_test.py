@@ -249,7 +249,7 @@ class Status(Case):
 
 class Failure(Case):
     def failing(self, exc):
-        def gql(query, **v):
+        def gql(_query, **_v):
             raise exc
 
         return gql
@@ -268,7 +268,7 @@ class Failure(Case):
                 self.assertEqual(fake.calls, ["commentUpdate"])
         calls = []
 
-        def malformed(query, **v):
+        def malformed(query, **_v):
             calls.append(query)
             return {}
 
@@ -300,7 +300,7 @@ class Failure(Case):
         self.addCleanup(release.set)
         t = time.monotonic()
         out = sessions.post(
-            ISSUE, self.record(), 0, gql=lambda q, **v: release.wait(30), timeout=0.1
+            ISSUE, self.record(), 0, gql=lambda _q, **_v: release.wait(30), timeout=0.1
         )
         self.assertLess(time.monotonic() - t, 5)
         self.assertEqual(out, "timed out after 0.1s")
@@ -412,6 +412,6 @@ class Repair(Case):
         self.addCleanup(release.set)
         t = time.monotonic()
         self.assertEqual(
-            self.repair(lambda q, **v: release.wait(30), limit=0.1), "timed out after 0.1s"
+            self.repair(lambda _q, **_v: release.wait(30), limit=0.1), "timed out after 0.1s"
         )
         self.assertLess(time.monotonic() - t, 5)
