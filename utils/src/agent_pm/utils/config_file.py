@@ -89,8 +89,7 @@ def _rank(name: str) -> int:
     for i, level in enumerate(LEVELS):
         if name in level:
             return i
-    projects = ", ".join(p for level in LEVELS for p in level)
-    raise ConfigFileError(f"project {name!r}: want one of {projects}")
+    raise ConfigFileError(f"project {name!r}: want one of {', '.join(p for level in LEVELS for p in level)}")
 
 
 def _configs(root: str, name: str, path: str | None) -> dict[str, dict]:

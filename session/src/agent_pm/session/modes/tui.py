@@ -64,11 +64,7 @@ def _close(name: str, pane: str | None = None, *, host=tmux_host) -> None:
         host.kill(pane or name)
     except TuiError as e:
         if host.status(pane or name) is not None:
-            raise DriverError(
-                f"cannot close tui session {name}: {e.strerror or e}"
-                if isinstance(e, OSError)
-                else f"cannot close tui session {name}: {e}"
-            ) from None
+            raise DriverError(f"cannot close tui session {name}: {e}") from None
     _drop(name)
 
 

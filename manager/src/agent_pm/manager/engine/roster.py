@@ -395,7 +395,7 @@ def _open(path: str, flags: int) -> int | None:
         return None
     except OSError as e:
         raise RosterError(
-            f"{path}: {(_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror)}"
+            f"{path}: {_NOT_REGULAR if e.errno == errno.ELOOP else e.strerror}"
         ) from e
     try:
         st = os.fstat(fd)
@@ -746,7 +746,7 @@ def rotate(r: dict, directory: str, *, sleep=None) -> bool:
         except OSError as e:
             raise RosterError(f"{p}: {e.strerror}") from e
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-            raise RosterError(f"{p}: not a regular file owned by you")
+            raise RosterError(f"{p}: {_NOT_REGULAR}")
     try:
         os.replace(path, old)
     except OSError as e:
