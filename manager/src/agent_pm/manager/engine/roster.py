@@ -201,14 +201,20 @@ class Roster:
                     _name(holder["session"])
             if not isinstance(data["entries"], dict):
                 raise ValueError("entries: want an object")
-            for name, value in data["entries"].items():
+        except (ValueError, TypeError, RecursionError) as error:
+            raise RosterError(f"{self.path}: {error}") from error
+        entries = {}
+        for name, value in data["entries"].items():
+            try:
                 _name(name)
                 if not isinstance(value, dict):
                     raise ValueError("entry: want an object")
                 _entry(value)
-        except (ValueError, TypeError, RecursionError) as error:
-            raise RosterError(f"{self.path}: {error}") from error
-        return data
+            except (ValueError, TypeError, RecursionError, RosterError) as error:
+                print(f"manager: roster.json: entry {name!r}: {error}; skipped", file=sys.stderr)
+            else:
+                entries[name] = value
+        return {**data, "entries": entries}
 
     def _open_holder(self) -> int:
         path = os.path.join(self.directory, "holder.lock")

@@ -131,7 +131,7 @@ class RosterTest(Case):
                 self.roster.adopt(replace(self.record, sid=sid))
             self.assertFalse(Path(self.directory).exists())
 
-    def test_persisted_invalid_sid_is_refused_for_every_state(self):
+    def test_persisted_invalid_sid_is_skipped_for_every_state(self):
         self.roster.adopt(self.record)
         valid = self.content()
         for state in State:
@@ -146,8 +146,11 @@ class RosterTest(Case):
                         entry["record"]["sid"] = sid
                     Path(self.roster.path).write_text(json.dumps(data))
                     before = Path(self.roster.path).read_bytes()
-                    with self.assertRaisesRegex(RosterError, "canonical uuid4"):
-                        self.roster.entries()
+                    warning = io.StringIO()
+                    with mock.patch("sys.stderr", warning):
+                        self.assertEqual(self.roster.entries(), {})
+                    self.assertEqual(len(warning.getvalue().splitlines()), 1)
+                    self.assertIn("canonical uuid4", warning.getvalue())
                     self.assertEqual(Path(self.roster.path).read_bytes(), before)
                     self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
 
@@ -163,8 +166,14 @@ class RosterTest(Case):
             lambda: self.roster.claim_resume("x"),
             lambda: self.roster.mark("x", State.RESUMING),
         ):
-            with self.assertRaisesRegex(RosterError, "canonical uuid4"):
+            warning = io.StringIO()
+            with (
+                mock.patch("sys.stderr", warning),
+                self.assertRaisesRegex(RosterError, "not in roster"),
+            ):
                 operation()
+            self.assertEqual(len(warning.getvalue().splitlines()), 1)
+            self.assertIn("canonical uuid4", warning.getvalue())
             self.assertEqual(Path(self.roster.path).read_bytes(), before)
             self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
 
@@ -456,8 +465,50 @@ class RosterTest(Case):
             " " * ((1 << 20) + 1),
         ):
             Path(self.roster.path).write_text(raw)
-            with self.subTest(raw=raw[:20]), self.assertRaises(RosterError):
-                self.roster.entries()
+            with self.subTest(raw=raw[:20]):
+                if raw == valid.replace('"live"', '"impossible"'):
+                    warning = io.StringIO()
+                    with mock.patch("sys.stderr", warning):
+                        self.assertEqual(self.roster.entries(), {})
+                    self.assertEqual(len(warning.getvalue().splitlines()), 1)
+                    self.assertIn("impossible", warning.getvalue())
+                    self.assertEqual(Path(self.roster.path).read_text(), raw)
+                    self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
+                else:
+                    with self.assertRaises(RosterError):
+                        self.roster.entries()
+
+    def test_invalid_entry_read_keeps_healthy_entry_and_original_ledger(self):
+        self.roster.adopt(self.record)
+        bad = replace(self.record, name="bad", sid=str(uuid4()))
+        self.roster.adopt(bad)
+        data = self.content()
+        data["entries"]["bad"]["note"] = "bad\nnote"
+        Path(self.roster.path).write_text(json.dumps(data))
+        before = Path(self.roster.path).read_bytes()
+        warning = io.StringIO()
+        with mock.patch("sys.stderr", warning):
+            entries = self.roster.entries()
+        self.assertEqual(list(entries), ["x"])
+        self.assertEqual(entries["x"].record, self.record)
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.assertEqual(len(warning.getvalue().splitlines()), 1)
+        self.assertIn("entry 'bad'", warning.getvalue())
+
+    def test_next_write_drops_invalid_entry_and_updates_healthy_entry(self):
+        self.roster.adopt(self.record)
+        data = self.content()
+        data["entries"]["bad"] = {"record": "invalid"}
+        Path(self.roster.path).write_text(json.dumps(data))
+        warning = io.StringIO()
+        with mock.patch("sys.stderr", warning):
+            self.roster.note("x", "updated")
+        self.assertEqual(len(warning.getvalue().splitlines()), 1)
+        self.assertIn("entry 'bad'", warning.getvalue())
+        self.assertEqual(list(self.content()["entries"]), ["x"])
+        self.assertEqual(self.roster.entries()["x"].note, "updated")
+        self.roster.remove("x")
+        self.assertEqual(self.roster.entries(), {})
 
     def test_lock_waits_for_other_writer(self):
         self.begin()
