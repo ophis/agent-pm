@@ -1028,6 +1028,13 @@ class SharedTypes(Sample):
         )
         self.assertEqual(self.found("types.py"), [])
 
+    def test_a_relative_import_and_a_module_attribute_count(self):
+        for user in ("from .a import A\n", "from agent_pm.utils import a\n\nx = a.A\n"):
+            with self.subTest(user):
+                root = self.tree({f"{self.UTILS}/a.py": self.DATA, f"{self.UTILS}/b.py": user})
+                ((found,),) = [guards.shared_types(root)]
+                self.assertIn(": agent_pm.utils.a.A: a shared dataclass", found)
+
     def test_a_package_re_export_and_a_listed_home_are_clean(self):
         self.assertEqual(self.found("a.py", "__init__.py"), [])
         with mock.patch.dict(guards.TYPE_HOMES, {"utils.a.A": "why"}):

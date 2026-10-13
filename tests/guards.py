@@ -21,7 +21,8 @@ status_log_format(repo) STATUS_LOG_CLOCK only in STATUS_LOG_HOME
 syntax_39(repo)       PY39 files parse as Python 3.9
 import_hygiene(repo)  no sys.path mutation, module-level environment write or E402/I001/isort comment
 namespace_package(repo) each PROJECTS' src/ holds only PKG, no __init__.py, exactly its own subpackage (LEFTOVERS aside)
-shared_types(repo)    a dataclass another module imports (an __init__ aside) is in a types.py or TYPE_HOMES
+shared_types(repo)    a dataclass another module of its project uses, imported or as module.Name (an __init__ aside),
+                      is in a *.types module or TYPE_HOMES
 python_commands(repo) PYTHON in COMMAND_FILES and COMMAND_DOCS' .md is PYTHON_OK
 orchestrator_imports(orch) src/ imports stdlib, ORCH, SHARED, `from session import api`, EXPORTERS' __all__
                       (composer's and `from session import Session` in config.py only), no bare name
@@ -125,6 +126,10 @@ LEFTOVERS = {"__pycache__", ".DS_Store"}  # with *.egg-info, never a namespace_p
 TYPE_HOMES = {
     "delegate.event.outcome.Outcome": "the event unit sits below the engine",
     "linear_orchestrator.linear.issues.Issue": "issues.py is its parser",
+    **dict.fromkeys(
+        (f"session.adapters.codex.sessions.{n}" for n in ("SessionFile", "SessionState")),
+        "sessions.py runs by path as a stdlib-only script",
+    ),
 }
 PROJECTS = {
     "delegate": "delegate",
@@ -498,20 +503,39 @@ def shared_types(repo: str) -> list[str]:
             and any("dataclass" in ast.unparse(d) for d in n.decorator_list)
         }
         for module, (rel, tree) in trees.items():
-            if rel.endswith("__init__.py"):
-                continue
-            for line, source, name in _import_items(tree):
-                key = f"{source}.{name}"
-                if (
-                    key in data
-                    and source != module
-                    and not source.endswith(".types")
-                    and key.removeprefix(f"{PKG}.") not in TYPE_HOMES
-                ):
-                    found.append(
-                        f"{project}/src/{rel}:{line}: {key}: a shared dataclass belongs in a types.py"
-                    )
+            if not rel.endswith("__init__.py"):
+                found += _type_uses(project, rel, module, tree, data)
     return sorted(found)
+
+
+def _type_uses(project, rel, module, tree, data):
+    package, bound, used = module.split(".")[:-1], {}, []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            source = ".".join(
+                [*package[: len(package) - node.level + 1], *([node.module] if node.module else [])]
+                if node.level
+                else [node.module]
+            )
+            for a in node.names:
+                bound[a.asname or a.name] = f"{source}.{a.name}"
+                used.append((node.lineno, f"{source}.{a.name}"))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                bound[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+    used += [(n.lineno, _dotted(n, bound)) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
+    return sorted(
+        {
+            f"{project}/src/{rel}:{line}: {key}: a shared dataclass belongs in a types.py"
+            for line, key in used
+            if key in data
+            and (source := key.rpartition(".")[0]) != module
+            and not source.endswith(".types")
+            and key.removeprefix(f"{PKG}.") not in TYPE_HOMES
+        }
+    )
 
 
 def python_commands(repo: str) -> list[str]:
