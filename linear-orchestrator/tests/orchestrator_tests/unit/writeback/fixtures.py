@@ -27,34 +27,21 @@ class Base(Case):
         self.addCleanup(shutil.rmtree, self.tmp)
         linear.use_logs(os.path.join(self.tmp, "logs"))
 
-    def ctx(
-        self,
-        role="engineer",
-        *,
-        gql=None,
-        resume=False,
-        target=TARGET,
-        project=None,
-        sid=SID,
-        workdir=None,
-        humans=HUMANS,
-    ):
-        if workdir is None:
-            workdir = tempfile.mkdtemp(dir=self.tmp)
+    def ctx(self, role="engineer", *, gql=None):
         return writeback.Context(
             ident=ID,
             issue_id=UUID,
             role=role,
-            sid=sid,
-            resume=resume,
-            project=project,
-            workdir=workdir,
+            sid=SID,
+            resume=False,
+            project=None,
+            workdir=tempfile.mkdtemp(dir=self.tmp),
             gql=gql or Gql(),
-            humans=humans,
+            humans=HUMANS,
             states=STATES,
             repos=REPOS,
             team=board_ids.TEAM,
-            target=target,
+            target=TARGET,
         )
 
     def write(self, ctx, rel, text):

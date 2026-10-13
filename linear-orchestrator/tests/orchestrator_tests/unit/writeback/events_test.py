@@ -323,12 +323,14 @@ class WritebackContext(run_fixtures.Base):
                     cfg,
                     "engineer",
                     gql,
-                    ident=ID,
-                    issue_id=UUID,
-                    sid=SID,
-                    resume=resume,
-                    project=PROJECT,
-                    target=target,
+                    writeback.RunIdentity(
+                        ident=ID,
+                        issue_id=UUID,
+                        sid=SID,
+                        resume=resume,
+                        project=PROJECT,
+                        target=target,
+                    ),
                 )
                 want = writeback.Context(
                     ident=ID,

@@ -3,16 +3,15 @@ moves, each step once per session id (the ledger; comment steps by client id, fo
 resume); bounce, the router's repo-check report.
 """
 
+import contextlib
 import functools
 import hashlib
 import json
 import os
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from datetime import datetime
 
 from agent_pm.delegate import Outcome, Progress
-from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
+from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS, repo_slug
 from agent_pm.linear_orchestrator.engine.target import MAPPED
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
@@ -30,6 +29,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
     subscribe,
 )
+from agent_pm.linear_orchestrator.linear.types import Context, RunIdentity
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
 
 M_TITLE = (
@@ -54,38 +54,38 @@ ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create iss
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
-@dataclass(frozen=True)
-class Context:
-    ident: str
-    issue_id: str
-    role: str
-    sid: str
-    resume: bool
-    project: str | None
-    workdir: str
-    gql: Callable[..., dict]
-    humans: tuple[str, ...]
-    states: Mapping[str, str]
-    repos: Mapping[str, str]
-    team: str
-    target: tuple[str, str] | None
-
-
-def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
+def context(cfg, role, gql, identity: RunIdentity):
     return Context(
-        ident=ident,
-        issue_id=issue_id,
+        ident=identity.ident,
+        issue_id=identity.issue_id,
         role=role,
-        sid=sid,
-        resume=resume,
-        project=project,
-        workdir=cfg.run_dir(ident),
+        sid=identity.sid,
+        resume=identity.resume,
+        project=identity.project,
+        workdir=cfg.run_dir(identity.ident),
         gql=functools.partial(gql, service=cfg.roles[role].key),
         humans=tuple(e.lower() for e in cfg.human_members),
         states=cfg.states,
         repos=cfg.project_repos,
         team=cfg.team,
-        target=target,
+        target=identity.target,
+    )
+
+
+def from_request(cfg, role, gql, args, issue_id):
+    target = getattr(args, "target", None)
+    return context(
+        cfg,
+        role,
+        gql,
+        RunIdentity(
+            ident=args.issue,
+            issue_id=issue_id,
+            sid=args.sid,
+            resume=args.mode == "resume",
+            project=args.project,
+            target=repo_slug(target) if target else None,
+        ),
     )
 
 
@@ -165,7 +165,7 @@ def _post(ctx, step, body):
 
 
 def progress(ctx, event: Progress) -> None:
-    # raises only a signal LinearError: an on_event exception stops the Delegate's session
+    # raises only Stopped: an on_event exception stops the Delegate's session
     try:
         if not isinstance(event, Progress):
             return
@@ -211,8 +211,8 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: Outcome) -> bool:
-    # never raises: a signal LinearError stops the steps and returns False, so run.py still posts
-    # the session comment's end
+    # never raises: Stopped stops the steps and returns False, so run.py still posts the session
+    # comment's end
     try:
         return _finish(ctx, outcome)
     except (*SERVICE_ERRORS, Stopped) as e:
@@ -220,9 +220,8 @@ def finish(ctx, outcome: Outcome) -> bool:
         return False
 
 
-def _finish(ctx, o):
-    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
-    url = _url(ctx, o.url)
+def _completion_body(ctx, o):
+    task, url = TASKS[ctx.role], _url(ctx, o.url)
     if o.status == "done":
         lead, text, state = task.done, o.summary, "in_review"
     elif o.status == "needs_input":
@@ -237,6 +236,47 @@ def _finish(ctx, o):
     if task.approve and o.status == "done":
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
 
+    return body, state, url
+
+
+def _post_files(ctx, o, body):
+    posts = []
+    for path in o.files:
+        name = os.path.basename(path)
+        try:
+            data = _read_file(path, ctx.workdir)
+        except (OSError, ValueError) as e:
+            body += f"\n\nCould not post the file `{name}`: {one_line(e)}"
+            continue
+        text = data.decode("utf-8", errors="replace")
+        posts.append(
+            (
+                "Plan" if PLAN_MARK in text else "Spec",
+                name,
+                text,
+                hashlib.sha256(data).hexdigest()[:12],
+            )
+        )
+    for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
+        if err := _post(ctx, f"file:{name}:{digest}", f"**{kind}** `{name}`\n\n---\n\n{text}"):
+            body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
+    return body
+
+
+def _attach(ctx, url, title, attached):
+    if url in attached:
+        return
+    try:
+        call(ctx.gql, M_ATTACH, "attachmentLinkURL", i=ctx.issue_id, u=url, t=title)
+    except SERVICE_ERRORS as e:
+        if not any(s in str(e) for s in ATTACHED):  # the GitHub integration links PRs itself
+            raise
+
+
+def _finish(ctx, o):
+    task, gql, issue = TASKS[ctx.role], ctx.gql, ctx.issue_id
+    body, state, url = _completion_body(ctx, o)
+
     try:
         attached = {a["url"] for a in gql(Q_ATTACHED, i=issue)["issue"]["attachments"]["nodes"]}
     except SERVICE_ERRORS as e:
@@ -244,26 +284,7 @@ def _finish(ctx, o):
         return False
 
     if task.files and o.status != "needs_input":
-        posts = []
-        for path in o.files:
-            name = os.path.basename(path)
-            try:
-                data = _read_file(path, ctx.workdir)
-            except (OSError, ValueError) as e:
-                body += f"\n\nCould not post the file `{name}`: {one_line(e)}"
-                continue
-            text = data.decode("utf-8", errors="replace")
-            posts.append(
-                (
-                    "Plan" if PLAN_MARK in text else "Spec",
-                    name,
-                    text,
-                    hashlib.sha256(data).hexdigest()[:12],
-                )
-            )
-        for kind, name, text, digest in sorted(posts, key=lambda p: p[0] == "Plan"):
-            if err := _post(ctx, f"file:{name}:{digest}", f"**{kind}** `{name}`\n\n---\n\n{text}"):
-                body += f"\n\nCould not post the {kind} `{name}`: {one_line(err)}"
+        body = _post_files(ctx, o, body)
 
     if (
         task.retitle
@@ -280,21 +301,12 @@ def _finish(ctx, o):
     if _post(ctx, "comment", body):
         return False
 
-    if o.status == "done" and url:
-
-        def attach():
-            if url in attached:
-                return
-            try:
-                call(gql, M_ATTACH, "attachmentLinkURL", i=issue, u=url, t=o.title)
-            except SERVICE_ERRORS as e:
-                if not any(
-                    s in str(e) for s in ATTACHED
-                ):  # the GitHub integration links PRs itself
-                    raise
-
-        if _step(ctx, f"attach:{url}", attach):
-            return False
+    if (
+        o.status == "done"
+        and url
+        and _step(ctx, f"attach:{url}", lambda: _attach(ctx, url, o.title, attached))
+    ):
+        return False
 
     return (
         _step(
@@ -335,10 +347,8 @@ def bounce(ctx, issue: Issue, reason: str) -> None:
             f" to Handoff again with a comment `Repo: <owner>/<name>` naming the "
             f"target repo."
         ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
-        try:
+        with contextlib.suppress(*SERVICE_ERRORS):
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
-        except SERVICE_ERRORS:
-            pass
         notes = subscribe(gql, src["id"], ctx.humans)
         comment(gql, src["id"], text + notes)
         _guarded_move(ctx, src["id"], h.source, "in_review", "done")

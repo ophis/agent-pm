@@ -186,8 +186,8 @@ class CompletionMessages(Base):
                     with self.subTest(role=role, status=status, resume=resume):
                         gql = Gql()
                         build = config.TASKS[role].kind == "build"
-                        ctx = self.ctx(
-                            role, gql=gql, resume=resume, target=TARGET if build else None
+                        ctx = replace(
+                            self.ctx(role, gql=gql), resume=resume, target=TARGET if build else None
                         )
                         spec, plan = self.files(ctx)
                         self.assertTrue(
@@ -212,7 +212,7 @@ class CompletionMessages(Base):
 
     def test_design_retitle_and_mapped_approve_line(self):
         gql = Gql()
-        ctx = self.ctx("pm", gql=gql, target=None, project=PROJECT)
+        ctx = replace(self.ctx("pm", gql=gql), target=None, project=PROJECT)
         writeback.finish(ctx, outcome("done", "Session Registry", "PRD for the registry.", url=PRD))
         self.assertEqual(
             gql.calls,
@@ -378,7 +378,7 @@ class ResumedComments(Base):
     def test_a_resumed_finish_counts_a_found_comment_as_posted(self):
         body = "Build failed: push not permitted"
         gql = Gql(comments={cid("comment"): mine(body)})
-        ctx = self.ctx(gql=gql, resume=True)
+        ctx = replace(self.ctx(gql=gql), resume=True)
         self.assertTrue(writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted")))
         self.assertEqual(
             gql.calls,
@@ -424,7 +424,7 @@ class ResumedComments(Base):
                     comments=comments,
                     fail=lambda n, _v, *, fail=fail: fail if n == "find" else None,
                 )
-                ctx = self.ctx(gql=gql, resume=True)
+                ctx = replace(self.ctx(gql=gql), resume=True)
                 self.assertFalse(
                     writeback.finish(ctx, outcome("failed", "ENG-7: x", "push not permitted"))
                 )

@@ -72,6 +72,7 @@ def lookup(account):
 
 def agent_calls(calls):
     """fake_claude's calls of agent runs: the usage probe's have neither --session-id nor --resume.
+        
     """
     return [c for c in calls if {"--session-id", "--resume"} & set(c["argv"])]
 
@@ -564,6 +565,7 @@ class Segment(TmuxFlow):
 
     def prompt(self, ident, sid):
         """The input of sid's first run: run.jsonl's input record after sid's first session record.
+                
         """
         records = self.records(ident)
         at = next(

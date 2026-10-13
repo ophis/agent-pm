@@ -60,17 +60,7 @@ class Launch:
             issue = issues.read_issue(self.gql, a.issue)
         except SERVICE_ERRORS as e:
             return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
-        ctx = writeback.context(
-            cfg,
-            self.role,
-            self.gql,
-            ident=a.issue,
-            issue_id=issue.id,
-            sid=a.sid,
-            resume=a.mode == "resume",
-            project=a.project,
-            target=None,
-        )
+        ctx = writeback.from_request(cfg, self.role, self.gql, a, issue.id)
         repo, result = self.target(issue, ctx)
         if result is not None:
             return result

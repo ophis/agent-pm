@@ -69,7 +69,7 @@ class UsageLimitReporting(Base):
 
     def test_subscribes_the_humans_and_notes_failures(self):
         gql = Gql()
-        self.assertTrue(writeback.limit(self.ctx(gql=gql, humans=()), T))
+        self.assertTrue(writeback.limit(replace(self.ctx(gql=gql), humans=()), T))
         self.assertEqual(
             gql.calls,
             [
@@ -380,7 +380,7 @@ class EngineeringUrls(Base):
             with self.subTest(name):
                 gql = Gql()
                 before = len(logged())
-                writeback.finish(self.ctx(gql=gql, target=target), o)
+                writeback.finish(replace(self.ctx(gql=gql), target=target), o)
                 self.assertEqual(gql.calls, calls)
                 self.assertEqual(
                     [line for line in self.lines()[before:] if line.startswith("skip ")],

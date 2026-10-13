@@ -9,6 +9,7 @@ from orchestrator_tests.unit.sessions.data import CMD, T1, record
 
 class Late:
     """Holds the first call until released, then sends it: a write that timed out and lands later.
+        
     """
 
     def __init__(self, gql):
