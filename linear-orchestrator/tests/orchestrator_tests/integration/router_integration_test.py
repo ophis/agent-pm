@@ -298,6 +298,8 @@ class Router(TmuxFlow):
         self.wait_end(sid, ID)
         [end] = [e for e in self.logged() if (e["src"], e["kind"]) == ("run", "end")]
         self.assertEqual((end["issue"], end["exit"]), (ID, 128 + signal.SIGTERM))
+        [delegate_end] = [record for record in self.records(ID) if record["kind"] == "end"]
+        self.assertEqual((delegate_end["sid"], delegate_end["rc"]), (sid, 128 + signal.SIGTERM))
         live_tmux.wait(lambda: gone(agent["pid"]), TIMEOUT, f"fake claude {agent['pid']} to end")
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
         self.assertEqual(author, HARNESS_EMAIL)

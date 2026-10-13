@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from agent_pm import delegate
 from agent_pm.session import Driver
+from agent_pm.utils import Stopped as Stopped
 
 STATES = {
     "todo": "Todo",
@@ -27,12 +28,6 @@ class ConfigError(Exception):
 
 class LinearError(Exception):
     pass
-
-
-class Stopped(BaseException):
-    def __init__(self, code):
-        super().__init__(code)
-        self.code = code
 
 
 class Unavailable(Exception):

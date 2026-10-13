@@ -6,6 +6,7 @@ from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import Driver
 from agent_pm.session import Spec as SessionSpec
+from agent_pm.utils import Stopped as Stopped
 
 __all__ = [
     "ConfigError",
@@ -18,12 +19,6 @@ __all__ = [
     "Finished",
     "Event",
 ]
-
-
-class Stopped(BaseException):
-    def __init__(self, signum: int):
-        self.code = 128 + signum
-        super().__init__(self.code)
 
 
 @dataclass(frozen=True)

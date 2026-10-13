@@ -357,7 +357,7 @@ class Stops(Base):
 
     def test_an_exception_ends_the_record_stopped(self):
         for error, rc, text in (
-            (Stopped(signal.SIGTERM), 143, "stopped: Stopped: 143"),
+            (Stopped(128 + signal.SIGTERM), 143, "stopped: Stopped: 143"),
             (SystemExit(129), 129, "stopped: SystemExit: 129"),
             (SystemExit("bye"), 1, "stopped: SystemExit: bye"),
             (KeyboardInterrupt(), 1, "stopped: KeyboardInterrupt"),

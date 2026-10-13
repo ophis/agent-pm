@@ -190,7 +190,7 @@ def _detach(a: argparse.Namespace, p: Plan) -> int:
 
 def _stop(signum, _frame):
     signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)  # one exit: one outcome line
-    raise Stopped(signum)
+    raise Stopped(128 + signum)
 
 
 def listing(team: Team) -> str:

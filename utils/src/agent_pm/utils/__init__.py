@@ -36,7 +36,7 @@ from agent_pm.utils.paths import (
 from agent_pm.utils.record import Display, Record, Status, json_records
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
-from agent_pm.utils.shell import LONG, SHORT, Runner, err_text, redact, sh
+from agent_pm.utils.shell import LONG, SHORT, Runner, Stopped, err_text, redact, sh
 from agent_pm.utils.text import printable, sid_error
 
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "SHORT",
     "STATE",
     "Status",
+    "Stopped",
     "append_line",
     "check_slug",
     "checkout",
