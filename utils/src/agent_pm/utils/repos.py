@@ -37,6 +37,55 @@ class Invalid(Exception):
     def checkout(cls, slug):
         return cls(f"unsafe checkout name {slug[:80]!r}")
 
+    @classmethod
+    def inaccessible(cls, slug, status):
+        return cls(f"{slug}: not found or no access (HTTP {status})")
+
+    @classmethod
+    def existing_path(cls, path):
+        return cls(f"{path} exists and is not a checkout")
+
+    @classmethod
+    def wrong_checkout(cls, path, slug):
+        return cls(f"{path} is not a checkout of {slug}")
+
+    @classmethod
+    def branch(cls, name):
+        return cls(f"unsafe branch name {name[:80]!r}")
+
+    @classmethod
+    def temporary_clone(cls, clone, temporary):
+        return cls(
+            f"{clone} is under the temp dir {temporary}: keep local clones outside temp dirs"
+        )
+
+    @classmethod
+    def symlink_policy(cls, path, actual, expected):
+        return cls(
+            f"{path} has core.symlinks={actual or 'unset'}, trusted_dirs gives {expected}: "
+            "remove it and run again"
+        )
+
+    @classmethod
+    def default_branch(cls, slug):
+        return cls(f"{slug}: unsafe default branch name")
+
+    @classmethod
+    def builds_on_default(cls, branch):
+        return cls(f"{branch} is the default branch; build on another")
+
+    @classmethod
+    def base_branch(cls, branch):
+        return cls(f"unsafe base branch name {str(branch)[:80]!r}")
+
+    @classmethod
+    def busy_branch(cls, branch, path):
+        return cls(f"{branch} is checked out in {path}")
+
+    @classmethod
+    def missing_worktree(cls, path):
+        return cls(f"{path} missing: run worktree first")
+
 
 @dataclass(frozen=True)
 class Repo:

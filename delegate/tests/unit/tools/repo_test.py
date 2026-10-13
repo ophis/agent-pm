@@ -15,6 +15,7 @@ import unittest
 import unittest.mock
 
 from agent_pm.delegate.composer import TEAM
+from agent_pm.delegate.team.tools.types import CheckoutRequest, RepoServices
 
 from delegate.tests.case import Case
 
@@ -138,7 +139,10 @@ class Base(Case):
     def main(self, argv, run, config=None, local=None):
         out, err = io.StringIO(), io.StringIO()
         code = repo.main(
-            argv, run=run, out=out, err=err, config=config or self.none, local=local or self.none
+            argv,
+            config=config or self.none,
+            local=local or self.none,
+            services=RepoServices(run=run, out=out, err=err),
         )
         return code, out.getvalue(), err.getvalue()
 
@@ -436,7 +440,7 @@ class Worktree(Base):
         """argparse's stderr for `argv`, which it must refuse."""
         err = io.StringIO()
         with self.assertRaises(SystemExit), unittest.mock.patch("sys.stderr", err):
-            repo.main(argv, run=Fake([]), config=self.none, local=self.none)
+            repo.main(argv, config=self.none, local=self.none, services=RepoServices(run=Fake([])))
         return err.getvalue()
 
     def test_an_option_given_twice_is_refused(self):
@@ -542,12 +546,10 @@ class Local(Clone):
                 *([] if base_branch is None else ["--base", base_branch]),
                 spec or self.clone,
             ],
-            run=run,
-            out=out,
-            err=err,
             config=config or self.none,
             local=self.none,
             temp=(),
+            services=RepoServices(run=run, out=out, err=err),
         )
         return code, json.loads(out.getvalue()) if code == 0 else err.getvalue(), run
 
@@ -724,7 +726,9 @@ class Local(Clone):
         def go(branch):
             try:
                 results[branch] = repo.worktree(
-                    self.clone, branch, os.path.join(self.tmp, branch), run=Real([info()]), temp=()
+                    CheckoutRequest(self.clone, branch, os.path.join(self.tmp, branch)),
+                    run=Real([info()]),
+                    temp=(),
                 )
             except Exception as e:
                 results[branch] = e
@@ -744,12 +748,10 @@ class Local(Clone):
         run, out, err = Real([info()]), io.StringIO(), io.StringIO()
         code = repo.main(
             ["worktree", "--dir", self.dir, "--branch", "TASK-7-x", "--name", "TASK-7", self.clone],
-            run=run,
-            out=out,
-            err=err,
             config=self.none,
             local=self.none,
             temp=(),
+            services=RepoServices(run=run, out=out, err=err),
         )
         self.assertEqual((code, json.loads(out.getvalue())["worktree"]), (0, wt), err.getvalue())
         admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
@@ -759,11 +761,9 @@ class Local(Clone):
                 run, out, err = Real([LOGIN, pr_list([]), info()]), io.StringIO(), io.StringIO()
                 code = repo.main(
                     ["status", "--dir", self.dir, "--branch", "TASK-7-x", *argv, self.clone],
-                    run=run,
-                    out=out,
-                    err=err,
                     config=self.none,
                     local=self.none,
+                    services=RepoServices(run=run, out=out, err=err),
                 )
                 self.assertEqual(code, want, err.getvalue())
                 if want == 0:  # status with a local path
@@ -783,12 +783,10 @@ class LocalSafety(Clone):
         )
         code = repo.main(
             ["worktree", "--dir", self.dir, "--branch", "TASK-1-x", spec or self.clone],
-            run=run,
-            out=out,
-            err=err,
             config=config or self.none,
             local=local or self.none,
             temp=temp,
+            services=RepoServices(run=run, out=out, err=err),
         )
         return code, err.getvalue()
 
@@ -1164,9 +1162,7 @@ class Status(Base):
         errors = io.StringIO()
         code = repo.main(
             ["status", "o/n", "--branch", "b", "--dir", self.dir],
-            run=Fake([]),
-            out=io.StringIO(),
-            err=errors,
+            services=RepoServices(run=Fake([]), out=io.StringIO(), err=errors),
         )
         self.assertEqual(code, 1)
         self.assertIn("Invalid value", errors.getvalue())

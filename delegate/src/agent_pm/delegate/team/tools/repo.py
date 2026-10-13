@@ -29,9 +29,17 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime
 
 from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
+from agent_pm.delegate.team.tools.types import (
+    BranchSelection,
+    CheckoutRequest,
+    RepoCommandError,
+    RepoServices,
+    Worktree,
+)
 from agent_pm.utils import (
     LOCAL,
     LONG,
@@ -61,11 +69,11 @@ BRANCH = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,100}(?<![./])")
 def gh_json(run: Runner, argv: list[str]):
     res = run(["gh", *argv], SHORT)
     if res.returncode != 0:
-        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {err_text(res)}")
+        raise RepoCommandError.gh(argv, err_text(res))
     try:
         return json.loads(res.stdout)
     except ValueError as e:
-        raise RuntimeError(f"gh {' '.join(argv)[:100]}: {e}") from None
+        raise RepoCommandError.gh(argv, e) from None
 
 
 def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
@@ -73,13 +81,13 @@ def info(repo: Repo, *, run: Runner) -> tuple[bool, str]:
     if res.returncode != 0:
         code = re.search(r"HTTP (\d{3})", res.stderr or "")
         if code and code.group(1) in ("403", "404"):
-            raise Invalid(f"{repo.slug}: not found or no access (HTTP {code.group(1)})")
-        raise RuntimeError(f"gh api: {err_text(res)}")
+            raise Invalid.inaccessible(repo.slug, code.group(1))
+        raise RepoCommandError.api(err_text(res))
     try:
         data = json.loads(res.stdout)
         return data["permissions"]["push"] is True, data["default_branch"]
     except (ValueError, KeyError, TypeError) as e:
-        raise RuntimeError(f"gh api repos/{repo.owner}/{repo.name}: {e!r}") from None
+        raise RepoCommandError.repository_response(repo, e) from None
 
 
 def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -> tuple[str, bool]:
@@ -92,7 +100,7 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
         or os.path.islink(dotgit)
         or not (os.path.isdir(dotgit) or os.path.isfile(dotgit))
     ):
-        raise Invalid(f"{wt} exists and is not a checkout")
+        raise Invalid.existing_path(wt)
     if os.path.isfile(dotgit):
         res = (
             run(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-common-dir"], SHORT)
@@ -100,14 +108,15 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
             else None
         )
         if (
-            res is None
+            clone is None
+            or res is None
             or res.returncode != 0
             or os.path.realpath(res.stdout.strip()) != os.path.join(clone, ".git")
         ):
-            raise Invalid(f"{wt} is not a checkout of {repo.slug}")
+            raise Invalid.wrong_checkout(wt, repo.slug)
     res = run(["git", "-C", wt, "remote", "get-url", "origin"], SHORT)
     if res.returncode != 0 or origin(res.stdout) != repo.slug.lower():
-        raise Invalid(f"{wt} is not a checkout of {repo.slug}")
+        raise Invalid.wrong_checkout(wt, repo.slug)
     return wt, True
 
 
@@ -129,12 +138,12 @@ def clone_repo(repo: Repo, wt: str, *, run: Runner) -> None:
         LONG,
     )
     if res.returncode != 0:
-        raise RuntimeError(f"gh repo clone: {err_text(res)}")
+        raise RepoCommandError.clone(err_text(res))
 
 
 def check_branch(branch: str) -> None:
     if not BRANCH.fullmatch(branch):
-        raise Invalid(f"unsafe branch name {branch[:80]!r}")
+        raise Invalid.branch(branch)
 
 
 def registered(run: Runner, at: str) -> dict[str, str | None]:
@@ -148,103 +157,112 @@ def registered(run: Runner, at: str) -> dict[str, str | None]:
     return found
 
 
-def worktree(
-    spec: str,
-    branch: str,
-    base: str,
-    *,
-    slug: str | None = None,
-    run: Runner = sh,
-    temp=None,
-    links=frozenset(),
-    base_branch: str | None = None,
-) -> dict:
-    # a local clone in a temp dir is refused: prune treats clones there as untrusted
-    check_branch(branch)
-    slug = check_slug(slug, branch)
-    repo, clone = resolve(spec, run=run)
-    if clone and (d := under(clone, temp_dirs() if temp is None else temp)):
-        raise Invalid(f"{clone} is under the temp dir {d}: keep local clones outside temp dirs")
-    symlinks = "true" if clone is not None and clone in links else "false"
-    wt, exists = place(repo, base, clone, slug, run=run)
-    if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
+def _existing(state: Worktree, *, run: Runner) -> bool:
+    clone, wt = state.clone, state.path
+    if state.exists and clone is not None and os.path.isfile(os.path.join(wt, ".git")):
         index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
-        if not os.path.isfile(index):  # its checkout never finished: it holds nothing
+        if not os.path.isfile(index):
+            # An unfinished checkout has no index and holds no work to retain.
             git(run, clone, "worktree", "remove", "--force", wt, timeout=LONG)
-            exists = False
-        else:
-            found = run(
-                ["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT
-            ).stdout.strip()
-            if found != symlinks:
-                raise Invalid(
-                    f"{wt} has core.symlinks={found or 'unset'}, trusted_dirs gives {symlinks}: "
-                    "remove it and run again"
-                )
-    push, default = info(repo, run=run)
-    if not isinstance(default, str) or not BRANCH.fullmatch(default):
-        raise Invalid(f"{repo.slug}: unsafe default branch name")
-    if branch == default:
-        raise Invalid(f"{branch} is the default branch; build on another")
-    onto = base_branch if base_branch is not None else default
-    if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
-        raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
-    add = clone is not None and not exists
-    # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move
-    # local branches.
-    if exists:
+            return False
+        found = run(
+            ["git", "-C", wt, "config", "--worktree", "--get", "core.symlinks"], SHORT
+        ).stdout.strip()
+        if found != state.symlinks:
+            raise Invalid.symlink_policy(wt, found, state.symlinks)
+    return state.exists
+
+
+def _branch_selection(run: Runner, at: str, branch: str, onto: str, mine: str) -> BranchSelection:
+    trees = registered(run, at)
+    busy = [path for path, name in trees.items() if name == branch and path != mine]
+    if busy:
+        raise Invalid.busy_branch(branch, busy[0])
+    if git(run, at, "branch", "--list", branch).strip():
+        options, start = (), branch
+    elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
+        options, start = ("--track", "-b", branch), f"origin/{branch}"
+    else:
+        options, start = ("--no-track", "-b", branch), f"origin/{onto}"
+    return BranchSelection(options, start, registered=mine in trees)
+
+
+def _add_checkout(state: Worktree, selection: BranchSelection, *, run: Runner) -> None:
+    clone, wt = state.clone, state.path
+    assert clone is not None
+    os.makedirs(os.path.dirname(wt), exist_ok=True)
+    # Per-worktree symlinks leave the clone's own checkout policy intact. --force re-adds a deleted
+    # checkout whose path remains registered.
+    if (
+        run(
+            ["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT
+        ).stdout.strip()
+        != "true"
+    ):
+        git(run, clone, "config", "extensions.worktreeConfig", "true")
+    force = ("--force",) if selection.registered else ()
+    git(
+        run,
+        clone,
+        "worktree",
+        "add",
+        "--no-checkout",
+        *force,
+        *selection.options,
+        wt,
+        selection.start,
+        timeout=LONG,
+    )
+    try:
+        git(run, wt, "config", "--worktree", "core.symlinks", state.symlinks)
+        git(run, wt, "reset", "-q", "--hard", timeout=LONG)
+    except (RuntimeError, subprocess.TimeoutExpired):
+        run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
+        raise
+
+
+def _checkout(state: Worktree, branch: str, onto: str, *, run: Runner) -> None:
+    clone, wt = state.clone, state.path
+    # The explicit refspec keeps a mirror-style configured fetch map from moving local branches.
+    if state.exists:
         git(run, wt, *FETCH, timeout=LONG)
-    elif add:
+    elif clone is not None:
         git(run, clone, *FETCH, timeout=LONG)
     else:
-        clone_repo(repo, wt, run=run)
-    at = clone if add else wt
+        clone_repo(state.repository, wt, run=run)
+    add = clone is not None and not state.exists
+    at = clone if clone is not None and not state.exists else wt
     if add or git(run, wt, "branch", "--show-current").strip() != branch:
-        trees, mine = registered(run, at), os.path.realpath(wt)
-        busy = [p for p, b in trees.items() if b == branch and p != mine]
-        if busy:
-            raise Invalid(f"{branch} is checked out in {busy[0]}")
-        if git(run, at, "branch", "--list", branch).strip():
-            opts, start = [], branch
-        elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
-            opts, start = ["--track", "-b", branch], f"origin/{branch}"
-        else:
-            opts, start = ["--no-track", "-b", branch], f"origin/{onto}"
+        selection = _branch_selection(run, at, branch, onto, os.path.realpath(wt))
         if add:
-            os.makedirs(os.path.dirname(wt), exist_ok=True)
-            # core.symlinks per worktree, so the clone's own checkout keeps its config. --force
-            # re-adds our own path when it was deleted by hand but is still registered.
-            if (
-                run(
-                    ["git", "-C", clone, "config", "--get", "extensions.worktreeConfig"], SHORT
-                ).stdout.strip()
-                != "true"
-            ):
-                git(run, clone, "config", "extensions.worktreeConfig", "true")
-            force = ["--force"] if mine in trees else []
-            git(
-                run,
-                clone,
-                "worktree",
-                "add",
-                "--no-checkout",
-                *force,
-                *opts,
-                wt,
-                start,
-                timeout=LONG,
-            )
-            try:
-                git(run, wt, "config", "--worktree", "core.symlinks", symlinks)
-                git(run, wt, "reset", "-q", "--hard", timeout=LONG)
-            except (RuntimeError, subprocess.TimeoutExpired):
-                run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
-                raise
+            _add_checkout(state, selection, run=run)
         else:
-            git(run, wt, "checkout", *opts, start, timeout=LONG)
+            git(run, wt, "checkout", *selection.options, selection.start, timeout=LONG)
+
+
+def worktree(request: CheckoutRequest, *, run: Runner = sh, temp=None, links=frozenset()) -> dict:
+    branch = request.branch
+    check_branch(branch)
+    slug = check_slug(request.slug, branch)
+    repo, clone = resolve(request.repository, run=run)
+    if clone and (directory := under(clone, temp_dirs() if temp is None else temp)):
+        raise Invalid.temporary_clone(clone, directory)
+    symlinks = "true" if clone is not None and clone in links else "false"
+    wt, exists = place(repo, request.directory, clone, slug, run=run)
+    state = Worktree(repo, clone, wt, exists=exists, symlinks=symlinks)
+    state = replace(state, exists=_existing(state, run=run))
+    push, default = info(repo, run=run)
+    if not isinstance(default, str) or not BRANCH.fullmatch(default):
+        raise Invalid.default_branch(repo.slug)
+    if branch == default:
+        raise Invalid.builds_on_default(branch)
+    onto = request.base_branch if request.base_branch is not None else default
+    if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
+        raise Invalid.base_branch(onto)
+    _checkout(state, branch, onto, run=run)
     commit = git(run, wt, "rev-parse", "HEAD").strip()
     if not SHA.fullmatch(commit):
-        raise RuntimeError(f"git rev-parse HEAD: {commit[:80]!r}")
+        raise RepoCommandError.head(commit)
     return {
         "repo": f"{repo.owner}/{repo.name}",
         "host": repo.host,
@@ -288,21 +306,14 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: datetime.fromisoformat(e["at"]))
 
 
-def status(
-    spec: str,
-    branch: str,
-    base: str,
-    *,
-    slug: str | None = None,
-    run: Runner = sh,
-    users: list[str] | None = None,
-    base_branch: str | None = None,
-) -> dict:
+def status(request: CheckoutRequest, *, run: Runner = sh, users: list[str] | None = None) -> dict:
+    spec, branch, base = request.repository, request.branch, request.directory
+    slug, base_branch = request.slug, request.base_branch
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)
     if not exists:
-        raise Invalid(f"{wt} missing: run worktree first")
+        raise Invalid.missing_worktree(wt)
     docs = plan_docs(wt, branch)
     since = (
         git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip()
@@ -340,7 +351,7 @@ def status(
         else info(repo, run=run)[1]
     )
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
-        raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
+        raise Invalid.base_branch(onto)
     user, others = [], []
     if pr:
         api = f"repos/{repo.owner}/{repo.name}"
@@ -384,13 +395,14 @@ def status(
 
 def main(
     argv: list[str],
-    run: Runner = sh,
-    out=sys.stdout,
-    err=sys.stderr,
+    *,
+    services: RepoServices | None = None,
     config: str = CONFIG,
     local: str = LOCAL,
     temp=None,
 ) -> int:
+    services = RepoServices() if services is None else services
+    run, out, err = services.run, services.out, services.err
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("worktree", "status"):
@@ -403,27 +415,11 @@ def main(
     a = ap.parse_args(argv)
     try:
         cfg = read_project("delegate", path=config, local=local)
+        request = CheckoutRequest(a.repo, a.branch, a.dir, slug=a.name, base_branch=a.base)
         if a.cmd == "worktree":
-            r = worktree(
-                a.repo,
-                a.branch,
-                a.dir,
-                slug=a.name,
-                run=run,
-                temp=temp,
-                links=trusted_dirs(cfg),
-                base_branch=a.base,
-            )
+            r = worktree(request, run=run, temp=temp, links=trusted_dirs(cfg))
         else:
-            r = status(
-                a.repo,
-                a.branch,
-                a.dir,
-                slug=a.name,
-                run=run,
-                users=cfg.get("users"),
-                base_branch=a.base,
-            )
+            r = status(request, run=run, users=cfg.get("users"))
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2
