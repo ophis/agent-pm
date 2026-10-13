@@ -10,7 +10,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
     ConfigError,
     Promotion,
-    PruneScope,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
@@ -285,11 +284,9 @@ class Promoter:
                 self.gql,
                 src["id"],
                 body,
-                linear.Transition(
-                    to=self.states["in_review"],
-                    frm=self.states["handoff"],
-                    emails=self.cfg.human_members,
-                ),
+                to=self.states["in_review"],
+                frm=self.states["handoff"],
+                emails=self.cfg.human_members,
             ),
         )
 
@@ -304,13 +301,15 @@ def run_prune(gql, now, promoter, pruner=None):
     try:
         if pruner is None:
             from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
-        scope = PruneScope(
+        pruner(
+            gql,
+            now,
+            dry=promoter.dry,
             work=promoter.cfg.runs_dir,
             team=promoter.team,
             roles=promoter.roles,
             driver=promoter.cfg.driver,
-        )
-        pruner(gql, now, promoter.dry, scope=scope).run()
+        ).run()
     except Unavailable as e:
         linear_error("prune", e, dry=promoter.dry)
     except CALL_ERRORS as e:

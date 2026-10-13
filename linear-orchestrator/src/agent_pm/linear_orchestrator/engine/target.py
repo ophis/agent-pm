@@ -9,7 +9,7 @@ from dataclasses import replace
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
-from agent_pm.linear_orchestrator.engine.types import ClonePaths, Invalid, Target, Transient
+from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
 from agent_pm.linear_orchestrator.linear import issues
 from agent_pm.utils import GUARD, NAME, OWNER, SHORT, common_dir, err_text, under
 from agent_pm.utils import checkout as clone_checkout
@@ -192,8 +192,7 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, paths: ClonePaths, *, run=sh_run) -> Target:
-    work, clones, writable = paths.work, paths.clones, paths.writable
+def with_clone(t, ident, *, run=sh_run, work, clones, writable=None) -> Target:
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
     # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)

@@ -19,7 +19,6 @@ import types
 import unittest
 from unittest import mock
 
-from agent_pm.session import StartOptions
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
@@ -144,11 +143,7 @@ class Base(Case):
 
     def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
         handle = self.driver.start(
-            runtime,
-            "headless",
-            "hello",
-            spec or Spec(workdir=self.workdir),
-            options=StartOptions(**kwargs),
+            runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
         self.addCleanup(handle.stop)
         return handle

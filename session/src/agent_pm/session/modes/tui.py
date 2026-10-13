@@ -13,7 +13,6 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import (
@@ -137,21 +136,15 @@ def _exit(status) -> int | None:
     return -signal.SIGHUP if status is None else status if isinstance(status, int) else None
 
 
-@dataclass(frozen=True, kw_only=True)
-class TuiSetup:
-    runtime: str
-    workdir: str
-    tmux: str
-    events: str | None = None
-
-
 class TuiMode:
     """One tui session, api.py's Mode, acting on its session's pane by id."""
 
-    def __init__(self, name: str, run: Tui, sid: str, setup: TuiSetup, *, host=tmux_host):
+    def __init__(
+        self, name: str, run: Tui, sid: str, *, events: str | None, runtime: str, host=tmux_host
+    ):
         self.host = host
         self.name, self.run, self.sid = name, run, sid
-        self.events, self.runtime = setup.events, setup.runtime
+        self.events, self.runtime = events, runtime
         self.dir = session_dir(name)
         self.hooks = os.path.join(self.dir, tui_hook.HOOKS)
         self.bound, self.reply, self.blocked = "", None, False
@@ -165,21 +158,24 @@ class TuiMode:
         run: Tui,
         info: SessionInfo,
         *,
-        setup: TuiSetup,
+        events: str | None,
+        runtime: str,
+        workdir: str,
+        tmux: str,
         host=tmux_host,
     ) -> "TuiMode":
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
-            "runtime": setup.runtime,
+            "runtime": runtime,
             "sid": info.sid,
-            "workdir": setup.workdir,
+            "workdir": workdir,
             "cwd": info.cwd,
             "project": info.project,
             "transcript": info.transcript,
             "resume": info.resume,
-            "events": setup.events,
+            "events": events,
             "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
-            "tmux_path": setup.tmux,
+            "tmux_path": tmux,
             **run.hook_state(),
         }
         for field, check in tui_hook.SESSION_STATE.items():
@@ -191,7 +187,7 @@ class TuiMode:
         if status == tmux_host.UNKNOWN:
             raise DriverError(f"tui session {name}: its tmux state is unknown")
         _tui_dir()
-        mode = cls(name, run, info.sid, setup, host=host)
+        mode = cls(name, run, info.sid, events=events, runtime=runtime, host=host)
         try:
             if os.path.lexists(mode.dir):
                 if not stat.S_ISDIR(os.lstat(mode.dir).st_mode):
@@ -223,11 +219,9 @@ class TuiMode:
             self.host.start(
                 self.name,
                 tmux_host.Command(argv=list(argv), cwd=cwd, env=dict(env)),
-                options=tmux_host.StartOptions(
-                    events=self.events,
-                    status_line=status_line,
-                    tags={"@sid": self.sid, "@runtime": self.runtime},
-                ),
+                events=self.events,
+                status_line=status_line,
+                tags={"@sid": self.sid, "@runtime": self.runtime},
             )
         except TuiError as e:
             self._unmake()
@@ -258,16 +252,7 @@ class TuiMode:
                 f"no tui session {name}" if None is None else f"no tui session {name}: {None}"
             )
         mode = cls(
-            name,
-            run,
-            state["sid"],
-            TuiSetup(
-                runtime=state["runtime"],
-                workdir=state["workdir"],
-                tmux=state["tmux_path"],
-                events=state["events"],
-            ),
-            host=host,
+            name, run, state["sid"], runtime=state["runtime"], events=state["events"], host=host
         )
         mode._pane = pane
         data = read_regular(mode.hooks) or b""

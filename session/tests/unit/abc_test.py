@@ -14,7 +14,6 @@ from agent_pm.session import (
     Displayable,
     Driver,
     DriverError,
-    DriverServices,
     Exited,
     Handle,
     Host,
@@ -29,7 +28,6 @@ from agent_pm.session import (
     SessionStatus,
     SessionStatusLog,
     Spec,
-    StartOptions,
     Stderr,
     Terminal,
     TurnEnd,
@@ -57,8 +55,6 @@ NAMES = (
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, SessionBound, Stderr, TurnEnd}
 ALLOWED_CONCRETE = {
     Driver,
-    StartOptions,
-    DriverServices,
     Handle,
     SessionStatusLog,
     Usage,

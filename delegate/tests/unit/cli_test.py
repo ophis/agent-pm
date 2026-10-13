@@ -10,7 +10,6 @@ import tempfile
 import types
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from unittest import mock
@@ -93,12 +92,6 @@ class FakeApplication:
         return cli.Application(self.driver).run(config, spec, on_event=on_event)
 
 
-@dataclass(frozen=True, kw_only=True)
-class Selection:
-    role: str = "dummy-tester"
-    task: str | None = "echo"
-
-
 class Base(Case):
     """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work`
     (not made).
@@ -153,17 +146,17 @@ class Base(Case):
     def runs(
         self,
         *extra,
-        selection=None,
+        role="dummy-tester",
+        task="echo",
         input="Hello.",
         runtime="fake",
         stdin="",
         out=None,
     ):
-        selection = Selection() if selection is None else selection
         return self.cli(
             "--role",
-            selection.role,
-            *(("--task", selection.task) if selection.task else ()),
+            role,
+            *(("--task", task) if task else ()),
             "--input",
             input,
             "--out",
@@ -410,7 +403,7 @@ class DriverForm(Base):
 
     def test_a_config_error_exits_2_and_writes_error(self):
         for kw, extra, want in (
-            ({"selection": Selection(role="ghost", task=None)}, (), "unknown role 'ghost'"),
+            ({"role": "ghost", "task": None}, (), "unknown role 'ghost'"),
             ({}, ("--split", "right"), SPLIT),
         ):
             with self.subTest(want=want), self.ran() as run:
@@ -428,7 +421,7 @@ class DriverForm(Base):
             (1, "", "delegate: the agent run returned no outcome"),
         )
         spec, kw = start.call_args.args[3], start.call_args.kwargs
-        self.assertEqual((spec.name, kw["options"].events, spec.sid), (TUI, self.events, SID))
+        self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
         self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")
@@ -523,7 +516,7 @@ class DryRun(Base):
         self.assertEqual(json.loads(stdout)["runtime"], "fake")
 
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
-        code, out, _ = self.runs("--dry-run", selection=Selection(task=None))
+        code, out, _ = self.runs("--dry-run", task=None)
         shown = json.loads(out)
         self.assertEqual((code, uuid.UUID(shown["sid"]).version, shown["resume"]), (0, 4, False))
         self.assertIn("**Your task**: pick it from", shown["prompt"])
@@ -776,7 +769,7 @@ class Tui(Base):
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 kw = start.call_args.kwargs
                 self.assertEqual(
-                    (start.call_args.args[:2], start.call_args.args[3].name, kw["options"].events),
+                    (start.call_args.args[:2], start.call_args.args[3].name, kw["events"]),
                     (("fake", "tui"), None, None),
                 )
 
@@ -919,13 +912,13 @@ class Usage(Base):
         cases = [
             (
                 ("an unknown role"),
-                {("selection"): Selection(role=("ghost"), task=None)},
+                {"role": "ghost", "task": None},
                 (""),
                 ("unknown role 'ghost'"),
             ),
             (
                 "a task off the index",
-                {"selection": Selection(role="engineer", task="deep-research")},
+                {"role": "engineer", "task": "deep-research"},
                 "",
                 "task 'deep-research' is not one of engineer's tasks (build, light-build)",
             ),

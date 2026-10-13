@@ -4,7 +4,6 @@ import os
 import re
 import signal
 from contextlib import redirect_stderr
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest import mock
 
@@ -110,16 +109,6 @@ class FakeRun:
         return self.result
 
 
-@dataclass(frozen=True, kw_only=True)
-class RunRequest:
-    assignee: str = ENGINEER
-    task: str | None = None
-    mode: str = "new"
-    target: str | None = "Ophis/Agent-PM"
-    uuid: str = UUID
-    runtime: str = RUNTIME
-
-
 class Case(Base):
     def setUp(self):
         super().setUp()
@@ -132,16 +121,16 @@ class Case(Base):
             p.start()
             self.addCleanup(p.stop)
 
-    def argv(self, *extra, request: RunRequest | None = None):
-        request = request or RunRequest()
-        assignee, task, mode, target, uuid, runtime = (
-            request.assignee,
-            request.task,
-            request.mode,
-            request.target,
-            request.uuid,
-            request.runtime,
-        )
+    def argv(
+        self,
+        *extra,
+        assignee=ENGINEER,
+        task=None,
+        mode="new",
+        target="Ophis/Agent-PM",
+        uuid=UUID,
+        runtime=RUNTIME,
+    ):
         return [
             "--uuid",
             uuid,
@@ -157,11 +146,28 @@ class Case(Base):
             "--input=Do it.\n",
         ]
 
-    def main(self, *extra, request: RunRequest | None = None):
+    def main(
+        self,
+        *extra,
+        assignee=ENGINEER,
+        task=None,
+        mode="new",
+        target="Ophis/Agent-PM",
+        uuid=UUID,
+        runtime=RUNTIME,
+    ):
         err = io.StringIO()
         with redirect_stderr(err):
             rc = run.main(
-                self.argv(*extra, request=request),
+                self.argv(
+                    *extra,
+                    assignee=assignee,
+                    task=task,
+                    mode=mode,
+                    target=target,
+                    uuid=uuid,
+                    runtime=runtime,
+                ),
                 gql=self.gql,
                 run=self.delegate,
                 driver=self.api,
@@ -302,18 +308,18 @@ class RunExecution(Case):
         )
 
     def test_a_task_reaches_the_delegate(self):
-        self.assertEqual(self.main(request=RunRequest(task="light-build")), 0)
+        self.assertEqual(self.main(task="light-build"), 0)
         self.assertEqual(self.call()[1].task, "light-build")
 
     def test_a_researcher_run_has_the_brake(self):
-        self.assertEqual(self.main(request=RunRequest(assignee=RESEARCHER, target=None)), 0)
+        self.assertEqual(self.main(assignee=RESEARCHER, target=None), 0)
         researcher, _ = self.call()
         self.assertEqual(researcher, config.load().roles["researcher"].run)
         self.assertEqual(researcher.gate, GATE)
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_resume(self):
-        self.assertEqual(self.main(request=RunRequest(mode="resume")), 0)
+        self.assertEqual(self.main(mode="resume"), 0)
         _, spec = self.call()
         self.assertEqual((spec.sid, spec.resume), (SID, True))
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=resume sid={SID}")
@@ -388,7 +394,7 @@ class RunExecution(Case):
                 if setup:
                     setup()
                 n = len(self.said())
-                self.assertEqual(self.main(request=RunRequest(**kw)), 1)
+                self.assertEqual(self.main(**kw), 1)
                 self.assertEqual(
                     self.said()[n:],
                     [
@@ -417,7 +423,7 @@ class RunExecution(Case):
     def test_bad_uuid_or_target(self):
         for kw in (dict(uuid="nope"), dict(target="a/b/c")):
             with self.subTest(kw=kw):
-                self.assertEqual(self.main(request=RunRequest(**kw)), 2)
+                self.assertEqual(self.main(**kw), 2)
                 self.assertTrue(self.err.startswith("run.py: bad issue uuid or target: "), self.err)
         self.nothing_ran()
 
@@ -510,7 +516,7 @@ class RunTui(Case):
 class RunIdentity(Case):
     def test_session_comments_go_as_the_harness_and_write_back_as_the_role(self):
         self.done(Progress("start", "x"))
-        self.assertEqual(self.main(request=RunRequest(mode="resume")), 0)
+        self.assertEqual(self.main(mode="resume"), 0)
         self.assertEqual(config.load().harness_key, HARNESS)
         by = {}
         for (_, service, v), timeout in zip(self.gql.calls, self.gql.timeouts, strict=True):
@@ -664,6 +670,6 @@ class RunArguments(Case):
     def test_bad_runtime(self):
         for runtime in ("", "cl\x07aude"):
             with self.subTest(runtime=runtime):
-                self.assertEqual(self.main(request=RunRequest(runtime=runtime)), 2)
+                self.assertEqual(self.main(runtime=runtime), 2)
                 self.assertEqual(self.err, f"run.py: bad runtime: {runtime!r}\n")
         self.nothing_ran()

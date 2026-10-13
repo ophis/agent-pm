@@ -18,11 +18,10 @@ import uuid
 from unittest import mock
 
 import agent_pm.session as session_pkg
-from agent_pm.session import StartOptions
 from agent_pm.session.adapters import selection
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.api import POLL, HandleServices, HandleState, Mode
+from agent_pm.session.engine.api import POLL, Mode
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -272,7 +271,7 @@ class Base(Case):
         """`sid` and `name` go into the spec, as self.driver.start takes them."""
         given = {k: kwargs.pop(k) for k in ("sid", "name") if k in kwargs}
         spec = dataclasses.replace(spec or self.spec(), **given)
-        handle = self.driver.start(runtime, mode, prompt, spec, options=StartOptions(**kwargs))
+        handle = self.driver.start(runtime, mode, prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
 
@@ -743,18 +742,17 @@ class HandleOverAModeTest(Case):
             "fake",
             "tui",
             Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
-            state=HandleState(
-                info=SessionInfo(
-                    sid="s1",
-                    native_id=native_id,
-                    cwd=self.dir,
-                    project=False,
-                    transcript="",
-                    resume="",
-                ),
-                idle_timeout=idle_timeout,
+            info=SessionInfo(
+                sid="s1",
+                native_id=native_id,
+                cwd=self.dir,
+                project=False,
+                transcript="",
+                resume="",
             ),
-            services=HandleServices(host=self.mode, **kwargs),
+            idle_timeout=idle_timeout,
+            host=self.mode,
+            **kwargs,
         )
 
     def events(self, handle) -> list:
@@ -1267,13 +1265,11 @@ class ShowTest(TuiBase):
                 mock.call.status("w1"),
                 mock.call.open_pane(
                     "w1",
-                    options=tmux_host.PaneOptions(
-                        split="below",
-                        split_from="m1",
-                        opener="w0t0p0:AB-12",
-                        per_column=2,
-                        retile="off",
-                    ),
+                    split="below",
+                    split_from="m1",
+                    opener="w0t0p0:AB-12",
+                    per_column=2,
+                    retile="off",
                 ),
             ],
         )
@@ -1290,10 +1286,7 @@ class ShowTest(TuiBase):
             logs.output, [f"WARNING:driver:show w1: {NO_PANE}; watch it with tmux attach -t '=w1'"]
         )
         self.host.open_pane.assert_called_once_with(
-            "w1",
-            options=tmux_host.PaneOptions(
-                split=None, split_from=None, opener=None, per_column=None, retile=None
-            ),
+            "w1", split=None, split_from=None, opener=None, per_column=None, retile=None
         )
 
     def test_an_absent_session_is_a_driver_error(self):
@@ -1384,12 +1377,13 @@ class DetachTest(TuiBase):
                 mock.call.detach(
                     "d1",
                     tmux_host.Command(argv=["tool", "a b"], cwd=self.dir, env=env),
-                    options=tmux_host.DetachOptions(block=api.SIGNALS, opener="mgr"),
+                    block=api.SIGNALS,
+                    opener="mgr",
                 )
             ],
         )
         self.driver.detach("d2", ("tool",), self.dir, env)
-        self.assertEqual(self.host.detach.call_args.kwargs["options"].opener, None)
+        self.assertEqual(self.host.detach.call_args.kwargs["opener"], None)
 
     def test_a_bad_name_argv_cwd_or_opener_is_refused_before_tmux(self):
         self.name_refused(lambda name: self.driver.detach(name, ["tool"], self.dir, {}))
@@ -1486,9 +1480,9 @@ class TuiStartTest(TuiBase):
         self.assertEqual(
             call.kwargs,
             {
-                "options": tmux_host.StartOptions(
-                    events=self.events, status_line=False, tags={"@sid": SID, "@runtime": "fake"}
-                )
+                "events": self.events,
+                "status_line": False,
+                "tags": {"@sid": SID, "@runtime": "fake"},
             },
         )
         self.assertEqual(call.args[1].env["PWD"], self.workdir)
@@ -1590,7 +1584,7 @@ class TuiStartTest(TuiBase):
     def test_the_status_line_is_the_tui_settings(self):
         self.configure(tui=True, settings={"status_line": True})
         self.tui(name="w1")
-        self.assertIs(self.host.start.call_args.kwargs["options"].status_line, expr2=True)
+        self.assertIs(self.host.start.call_args.kwargs["status_line"], expr2=True)
 
     def test_a_bad_tui_setting_is_refused_before_anything(self):
         self.configure(tui=True, settings={"status_line": "yes"})

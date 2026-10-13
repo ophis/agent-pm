@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import Driver, StartOptions
+from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import tui_start
 from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine import records
@@ -191,7 +191,7 @@ class Live(Case):
             dataclasses.replace(
                 kwargs.pop("spec", self.spec), name=name, sid=kwargs.pop("sid", self.sid)
             ),
-            options=StartOptions(**{"events": str(self.events), **kwargs}),
+            **{"events": str(self.events), **kwargs},
         )
         self.addCleanup(handle.stop)
         return handle
@@ -244,7 +244,7 @@ class Live(Case):
             "headless",
             "headless",
             dataclasses.replace(self.spec, sid=self.sid),
-            options=StartOptions(resume=self.sid if resume else None),
+            resume=self.sid if resume else None,
         )
         self.addCleanup(handle.stop)
         stream = Stream(self, handle)

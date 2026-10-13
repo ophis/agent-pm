@@ -3,39 +3,16 @@ params, its Team and a run's access intent.
 """
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
 from agent_pm.delegate.composer.errors import ConfigError as ConfigError
-from agent_pm.delegate.engine.config import CONFIG
-from agent_pm.utils import LOCAL
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
-
-
-@dataclass(frozen=True, kw_only=True)
-class ConfigSource:
-    path: str = CONFIG
-    local: str = LOCAL
-    table: Mapping | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class RunOverrides:
-    values: Sequence[Mapping] = ()
-    source: str = "run overlay"
-    table: str = "overlay"
-
-
-@dataclass(frozen=True)
-class RunLocation:
-    cwd: str
-    project: bool
-    repo_dir: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

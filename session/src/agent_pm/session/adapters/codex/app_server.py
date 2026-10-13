@@ -10,7 +10,6 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from typing import Protocol
 
 
@@ -18,24 +17,6 @@ class Termination(Protocol):
     signum: int
 
     def check(self) -> None: ...
-
-
-@dataclass(frozen=True, kw_only=True)
-class ProcessRequest:
-    exe: str
-    args: list[str]
-    cwd: str
-    env: dict[str, str]
-
-
-@dataclass(frozen=True, kw_only=True)
-class RpcOptions:
-    env: dict[str, str]
-    wait: float
-    limit: int
-    cwd: str | None = None
-    termination: Termination | None = None
-    exit_wait: float = 5
 
 
 class Error(Exception):
@@ -61,7 +42,12 @@ def call(
     method: str,
     params: dict | None = None,
     *,
-    options: RpcOptions,
+    env: dict[str, str],
+    wait: float,
+    limit: int,
+    cwd: str | None = None,
+    termination: Termination | None = None,
+    exit_wait: float = EXIT_WAIT,
 ):
     """`exe app-server *args` in its own process group: initialize, then `method`'s result within
     `wait` s and `limit` buffered bytes; else Error, or Exited (its returncode) if it ends first.
@@ -70,13 +56,13 @@ def call(
     proc = None
     exited = False
     try:
-        if options.termination is not None:
-            options.termination.check()
+        if termination is not None:
+            termination.check()
         try:
             proc = subprocess.Popen(
                 [exe, "app-server", *args],
-                cwd=options.cwd,
-                env=options.env,
+                cwd=cwd,
+                env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -84,10 +70,10 @@ def call(
             )
         except OSError as e:
             raise Error(f"{exe}: {e.strerror}") from e
-        if options.termination is not None:
-            options.termination.check()
+        if termination is not None:
+            termination.check()
         assert proc.stdout is not None
-        lines = Lines(proc.stdout.fileno(), options)
+        lines = Lines(proc.stdout.fileno(), wait, limit, termination=termination)
         send(
             proc,
             {
@@ -110,9 +96,9 @@ def call(
         raise
     finally:
         if proc is not None:
-            close(proc, options.termination, options.exit_wait)
-        if options.termination is not None:
-            options.termination.check()
+            close(proc, termination, exit_wait)
+        if termination is not None:
+            termination.check()
         if exited and proc is not None:
             raise Exited(proc.returncode)
 
@@ -126,25 +112,25 @@ def send(proc, message: dict) -> None:
 
 
 class Lines:
-    def __init__(self, fd: int, options: RpcOptions):
-        self.fd, self.options = fd, options
-        self.deadline, self.buf, self.seen = time.monotonic() + options.wait, bytearray(), 0
+    def __init__(self, fd: int, wait: float, limit: int, *, termination: Termination | None = None):
+        self.fd, self.wait, self.limit, self.termination = fd, wait, limit, termination
+        self.deadline, self.buf, self.seen = time.monotonic() + wait, bytearray(), 0
 
     def __next__(self) -> bytes:
         while (end := self.buf.find(b"\n", self.seen)) < 0:
-            if self.options.termination is not None:
-                self.options.termination.check()
+            if self.termination is not None:
+                self.termination.check()
             self.seen = len(self.buf)
             left = self.deadline - time.monotonic()
             if left <= 0:
-                raise Error(f"no answer in {self.options.wait} s")
+                raise Error(f"no answer in {self.wait} s")
             if not select.select([self.fd], [], [], min(left, POLL))[0]:
                 continue
             chunk = os.read(self.fd, BLOCK)
             if not chunk:
                 raise Exited
-            if len(self.buf) + len(chunk) > self.options.limit:
-                raise Error(f"an answer over {self.options.limit} bytes")
+            if len(self.buf) + len(chunk) > self.limit:
+                raise Error(f"an answer over {self.limit} bytes")
             self.buf += chunk
         line = bytes(self.buf[:end])
         del self.buf[: end + 1]
@@ -212,7 +198,10 @@ def probe(env: dict, timeout: float = 10) -> dict | None:
             "codex",
             [],
             "account/rateLimits/read",
-            options=RpcOptions(env=env, wait=timeout, limit=PROBE_MAX, exit_wait=POLL),
+            env=env,
+            wait=timeout,
+            limit=PROBE_MAX,
+            exit_wait=POLL,
         )
     except (Error, Exited, OSError, ValueError):
         return None

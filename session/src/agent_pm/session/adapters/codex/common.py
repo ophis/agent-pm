@@ -10,7 +10,6 @@ from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.codex.sessions import (
-    CreationOptions,
     RecoveryError,
     SessionFile,
     SessionState,
@@ -297,9 +296,7 @@ class CodexCommon:
                 "env": {**self.config.get("env", {}), **spec.access.env, **spec.env},
             }
         )
-        return create_session(
-            workdir, sid, snapshot, roots, options=CreationOptions(persist=persist)
-        )
+        return create_session(workdir, sid, snapshot, roots, persist=persist)
 
     def _new_roots(self, spec) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")

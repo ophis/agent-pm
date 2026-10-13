@@ -33,13 +33,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
-from agent_pm.delegate.team.tools.types import (
-    BranchSelection,
-    CheckoutRequest,
-    RepoCommandError,
-    RepoServices,
-    Worktree,
-)
+from agent_pm.delegate.team.tools.types import BranchSelection, RepoCommandError, Worktree
 from agent_pm.utils import (
     LOCAL,
     LONG,
@@ -242,17 +236,26 @@ def _checkout(state: Worktree, branch: str, onto: str, *, run: Runner) -> None:
             git(run, wt, "checkout", *selection.options, selection.start, timeout=LONG)
 
 
-def worktree(request: CheckoutRequest, *, run: Runner = sh, temp=None, links=frozenset()) -> dict:
-    branch = request.branch
+def worktree(
+    spec: str,
+    branch: str,
+    base: str,
+    *,
+    slug: str | None = None,
+    base_branch: str | None = None,
+    run: Runner = sh,
+    temp=None,
+    links=frozenset(),
+) -> dict:
     check_branch(branch)
-    slug = check_slug(request.slug, branch)
-    repo, clone = resolve(request.repository, run=run)
+    slug = check_slug(slug, branch)
+    repo, clone = resolve(spec, run=run)
     if clone and (directory := under(clone, temp_dirs() if temp is None else temp)):
         raise Invalid(
             f"{clone} is under the temp dir {directory}: keep local clones outside temp dirs"
         )
     symlinks = "true" if clone is not None and clone in links else "false"
-    wt, exists = place(repo, request.directory, clone, slug, run=run)
+    wt, exists = place(repo, base, clone, slug, run=run)
     state = Worktree(repo, clone, wt, exists=exists, symlinks=symlinks)
     state = replace(state, exists=_existing(state, run=run))
     push, default = info(repo, run=run)
@@ -260,7 +263,7 @@ def worktree(request: CheckoutRequest, *, run: Runner = sh, temp=None, links=fro
         raise Invalid(f"{repo.slug}: unsafe default branch name")
     if branch == default:
         raise Invalid(f"{branch} is the default branch; build on another")
-    onto = request.base_branch if request.base_branch is not None else default
+    onto = base_branch if base_branch is not None else default
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     _checkout(state, branch, onto, run=run)
@@ -310,9 +313,16 @@ def _oldest_first(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda e: datetime.fromisoformat(e["at"]))
 
 
-def status(request: CheckoutRequest, *, run: Runner = sh, users: list[str] | None = None) -> dict:
-    spec, branch, base = request.repository, request.branch, request.directory
-    slug, base_branch = request.slug, request.base_branch
+def status(
+    spec: str,
+    branch: str,
+    base: str,
+    *,
+    slug: str | None = None,
+    base_branch: str | None = None,
+    run: Runner = sh,
+    users: list[str] | None = None,
+) -> dict:
     slug = check_slug(slug, branch)
     repo, clone = resolve(spec, run=run)
     wt, exists = place(repo, base, clone, slug, run=run)
@@ -400,13 +410,13 @@ def status(request: CheckoutRequest, *, run: Runner = sh, users: list[str] | Non
 def main(
     argv: list[str],
     *,
-    services: RepoServices | None = None,
+    run: Runner = sh,
+    out=sys.stdout,
+    err=sys.stderr,
     config: str = CONFIG,
     local: str = LOCAL,
     temp=None,
 ) -> int:
-    services = RepoServices() if services is None else services
-    run, out, err = services.run, services.out, services.err
     ap = argparse.ArgumentParser(prog="repo.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for cmd in ("worktree", "status"):
@@ -419,11 +429,27 @@ def main(
     a = ap.parse_args(argv)
     try:
         cfg = read_project("delegate", path=config, local=local)
-        request = CheckoutRequest(a.repo, a.branch, a.dir, slug=a.name, base_branch=a.base)
         if a.cmd == "worktree":
-            r = worktree(request, run=run, temp=temp, links=trusted_dirs(cfg))
+            r = worktree(
+                a.repo,
+                a.branch,
+                a.dir,
+                slug=a.name,
+                base_branch=a.base,
+                run=run,
+                temp=temp,
+                links=trusted_dirs(cfg),
+            )
         else:
-            r = status(request, run=run, users=cfg.get("users"))
+            r = status(
+                a.repo,
+                a.branch,
+                a.dir,
+                slug=a.name,
+                base_branch=a.base,
+                run=run,
+                users=cfg.get("users"),
+            )
     except Invalid as e:
         err.write(f"repo.py: {redact(str(e))}\n")
         return 2

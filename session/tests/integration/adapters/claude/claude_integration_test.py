@@ -19,7 +19,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session import StartOptions
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine.types import (
     Access,
@@ -123,9 +122,7 @@ class Base(Case):
 
     def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> api.Handle:
         spec = spec or Spec(workdir=self.workdir, sid=sid)
-        handle = self.driver.start(
-            "claude", "headless", prompt, spec, options=StartOptions(**kwargs)
-        )
+        handle = self.driver.start("claude", "headless", prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
         return handle
 

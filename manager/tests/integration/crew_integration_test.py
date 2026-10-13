@@ -14,7 +14,6 @@ from unittest import mock
 from agent_pm.manager.engine import crew as monitor
 from agent_pm.manager.engine import crew as workers
 from agent_pm.manager.engine import roster
-from agent_pm.manager.engine.types import Entry
 from agent_pm.utils import LOCAL
 
 from manager.tests.case import PY, PYTHONPATH, REPO, SRC, Case
@@ -373,7 +372,7 @@ class Live(Case):
         for session in sessions:
             self.ok(self.server.tmux("new-session", "-d", "-s", session, *live_tmux.IDLE))
         resume = [sys.executable, os.path.join(self.root, "drive.py"), f"--role={ROLE}"]
-        e = roster.entry(Entry("role", sid=ROLE_SID, cwd=work, resume=resume, tui=ROLE_TUI))
+        e = roster.entry("role", sid=ROLE_SID, cwd=work, resume=resume, tui=ROLE_TUI)
         roster.put(self.directory, ROLE_DRIVER, e)
         return e
 

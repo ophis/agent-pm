@@ -13,7 +13,7 @@ from agent_pm.linear_orchestrator.engine import promote
 from agent_pm.linear_orchestrator.linear import issues
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
-from orchestrator_tests.integration.segments import BUILD, REPORT, BoardChanges, Segment
+from orchestrator_tests.integration.segments import BUILD, REPORT, Segment
 
 REWORK = "Add a section on stale sessions."
 
@@ -137,11 +137,9 @@ class PmToEngineer(Segment):
             )
             self.expect(
                 ident,
-                BoardChanges(
-                    state="todo",
-                    history=[("in_progress", "todo", HARNESS_EMAIL)],
-                    comments=[(HARNESS_EMAIL, "interrupted")],
-                ),
+                state="todo",
+                history=[("in_progress", "todo", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, "interrupted")],
             )
         self.pm_done(ident)
 

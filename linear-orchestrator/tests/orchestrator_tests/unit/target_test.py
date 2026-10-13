@@ -202,7 +202,9 @@ class TargetCheckout(Case):
         return target.with_clone(
             self.T,
             "TASK-26",
-            target.ClonePaths(clones=clones, work=self.work, writable=writable),
+            clones=clones,
+            work=self.work,
+            writable=writable,
             run=run,
         )
 

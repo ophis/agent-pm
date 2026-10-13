@@ -183,7 +183,7 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
         self.assertEqual(exe, "/protected/codex")
         self.assertEqual(argv[-4:], ["-c", "hooks.state={exact}", "--", "prompt"])
         self.assertEqual(env["CODEX_HOME"], str(self.codex_home))
-        self.assertEqual(trust.call_args.args[0].cwd, str(self.cwd))
+        self.assertEqual(trust.call_args.kwargs["cwd"], str(self.cwd))
         self.assertEqual(
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
@@ -245,14 +245,12 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
         ):
             self.assertTrue(
                 tui_start.hook_trust(
-                    tui_start.app_server.ProcessRequest(
-                        exe="fake",
-                        args=[],
-                        cwd=str(self.cwd),
-                        env={"CODEX_HOME": str(self.codex_home)},
-                    ),
-                    commands,
+                    exe="fake",
+                    args=[],
+                    cwd=str(self.cwd),
+                    env={"CODEX_HOME": str(self.codex_home)},
                     listing=listing,
+                    commands=commands,
                 ).startswith("hooks.state=")
             )
         self.assertEqual(listing.call_count, 2)
@@ -262,10 +260,11 @@ print(json.dumps(sorted(imports - sys.stdlib_module_names)))
             self.assertRaisesRegex(tui_start.StartError, "held"),
         ):
             tui_start.hook_trust(
-                tui_start.app_server.ProcessRequest(
-                    exe="fake", args=[], cwd=str(self.cwd), env={"CODEX_HOME": str(self.codex_home)}
-                ),
-                commands,
+                exe="fake",
+                args=[],
+                cwd=str(self.cwd),
+                env={"CODEX_HOME": str(self.codex_home)},
+                commands=commands,
             )
 
     def test_missing_duplicate_foreign_hook_rows_and_disabled_user_hooks(self):
@@ -442,6 +441,6 @@ class ProtectTest(Base):
         self.assertEqual(argv[start : start + len(flags)], list(flags))
         hook_flags = [word for word in json.loads(data)["hook_flags"]][:-4]
         self.assertEqual(
-            trust.call_args.args[0].args,
+            trust.call_args.kwargs["args"],
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],
         )

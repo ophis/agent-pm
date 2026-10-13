@@ -17,7 +17,6 @@ from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine.types import (
     Config,
     ConfigError,
-    CoreConfig,
     Docs,
     Role,
     Task,
@@ -213,7 +212,7 @@ def _load(cfg, root, work, local, core):
         core_cfg = utils.read_project("delegate", path=core, local=local)
     except (OSError, ValueError) as e:
         raise ConfigError(f"core: {e}") from None
-    roles = _runnable(cfg, root, work, CoreConfig(core, local, core_cfg))
+    roles = _runnable(cfg, root, work, core=core, local=local, core_cfg=core_cfg)
     docs = _docs(roles, local)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
@@ -403,24 +402,26 @@ def _fill_root(value: Any, root: str) -> Any:
     return value
 
 
-def _runnable(cfg, root, work, core: CoreConfig):
+def _runnable(cfg, root, work, *, core, local, core_cfg):
     try:
-        trusted = delegate.trusted_dirs(core.path, core.local, cfg=core.values)
+        trusted = delegate.trusted_dirs(core, local, cfg=core_cfg)
     except (OSError, ValueError, delegate.ComposerConfigError) as e:
         raise ConfigError(f"core: {e}") from None
     for d in sorted(trusted):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
-    out = _resolve_roles(cfg, _fill_root(cfg.get("core", {}), root), core)
+    out = _resolve_roles(
+        cfg, _fill_root(cfg.get("core", {}), root), core=core, local=local, core_cfg=core_cfg
+    )
     _role_links(cfg, out)
     _runnable_inputs(cfg, out)
     return out
 
 
-def _resolve_roles(cfg, overlay, core: CoreConfig):
+def _resolve_roles(cfg, overlay, *, core, local, core_cfg):
     out = {}
     for name, p in cfg["roles"].items():
-        if name not in core.values.get("roles", {}):
+        if name not in core_cfg.get("roles", {}):
             raise ConfigError(
                 f"linear-orchestrator/config.toml: role {name!r} is not in delegate/config.toml"
             )
@@ -432,14 +433,13 @@ def _resolve_roles(cfg, overlay, core: CoreConfig):
             run = delegate.resolve_run(
                 name,
                 None,
-                overrides=delegate.RunOverrides(
-                    values=(overlay,), source="linear-orchestrator/config.toml", table="core"
-                ),
-                source=delegate.ConfigSource(path=core.path, local=core.local, table=core.values),
+                overlays=(overlay,),
+                label=("linear-orchestrator/config.toml", "core"),
+                config=core,
+                local=local,
+                cfg=core_cfg,
             )
-            tasks = tuple(
-                delegate.task_index(name, config=core.path, local=core.local, cfg=core.values)
-            )
+            tasks = tuple(delegate.task_index(name, config=core, local=local, cfg=core_cfg))
         except delegate.ComposerConfigError as e:
             raise ConfigError(f"core: {e}") from None
         out[name] = Role(

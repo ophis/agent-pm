@@ -34,7 +34,6 @@ from agent_pm.manager.engine.types import (
     ROTATE_MSG,
     UNPRINTABLE,
     CommandArgumentError,
-    Entry,
     NotAWorker,
     Refused,
     RosterError,
@@ -52,7 +51,6 @@ from agent_pm.session import (
     Handle,
     IdleTimeout,
     SessionRow,
-    StartOptions,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import printable_abs, read_project, save
@@ -100,7 +98,7 @@ def placed(e: dict, row: SessionRow) -> dict:
     for key in ("pane", "opener"):
         if getattr(row, key) is not None:
             with contextlib.suppress(RosterError):
-                e = roster.entry(Entry(**{**e, key: getattr(row, key)}))
+                e = roster.entry(**{**e, key: getattr(row, key)})
     return e
 
 
@@ -497,15 +495,13 @@ def _enroll(record: dict, own: str | None, note: str | None, *, driver=None) -> 
     try:
         with leased(directory, own, driver=driver) as r:
             value = roster.entry(
-                Entry(
-                    "worker",
-                    sid=record["sid"],
-                    cwd=record["cwd"],
-                    resume=resume,
-                    note=note,
-                    split=split,
-                    split_from=split_from,
-                )
+                "worker",
+                sid=record["sid"],
+                cwd=record["cwd"],
+                resume=resume,
+                note=note,
+                split=split,
+                split_from=split_from,
             )
             roster.record(r, name, value if row is None else placed(value, row))
     except WorkersError as e:
@@ -551,7 +547,9 @@ def _launch(
             "tui",
             worker.prompt or "",
             spec,
-            options=StartOptions(resume=worker.resume, idle_timeout=EARLY, events=record["events"]),
+            resume=worker.resume,
+            idle_timeout=EARLY,
+            events=record["events"],
         )
     path = os.path.join(spec.workdir, RECORD)
     try:

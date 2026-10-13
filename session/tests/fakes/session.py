@@ -38,7 +38,7 @@ class FakeSession(Session):
     def scripted(cls, *events) -> type[FakeSession]:
         return type(cls.__name__, (cls,), {"script": events})
 
-    def __init__(self, runtime, mode, spec, sid, name, display) -> None:
+    def __init__(self, runtime, mode, spec, sid, name, *, display) -> None:
         self.runtime, self.mode, self.spec, self.sid, self.name = runtime, mode, spec, sid, name
         self.display_value = display
         self.sent: list[str] = []
@@ -136,7 +136,7 @@ class FakeSession(Session):
         name = spec.name or f"{runtime}-{sid[:8]}"
         if name in cls.live:
             raise DriverError(f"session {name} is live")
-        cls.live[name] = cls(runtime, mode, spec, sid, name, display)
+        cls.live[name] = cls(runtime, mode, spec, sid, name, display=display)
         return cls.live[name]
 
     @classmethod

@@ -15,7 +15,7 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 sessions = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "sessions.py")))
 app_server = SimpleNamespace(**runpy.run_path(os.path.join(DIRECTORY, "app_server.py")))
-ProcessRequest = app_server.ProcessRequest
+
 HOOKS = runpy.run_path(os.path.join(DIRECTORY, "hook_schema.py"))["HOOKS"]
 
 
@@ -80,14 +80,16 @@ class _Termination:
 
 
 def hook_trust(
-    request: ProcessRequest,
-    commands: dict[str, str],
+    exe: str,
+    args: list[str],
+    cwd: str,
+    env: dict[str, str],
     *,
+    commands: dict[str, str],
     root=None,
     termination=None,
     listing=None,
 ) -> str:
-    exe, args, cwd, env = request.exe, request.args, request.cwd, request.env
     listing = hooks_list if listing is None else listing
     root = sessions.store_directory(create=False, root=root)
     if root is None:
@@ -125,9 +127,11 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
             args,
             "hooks/list",
             {"cwds": [cwd]},
-            options=app_server.RpcOptions(
-                env=env, wait=ANSWER_WAIT, limit=ANSWER_MAX, cwd=cwd, termination=termination
-            ),
+            env=env,
+            wait=ANSWER_WAIT,
+            limit=ANSWER_MAX,
+            cwd=cwd,
+            termination=termination,
         )
     except app_server.Error as e:
         raise StartError(f"codex hooks/list: {e}") from None
@@ -207,10 +211,13 @@ def _start(argv, termination, trust):
     cwd = state.snapshot["cwd"]
     termination.check()
     trusted_state = trust(
-        app_server.ProcessRequest(exe=data["argv"][0], args=data["hook_flags"], cwd=cwd, env=env),
-        commands,
+        exe=data["argv"][0],
+        args=data["hook_flags"],
+        cwd=cwd,
+        env=env,
         root=data["store"],
         termination=termination,
+        commands=commands,
     )
     command = data["argv"].copy()
     index = command.index("--") if "--" in command else len(command)

@@ -11,8 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from types import ModuleType
+from dataclasses import replace
 from typing import Protocol
 
 from agent_pm.session.adapters import registry
@@ -21,7 +20,6 @@ from agent_pm.session.adapters.selection import check as check_selection
 from agent_pm.session.engine import records
 from agent_pm.session.engine.records import holds as holds
 from agent_pm.session.engine.records import session_record as session_record
-from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
 from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
@@ -46,15 +44,6 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.utils import STATE, printable_abs, sid_error
-
-
-@dataclass(frozen=True, kw_only=True)
-class LaunchContext:
-    runtime: str
-    spec: Spec
-    events: str | None
-    registry: registry.Registry
-    host: ModuleType = tmux_host
 
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
@@ -122,10 +111,19 @@ class _HeadlessSteps(_LaunchSteps):
     def run_of(adapter: Adapter) -> Headless | None:
         return adapter.headless()
 
-    def __init__(self, run: Headless, context: LaunchContext):
-        self.registry = context.registry
-        _no_tui_keys(context.spec.name, context.events)
-        self.run, self.runtime = run, context.runtime
+    def __init__(
+        self,
+        run: Headless,
+        *,
+        runtime: str,
+        spec: Spec,
+        events: str | None,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        self.registry = registry
+        _no_tui_keys(spec.name, events)
+        self.run, self.runtime = run, runtime
 
     def launch(self, prompt: str, request: SessionRequest) -> Launch:
         return self.run.launch(prompt, request)
@@ -148,16 +146,22 @@ class _TuiSteps(_LaunchSteps):
     def run_of(adapter: Adapter) -> Tui | None:
         return adapter.tui()
 
-    def __init__(self, run: Tui, context: LaunchContext):
-        self.registry = context.registry
-        self.run, self.runtime, self.settings = run, context.runtime, context.registry.tui()
-        self.host = context.host
-        spec = context.spec
+    def __init__(
+        self,
+        run: Tui,
+        *,
+        runtime: str,
+        spec: Spec,
+        events: str | None,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        self.registry = registry
+        self.run, self.runtime, self.settings = run, runtime, registry.tui()
+        self.host = host
         assert spec.sid is not None
-        self.name = validate_name(
-            f"{context.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name
-        )
-        self.events = validate_events(context.events, host=self.host)
+        self.name = validate_name(f"{runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
+        self.events = validate_events(events, host=self.host)
         self.tmux = self.host.tmux_path()
         if self.tmux is None:
             raise DriverError("tmux not found")
@@ -181,9 +185,10 @@ class _TuiSteps(_LaunchSteps):
                 self.name,
                 self.run,
                 info,
-                setup=tui.TuiSetup(
-                    events=self.events, runtime=self.runtime, workdir=workdir, tmux=self.tmux
-                ),
+                events=self.events,
+                runtime=self.runtime,
+                workdir=workdir,
+                tmux=self.tmux,
                 host=self.host,
             )
 
@@ -205,8 +210,17 @@ class _InProcessSteps:
     def run_of(adapter: Adapter) -> InProcess | None:
         return adapter.in_process()
 
-    def __init__(self, run: InProcess, context: LaunchContext):
-        _no_tui_keys(context.spec.name, context.events)
+    def __init__(
+        self,
+        run: InProcess,
+        *,
+        runtime: str,
+        spec: Spec,
+        events: str | None,
+        registry: registry.Registry,
+        host=tmux_host,
+    ):
+        _no_tui_keys(spec.name, events)
         self.run = run
 
     def info(self, prompt: str, request: SessionRequest) -> SessionInfo:
@@ -267,50 +281,46 @@ class Mode(Protocol):
         ...
 
 
-@dataclass(frozen=True, kw_only=True)
-class HandleState:
-    info: SessionInfo
-    idle_timeout: float | None
-    reply: str | None = None
-    blocked: bool = False
-
-
 def diagnostics() -> logging.Logger:
     logger = logging.Logger("driver")
     logger.parent = logging.getLogger()
     return logger
 
 
-@dataclass(frozen=True, kw_only=True)
-class HandleServices:
-    host: Mode
-    adapter: Adapter | None = None
-    usage: Callable[[], Usage | None] | None = None
-    clock: Callable[[], float] | None = None
-    logger: logging.Logger = field(default_factory=diagnostics)
-
-
 class Handle:
     def __init__(
-        self, runtime: str, mode: str, spec: Spec, *, state: HandleState, services: HandleServices
+        self,
+        runtime: str,
+        mode: str,
+        spec: Spec,
+        *,
+        info: SessionInfo,
+        idle_timeout: float | None,
+        host: Mode,
+        reply: str | None = None,
+        blocked: bool = False,
+        adapter: Adapter | None = None,
+        usage: Callable[[], Usage | None] | None = None,
+        clock: Callable[[], float] | None = None,
+        logger: logging.Logger | None = None,
     ):
         """spec: its sid, name (a tui session's) and workdir."""
         self.sid, self.runtime, self.mode, self.name = spec.sid, runtime, mode, spec.name
         self._host, self._info, self.validate_idle_timeout = (
-            services.host,
-            state.info,
-            state.idle_timeout,
+            host,
+            info,
+            idle_timeout,
         )
-        self._adapter = services.adapter
-        self._usage = services.usage
-        self._logger = services.logger
-        self.clock = time.monotonic if services.clock is None else services.clock
+        self._adapter = adapter
+        self._usage = usage
+        self._logger = diagnostics() if logger is None else logger
+        self.clock = time.monotonic if clock is None else clock
         self._channel = records.path(spec.workdir)
-        self._reply = state.reply
+        self._reply = reply
         self._queue: deque = deque()
         self._closed = False
         self._ended = False
-        self._blocked = state.blocked
+        self._blocked = blocked
 
     def events(self) -> Iterator[Event | Stderr | IdleTimeout]:
         last = self.clock()
@@ -500,17 +510,25 @@ class Driver:
         adapters: Mapping,
         hosts: Mapping,
         default_host: str,
-        services: DriverServices | None = None,
+        host=tmux_host,
+        probe=headless.probe,
+        clock: Callable[[], float] | None = None,
     ):
-        services = DriverServices() if services is None else services
         self._logger = diagnostics()
-        self.host, self.probe, self.clock = services.host, services.probe, services.clock
+        self.host, self.probe, self.clock = host, probe, clock
         self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
 
     @classmethod
-    def from_config(cls, config: Mapping, *, services: DriverServices | None = None):
+    def from_config(
+        cls,
+        config: Mapping,
+        *,
+        host=tmux_host,
+        probe=headless.probe,
+        clock: Callable[[], float] | None = None,
+    ):
         try:
-            return cls(**registry.settings(config), services=services)
+            return cls(**registry.settings(config), host=host, probe=probe, clock=clock)
         except ValueError as error:
             raise ConfigError(str(error)) from error
 
@@ -521,14 +539,14 @@ class Driver:
         prompt: str,
         spec: Spec,
         *,
-        options: StartOptions | None = None,
+        resume: str | None = None,
+        events: str | None = None,
+        idle_timeout: float | None = None,
     ) -> Handle:
-        """spec.sid: its id (None: options.resume, else a new one); tui: tmux session spec.name,
-        else <runtime>-<sid[:8]>, refused when running; options.events gets done, blocked and dead
-        lines; spec.protect gains the hook paths.
+        """spec.sid: its id (None: resume, else a new one); tui: tmux session spec.name, else
+        <runtime>-<sid[:8]>, refused when running; events gets done, blocked and dead lines;
+        spec.protect gains the hook paths.
         """
-        options = StartOptions() if options is None else options
-        resume, idle_timeout, events = options.resume, options.idle_timeout, options.events
         if mode not in MODES:
             raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
         validate_idle_timeout(idle_timeout)
@@ -543,10 +561,7 @@ class Driver:
             raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
         spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
         steps = kind(
-            run,
-            LaunchContext(
-                runtime=runtime, spec=spec, events=events, registry=self.registry, host=self.host
-            ),
+            run, runtime=runtime, spec=spec, events=events, registry=self.registry, host=self.host
         )
         check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
         spec = steps.specced(spec)
@@ -569,14 +584,13 @@ class Driver:
             runtime,
             mode,
             replace(spec, name=steps.name),
-            state=HandleState(info=info, idle_timeout=idle_timeout),
-            services=HandleServices(
-                host=host,
-                adapter=adapter,
-                usage=lambda: self.usage(runtime),
-                clock=self.clock,
-                logger=self._logger,
-            ),
+            info=info,
+            idle_timeout=idle_timeout,
+            host=host,
+            adapter=adapter,
+            usage=lambda: self.usage(runtime),
+            clock=self.clock,
+            logger=self._logger,
         )
 
     def attach(self, name: str, idle_timeout: float | None = None) -> Handle:
@@ -610,15 +624,14 @@ class Driver:
             state["runtime"],
             "tui",
             Spec(workdir=state["workdir"], sid=state["sid"], name=name),
-            state=HandleState(
-                info=info, idle_timeout=idle_timeout, reply=host.reply, blocked=host.blocked
-            ),
-            services=HandleServices(
-                host=host,
-                adapter=adapter,
-                usage=lambda: self.usage(state["runtime"]),
-                clock=self.clock,
-            ),
+            info=info,
+            idle_timeout=idle_timeout,
+            reply=host.reply,
+            blocked=host.blocked,
+            host=host,
+            adapter=adapter,
+            usage=lambda: self.usage(state["runtime"]),
+            clock=self.clock,
         )
         handle.info()
         return handle
@@ -640,13 +653,11 @@ class Driver:
             raise DriverError(f"no tmux session {name}")
         why = self.host.open_pane(
             name,
-            options=tmux_host.PaneOptions(
-                split=split,
-                split_from=split_from,
-                opener=opener,
-                per_column=settings.per_column,
-                retile=settings.retile,
-            ),
+            split=split,
+            split_from=split_from,
+            opener=opener,
+            per_column=settings.per_column,
+            retile=settings.retile,
         )
         if why is None:
             return None
@@ -783,7 +794,8 @@ class Driver:
             self.host.detach(
                 name,
                 tmux_host.Command(argv=list(argv), cwd=cwd, env=dict(env)),
-                options=tmux_host.DetachOptions(block=SIGNALS, opener=opener),
+                block=SIGNALS,
+                opener=opener,
             )
         except TuiError as e:
             raise DriverError(f"detach {name}: {e}") from e

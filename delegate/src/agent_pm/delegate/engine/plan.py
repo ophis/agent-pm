@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunLocation, RunParams, Team
+from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
@@ -127,9 +127,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | None = None) -> Plan:
     )
     resume = spec.sid if spec.resume else None
     here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
-    intent = composer.access(
-        run, workdir, RunLocation(here, project=project, repo_dir=spec.repo), team=team
-    )
+    intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo, team=team)
     access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),

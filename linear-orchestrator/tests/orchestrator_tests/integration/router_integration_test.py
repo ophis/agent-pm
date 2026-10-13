@@ -15,7 +15,6 @@ import unittest
 
 from agent_pm.linear_orchestrator.engine import config
 from orchestrator_tests.case import PYTHONPATH
-from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
@@ -79,12 +78,10 @@ class Router(TmuxFlow):
         super().setUp()
         self.fake.issue(
             TITLE,
-            seed=fake_linear.IssueSeed(
-                identifier=ID,
-                assignee=self.ids[ENGINEER],
-                project=PROJECT,
-                description="Add a session registry.",
-            ),
+            identifier=ID,
+            assignee=self.ids[ENGINEER],
+            project=PROJECT,
+            description="Add a session registry.",
         )
 
     def claim(self, mode="start", *argv):

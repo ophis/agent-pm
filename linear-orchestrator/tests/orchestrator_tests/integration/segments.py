@@ -106,17 +106,6 @@ class Pending(NamedTuple):
     resumed: bool
 
 
-@dataclass(frozen=True, kw_only=True)
-class BoardChanges:
-    state: str | None = None
-    title: str | None = None
-    history: tuple = ()
-    comments: tuple = ()
-    attachments: tuple = ()
-    subscribers: tuple = ()
-    ledger: dict | None = None
-
-
 class BoardExpectations(TmuxFlow):
     def setUp(self):
         super().setUp()
@@ -143,15 +132,26 @@ class BoardExpectations(TmuxFlow):
             **{"state": fake_linear.NAMES[rec["state"]], "title": rec["title"], **fields}
         )
 
-    def expect(self, ident, changes: BoardChanges):
+    def expect(
+        self,
+        ident,
+        *,
+        state=None,
+        title=None,
+        history=(),
+        comments=(),
+        attachments=(),
+        subscribers=(),
+        ledger=None,
+    ):
         want = self.want[ident]
-        want.state = want.state if changes.state is None else changes.state
-        want.title = want.title if changes.title is None else changes.title
-        want.history += changes.history
-        want.comments += changes.comments
-        want.attachments += changes.attachments
-        want.subscribers += changes.subscribers
-        want.ledger.update(changes.ledger or {})
+        want.state = want.state if state is None else state
+        want.title = want.title if title is None else title
+        want.history += history
+        want.comments += comments
+        want.attachments += attachments
+        want.subscribers += subscribers
+        want.ledger.update(ledger or {})
 
     def expect_session(self, ident, sid, status):
         comments, entry = self.want[ident].comments, (HARNESS_EMAIL, f"session {sid} {status}")
@@ -357,18 +357,16 @@ class Segment(BoardExpectations):
             if p.resumed:
                 posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
                 self.expect_problem(*[lookup(account)] * len(posts))
-            self.expect(p.ident, BoardChanges(comments=comments, ledger={p.sid: steps}, **changes))
+            self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
 
     def backlog_issue(self, role, title, description, labels=()):
         ident = self.fake.issue(
             title,
-            seed=fake_linear.IssueSeed(
-                state="backlog",
-                assignee=self.ids[ACCOUNTS[role]],
-                project=PROJECT,
-                description=description,
-                labels=labels,
-            ),
+            state="backlog",
+            assignee=self.ids[ACCOUNTS[role]],
+            project=PROJECT,
+            description=description,
+            labels=labels,
         )["identifier"]
         self.track(ident, state="backlog", title=title)
         return ident
@@ -405,9 +403,7 @@ class Segment(BoardExpectations):
     def human_move(self, ident, to, name):
         with self.step(name):
             self.fake.move(ident, to, actor=self.ids[HUMAN])
-            self.expect(
-                ident, BoardChanges(state=to, history=[(self.want[ident].state, to, HUMAN)])
-            )
+            self.expect(ident, state=to, history=[(self.want[ident].state, to, HUMAN)])
 
     def human_say(self, ident, text, to, name):
         with self.step(name):
@@ -415,11 +411,9 @@ class Segment(BoardExpectations):
             self.fake.move(ident, to, actor=self.ids[HUMAN])
             self.expect(
                 ident,
-                BoardChanges(
-                    state=to,
-                    history=[(self.want[ident].state, to, HUMAN)],
-                    comments=[(HUMAN, f"human: {text}")],
-                ),
+                state=to,
+                history=[(self.want[ident].state, to, HUMAN)],
+                comments=[(HUMAN, f"human: {text}")],
             )
 
     def handoff(self, ident, text):
@@ -444,7 +438,8 @@ class Segment(BoardExpectations):
             self.expect_runs(("start", ident, sid, role, RUNTIME))
             self.expect(
                 ident,
-                BoardChanges(state="in_progress", history=[("todo", "in_progress", HARNESS_EMAIL)]),
+                state="in_progress",
+                history=[("todo", "in_progress", HARNESS_EMAIL)],
             )
             self.expect_session(ident, sid, "running")
             self.expect_problem(FIRST_WRITE)
@@ -471,11 +466,9 @@ class Segment(BoardExpectations):
             child, title = self.assert_child(ident, role, nxt)
             self.expect(
                 ident,
-                BoardChanges(
-                    state="done",
-                    history=[("handoff", "done", HARNESS_EMAIL)],
-                    comments=[(HARNESS_EMAIL, f"promoted {child}")],
-                ),
+                state="done",
+                history=[("handoff", "done", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, f"promoted {child}")],
             )
             self.track(child, state="todo", title=title)
         return child
@@ -621,12 +614,10 @@ class Segment(BoardExpectations):
         with self.step("seed: backlog"):
             src = self.fake.issue(
                 RESEARCH[0],
-                seed=fake_linear.IssueSeed(
-                    state="done",
-                    assignee=self.ids[ACCOUNTS["researcher"]],
-                    project=PROJECT,
-                    description=RESEARCH[1],
-                ),
+                state="done",
+                assignee=self.ids[ACCOUNTS["researcher"]],
+                project=PROJECT,
+                description=RESEARCH[1],
             )
             path = (
                 f"{RESEARCH_DIR}{datetime.now(UTC):%Y-%m-%d}-{src['identifier']}"

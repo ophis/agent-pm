@@ -9,7 +9,6 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.adapters.selection import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
@@ -195,16 +194,17 @@ class ClaudeCommon:
         request: SessionRequest,
         settings: Mapping | None,
         *,
-        command: ClaudeCommand | None = None,
+        head: tuple[str, ...] = (),
+        output: tuple[str, ...] = (),
+        tail: tuple[str, ...] = (),
+        env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments;
-        command.env under the config's. --mcp-config keeps a project's .mcp.json that a
-        --strict-mcp-config in spec.flags would drop.
+        """Build a Claude command with configured settings, access grants and output arguments; env
+        under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
+        spec.flags would drop.
         """
-        command = ClaudeCommand() if command is None else command
         spec = request.spec
         resume = request.resumed
-        head, output, tail, env = command.head, command.output, command.tail, command.env
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access

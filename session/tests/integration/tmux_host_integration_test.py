@@ -243,7 +243,7 @@ class StartTest(Live):
             tmux_host.Command(
                 argv=["/bin/sh", "-c", "exit 3"], cwd=self.cwd, env=self.server.env()
             ),
-            options=tmux_host.StartOptions(events=events),
+            events=events,
         )
 
         def dead():
@@ -435,8 +435,10 @@ class SettleTest(Live):
                 grids.open_grid(
                     self.window,
                     self.manager,
-                    tmux_host.GridSettings(per_column=1, retile="all"),
-                    tmux_host.PaneServices(proc=subprocess.run, script=tmux_host.__file__),
+                    per_column=1,
+                    retile="all",
+                    proc=subprocess.run,
+                    script=tmux_host.__file__,
                 )
             )
 

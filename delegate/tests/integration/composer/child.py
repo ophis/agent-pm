@@ -21,11 +21,11 @@ try:
     run = composer.resolve(
         req["role"],
         req.get("task"),
-        overrides=composer.RunOverrides(values=req.get("overlays", ())),
+        overlays=req.get("overlays", ()),
         team=team,
     )
     intent = composer.access(
-        run, req["workdir"], composer.RunLocation(req["cwd"], project=False), team=team
+        run, req["workdir"], cwd=req["cwd"], project=False, team=team
     )
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
     writes += [("a dir the run adds", d) for d in intent.dirs]

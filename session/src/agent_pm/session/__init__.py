@@ -24,7 +24,6 @@ from agent_pm.session.engine.api import (
     session_record as session_record,
 )
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.runtime.types import DriverServices, StartOptions
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     Access,
@@ -50,8 +49,6 @@ from agent_pm.session.hosts.tables import parse_hosts
 
 __all__ = [
     "Driver",
-    "DriverServices",
-    "StartOptions",
     "Handle",
     "MODES",
     "SIGNALS",

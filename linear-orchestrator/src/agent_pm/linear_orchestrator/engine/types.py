@@ -2,9 +2,8 @@
 
 import os
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Literal
 
 from agent_pm import delegate
@@ -107,13 +106,6 @@ class Docs:
 
 
 @dataclass(frozen=True)
-class CoreConfig:
-    path: str
-    local: str
-    values: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class Config:
     team: str
     states: Mapping[str, str]
@@ -157,35 +149,11 @@ class Promotion:
     child: dict[str, Any] | None = None
 
 
-@dataclass(frozen=True, kw_only=True)
-class RouterServices:
-    gql: Callable[..., dict] | None = None
-    run: Callable | None = None
-    keychain: Callable[[str], bool] | None = None
-    start: Callable[..., int] | None = None
-    driver: Driver | None = None
-
-
 @dataclass(frozen=True)
 class Team:
     id: str
     name: str
     states: dict[str, str]
-
-
-@dataclass(frozen=True, kw_only=True)
-class PruneScope:
-    work: str
-    team: Team
-    roles: Mapping[str, str]
-    driver: Driver
-    writable: tuple[str, ...] | None = None
-
-
-@dataclass(frozen=True)
-class TickTime:
-    now: datetime
-    hour: int
 
 
 @dataclass(frozen=True)
@@ -207,20 +175,6 @@ class Doc:
 class Sources:
     docs: tuple[Doc, ...]
     earlier: Doc | None
-
-
-@dataclass(frozen=True, kw_only=True)
-class InputContext:
-    humans: tuple[str, ...]
-    target: Target | None
-    docs: Docs
-
-
-@dataclass(frozen=True, kw_only=True)
-class ClonePaths:
-    work: str
-    clones: Mapping[str, str]
-    writable: tuple[str, ...] | None = None
 
 
 ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"

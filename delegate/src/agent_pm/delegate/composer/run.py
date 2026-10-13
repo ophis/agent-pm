@@ -5,7 +5,7 @@ config as one.
 """
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from agent_pm.delegate.composer.base import fill, title_of
@@ -19,15 +19,7 @@ from agent_pm.delegate.composer.teams import (
     tasks_path,
     team_or_default,
 )
-from agent_pm.delegate.composer.types import (
-    ConfigError,
-    ConfigSource,
-    Intent,
-    RunConfig,
-    RunLocation,
-    RunOverrides,
-    Team,
-)
+from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
 from agent_pm.delegate.engine import config as delegate_config
 from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH
 from agent_pm.utils import LOCAL
@@ -70,24 +62,23 @@ def resolve(
     role: str,
     task: str | None = None,
     *,
-    overrides: RunOverrides | None = None,
+    overlays: Sequence[Mapping] = (),
+    label: tuple[str, str] = ("run overlay", "overlay"),
     team: Team | None = None,
-    source: ConfigSource | None = None,
+    config: str = CONFIG,
+    local: str = LOCAL,
+    cfg: Mapping | None = None,
 ) -> RunConfig:
-    source = ConfigSource() if source is None else source
-    overrides = RunOverrides() if overrides is None else overrides
-    config, local, cfg = source.path, source.local, source.table
-    overlays = overrides.values
     overlays, team = tuple(overlays), team_or_default(team)
     known = set(role_tables(config, local, cfg)) | {n for kind, n in team.files if kind == "roles"}
     if role not in known:
         raise no_charter(role, {}, team)
-    label, where = overrides.source, overrides.table
+    source, where = label
     for overlay in overlays:
         try:
             _check_overlay(overlay, known, where)
         except ConfigError as e:
-            raise ConfigError(f"{label}: {e}") from None
+            raise ConfigError(f"{source}: {e}") from None
     cfg = config_of(config, local, cfg)
     _check(cfg)
     values = _run_keys(cfg, role)
@@ -127,9 +118,14 @@ def bind(entry: str, repo_dir: str | None) -> str | None:
 
 
 def access(
-    run: RunConfig, workdir: str, location: RunLocation, *, team: Team | None = None
+    run: RunConfig,
+    workdir: str,
+    *,
+    cwd: str,
+    project: bool,
+    repo_dir: str | None = None,
+    team: Team | None = None,
 ) -> Intent:
-    cwd, project, repo_dir = location.cwd, location.project, location.repo_dir
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)

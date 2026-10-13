@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import CALL_ERRORS, PruneScope, Unavailable
+from agent_pm.linear_orchestrator.engine.types import CALL_ERRORS, Unavailable
 from agent_pm.linear_orchestrator.linear.linear import (
     HISTORY,
     ISSUE_ID,
@@ -65,11 +65,13 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, dry, *, scope: PruneScope, run=config.sh_run):
-        self.driver = scope.driver
-        self.gql, self.now, self.dry, self.work = gql, now, dry, scope.work
-        self.team, self.roles, self.run_git = scope.team, scope.roles, run
-        self.writable = config.writable(scope.work) if scope.writable is None else scope.writable
+    def __init__(
+        self, gql, now, *, dry, run=config.sh_run, work, team, roles, driver, writable=None
+    ):
+        self.gql, self.now, self.dry, self.work = gql, now, dry, work
+        self.team, self.roles, self.run_git = team, roles, run
+        self.driver = driver
+        self.writable = config.writable(work) if writable is None else writable
         self.errors, self.tuis = 0, {}
         self.say = functools.partial(log, "prune", dry=dry)
 

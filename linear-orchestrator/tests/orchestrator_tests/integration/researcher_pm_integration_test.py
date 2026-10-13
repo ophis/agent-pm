@@ -13,7 +13,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     LIGHT_RESEARCH,
     RESEARCH_DIR,
 )
-from orchestrator_tests.integration.segments import RESEARCH, BoardChanges, Segment
+from orchestrator_tests.integration.segments import RESEARCH, Segment
 
 BLOCKER = "Pick a session store"
 
@@ -87,12 +87,10 @@ class ResearcherToPm(Segment):
             )
             self.expect(
                 ident,
-                BoardChanges(
-                    state="in_review",
-                    history=[("todo", "in_review", HARNESS_EMAIL)],
-                    comments=[(HARNESS_EMAIL, "cap")],
-                    subscribers=[HUMAN],
-                ),
+                state="in_review",
+                history=[("todo", "in_review", HARNESS_EMAIL)],
+                comments=[(HARNESS_EMAIL, "cap")],
+                subscribers=[HUMAN],
             )
         self.assertEqual(len(self.runs()), routing.CAP)
 

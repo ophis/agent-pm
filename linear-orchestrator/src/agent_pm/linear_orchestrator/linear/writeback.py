@@ -28,7 +28,7 @@ from agent_pm.linear_orchestrator.linear.linear import (
     one_line,
     subscribe,
 )
-from agent_pm.linear_orchestrator.linear.types import Context, Issue, RunIdentity
+from agent_pm.linear_orchestrator.linear.types import Context, Issue
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
 
 M_TITLE = (
@@ -53,21 +53,21 @@ ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create iss
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
-def context(cfg, role, gql, identity: RunIdentity):
+def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target=None):
     return Context(
-        ident=identity.ident,
-        issue_id=identity.issue_id,
+        ident=ident,
+        issue_id=issue_id,
         role=role,
-        sid=identity.sid,
-        resume=identity.resume,
-        project=identity.project,
-        workdir=cfg.run_dir(identity.ident),
+        sid=sid,
+        resume=resume,
+        project=project,
+        workdir=cfg.run_dir(ident),
         gql=functools.partial(gql, service=cfg.roles[role].key),
         humans=tuple(e.lower() for e in cfg.human_members),
         states=cfg.states,
         repos=cfg.project_repos,
         team=cfg.team,
-        target=identity.target,
+        target=target,
     )
 
 
@@ -77,14 +77,12 @@ def from_request(cfg, role, gql, args, issue_id):
         cfg,
         role,
         gql,
-        RunIdentity(
-            ident=args.issue,
-            issue_id=issue_id,
-            sid=args.sid,
-            resume=args.mode == "resume",
-            project=args.project,
-            target=repo_slug(target) if target else None,
-        ),
+        ident=args.issue,
+        issue_id=issue_id,
+        sid=args.sid,
+        resume=args.mode == "resume",
+        project=args.project,
+        target=repo_slug(target) if target else None,
     )
 
 

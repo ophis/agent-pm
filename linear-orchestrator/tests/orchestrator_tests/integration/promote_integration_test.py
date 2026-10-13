@@ -63,9 +63,10 @@ class Promote(Tick):
         )
         self.fake.issue(
             TITLE,
-            seed=fake_linear.IssueSeed(
-                identifier=SOURCE, state="in_progress", assignee=researcher, project=PROJECT
-            ),
+            identifier=SOURCE,
+            state="in_progress",
+            assignee=researcher,
+            project=PROJECT,
         )
         self.fake.move(SOURCE, "in_review", actor=researcher, at=now - timedelta(minutes=40))
         self.fake.comment(SOURCE, human, INSTRUCTIONS, at=now - timedelta(minutes=30))
@@ -180,18 +181,20 @@ class Prune(Tick, TmuxFlow):
         engineer = self.ids[ACCOUNTS["engineer"]]
         done_id = self.fake.issue(
             "ENG: Session registry",
-            seed=fake_linear.IssueSeed(
-                identifier=DONE, state="in_review", assignee=engineer, project=PROJECT
-            ),
+            identifier=DONE,
+            state="in_review",
+            assignee=engineer,
+            project=PROJECT,
         )["id"]
         self.fake.move(
             DONE, "done", actor=self.ids[HUMAN], at=datetime.now(UTC) - timedelta(hours=25)
         )
         self.fake.issue(
             "ENG: Session reaper",
-            seed=fake_linear.IssueSeed(
-                identifier=OPEN, state="in_progress", assignee=engineer, project=PROJECT
-            ),
+            identifier=OPEN,
+            state="in_progress",
+            assignee=engineer,
+            project=PROJECT,
         )
         gone = [os.path.join(self.runs_dir, DONE, *p) for p in (CLONE, ("publish",), ("tmp",))]
         kept = os.path.join(self.runs_dir, OPEN, *CLONE)

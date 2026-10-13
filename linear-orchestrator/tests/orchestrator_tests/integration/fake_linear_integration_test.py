@@ -41,9 +41,10 @@ class ServerCase(Case):
         self.human = fake.user("Me@X.com", "Me")
         fake.issue(
             "Session registry",
-            seed=fake_linear.IssueSeed(
-                identifier="TASK-7", state="in_progress", assignee=self.engineer, project=PROJECT
-            ),
+            identifier="TASK-7",
+            state="in_progress",
+            assignee=self.engineer,
+            project=PROJECT,
         )
         self.url = fake_linear.serve(self, fake)
         env = mock.patch.dict(
@@ -163,7 +164,7 @@ class GraphQLProjection(ServerCase):
         )
 
     def test_a_move_is_history_by_the_caller(self):
-        self.fake.issue("Claimed", seed=fake_linear.IssueSeed(identifier="TASK-8"))
+        self.fake.issue("Claimed", identifier="TASK-8")
         self.fake.move(
             "TASK-8",
             "in_progress",
@@ -316,19 +317,14 @@ class GraphQLProjection(ServerCase):
         finished = [
             self.fake.issue(
                 f"Finished {n}",
-                seed=fake_linear.IssueSeed(
-                    state=("done", "canceled")[n % 2], assignee=self.engineer
-                ),
+                state=("done", "canceled")[n % 2],
+                assignee=self.engineer,
             )["identifier"]
             for n in range(51)
         ]
-        archived = self.fake.issue(
-            "Archived", seed=fake_linear.IssueSeed(state="done", assignee=self.engineer)
-        )["identifier"]
+        archived = self.fake.issue("Archived", state="done", assignee=self.engineer)["identifier"]
         linear.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
-        self.fake.issue(
-            "Someone else's", seed=fake_linear.IssueSeed(state="done", assignee=self.human)
-        )
+        self.fake.issue("Someone else's", state="done", assignee=self.human)
         pages, cursor = [], None
         while True:
             page = self.gql(
@@ -347,7 +343,7 @@ class GraphQLProjection(ServerCase):
         self.assertTrue(self.fake.find(archived)["archived"])
 
     def test_issue_create_takes_the_next_number_and_refuses_a_used_id(self):
-        self.fake.issue("Older", seed=fake_linear.IssueSeed(identifier="TASK-3"))
+        self.fake.issue("Older", identifier="TASK-3")
         new = {
             "id": promote.child_id("src", "pm", "2026-10-09T07:00:00.000Z"),
             "teamId": TEAM,
@@ -392,15 +388,15 @@ class GraphQLProjection(ServerCase):
     def test_the_board_reads(self):
         done = "2026-10-08T07:00:00.000Z"
         self.fake.label_group(TASK_GROUP, "Tasks", {LABEL: "build"})
-        blocker = self.fake.issue("Blocker", seed=fake_linear.IssueSeed(state="in_progress"))
+        blocker = self.fake.issue("Blocker", state="in_progress")
         ready = self.fake.issue(
             "Ready",
-            seed=fake_linear.IssueSeed(assignee=self.engineer, project=PROJECT, labels=[LABEL]),
+            assignee=self.engineer,
+            project=PROJECT,
+            labels=[LABEL],
         )
-        self.fake.issue("No project", seed=fake_linear.IssueSeed(assignee=self.engineer))
-        self.fake.issue(
-            "Someone else's", seed=fake_linear.IssueSeed(assignee=self.human, project=PROJECT)
-        )
+        self.fake.issue("No project", assignee=self.engineer)
+        self.fake.issue("Someone else's", assignee=self.human, project=PROJECT)
         linear.call(
             self.gql,
             promote.M_RELATE,
@@ -497,10 +493,10 @@ class FixtureOperations(Case):
 
     def test_seeding_refuses_a_used_or_malformed_issue_id(self):
         fake = fake_linear.FakeLinear()
-        uid = fake.issue(seed=fake_linear.IssueSeed(identifier="TASK-7"))["id"]
+        uid = fake.issue(identifier="TASK-7")["id"]
         for kw in ({"identifier": "TASK-7"}, {"id": uid}, {"identifier": "OTHER-1"}):
             with self.subTest(**kw), self.assertRaises(ValueError):
-                fake.issue(seed=fake_linear.IssueSeed(**kw))
+                fake.issue(**kw)
 
     def test_backlog_is_a_state_outside_the_config(self):
         self.assertNotIn(fake_linear.BACKLOG, STATES.values())
@@ -513,9 +509,7 @@ class FixtureOperations(Case):
         fake = fake_linear.FakeLinear()
         actor = fake.user("me@x.com", "Me")
         self.assertEqual(
-            fake.issue("Later", seed=fake_linear.IssueSeed(identifier="TASK-1", state="backlog"))[
-                "state"
-            ],
+            fake.issue("Later", identifier="TASK-1", state="backlog")["state"],
             fake_linear.BACKLOG,
         )
         fake.move("TASK-1", "todo", actor=actor)
@@ -534,8 +528,8 @@ class FixtureOperations(Case):
     def test_relate_records_the_issues_ids_and_refuses_an_unknown_one(self):
         fake = fake_linear.FakeLinear()
         a, b = (
-            fake.issue("A", seed=fake_linear.IssueSeed(identifier="TASK-1")),
-            fake.issue("B", seed=fake_linear.IssueSeed(identifier="TASK-2")),
+            fake.issue("A", identifier="TASK-1"),
+            fake.issue("B", identifier="TASK-2"),
         )
         fake.relate("blocks", "TASK-1", b["id"])
         self.assertEqual(fake.relations, [("blocks", a["id"], b["id"])])
@@ -587,11 +581,11 @@ class GraphQLQueries(ServerCase):
     def test_a_backlog_issue_is_not_in_a_todo_list(self):
         later = self.fake.issue(
             "Later",
-            seed=fake_linear.IssueSeed(state="backlog", assignee=self.engineer, project=PROJECT),
+            state="backlog",
+            assignee=self.engineer,
+            project=PROJECT,
         )
-        ready = self.fake.issue(
-            "Ready", seed=fake_linear.IssueSeed(assignee=self.engineer, project=PROJECT)
-        )
+        ready = self.fake.issue("Ready", assignee=self.engineer, project=PROJECT)
 
         def listed(state):
             flt = {
@@ -627,8 +621,8 @@ class GraphQLQueries(ServerCase):
         self.assertEqual(self.fake.find(new["id"])["state"], fake_linear.BACKLOG)
 
     def test_relate_shows_in_relations_and_inverse_relations(self):
-        self.fake.issue("Later", seed=fake_linear.IssueSeed(identifier="TASK-8", state="backlog"))
-        ready = self.fake.issue("Ready", seed=fake_linear.IssueSeed(identifier="TASK-9"))
+        self.fake.issue("Later", identifier="TASK-8", state="backlog")
+        ready = self.fake.issue("Ready", identifier="TASK-9")
         self.fake.relate("blocks", "TASK-8", ready["id"])
         self.assertEqual(
             self.gql(issues.Q_ISSUE, i="TASK-8")["issue"]["relations"]["nodes"],
@@ -648,7 +642,7 @@ class GraphQLQueries(ServerCase):
         )
 
     def test_the_write_back_ops(self):
-        prd = self.fake.issue("PRD: Widgets", seed=fake_linear.IssueSeed(state="done"))
+        prd = self.fake.issue("PRD: Widgets", state="done")
         linear.call(
             self.gql,
             promote.M_RELATE,
@@ -691,14 +685,12 @@ class GraphQLQueries(ServerCase):
         created, handed, said, done = (f"2026-10-0{d}T07:00:00.000Z" for d in (5, 6, 7, 8))
         src = self.fake.issue(
             "Research",
-            seed=fake_linear.IssueSeed(
-                identifier="TASK-9",
-                state="in_review",
-                assignee=self.engineer,
-                project=PROJECT,
-                priority=2,
-                created=created,
-            ),
+            identifier="TASK-9",
+            state="in_review",
+            assignee=self.engineer,
+            project=PROJECT,
+            priority=2,
+            created=created,
         )
         self.fake.move("TASK-9", "handoff", actor=self.human, at=handed)
         self.fake.comment("TASK-9", self.human, "Build it.", at=said)

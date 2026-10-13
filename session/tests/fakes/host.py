@@ -123,10 +123,14 @@ class FakeHost(Host):
         return os.path.expanduser(self.settings.get("root", "~/.agent-pm/fake-host"))
 
     def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
-        return self._start("detach", name, argv, cwd, env, display, events, record)
+        return self._start(
+            "detach", name, argv, cwd, env, display=display, events=events, record=record
+        )
 
     def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
-        return self._start("terminal", name, argv, cwd, env, display, events, record)
+        return self._start(
+            "terminal", name, argv, cwd, env, display=display, events=events, record=record
+        )
 
     def attach(self, name: str) -> FakeProcess:
         folder = os.path.join(self.root(), name)
@@ -146,7 +150,7 @@ class FakeHost(Host):
             and (display is None or meta.get("display") == display)
         ]
 
-    def _start(self, kind, name, argv, cwd, env, display, events, record):
+    def _start(self, kind, name, argv, cwd, env, *, display, events, record):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ValueError(f"name: want [A-Za-z0-9_-]+, not {name!r}")
         if not (isinstance(argv, list | tuple) and argv and all(isinstance(a, str) for a in argv)):

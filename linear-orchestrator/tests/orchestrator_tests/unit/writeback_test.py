@@ -6,7 +6,7 @@ import os
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
@@ -130,29 +130,17 @@ def plan_comment(name="ENG-7-plan.md", text=PLAN_TEXT):
     return post(f"file:{name}:{sha(text)}", f"**Plan** `{name}`\n\n---\n\n{text}")
 
 
-@dataclass(frozen=True, kw_only=True)
-class WritebackEffects:
-    body: str
-    state: str
-    files: tuple = ()
-    title: str | None = None
-    subscribe: bool = True
-    attach: str | None = None
-    attach_title: str | None = None
-    resume: bool = False
-
-
-def expect(facts: WritebackEffects):
-    body, state, files, title, subscribe, attach, attach_title, resume = (
-        facts.body,
-        facts.state,
-        facts.files,
-        facts.title,
-        facts.subscribe,
-        facts.attach,
-        facts.attach_title,
-        facts.resume,
-    )
+def expect(
+    *,
+    body,
+    state,
+    files=(),
+    title=None,
+    subscribe=True,
+    attach=None,
+    attach_title=None,
+    resume=False,
+):
 
     def posted(call):
         return [("find", {"c": call[1]["c"]}), call] if resume else [call]
@@ -581,14 +569,12 @@ class WritebackContext(run_fixtures.Base):
                     cfg,
                     "engineer",
                     gql,
-                    writeback.RunIdentity(
-                        ident=ID,
-                        issue_id=UUID,
-                        sid=SID,
-                        resume=resume,
-                        project=PROJECT,
-                        target=target,
-                    ),
+                    ident=ID,
+                    issue_id=UUID,
+                    sid=SID,
+                    resume=resume,
+                    project=PROJECT,
+                    target=target,
                 )
                 want = writeback.Context(
                     ident=ID,
@@ -769,9 +755,7 @@ class CompletionSteps(Base):
                 ctx, Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR)
             )
         )
-        self.assertEqual(
-            gql.calls, expect(facts=WritebackEffects(body="Build ready: Ready.", state="in_review"))
-        )
+        self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
         self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
@@ -849,7 +833,7 @@ class CompletionSteps(Base):
             "\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
             "\n\nCould not subscribe bob@example.com: LinearError: linear api error: boom"
         )
-        self.assertEqual(gql.calls, expect(facts=WritebackEffects(body=body, state="in_review")))
+        self.assertEqual(gql.calls, expect(body=body, state="in_review"))
 
     def test_rejected_spec_post_noted(self):
         err = LinearError("linear api error: body too long")
@@ -879,13 +863,11 @@ class CompletionSteps(Base):
         self.assertEqual(
             gql.calls,
             expect(
-                facts=WritebackEffects(
-                    files=[spec_comment(), plan_comment()],
-                    body=body,
-                    state="in_review",
-                    attach=PR,
-                    attach_title="ENG-7: x",
-                )
+                files=[spec_comment(), plan_comment()],
+                body=body,
+                state="in_review",
+                attach=PR,
+                attach_title="ENG-7: x",
             ),
         )
         self.assertIn(
@@ -1002,7 +984,7 @@ class EngineeringUrls(Base):
                 "other repo dropped",
                 TARGET,
                 Outcome(status="done", title="ENG-7: x", summary="Ready.", url=evil),
-                expect(facts=WritebackEffects(body="Build ready: Ready.", state="in_review")),
+                expect(body="Build ready: Ready.", state="in_review"),
                 f"skip {ID} reason=url not on ophis/agent-pm",
             ),
             (
@@ -1010,12 +992,10 @@ class EngineeringUrls(Base):
                 ("Ophis", "Agent-PM"),
                 Outcome(status="done", title="ENG-7: x", summary="Ready.", url=PR),
                 expect(
-                    facts=WritebackEffects(
-                        body="Build ready: Ready.",
-                        state="in_review",
-                        attach=PR,
-                        attach_title="ENG-7: x",
-                    )
+                    body="Build ready: Ready.",
+                    state="in_review",
+                    attach=PR,
+                    attach_title="ENG-7: x",
                 ),
                 None,
             ),
@@ -1023,11 +1003,7 @@ class EngineeringUrls(Base):
                 "no target drops every url",
                 None,
                 Outcome(status="failed", title="ENG-7: x", summary="push not permitted", url=TREE),
-                expect(
-                    facts=WritebackEffects(
-                        body="Build failed: push not permitted", state="in_review"
-                    )
-                ),
+                expect(body="Build failed: push not permitted", state="in_review"),
                 f"skip {ID} reason=url not on a target repo",
             ),
         ):
@@ -1165,74 +1141,54 @@ class CompletionMessages(Base):
         files = [spec_comment(), plan_comment()] if config.TASKS[role].files else []
         table = {
             ("research", "done"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    body=f"Three queues compared.\nRedis streams fit best.\n\n{DOC}",
-                    state="in_review",
-                    attach=DOC,
-                    attach_title="Queue options",
-                )
+                resume=resume,
+                body=f"Three queues compared.\nRedis streams fit best.\n\n{DOC}",
+                state="in_review",
+                attach=DOC,
+                attach_title="Queue options",
             ),
-            ("research", "needs_input"): expect(
-                WritebackEffects(resume=resume, body=research, state="in_review")
-            ),
+            ("research", "needs_input"): expect(resume=resume, body=research, state="in_review"),
             ("research", "failed"): (
-                expect(
-                    WritebackEffects(
-                        resume=resume, body=f"gh api failed\n\n{DOC}", state="in_review"
-                    )
-                )
+                expect(resume=resume, body=f"gh api failed\n\n{DOC}", state="in_review")
                 if resume
                 else expect(
-                    WritebackEffects(
-                        resume=resume, body=f"gh api failed\n\n{DOC}", state="todo", subscribe=False
-                    )
+                    resume=resume, body=f"gh api failed\n\n{DOC}", state="todo", subscribe=False
                 )
             ),
             ("design", "done"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    title="PRD: Session Registry",
-                    body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE}",
-                    state="in_review",
-                    attach=PRD,
-                    attach_title="Session Registry",
-                )
+                resume=resume,
+                title="PRD: Session Registry",
+                body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE}",
+                state="in_review",
+                attach=PRD,
+                attach_title="Session Registry",
             ),
             ("design", "needs_input"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    body=f"1. Who uses it?\n2. Web or CLI?\n\n{FOOTER}",
-                    state="in_review",
-                )
+                resume=resume,
+                body=f"1. Who uses it?\n2. Web or CLI?\n\n{FOOTER}",
+                state="in_review",
             ),
             ("design", "failed"): expect(
-                WritebackEffects(resume=resume, body="Could not publish.", state="in_review")
+                resume=resume, body="Could not publish.", state="in_review"
             ),
             ("build", "done"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    files=files,
-                    state="in_review",
-                    body="Build ready:\nAdds the registry.\nVerify: python3 -m unittest",
-                    attach=PR,
-                    attach_title="ENG-7: Session registry",
-                )
+                resume=resume,
+                files=files,
+                state="in_review",
+                body="Build ready:\nAdds the registry.\nVerify: python3 -m unittest",
+                attach=PR,
+                attach_title="ENG-7: Session registry",
             ),
             ("build", "needs_input"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    body=f"Question:\n1. Keep the old API?\n\n{FOOTER}",
-                    state="in_review",
-                )
+                resume=resume,
+                body=f"Question:\n1. Keep the old API?\n\n{FOOTER}",
+                state="in_review",
             ),
             ("build", "failed"): expect(
-                WritebackEffects(
-                    resume=resume,
-                    files=files,
-                    state="in_review",
-                    body=f"Build failed: push not permitted\n\n{TREE}",
-                )
+                resume=resume,
+                files=files,
+                state="in_review",
+                body=f"Build failed: push not permitted\n\n{TREE}",
             ),
         }
         return table[(config.TASKS[role].kind, status)]
@@ -1281,13 +1237,11 @@ class CompletionMessages(Base):
         self.assertEqual(
             gql.calls,
             expect(
-                facts=WritebackEffects(
-                    title="PRD: Session Registry",
-                    body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE_MAPPED}",
-                    state="in_review",
-                    attach=PRD,
-                    attach_title="Session Registry",
-                )
+                title="PRD: Session Registry",
+                body=f"PRD for the registry.\n\n{PRD}\n\n{APPROVE_MAPPED}",
+                state="in_review",
+                attach=PRD,
+                attach_title="Session Registry",
             ),
         )
         self.assertEqual(
@@ -1329,12 +1283,7 @@ class CompletionLedger(Base):
         self.assertEqual(
             again.calls,
             expect(
-                facts=WritebackEffects(
-                    body="Build ready: Ready.",
-                    state="in_review",
-                    attach=PR,
-                    attach_title="ENG-7: x",
-                )
+                body="Build ready: Ready.", state="in_review", attach=PR, attach_title="ENG-7: x"
             ),
         )
 
@@ -1363,9 +1312,7 @@ class CompletionLedger(Base):
         )
         self.assertEqual(
             gql.calls,
-            expect(
-                facts=WritebackEffects(body="Build failed: push not permitted", state="in_review")
-            ),
+            expect(body="Build failed: push not permitted", state="in_review"),
         )
         self.assertEqual(
             self.ledger(ctx),
@@ -1388,11 +1335,7 @@ class CompletionLedger(Base):
                 )
                 self.assertEqual(
                     gql.calls,
-                    expect(
-                        facts=WritebackEffects(
-                            body="Build failed: push not permitted", state="in_review"
-                        )
-                    ),
+                    expect(body="Build failed: push not permitted", state="in_review"),
                 )
 
     def test_fifo_ledger_does_not_block(self):
@@ -1418,9 +1361,7 @@ class CompletionLedger(Base):
         )
         self.assertEqual(
             gql.calls,
-            expect(
-                facts=WritebackEffects(body="Build failed: push not permitted", state="in_review")
-            ),
+            expect(body="Build failed: push not permitted", state="in_review"),
         )
         self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
         with open(elsewhere) as f:
@@ -1508,11 +1449,7 @@ class ResumedComments(Base):
         self.assertTrue(writeback.finish(replace(ctx, gql=again, resume=True), done))
         self.assertEqual(
             again.calls,
-            expect(
-                facts=WritebackEffects(
-                    body="Build failed: push not permitted", state="in_review", resume=True
-                )
-            ),
+            expect(body="Build failed: push not permitted", state="in_review", resume=True),
         )
         self.assertEqual(len([c for c in again.calls if c[0] == "comment"]), 1)
 

@@ -12,7 +12,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     LinearError,
 )
 from agent_pm.linear_orchestrator.linear import linear
-from agent_pm.linear_orchestrator.linear.types import SessionEnd
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
 
@@ -127,13 +126,12 @@ def _text(rec):
     return out
 
 
-def post(issue, rec, *, gql, end: SessionEnd | None = None, timeout=LIMIT):
-    end = end or SessionEnd()
+def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
     rec["args"] = (
-        end.returncode,
-        None if end.returncode is None else end.ended_at or now(),
-        end.outcome,
-        end.limit,
+        rc,
+        None if rc is None else ended_at or now(),
+        outcome,
+        limit,
     )
     return write(gql, rec["sid"], issue, _text(rec), limit=timeout)
 

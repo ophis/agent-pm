@@ -8,7 +8,6 @@ import tomllib
 import types
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import ConfigSource
 from agent_pm.delegate.composer.base import anchor, fill, outline
 from agent_pm.delegate.composer.prompt import RETURN, RULE, reference_errors
 from agent_pm.delegate.composer.run import check_old_keys
@@ -59,9 +58,6 @@ dir = "Product Design/"
 
 API = [
     "ConfigError",
-    "ConfigSource",
-    "RunOverrides",
-    "RunLocation",
     "TEAM",
     "DELIVERABLE",
     "RunConfig",
@@ -321,7 +317,7 @@ class Acceptance(Case):
             with open(config, "w") as f:
                 f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
             for role in roles():
-                run = composer.resolve(role, source=ConfigSource(path=config, local=os.devnull))
+                run = composer.resolve(role, config=config, local=os.devnull)
                 prompt = composer.render(run, RUN)
                 self.assertEqual(run.language, "", role)
                 self.assertNotIn(LANGUAGE_RULE, prompt, role)

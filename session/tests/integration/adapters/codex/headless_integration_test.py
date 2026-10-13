@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import Driver, StartOptions
+from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.sessions import store_root
 from agent_pm.session.engine import records
@@ -441,7 +441,7 @@ class HeadlessLaunchIntegrationTest(HeadlessSessions):
                 "headless",
                 "again",
                 dataclasses.replace(self.spec, sid=self.sid),
-                options=StartOptions(resume=self.sid),
+                resume=self.sid,
             )
         )
         first, second = self.logged()
@@ -485,7 +485,7 @@ class HeadlessLaunchIntegrationTest(HeadlessSessions):
                         "headless",
                         "hello",
                         dataclasses.replace(self.spec, sid=self.sid),
-                        options=StartOptions(resume=self.sid if resume else None),
+                        resume=self.sid if resume else None,
                     )
                 )
                 self.assertEqual(found[-1], Exited(0))
@@ -531,7 +531,7 @@ class HeadlessLaunchIntegrationTest(HeadlessSessions):
                             "headless",
                             "hello",
                             dataclasses.replace(self.spec, sid=self.sid),
-                            options=StartOptions(resume=self.sid if resume else None),
+                            resume=self.sid if resume else None,
                         )
                     )
                     environment = self.logged()[-1]["env"]
@@ -555,11 +555,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(self.home)
         self.driver = Driver(**self.config)
         changed = dataclasses.replace(self.spec, env={"NEW_POLICY_KEY": "fresh"})
-        self.drain(
-            self.driver.start(
-                "codex", "headless", "again", changed, options=StartOptions(resume=self.sid)
-            )
-        )
+        self.drain(self.driver.start("codex", "headless", "again", changed, resume=self.sid))
         self.assertEqual(self.common.load(str(self.work), self.sid).snapshot, saved)
         self.assertEqual(len(self.logged()), 2)
         self.assertIsNone(self.logged()[-1]["env"]["NEW_POLICY_KEY"])
@@ -584,11 +580,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         )
         spec = dataclasses.replace(self.spec, tier=4, effort="max", access=access)
         handle = self.driver.start(
-            "codex",
-            "headless",
-            "again",
-            dataclasses.replace(spec, sid=self.sid),
-            options=StartOptions(resume=self.sid),
+            "codex", "headless", "again", dataclasses.replace(spec, sid=self.sid), resume=self.sid
         )
         self.assertTrue(handle.info().project)
         self.assertEqual(handle.info().transcript, str(fake_codex.session_path(NATIVE)))
@@ -643,7 +635,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                         "headless",
                         prompt,
                         dataclasses.replace(spec, sid=self.sid),
-                        options=StartOptions(resume=self.sid if resume else None),
+                        resume=self.sid if resume else None,
                     )
                 )
                 entry = self.logged()[-1]
@@ -682,7 +674,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
             "headless",
             "recover",
             dataclasses.replace(self.spec, sid=self.sid),
-            options=StartOptions(resume=self.sid),
+            resume=self.sid,
         )
         self.assertEqual(
             self.drain(resumed), [SessionBound(NATIVE), Reply(after), TurnEnd(after), Exited(0)]
@@ -706,7 +698,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                         "headless",
                         "hello",
                         dataclasses.replace(self.spec, sid=self.sid),
-                        options=StartOptions(resume=self.sid if resume else None),
+                        resume=self.sid if resume else None,
                     )
                 )
                 self.assertEqual(found[1:], [Reply(said), TurnEnd(said), Exited(0)])
@@ -723,7 +715,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
             "headless",
             "again",
             dataclasses.replace(self.spec, sid=self.sid),
-            options=StartOptions(resume=self.sid),
+            resume=self.sid,
         )
         with self.assertRaisesRegex(ConfigError, "already bound to a different native ID"):
             self.drain(handle)
@@ -742,7 +734,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                 "headless",
                 "again",
                 dataclasses.replace(self.spec, sid=self.sid),
-                options=StartOptions(resume=self.sid),
+                resume=self.sid,
             )
         self.assertEqual(self.logged(), [])
         self.assertFalse((self.work / "run.jsonl").exists())
@@ -773,7 +765,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                         "headless",
                         "again",
                         dataclasses.replace(self.spec, sid=self.sid),
-                        options=StartOptions(resume=self.sid),
+                        resume=self.sid,
                     )
                 self.assertEqual(len(self.logged()), 1)
 
@@ -790,7 +782,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                 "headless",
                 "again",
                 dataclasses.replace(self.spec, sid=self.sid),
-                options=StartOptions(resume=self.sid),
+                resume=self.sid,
             )
         self.assertEqual(len(self.logged()), 1)
 
@@ -820,7 +812,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                         "headless",
                         "again",
                         dataclasses.replace(self.spec, sid=self.sid),
-                        options=StartOptions(resume=self.sid),
+                        resume=self.sid,
                     )
                 self.assertEqual(len(self.logged()), 1)
 

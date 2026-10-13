@@ -909,7 +909,9 @@ class Writes(Case):
                 gql,
                 "I",
                 "body",
-                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
+                to=IN_REVIEW,
+                frm=IN_PROGRESS,
+                emails=("a@x.com", "b@x.com"),
             )
         )
         self.assertEqual(
@@ -923,7 +925,7 @@ class Writes(Case):
             ],
         )
         gql = Gql()
-        linear.comment_and_move(gql, "I", "body", linear.Transition(to=TODO, frm=IN_PROGRESS))
+        linear.comment_and_move(gql, "I", "body", to=TODO, frm=IN_PROGRESS)
         self.assertEqual([n for n, _ in gql.calls], ["read", "move", "comment"])
 
     def test_skipped_or_failed_move_posts_no_comment(self):
@@ -935,7 +937,9 @@ class Writes(Case):
                         gql,
                         "I",
                         "body",
-                        linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com",)),
+                        to=IN_REVIEW,
+                        frm=IN_PROGRESS,
+                        emails=("a@x.com",),
                     ),
                     state,
                 )
@@ -944,9 +948,7 @@ class Writes(Case):
             fail=lambda name, _v: LinearError("linear api error: boom") if name == "move" else None
         )
         with self.assertRaises(LinearError):
-            linear.comment_and_move(
-                gql, "I", "body", linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS)
-            )
+            linear.comment_and_move(gql, "I", "body", to=IN_REVIEW, frm=IN_PROGRESS)
         self.assertEqual([n for n, _ in gql.calls], ["read", "move"])
 
     def test_subscribe_failures_noted_in_the_comment(self):
@@ -960,7 +962,9 @@ class Writes(Case):
                 gql,
                 "I",
                 "body",
-                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
+                to=IN_REVIEW,
+                frm=IN_PROGRESS,
+                emails=("a@x.com", "b@x.com"),
             )
         )
         self.assertEqual(
@@ -984,7 +988,9 @@ class Writes(Case):
                 gql,
                 "I",
                 "body",
-                linear.Transition(to=IN_REVIEW, frm=IN_PROGRESS, emails=("a@x.com", "b@x.com")),
+                to=IN_REVIEW,
+                frm=IN_PROGRESS,
+                emails=("a@x.com", "b@x.com"),
             )
         self.assertEqual(cm.exception.code, 130)
         self.assertEqual(gql.calls, [("subscribe", {"i": "I", "e": "a@x.com"})])

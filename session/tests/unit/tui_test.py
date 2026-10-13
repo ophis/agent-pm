@@ -132,9 +132,10 @@ class Base(Case):
             NAME,
             run or self.run,
             info or self.info,
-            setup=tui.TuiSetup(
-                runtime="fake", workdir=workdir or self.tmp, tmux=tmux, events=events
-            ),
+            runtime="fake",
+            workdir=workdir or self.tmp,
+            tmux=tmux,
+            events=events,
             host=self.host,
         )
 
@@ -338,11 +339,9 @@ class BeginTest(Base):
                 mock.call.start(
                     NAME,
                     tmux_host.Command(argv=["/bin/run", "a"], cwd=self.tmp, env={"A": "1"}),
-                    options=tmux_host.StartOptions(
-                        events=self.events,
-                        status_line=True,
-                        tags={"@sid": SID, "@runtime": "fake"},
-                    ),
+                    events=self.events,
+                    status_line=True,
+                    tags={"@sid": SID, "@runtime": "fake"},
                 ),
                 mock.call.pane(NAME),
             ],
@@ -353,11 +352,9 @@ class BeginTest(Base):
             mock.call(
                 NAME,
                 tmux_host.Command(argv=["/bin/run"], cwd=self.tmp, env={}),
-                options=tmux_host.StartOptions(
-                    events=None,
-                    status_line=False,
-                    tags={"@sid": SID, "@runtime": "fake"},
-                ),
+                events=None,
+                status_line=False,
+                tags={"@sid": SID, "@runtime": "fake"},
             ),
         )
 

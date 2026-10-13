@@ -26,10 +26,9 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterator
-from dataclasses import asdict
 from typing import overload
 
-from agent_pm.manager.engine.types import Entry, Held, RosterError, Stale
+from agent_pm.manager.engine.types import Held, RosterError, Stale
 from agent_pm.session import Driver, DriverError
 from agent_pm.utils import LOCAL, STATE, read_project
 
@@ -535,13 +534,37 @@ def check(r: dict, directory: str, own: str | None, *, driver=None) -> None:
         raise RosterError(f"manager directory {directory} not attached: run crew.py attach first")
 
 
-def entry(spec: Entry) -> dict:
-    value = asdict(spec)
-    if spec.started is None:
-        value["started"] = now()
+def entry(
+    kind: str,
+    *,
+    sid: str | None,
+    cwd: str,
+    resume: list[str],
+    note: str | None = None,
+    opener: str | None = None,
+    pane: str | None = None,
+    split: str | None = None,
+    split_from: str | None = None,
+    tui: str | None = None,
+    state: str = "working",
+    started: str | None = None,
+) -> dict:
+    value = {
+        "kind": kind,
+        "sid": sid,
+        "cwd": cwd,
+        "resume": resume,
+        "note": note,
+        "opener": opener,
+        "pane": pane,
+        "split": split,
+        "split_from": split_from,
+        "tui": tui,
+        "state": state,
+        "started": now() if started is None else started,
+    }
     if bad := value_fault(value):
-        error_subject = "entry" if None is None else f"entry {None!r}"
-        raise RosterError(f"{error_subject}: {bad}")
+        raise RosterError(f"entry: {bad}")
     return value
 
 

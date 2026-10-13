@@ -152,11 +152,13 @@ class PruneScenario(Case):
             code = prune.Pruner(
                 gql,
                 NOW,
-                dry,
+                dry=dry,
                 run=git or Git(),
-                scope=prune.PruneScope(
-                    work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES, writable=writable
-                ),
+                work=self.work,
+                driver=self.api,
+                team=TEAM_OBJ,
+                roles=ROLES,
+                writable=writable,
             ).run()
         self.assertEqual(out.getvalue(), "")
         copies = [json.loads(line) for line in err.getvalue().splitlines() if line.startswith("{")]
@@ -661,7 +663,10 @@ class RetentionCleanup(PruneScenario):
             None,
             NOW,
             dry=False,
-            scope=prune.PruneScope(work=self.work, driver=self.api, team=TEAM_OBJ, roles=ROLES),
+            work=self.work,
+            driver=self.api,
+            team=TEAM_OBJ,
+            roles=ROLES,
         )
         self.assertEqual(pruner.writable, (self.work, *temp_dirs()))
 

@@ -17,12 +17,6 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True, kw_only=True)
-class CreationOptions:
-    root: str | None = None
-    persist: bool = True
-
-
 class RecoveryError(Exception):
     pass
 
@@ -503,10 +497,10 @@ def create_session(
     snapshot: dict,
     writable_roots: list[str],
     *,
-    options: CreationOptions | None = None,
+    persist: bool = True,
+    root: str | None = None,
 ) -> SessionState:
-    options = CreationOptions() if options is None else options
-    root = store_root(options.root)
+    root = store_root(root)
     workdir, sid = session_identity(workdir, sid)
     validate_snapshot(snapshot)
     state = _state(
@@ -525,7 +519,7 @@ def create_session(
     )
     recovery_snapshot(state, root=root)
     check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-    return save_session(state, root=root) if options.persist else state
+    return save_session(state, root=root) if persist else state
 
 
 def save_session(state: SessionState, *, root: str | None = None) -> SessionState:

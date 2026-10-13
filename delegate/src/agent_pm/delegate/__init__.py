@@ -3,7 +3,7 @@ session from the Driver, read from its replies' progress marks and outcome block
 """
 
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
-from agent_pm.delegate.composer import ConfigSource, RunConfig, RunOverrides, trusted_dirs
+from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
 from agent_pm.delegate.engine.base import Delegate
@@ -47,8 +47,6 @@ __all__ = [
     "STATUSES",
     "Delegate",
     "RunConfig",
-    "ConfigSource",
-    "RunOverrides",
     "DelegateEvent",
     "CONFIG",
     "IMPORT_ROOTS",

@@ -27,7 +27,7 @@ import re
 import sys
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import PYTHONPATH
@@ -38,8 +38,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
     Invalid,
     LinearError,
-    RouterServices,
-    TickTime,
     Transient,
     Unavailable,
 )
@@ -216,18 +214,11 @@ def q_issues(fields=""):
     )
 
 
-@dataclass(frozen=True, kw_only=True)
-class BoardPolicy:
-    now: datetime
-    dry: bool
-    gate: Gate | None = None
-
-
 class Board:
-    def __init__(self, gql, entries, cfg, policy: BoardPolicy, say=None):
-        self.gql, self.entries, self.now, self.dry = gql, entries, policy.now, policy.dry
-        self.cfg, self.gate = cfg, policy.gate
-        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=policy.dry)
+    def __init__(self, gql, entries, cfg, *, now, dry, gate=None, say=None):
+        self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
+        self.cfg, self.gate = cfg, gate
+        self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
@@ -307,11 +298,9 @@ class Board:
             self.gql,
             issue["id"],
             body,
-            linear.Transition(
-                to=self.states[state],
-                frm=self.states[frm],
-                emails=self.cfg.human_members if state == "in_review" else (),
-            ),
+            to=self.states[state],
+            frm=self.states[frm],
+            emails=self.cfg.human_members if state == "in_review" else (),
         )
         if left is not None:
             self.say("move-skip", issue["identifier"], step=step, state=left)
@@ -592,7 +581,8 @@ class Launch:
             repo = target.with_clone(
                 repo,
                 a.issue,
-                target.ClonePaths(clones=cfg.local_clones, work=cfg.runs_dir),
+                clones=cfg.local_clones,
+                work=cfg.runs_dir,
                 run=self.run,
             )
         return repo, None
@@ -610,7 +600,9 @@ class Launch:
                 issue,
                 self.role,
                 sources,
-                inputs.InputContext(humans=ctx.humans, target=repo, docs=cfg.docs),
+                humans=ctx.humans,
+                target=repo,
+                docs=cfg.docs,
             ).replace("\x00", "")
             text = text.encode("utf-8", "replace").decode()
         except SERVICE_ERRORS as e:
@@ -684,8 +676,7 @@ def full_roles(roles, live):
     return {r for r in roles if len(live[r]) >= roles[r].max_runs}
 
 
-def begin(selection, runs):
-    mode, issue, sid, role, task, runtime = selection
+def begin(runs, *, mode, issue, sid, role, task, runtime):
     ident = issue["identifier"]
     kind = "resume" if mode == "resume" else "start"
     note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime)
@@ -739,8 +730,7 @@ def choose(board, gate, live_ids, full, counts):
     return "new", issue, str(uuid.uuid4()), role, task, runtime
 
 
-def tick(opts, cfg, gql, time: TickTime, start):
-    now, hour = time.now, time.hour
+def tick(opts, cfg, gql, *, start, now, hour):
     dry, runs = opts["dry"], cfg.runs_log
     say = functools.partial(log, "router", dry=dry)
     if not opts["now"] and not 1 <= hour <= 6:
@@ -770,11 +760,12 @@ def tick(opts, cfg, gql, time: TickTime, start):
                 say("skip", reason="prune failed", error=one_line(e))
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, driver=cfg.driver)
-            board = Board(gql, parse_log(runs), cfg, BoardPolicy(now=now, dry=dry, gate=gate), walk)
+            board = Board(gql, parse_log(runs), cfg, now=now, dry=dry, gate=gate, say=walk)
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
                 return 0
-            a = begin(run, runs)
+            mode, issue, sid, role, task, runtime = run
+            a = begin(runs, mode=mode, issue=issue, sid=sid, role=role, task=task, runtime=runtime)
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
@@ -806,7 +797,7 @@ def run_issue(opts, cfg, gql, now, start):
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, cfg, BoardPolicy(now=now, dry=dry))
+        board = Board(gql, entries, cfg, now=now, dry=dry)
         if issue := next(
             (i for i in board.issues("in_progress") if i["identifier"] == ident), None
         ):
@@ -820,7 +811,12 @@ def run_issue(opts, cfg, gql, now, start):
         else:
             issue, task, role, runtime = taken
             run = ("new", issue, str(uuid.uuid4()), role, task, runtime)
-        return 0 if dry else start(begin(run, runs))
+        if dry:
+            return 0
+        mode, issue, sid, role, task, runtime = run
+        return start(
+            begin(runs, mode=mode, issue=issue, sid=sid, role=role, task=task, runtime=runtime)
+        )
 
 
 def brake(role, cfg):
@@ -849,13 +845,20 @@ def options(argv):
 
 
 def main(
-    argv, *, now=None, config_path=config.CONFIG, hour=None, services: RouterServices | None = None
+    argv,
+    *,
+    now=None,
+    config_path=config.CONFIG,
+    hour=None,
+    gql=None,
+    run=None,
+    keychain=None,
+    start=None,
+    driver=None,
 ):
-    services = services or RouterServices()
-    gql = services.gql or linear_gql
-    run = services.run or config.sh_run
-    keychain = services.keychain or linear.has_key
-    start, driver = services.start, services.driver
+    gql = gql or linear_gql
+    run = run or config.sh_run
+    keychain = keychain or linear.has_key
     opts = requested(argv)
     if opts is None:
         return 2
@@ -876,7 +879,7 @@ def main(
         if opts["issue"]:
             return run_issue(opts, cfg, gql, now, start)
         return tick(
-            opts, cfg, gql, TickTime(now, datetime.now().hour if hour is None else hour), start
+            opts, cfg, gql, now=now, hour=datetime.now().hour if hour is None else hour, start=start
         )
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])

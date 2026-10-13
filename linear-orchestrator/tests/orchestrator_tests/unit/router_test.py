@@ -11,7 +11,7 @@ import sys
 import tempfile
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
@@ -141,26 +141,18 @@ def writes(fake):
     ]
 
 
-@dataclass(frozen=True, kw_only=True)
-class IssueFacts:
-    updated: str | None = None
-    priority: int = 0
-    created: str = "2026-09-01T00:00:00Z"
-    project: str | None = DR
-    inverse: tuple = ()
-    labels: tuple = ()
-
-
-def issue(ident, state, role=None, *, facts: IssueFacts | None = None):
-    facts = facts or IssueFacts()
-    updated, priority, created, project, inverse, labels = (
-        facts.updated,
-        facts.priority,
-        facts.created,
-        facts.project,
-        facts.inverse,
-        facts.labels,
-    )
+def issue(
+    ident,
+    state,
+    role=None,
+    *,
+    updated=None,
+    priority=0,
+    created="2026-09-01T00:00:00Z",
+    project=DR,
+    inverse=(),
+    labels=(),
+):
     return {
         "id": ident,
         "identifier": ident,
@@ -442,50 +434,10 @@ class ClaimLinear(FakeLinear):
 def two():
     return FakeLinear(
         [
-            issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
+            issue("TASK-1", "Todo", "researcher", priority=1),
+            issue("TASK-2", "Todo", "pm", priority=2, project=PD),
         ]
     )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Attempt:
-    kind: str
-    ident: str
-    sid: str
-    minutes_ago: int
-    role: str = "researcher"
-    runtime: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class ClaimOptions:
-    full: tuple = ()
-    dry: bool = False
-    recover: bool = False
-    gate: bool = False
-    again: bool = False
-
-
-@dataclass(frozen=True, kw_only=True)
-class TickOptions:
-    hour: int = 2
-    live: tuple | list | None = ()
-    start: object = None
-    again: bool = False
-    now: object = NOW
-    tty: bool = False
-    outer: dict | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class LaunchRequest:
-    assignee: str = ENGINEER
-    task: str | None = None
-    mode: str = "new"
-    ident: str = ID
-    sid: str = SID
-    runtime: str = "a"
 
 
 class Base(run_fixtures.Base):
@@ -524,7 +476,7 @@ class Base(run_fixtures.Base):
 
     def resumable(self, ident, sid, minutes_ago, role="researcher"):
         self.moved(ident, minutes_ago + 1)
-        self.add(Attempt(kind="start", ident=ident, sid=sid, minutes_ago=minutes_ago, role=role))
+        self.add(kind="start", ident=ident, sid=sid, minutes_ago=minutes_ago, role=role)
         self.touch(sid, 40)
 
     def row(self, kind, ident, sid, role="researcher", runtime=None, **ago):
@@ -539,15 +491,15 @@ class Base(run_fixtures.Base):
             }
         )
 
-    def add(self, attempt: Attempt):
+    def add(self, *, kind, ident, sid, minutes_ago, role="researcher", runtime=None):
         self.lines.append(
             self.row(
-                attempt.kind,
-                attempt.ident,
-                attempt.sid,
-                attempt.role,
-                attempt.runtime,
-                minutes=attempt.minutes_ago,
+                kind,
+                ident,
+                sid,
+                role,
+                runtime,
+                minutes=minutes_ago,
             )
         )
 
@@ -594,13 +546,11 @@ class Base(run_fixtures.Base):
                     functools.partial(fake, service=HARNESS),
                     runs.parse_log(self.runs),
                     cfg,
-                    routing.BoardPolicy(
-                        now=NOW,
-                        dry=dry,
-                        gate=runtime_usage.Gate(self.runs, NOW, dry=dry, driver=self.api)
-                        if gate
-                        else None,
-                    ),
+                    now=NOW,
+                    dry=dry,
+                    gate=runtime_usage.Gate(self.runs, NOW, dry=dry, driver=self.api)
+                    if gate
+                    else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -620,15 +570,7 @@ class Base(run_fixtures.Base):
             )
         return "new" if run else ""
 
-    def claim(self, fake, options: ClaimOptions | None = None):
-        options = options or ClaimOptions()
-        full, dry, recover, gate, again = (
-            options.full,
-            options.dry,
-            options.recover,
-            options.gate,
-            options.again,
-        )
+    def claim(self, fake, *, full=(), dry=False, recover=False, gate=False, again=False):
 
         def use(b):
             recover and b.recover()
@@ -665,17 +607,9 @@ class Start:
 
 
 class TickBase(Base):
-    def tick(self, fake, *argv, options: TickOptions | None = None):
-        options = options or TickOptions()
-        hour, live, start, again, now, tty, outer = (
-            options.hour,
-            options.live,
-            options.start,
-            options.again,
-            options.now,
-            options.tty,
-            options.outer,
-        )
+    def tick(
+        self, fake, *argv, hour=2, live=(), start=None, again=False, now=NOW, tty=False, outer=None
+    ):
         # outer: main's run and keychain; main then starts through its own outer
         self.api.live = None if live is None else list(live)
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
@@ -692,9 +626,10 @@ class TickBase(Base):
                 now=now,
                 config_path=self.config_path,
                 hour=hour,
-                services=router.RouterServices(
-                    gql=fake, driver=self.api, start=self.start, **outer or {}
-                ),
+                gql=fake,
+                driver=self.api,
+                start=self.start,
+                **outer or {},
             )
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -730,16 +665,7 @@ class OuterBase(TickBase):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def outer(self, request: LaunchRequest | None = None):
-        request = request or LaunchRequest()
-        assignee, task, mode, ident, sid, runtime = (
-            request.assignee,
-            request.task,
-            request.mode,
-            request.ident,
-            request.sid,
-            request.runtime,
-        )
+    def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
         a = argparse.Namespace(
             issue=ident,
             project=PROJECT,
@@ -815,19 +741,22 @@ class IssueClaims(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=0, created="2026-01-01T00:00:00Z"),
+                        priority=0,
+                        created="2026-01-01T00:00:00Z",
                     ),
                     issue(
                         "TASK-2",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=3, created="2026-02-01T00:00:00Z"),
+                        priority=3,
+                        created="2026-02-01T00:00:00Z",
                     ),
                     issue(
                         "TASK-3",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=3, created="2026-01-15T00:00:00Z"),
+                        priority=3,
+                        created="2026-01-15T00:00:00Z",
                     ),
                 ],
                 ["TASK-3", "TASK-2", "TASK-1"],
@@ -838,19 +767,23 @@ class IssueClaims(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=2, created="2026-09-01T00:00:00Z"),
+                        priority=2,
+                        created="2026-09-01T00:00:00Z",
                     ),
                     issue(
                         "TASK-2",
                         "Todo",
                         "pm",
-                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z", project=PD),
+                        priority=2,
+                        created="2026-09-02T00:00:00Z",
+                        project=PD,
                     ),
                     issue(
                         "TASK-3",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=1, created="2026-09-03T00:00:00Z"),
+                        priority=1,
+                        created="2026-09-03T00:00:00Z",
                     ),
                 ],
                 ["TASK-3", "TASK-2", "TASK-1"],
@@ -861,25 +794,29 @@ class IssueClaims(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=2, created="2026-09-01T00:00:00Z"),
+                        priority=2,
+                        created="2026-09-01T00:00:00Z",
                     ),
                     issue(
                         "TASK-2",
                         "Todo",
                         "engineer",
-                        facts=IssueFacts(priority=2, created="2026-09-03T00:00:00Z"),
+                        priority=2,
+                        created="2026-09-03T00:00:00Z",
                     ),
                     issue(
                         "TASK-3",
                         "Todo",
                         "pm",
-                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z"),
+                        priority=2,
+                        created="2026-09-02T00:00:00Z",
                     ),
                     issue(
                         "TASK-4",
                         "Todo",
                         "engineer",
-                        facts=IssueFacts(priority=2, created="2026-09-02T00:00:00Z"),
+                        priority=2,
+                        created="2026-09-02T00:00:00Z",
                     ),
                 ],
                 ["TASK-4", "TASK-2", "TASK-3", "TASK-1"],
@@ -896,8 +833,8 @@ class IssueClaims(Base):
             [
                 issue("TASK-1", "Todo"),
                 issue("TASK-2", "Todo", "someone"),
-                issue("TASK-3", "Todo", "pm", facts=IssueFacts(project=None)),
-                issue("TASK-4", "Todo", "engineer", facts=IssueFacts(project=PD, priority=3)),
+                issue("TASK-3", "Todo", "pm", project=None),
+                issue("TASK-4", "Todo", "engineer", project=PD, priority=3),
             ]
         )
         self.assertEqual(self.claim(fake), f"TASK-4 https://linear.app/x/TASK-4 {PD}")
@@ -924,14 +861,14 @@ class IssueClaims(Base):
     def test_full_roles_not_picked(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "engineer", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=4)),
+                issue("TASK-1", "Todo", "engineer", priority=1),
+                issue("TASK-2", "Todo", "researcher", priority=4),
             ]
         )
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(
-            self.claim(fake, options=ClaimOptions(full={"engineer"})),
+            self.claim(fake, full={"engineer"}),
             "TASK-2 https://linear.app/x/TASK-2 Deep Research",
         )
         self.assertEqual(
@@ -947,12 +884,12 @@ class IssueClaims(Base):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "researcher", priority=2),
             ]
         )
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
@@ -970,7 +907,7 @@ class IssueClaims(Base):
         }
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")], hist)
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
 
     def test_no_longer_todo_skipped_for_the_next(self):
@@ -983,8 +920,8 @@ class IssueClaims(Base):
 
         fake = Snatched(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "researcher", priority=2),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -1003,7 +940,7 @@ class IssueClaims(Base):
         self.write_config(HUMANS + CONFIG)
         fake = Moved([issue("TASK-1", "Todo", "researcher")], "In Progress")
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), "")
         t = fake.issues["TASK-1"]
         self.assertEqual((t["state"], t["subscribers"]), ("In Progress", ["me@x.com"]))
@@ -1035,17 +972,15 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(
-                        priority=1,
-                        inverse=[
-                            blocker("TASK-7"),
-                            blocker("TASK-8", "completed"),
-                            blocker("TASK-9", "unstarted"),
-                        ],
-                    ),
+                    priority=1,
+                    inverse=[
+                        blocker("TASK-7"),
+                        blocker("TASK-8", "completed"),
+                        blocker("TASK-9", "unstarted"),
+                    ],
                 ),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
-                issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=3)),
+                issue("TASK-2", "Todo", "researcher", priority=2),
+                issue("TASK-3", "Todo", "researcher", priority=3),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -1072,9 +1007,7 @@ class IssueBlockers(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(
-                            inverse=[blocker(f"TASK-{n}", s) for n, s in enumerate(states, 7)]
-                        ),
+                        inverse=[blocker(f"TASK-{n}", s) for n, s in enumerate(states, 7)],
                     )
                 ]
             )
@@ -1090,11 +1023,9 @@ class IssueBlockers(Base):
 
     def test_capped_blocked_stays_todo(self):
         self.write_config(HUMANS + CONFIG)
-        fake = FakeLinear(
-            [issue("TASK-1", "Todo", "researcher", facts=IssueFacts(inverse=[blocker("TASK-7")]))]
-        )
+        fake = FakeLinear([issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])])
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), "")
         self.assertEqual(
             self.said(), ['blocked TASK-1 by=["TASK-7"]', "pick-none reason=queue empty"]
@@ -1109,19 +1040,18 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(
-                        priority=2,
-                        inverse=[
-                            blocker("TASK-5", kind="related"),
-                            blocker("TASK-6", kind="duplicate"),
-                        ],
-                    ),
+                    priority=2,
+                    inverse=[
+                        blocker("TASK-5", kind="related"),
+                        blocker("TASK-6", kind="duplicate"),
+                    ],
                 ),
                 issue(
                     "TASK-2",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(priority=1, inverse=[blocker("TASK-1", "unstarted")]),
+                    priority=1,
+                    inverse=[blocker("TASK-1", "unstarted")],
                 ),
             ]
         )
@@ -1143,7 +1073,7 @@ class IssueBlockers(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(inverse=[blocker(None), blocker("TASK-7", "completed")]),
+                    inverse=[blocker(None), blocker("TASK-7", "completed")],
                 )
             ]
         )
@@ -1155,18 +1085,20 @@ class IssueBlockers(Base):
     def test_blocker_query_error_reads_per_issue(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
                 issue(
                     "TASK-2",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(priority=2, inverse=[blocker("TASK-7")]),
+                    priority=2,
+                    inverse=[blocker("TASK-7")],
                 ),
                 issue(
                     "TASK-3",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(priority=3, inverse=[blocker("TASK-8", "canceled")]),
+                    priority=3,
+                    inverse=[blocker("TASK-8", "canceled")],
                 ),
             ]
         )
@@ -1197,9 +1129,7 @@ class IssueBlockers(Base):
                     issue("TASK-2", "Todo", "researcher"),
                 ]
             )
-            self.plan(fake) if argv == "plan" else self.claim(
-                fake, options=ClaimOptions(recover=argv == "pick")
-            )
+            self.plan(fake) if argv == "plan" else self.claim(fake, recover=argv == "pick")
             reads = {s: fake.reads(s) for s in ("Todo", "In Progress")}
             self.assertEqual(len(reads["Todo"]), 1, argv)
             self.assertIn(
@@ -1227,15 +1157,13 @@ class IssueBlockers(Base):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")]),
+                        inverse=[blocker("TASK-7"), blocker("TASK-8", "backlog")],
                     ),
-                    issue("TASK-2", "Todo", "pm", facts=IssueFacts(project=PD)),
+                    issue("TASK-2", "Todo", "pm", project=PD),
                 ]
             )
             self.assertEqual(
-                self.plan(fake, dry=True)
-                if argv == "plan"
-                else self.claim(fake, options=ClaimOptions(dry=True)),
+                self.plan(fake, dry=True) if argv == "plan" else self.claim(fake, dry=True),
                 out,
                 argv,
             )
@@ -1254,9 +1182,7 @@ class RouterEntry(OuterBase):
 
     def entry(self, *argv, live=(), tty=False):
         outer = {"run": self.run_, "keychain": self.keychain}
-        return self.tick(
-            self.fake, *argv, options=TickOptions(live=live, again=True, tty=tty, outer=outer)
-        )
+        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer)
 
     def test_claims_then_starts_run_py_after_its_start_line(self):
         for argv, said in (
@@ -1415,7 +1341,7 @@ class RouterArguments(Base):
             rc = router.main(
                 argv,
                 config_path=os.path.join(self.tmp, "absent.toml"),
-                services=router.RouterServices(gql=None),
+                gql=None,
             )
         return rc, err.getvalue()
 
@@ -1476,7 +1402,7 @@ class RouterArguments(Base):
 
 class RouterLocking(TickBase):
     def test_a_tick_skips_while_another_router_runs(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         before = self.before()
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         with other_router(self.runs):
@@ -1487,7 +1413,7 @@ class RouterLocking(TickBase):
                 ([], [], before, "Todo"),
             )
             self.assertEqual(
-                (self.tick(fake, options=TickOptions(hour=12)), self.said(), self.api.order),
+                (self.tick(fake, hour=12), self.said(), self.api.order),
                 (0, [], []),
             )
         self.assertEqual(self.tick(fake), 0)
@@ -1515,7 +1441,7 @@ class RouterLocking(TickBase):
                 rc = router.main(
                     ["--brake", "researcher"],
                     config_path=self.config_path,
-                    services=router.RouterServices(driver=self.api),
+                    driver=self.api,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
         self.assertEqual(fake.mutations, [])
@@ -1530,7 +1456,7 @@ class RouterOutages(TickBase):
                 with self.subTest(argv=argv, failure=name):
                     for again in (False, True):
                         gql = failing(error)
-                        self.assertEqual(self.tick(gql, *argv, options=TickOptions(again=again)), 1)
+                        self.assertEqual(self.tick(gql, *argv, again=again), 1)
                         self.assertEqual(
                             (self.said(), self.raw), ([] if again else [self.SAID[name]], "")
                         )
@@ -1574,7 +1500,7 @@ class RouterOutages(TickBase):
                     self.tick(
                         fake,
                         "--now",
-                        options=TickOptions(now=NOW + routing.STALE + timedelta(minutes=1)),
+                        now=NOW + routing.STALE + timedelta(minutes=1),
                     ),
                     0,
                 )
@@ -1657,7 +1583,7 @@ class ClaimUsageGates(Base):
                 self.api.usages, self.api.usage_calls = {"a": value, "b": reading(50)}, []
                 fake = two()
                 self.assertEqual(
-                    self.claim(fake, options=ClaimOptions(gate=True)),
+                    self.claim(fake, gate=True),
                     f"TASK-2 https://linear.app/x/TASK-2 {PD}",
                 )
                 self.assertEqual(
@@ -1675,7 +1601,7 @@ class ClaimUsageGates(Base):
     def test_an_absent_window_never_blocks(self):
         self.api.usages = {"a": reading(None, 10)}
         self.assertEqual(
-            self.claim(two(), options=ClaimOptions(gate=True)),
+            self.claim(two(), gate=True),
             "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
 
@@ -1683,13 +1609,13 @@ class ClaimUsageGates(Base):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=2)),
-                issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-3", "Todo", "researcher", priority=2),
+                issue("TASK-2", "Todo", "pm", priority=3, project=PD),
             ]
         )
         self.assertEqual(
-            self.claim(fake, options=ClaimOptions(gate=True)),
+            self.claim(fake, gate=True),
             f"TASK-2 https://linear.app/x/TASK-2 {PD}",
         )
         why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
@@ -1709,7 +1635,7 @@ class ClaimUsageGates(Base):
     def test_all_blocked_claims_nothing(self):
         self.api.usages = {"a": reading(95), "b": None}
         fake = two()
-        self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True)), "")
+        self.assertEqual(self.claim(fake, gate=True), "")
         self.assertEqual(fake.mutations, [])
         self.assertEqual(self.said()[-1], "pick-none reason=nothing claimable")
 
@@ -1725,7 +1651,7 @@ class ClaimUsageGates(Base):
                 fake = Changed(
                     [issue("TASK-1", "Todo", listed)], {"TASK-1": {"assignee": who(now)}}
                 )
-                self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True)), out)
+                self.assertEqual(self.claim(fake, gate=True), out)
                 self.assertEqual(self.api.usage_calls, calls)
                 self.assertEqual(len(fake.mutations), int(bool(out)))
 
@@ -1734,7 +1660,7 @@ class ClaimUsageGates(Base):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         skip = "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [skip]), (True, [])):
-            self.assertEqual(self.claim(fake, options=ClaimOptions(gate=True, again=again)), "")
+            self.assertEqual(self.claim(fake, gate=True, again=again), "")
             self.assertEqual(
                 self.said(), ["pick TASK-1 queue=1", *said, "pick-none reason=nothing claimable"]
             )
@@ -1745,7 +1671,7 @@ class ClaimUsageGates(Base):
         self.limit("a", at)
         fake = two()
         self.assertEqual(
-            self.claim(fake, options=ClaimOptions(dry=True, gate=True)),
+            self.claim(fake, dry=True, gate=True),
             f"TASK-2 https://linear.app/x/TASK-2 {PD}",
         )
         self.assertEqual(
@@ -1776,7 +1702,7 @@ class RunBrake(Base):
             rc = router.main(
                 ["--brake", role],
                 config_path=self.config_path,
-                services=router.RouterServices(driver=self.api),
+                driver=self.api,
             )
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
@@ -1847,8 +1773,8 @@ class ScheduledUsageGates(TickBase):
     def test_a_blocked_resume_candidate_lets_a_claim_start(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
+            issue("TASK-1", "In Progress", "researcher", priority=1),
+            issue("TASK-2", "Todo", "pm", priority=2, project=PD),
         )
         self.resumable("TASK-1", "a", 60)
         self.assertEqual(self.tick(fake), 0)
@@ -1871,9 +1797,9 @@ class ScheduledUsageGates(TickBase):
     def test_all_blocked_starts_nothing_and_probes_a_runtime_once(self):
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-3", "In Progress", "engineer", facts=IssueFacts(priority=2, project=PD)),
-            issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+            issue("TASK-1", "In Progress", "researcher", priority=1),
+            issue("TASK-3", "In Progress", "engineer", priority=2, project=PD),
+            issue("TASK-2", "Todo", "researcher", priority=2),
         )
         self.resumable("TASK-1", "a", 60)
         self.resumable("TASK-3", "c", 50, "engineer")
@@ -1881,7 +1807,7 @@ class ScheduledUsageGates(TickBase):
         why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [f"usage-skip TASK-{n} {why}" for n in (1, 3, 2)]), (True, [])):
             with self.subTest(again=again):
-                self.assertEqual(self.tick(fake, options=TickOptions(again=again)), 0)
+                self.assertEqual(self.tick(fake, again=again), 0)
                 self.assertEqual(self.said(), said)
                 self.assertEqual(
                     (self.start.launches, fake.mutations, self.state, self.api.usage_calls),
@@ -1938,8 +1864,8 @@ class ScheduledUsageGates(TickBase):
                 if limited:
                     self.limit("a", at)
                 fake = self.fake(
-                    issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-                    issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
+                    issue("TASK-1", "In Progress", "researcher", priority=1),
+                    issue("TASK-2", "Todo", "pm", priority=2, project=PD),
                 )
                 self.resumable("TASK-1", "a", 60)
                 before = self.before()
@@ -2012,9 +1938,10 @@ class TaskSelection(TaskLabelsScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(priority=1, labels=[label("Orphan", ORPHAN_LABEL)]),
+                    priority=1,
+                    labels=[label("Orphan", ORPHAN_LABEL)],
                 ),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-2", "Todo", "researcher", priority=2),
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-2 https://linear.app/x/TASK-2 Deep Research")
@@ -2039,19 +1966,20 @@ class TaskSelection(TaskLabelsScenario):
     def test_capped_and_bad_label_todo_skipped_for_the_next(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
                 issue(
                     "TASK-2",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(priority=2, labels=[label("Orphan", ORPHAN_LABEL)]),
+                    priority=2,
+                    labels=[label("Orphan", ORPHAN_LABEL)],
                 ),
-                issue("TASK-3", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
-                issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=4, project=PD)),
+                issue("TASK-3", "Todo", "pm", priority=3, project=PD),
+                issue("TASK-4", "Todo", "engineer", priority=4, project=PD),
             ]
         )
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.assertEqual(self.claim(fake), f"TASK-3 https://linear.app/x/TASK-3 {PD}")
         self.assertEqual(
             self.said(),
@@ -2078,9 +2006,8 @@ class TaskSelection(TaskLabelsScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(
-                        labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")]
-                    ),
+                    labels=[label("Orphan", ORPHAN_LABEL)],
+                    inverse=[blocker("TASK-7")],
                 )
             ]
         )
@@ -2127,12 +2054,12 @@ class TaskSelection(TaskLabelsScenario):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(labels=[label("Orphan", ORPHAN_LABEL)]),
+                        labels=[label("Orphan", ORPHAN_LABEL)],
                     )
                 ]
             )
             self.assertEqual(
-                self.claim(fake, options=ClaimOptions(dry=True, recover=argv)),
+                self.claim(fake, dry=True, recover=argv),
                 "TASK-1 https://linear.app/x/TASK-1 Deep Research",
                 argv,
             )
@@ -2149,7 +2076,7 @@ class TaskSelection(TaskLabelsScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                    labels=[label("Light Research", LIGHT)],
                 )
             ]
         )
@@ -2163,8 +2090,8 @@ class TaskSelection(TaskLabelsScenario):
     def test_fr22_every_resumable_issue_is_checked(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-1", "In Progress", "researcher", priority=1),
+                issue("TASK-2", "In Progress", "researcher", priority=2),
             ],
             self.hist,
         )
@@ -2222,9 +2149,8 @@ class ScheduledTaskSelection(TickBase):
                             "TASK-1",
                             "Todo",
                             "researcher",
-                            facts=IssueFacts(
-                                labels=[label("Orphan", ORPHAN_LABEL)], inverse=[blocker("TASK-7")]
-                            ),
+                            labels=[label("Orphan", ORPHAN_LABEL)],
+                            inverse=[blocker("TASK-7")],
                         )
                     ]
                 )
@@ -2261,11 +2187,11 @@ class ScheduledTaskSelection(TickBase):
                 "TASK-1",
                 "In Progress",
                 "researcher",
-                facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                labels=[label("Light Research", LIGHT)],
             )
         )
         self.moved("TASK-1", 61)
-        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=60))
+        self.add(kind="resume", ident="TASK-1", sid="a", minutes_ago=60)
         self.touch("a", 40)
         self.tick(fake)
         (launch,) = self.start.launches
@@ -2274,7 +2200,7 @@ class ScheduledTaskSelection(TickBase):
         self.assertIn("plan TASK-1 mode=resume sid=a", self.said())
 
     def test_fr22_a_logged_role_not_the_assignees_goes_to_review(self):
-        fake = self.fake(issue("TASK-1", "In Progress", "engineer", facts=IssueFacts(project=PD)))
+        fake = self.fake(issue("TASK-1", "In Progress", "engineer", project=PD))
         self.resumable("TASK-1", "a", 60)
         before = self.before()
         self.tick(fake)
@@ -2318,11 +2244,11 @@ class ScheduledTaskSelection(TickBase):
                 "TASK-1",
                 "In Progress",
                 "researcher",
-                facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                labels=[label("Light Research", LIGHT)],
             )
         )
         self.moved("TASK-1", 61)
-        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=60))
+        self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=60)
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.INTERRUPTED])
         self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())
@@ -2361,7 +2287,7 @@ class RunLaunching(OuterBase):
         self.assertEqual((self.err, self.said()), ("", []))
 
     def test_a_given_task_reaches_run_py_whose_argv_parses_it(self):
-        self.assertEqual(self.outer(request=LaunchRequest(task="light-build")), 0)
+        self.assertEqual(self.outer(task="light-build"), 0)
         argv = self.detached()
         self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
         found = run_py.options(argv[4:])
@@ -2415,7 +2341,7 @@ class RunLaunching(OuterBase):
             with self.subTest(role=role):
                 self.gql.issue = node(title=title, description=description)
                 self.run_.table, self.run_.calls = [(listing, ok("[]"))], []
-                self.assertEqual(self.outer(request=LaunchRequest(assignee=who_)), 0)
+                self.assertEqual(self.outer(assignee=who_), 0)
                 self.assertEqual(
                     self.detached(role),
                     inner(
@@ -2445,7 +2371,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(who=who_):
                 self.run_.table = [(listing, ok("[]"))]
-                self.assertEqual(self.outer(request=LaunchRequest(assignee=who_)), 0)
+                self.assertEqual(self.outer(assignee=who_), 0)
                 argv = self.detached(role)
                 self.assertNotIn("--target", argv)
                 self.assertEqual(argv[-1].splitlines()[1], f"Repo: {clone}")
@@ -2457,12 +2383,12 @@ class RunLaunching(OuterBase):
             os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
         )
         self.run_.table = [(("git", *GUARD, "-C"), ok()), *ENG_RUN]
-        self.assertEqual(self.outer(request=LaunchRequest(mode="resume")), 0)
+        self.assertEqual(self.outer(mode="resume"), 0)
         self.assertEqual(self.input(), INPUT)
         self.assertEqual([argv[0] for argv, _ in self.run_.calls], ["gh", "git", "git"])
 
     def test_a_resume_reads_its_session_at_its_runtime_and_rebuilds_the_input(self):
-        self.assertEqual(self.outer(request=LaunchRequest(mode="resume", runtime="b")), 0)
+        self.assertEqual(self.outer(mode="resume", runtime="b"), 0)
         self.assertEqual(
             self.detached(),
             inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", runtime="b")),
@@ -2477,7 +2403,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
-                self.assertEqual(self.outer(request=LaunchRequest(mode="resume")), 3)
+                self.assertEqual(self.outer(mode="resume"), 3)
                 self.assertEqual(
                     (self.said(), self.err),
                     ([f"transient TASK-7 reason=session {SID} not resumable ({why})"], ""),
@@ -2488,7 +2414,7 @@ class RunLaunching(OuterBase):
     def test_bad_issue_or_session_id(self):
         for ident, sid in (("task-7", SID), (ID, "not-a-sid"), (ID, "z" * 36)):
             with self.subTest(ident=ident, sid=sid):
-                self.assertEqual(self.outer(request=LaunchRequest(ident=ident, sid=sid)), 2)
+                self.assertEqual(self.outer(ident=ident, sid=sid), 2)
                 self.assertEqual(self.err, f"router.py: bad issue or session id: {ident} {sid}\n")
         self.assertEqual((self.api.detached, self.gql.calls, self.keychain_calls), ([], [], []))
 
@@ -2501,7 +2427,7 @@ class RunLaunching(OuterBase):
             ),
         ):
             with self.subTest(reason=reason):
-                self.assertEqual(self.outer(request=LaunchRequest(mode="resume", **kw)), 2)
+                self.assertEqual(self.outer(mode="resume", **kw), 2)
                 self.assertEqual(
                     (self.said(), self.err), ([f"config-error TASK-7 reason={reason}"], "")
                 )
@@ -2514,7 +2440,7 @@ class RunLaunching(OuterBase):
         self.missing.add(KEY)
         for mode in ("new", "resume"):
             with self.subTest(mode=mode):
-                self.assertEqual(self.outer(request=LaunchRequest(mode=mode)), 2)
+                self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
                     [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
@@ -2541,7 +2467,7 @@ class RunLaunching(OuterBase):
         for task in (None, "light-build"):
             with self.subTest(task=task):
                 self.gql = Gql(issue=node(comments=[USER_NOTE]))
-                self.assertEqual(self.outer(request=LaunchRequest(task=task)), 0)
+                self.assertEqual(self.outer(task=task), 0)
                 self.assertEqual(
                     self.gql.calls,
                     [
@@ -2597,7 +2523,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(reason=reason):
                 self.run_.table = [(("gh", "api"), r)]
-                self.assertEqual(self.outer(request=LaunchRequest(mode=mode)), 3)
+                self.assertEqual(self.outer(mode=mode), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason={reason}"])
         self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})] * 3)
         self.assertEqual(self.api.detached, [])
@@ -2610,7 +2536,7 @@ class RunLaunching(OuterBase):
         ):
             with self.subTest(reason=reason):
                 self.run_.table = [(LISTING, r)]
-                self.assertEqual(self.outer(request=LaunchRequest(assignee=RESEARCHER)), 3)
+                self.assertEqual(self.outer(assignee=RESEARCHER), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
         self.assertEqual(self.api.detached, [])
 
@@ -2654,7 +2580,15 @@ class RunStartRecords(Base):
         found = issue("TASK-1", "In Progress", "researcher")
         with frozen("2026-10-09T00:26:33-04:00"):
             got = [
-                router.begin((mode, found, "s1", "researcher", task, "a"), path)
+                router.begin(
+                    path,
+                    mode=mode,
+                    issue=found,
+                    sid="s1",
+                    role="researcher",
+                    task=task,
+                    runtime="a",
+                )
                 for mode, task in (("new", "light-research"), ("resume", None))
             ]
         with open(path) as f:
@@ -2688,7 +2622,7 @@ class ExplicitIssueRuns(TickBase):
     def nothing_resumable(self):
         def capped():
             for m in (390, 380, 370, 360):
-                self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m))
+                self.add(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m)
 
         return [
             (
@@ -2716,16 +2650,14 @@ class ExplicitIssueRuns(TickBase):
             (
                 "not resumable",
                 issue("TASK-1", "In Progress", "researcher"),
-                lambda: self.add(Attempt(kind="start", ident="TASK-1", sid="n", minutes_ago=5)),
+                lambda: self.add(kind="start", ident="TASK-1", sid="n", minutes_ago=5),
                 "recover TASK-1 to=todo reason=not resumable sid=n",
                 "Todo",
                 routing.INTERRUPTED,
             ),
             (
                 "no sid",
-                issue(
-                    "TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(minutes=5))
-                ),
+                issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=5)),
                 lambda: None,
                 f"recover TASK-1 to=todo reason=no session updated={ago(minutes=5)}",
                 "Todo",
@@ -2734,19 +2666,17 @@ class ExplicitIssueRuns(TickBase):
         ]
 
     def test_todo_is_claimed_and_started_whatever_the_gates(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         self.limit("a", (NOW + timedelta(hours=1)).isoformat())
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3))),
-            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-3", "Todo", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=3, project=PD)),
+            issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)),
+            issue("TASK-2", "In Progress", "researcher", priority=1),
+            issue("TASK-3", "Todo", "researcher", priority=1),
+            issue("TASK-4", "Todo", "engineer", priority=3, project=PD),
         )
         self.resumable("TASK-2", "b", 60)
-        self.assertEqual(
-            self.tick(fake, "--issue", "TASK-4", options=TickOptions(hour=12, live=FULL)), 0
-        )
+        self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, live=FULL), 0)
         self.assertEqual(
             self.said(), ["pick TASK-4 queue=1", "claim TASK-4 role=engineer runtime=a"]
         )
@@ -2783,18 +2713,14 @@ class ExplicitIssueRuns(TickBase):
             with self.subTest(rc=rc):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 start = Start(exits={"TASK-1": rc})
-                self.assertEqual(
-                    self.tick(fake, "--issue", "TASK-1", options=TickOptions(start=start)), rc
-                )
+                self.assertEqual(self.tick(fake, "--issue", "TASK-1", start=start), rc)
 
     def test_unknown_agent_runs_start_nothing(self):
         for dry in (False, True):
             with self.subTest(dry=dry):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
-                self.assertEqual(
-                    self.tick(fake, *argv, options=TickOptions(live=None)), 0 if dry else 1
-                )
+                self.assertEqual(self.tick(fake, *argv, live=None), 0 if dry else 1)
                 self.assertEqual(self.err, "router.py: agent runs unknown; try again\n")
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.state, self.said()), ([], [], "", [])
@@ -2807,9 +2733,7 @@ class ExplicitIssueRuns(TickBase):
                     fake = FakeLinear([issue("TASK-1", state, "engineer")])
                     argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
                     self.assertEqual(
-                        self.tick(
-                            fake, *argv, options=TickOptions(live=["agent-pm-engineer-TASK-1"])
-                        ),
+                        self.tick(fake, *argv, live=["agent-pm-engineer-TASK-1"]),
                         0 if dry else 1,
                     )
                     self.assertEqual(
@@ -2826,7 +2750,7 @@ class ExplicitIssueRuns(TickBase):
         self.resumable("TASK-1", "a", 20)
         self.touch("a", 5)
         self.assertEqual(self.plan(fake), "")
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1", options=TickOptions(hour=12)), 0)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", hour=12), 0)
         self.assertEqual(self.said(), ["plan TASK-1 mode=resume sid=a"])
         (launch,) = self.start.launches
         self.assertEqual(
@@ -2902,7 +2826,7 @@ class ExplicitIssueRuns(TickBase):
             with self.subTest(argv=argv):
                 self.lines = []
                 for sid in "abcd":
-                    self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+                    self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
                 before = self.before()
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv), 0 if "--dry-run" in argv else 1)
@@ -2928,9 +2852,9 @@ class ExplicitIssueRuns(TickBase):
                             "TASK-1",
                             "Todo",
                             "researcher",
-                            facts=IssueFacts(inverse=[blocker("TASK-7")]),
+                            inverse=[blocker("TASK-7")],
                         ),
-                        issue("TASK-4", "Todo", "pm", facts=IssueFacts(project=PD)),
+                        issue("TASK-4", "Todo", "pm", project=PD),
                     ]
                     if resume:
                         listed.append(issue("TASK-2", "In Progress", "researcher"))
@@ -2953,8 +2877,8 @@ class ExplicitIssueRuns(TickBase):
                 issue("TASK-1", "In Review", "researcher"),
                 issue("TASK-2", "Todo", "someone"),
                 issue("TASK-3", "Todo"),
-                issue("TASK-4", "In Progress", "someone", facts=IssueFacts(updated=ago(hours=3))),
-                issue("TASK-5", "Todo", "researcher", facts=IssueFacts(project=None)),
+                issue("TASK-4", "In Progress", "someone", updated=ago(hours=3)),
+                issue("TASK-5", "Todo", "researcher", project=None),
             ]
         )
         for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-9"):
@@ -2971,8 +2895,8 @@ class TickRecords(TickScenario):
     def test_a_usage_blocked_tick_writes_only_its_usage_skips_once_a_day(self):
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
             ]
         )
         for again, five, said in (
@@ -2988,7 +2912,7 @@ class TickRecords(TickScenario):
         ):
             with self.subTest(again=again):
                 self.api.usages = {"a": reading(five)}
-                self.assertEqual(self.tick(fake, options=TickOptions(again=again)), 0)
+                self.assertEqual(self.tick(fake, again=again), 0)
                 self.assertEqual(self.said(), said)
                 self.assertEqual((self.start.launches, fake.mutations, self.state), ([], [], ""))
 
@@ -3011,12 +2935,12 @@ class TickRecords(TickScenario):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "researcher", priority=2),
             ]
         )
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         self.tick(fake)
         self.assertEqual(
             self.said(),
@@ -3042,13 +2966,13 @@ class TickRecords(TickScenario):
         self.assertEqual((gql.failed[0][0], fake.mutations), (RECHECK, []))
 
     def test_trim_runs_before_plan(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         self.tick(FakeLinear([]))
         self.assertNotIn("TASK-8", self.state)
 
     def test_trim_failure_continues(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         with mock.patch.object(os, "replace", side_effect=OSError("disk")):
             self.tick(fake)
         self.assertIn("skip reason=prune failed error=OSError: disk", self.said())
@@ -3069,7 +2993,7 @@ class TickRecords(TickScenario):
         for start, end in cases:
             with self.subTest(end=end):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, options=TickOptions(start=start)), 0)
+                self.assertEqual(self.tick(fake, start=start), 0)
                 self.assertEqual(self.said()[-1], end)
                 (launch,) = self.start.launches
                 self.assertEqual(
@@ -3090,7 +3014,7 @@ class TickRecords(TickScenario):
             with self.subTest(live=live):
                 self.tick(
                     FakeLinear([issue("TASK-1", "Todo", "engineer")]),
-                    options=TickOptions(live=live),
+                    live=live,
                 )
                 self.assertEqual(self.launched_runs(), ran)
 
@@ -3098,40 +3022,40 @@ class TickRecords(TickScenario):
 class RunPlanning(Base):
     def walk_fixture(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
-            issue("TASK-4", "In Progress", "researcher", facts=IssueFacts(priority=2)),
-            issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),
-            issue("TASK-5", "In Progress", "researcher", facts=IssueFacts(priority=4)),
-            issue("TASK-6", "In Progress", "researcher", facts=IssueFacts(priority=4)),
-            issue("TASK-9", "Todo", "researcher", facts=IssueFacts(priority=1)),
+            issue("TASK-1", "In Progress", "researcher", priority=2),
+            issue("TASK-4", "In Progress", "researcher", priority=2),
+            issue("TASK-3", "In Progress", "researcher", priority=3),
+            issue("TASK-5", "In Progress", "researcher", priority=4),
+            issue("TASK-6", "In Progress", "researcher", priority=4),
+            issue("TASK-9", "Todo", "researcher", priority=1),
         )
         self.moved("TASK-1", 400)
-        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=399))
+        self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=399)
         self.resumable("TASK-3", "c", 100)
         self.resumable("TASK-6", "f", 50)
         for ident, sid in (("TASK-4", "d"), ("TASK-5", "e")):
             for m in (390, 380, 370, 360):
-                self.add(Attempt(kind="start", ident=ident, sid=f"{sid}{m}", minutes_ago=m))
+                self.add(kind="start", ident=ident, sid=f"{sid}{m}", minutes_ago=m)
         return fake
 
     def reset_fixture(self):
         self.write_config(HUMANS + CONFIG)
         self.moved("TASK-1", 700)
-        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=699))
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=699)
         for m in (650, 600, 550):
-            self.add(Attempt(kind="resume", ident="TASK-1", sid="old", minutes_ago=m))
+            self.add(kind="resume", ident="TASK-1", sid="old", minutes_ago=m)
         self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
         self.resumable("TASK-1", "new", 100)
-        self.add(Attempt(kind="resume", ident="TASK-1", sid="new", minutes_ago=60))
+        self.add(kind="resume", ident="TASK-1", sid="new", minutes_ago=60)
 
     def capped(self, hist):
         self.write_config(HUMANS + CONFIG)
         fake = FakeLinear(
-            [issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))],
+            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))],
             {"TASK-1": hist},
         )
         for i, sid in enumerate("abcd"):
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50)
         self.touch("d", 200)
         return fake, self.plan(fake)
 
@@ -3142,10 +3066,8 @@ class RunPlanning(Base):
             (
                 "other assignees not recovered",
                 [
-                    issue(
-                        "TASK-1", "In Progress", "someone", facts=IssueFacts(updated=ago(hours=3))
-                    ),
-                    issue("TASK-2", "In Progress", None, facts=IssueFacts(updated=ago(hours=3))),
+                    issue("TASK-1", "In Progress", "someone", updated=ago(hours=3)),
+                    issue("TASK-2", "In Progress", None, updated=ago(hours=3)),
                 ],
                 "",
             ),
@@ -3158,12 +3080,10 @@ class RunPlanning(Base):
                 self.assertEqual(set(fake.services), {HARNESS})
 
     def test_attempt_cap_beats_resume(self):
-        fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=5)))
-        )
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=5)))
         self.resumable("TASK-1", "sid1", 300)
         for m in (200, 150, 100):
-            self.add(Attempt(kind="resume", ident="TASK-1", sid="sid1", minutes_ago=m))
+            self.add(kind="resume", ident="TASK-1", sid="sid1", minutes_ago=m)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Review")
         self.assertEqual(fake.issues["TASK-1"]["comments"], [routing.CAP_COMMENT])
@@ -3173,7 +3093,7 @@ class RunPlanning(Base):
         for others, out in (
             ((), ""),
             ((issue("TASK-2", "Todo", "researcher"),), "new"),
-            ((issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),), resume),
+            ((issue("TASK-3", "In Progress", "researcher", priority=3),), resume),
         ):
             with self.subTest(out=out):
                 self.lines, self.hist = [], {}
@@ -3182,7 +3102,8 @@ class RunPlanning(Base):
                         "TASK-1",
                         "In Progress",
                         "researcher",
-                        facts=IssueFacts(priority=1, updated=ago(hours=5)),
+                        priority=1,
+                        updated=ago(hours=5),
                     ),
                     *others,
                 )
@@ -3199,19 +3120,21 @@ class RunPlanning(Base):
                 "TASK-1",
                 "In Progress",
                 "researcher",
-                facts=IssueFacts(priority=1, updated=ago(hours=3)),
+                priority=1,
+                updated=ago(hours=3),
             ),
             issue(
                 "TASK-2",
                 "In Progress",
                 "researcher",
-                facts=IssueFacts(priority=2, updated=ago(hours=3)),
+                priority=2,
+                updated=ago(hours=3),
             ),
-            issue("TASK-3", "In Progress", "researcher", facts=IssueFacts(priority=3)),
-            issue("TASK-4", "In Progress", "pm", facts=IssueFacts(priority=4, project=PD)),
+            issue("TASK-3", "In Progress", "researcher", priority=3),
+            issue("TASK-4", "In Progress", "pm", priority=4, project=PD),
         )
         for m in (390, 380, 370, 360):
-            self.add(Attempt(kind="start", ident="TASK-1", sid=f"a{m}", minutes_ago=m))
+            self.add(kind="start", ident="TASK-1", sid=f"a{m}", minutes_ago=m)
         self.resumable("TASK-3", "c", 100)
         self.resumable("TASK-4", "d", 200, "pm")
         cands = self.board(fake, lambda b: b.recover({"TASK-1"}))
@@ -3248,7 +3171,7 @@ class RunPlanning(Base):
                 self.lines, self.hist = [], {}
                 fake = self.fake(
                     *[
-                        issue(i, "In Progress", role, facts=IssueFacts(priority=p, project=proj))
+                        issue(i, "In Progress", role, priority=p, project=proj)
                         for i, p, _, role, proj in specs
                     ]
                 )
@@ -3260,10 +3183,10 @@ class RunPlanning(Base):
 
     def test_no_current_sid_never_outranks(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=4)),
+            issue("TASK-1", "In Progress", "researcher", priority=1),
+            issue("TASK-2", "In Progress", "researcher", priority=4),
         )
-        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=400))
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=400)
         self.touch("old", 300)
         self.moved("TASK-1", 60, actor=USER)
         self.resumable("TASK-2", "b", 100)
@@ -3273,11 +3196,11 @@ class RunPlanning(Base):
 
     def test_sid_without_start_sorts_by_first_line(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
-            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+            issue("TASK-1", "In Progress", "researcher", priority=2),
+            issue("TASK-2", "In Progress", "researcher", priority=2),
         )
-        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=300))
-        self.add(Attempt(kind="resume", ident="TASK-1", sid="a", minutes_ago=50))
+        self.add(kind="resume", ident="TASK-1", sid="a", minutes_ago=300)
+        self.add(kind="resume", ident="TASK-1", sid="a", minutes_ago=50)
         self.touch("a", 40)
         self.resumable("TASK-2", "b", 200)
         self.assertEqual(
@@ -3295,7 +3218,7 @@ class RunPlanning(Base):
                 self.lines, self.hist = [], {}
                 fake = self.walk_fixture()
                 self.assertEqual(
-                    self.claim(fake, options=ClaimOptions(recover=True))
+                    self.claim(fake, recover=True)
                     if mode == "pick"
                     else self.plan(fake, dry=mode == "dry plan"),
                     out,
@@ -3323,14 +3246,12 @@ class RunPlanning(Base):
                 self.assertNotIn("comments", fake.issues["TASK-3"])
 
     def test_sid_without_transcript(self):
-        fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))
-        )
-        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=10))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=10)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.mutations, [])
         self.lines = []
-        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=40))
+        self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=40)
         self.assertEqual(self.plan(fake), "new")
         self.assertEqual(
             (fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]),
@@ -3345,11 +3266,10 @@ class RunPlanning(Base):
                     "TASK-1",
                     "In Progress",
                     "engineer",
-                    facts=IssueFacts(updated=ago(hours=3), project=PD),
+                    updated=ago(hours=3),
+                    project=PD,
                 ),
-                issue(
-                    "TASK-2", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=1))
-                ),
+                issue("TASK-2", "In Progress", "researcher", updated=ago(hours=1)),
             ]
         )
         self.plan(fake)
@@ -3363,10 +3283,8 @@ class RunPlanning(Base):
         self.assertEqual(fake.issues["TASK-2"]["state"], "In Progress")
 
     def test_stale_sid_goes_to_two_hour_rule(self):
-        fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(minutes=220)))
-        )
-        self.add(Attempt(kind="start", ident="TASK-1", sid="old", minutes_ago=400))
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(minutes=220)))
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=400)
         self.touch("old", 400)
         self.moved("TASK-1", 220, actor=USER)
         self.assertEqual(self.plan(fake), "new")
@@ -3377,25 +3295,23 @@ class RunPlanning(Base):
             self.lines, self.hist = [], {}
             fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
             self.moved("TASK-1", 100)
-            self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=start))
+            self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=start)
             self.touch("a", 40)
             self.assertEqual(self.plan(fake).split(" ")[0], want)
 
     def test_no_move_in_history_is_current(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.moved("TASK-1", 500, state=STATES["Todo"], actor=USER)
-        self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=100))
+        self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=100)
         self.touch("a", 40)
         self.assertEqual(
             self.plan(fake), "resume TASK-1 a https://linear.app/x/TASK-1 Deep Research"
         )
 
     def test_no_current_sid_never_capped(self):
-        fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=1)))
-        )
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=1)))
         for m in (600, 550, 500, 450):
-            self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m))
+            self.add(kind="start", ident="TASK-1", sid=f"s{m}", minutes_ago=m)
         self.moved("TASK-1", 60, actor=USER)
         self.assertEqual(self.plan(fake), "")
         self.assertEqual(fake.mutations, [])
@@ -3404,7 +3320,7 @@ class RunPlanning(Base):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         for n in range(4):
             self.moved("TASK-1", 41)
-            self.add(Attempt(kind="start", ident="TASK-1", sid=f"s{n}", minutes_ago=40))
+            self.add(kind="start", ident="TASK-1", sid=f"s{n}", minutes_ago=40)
             if n < 3:
                 self.assertEqual(self.plan(fake), "new")
                 self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -3420,7 +3336,7 @@ class RunPlanning(Base):
             ("resumes", (), "resume TASK-1 new https://linear.app/x/TASK-1 Deep Research"),
             (
                 "orders",
-                (issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=2)),),
+                (issue("TASK-2", "In Progress", "researcher", priority=2),),
                 "resume TASK-2 b https://linear.app/x/TASK-2 Deep Research",
             ),
         )
@@ -3428,7 +3344,7 @@ class RunPlanning(Base):
             with self.subTest(name):
                 self.lines, self.hist = [], {}
                 fake = self.fake(
-                    issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=2)),
+                    issue("TASK-1", "In Progress", "researcher", priority=2),
                     *others,
                 )
                 self.reset_fixture()
@@ -3449,15 +3365,13 @@ class RunPlanning(Base):
                             "TASK-1",
                             "In Progress",
                             "researcher",
-                            facts=IssueFacts(updated=ago(minutes=40)),
+                            updated=ago(minutes=40),
                         )
                     ]
                 )
                 self.lines = []
                 for i, sid in enumerate("abcd"):
-                    self.add(
-                        Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50)
-                    )
+                    self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=400 - i * 50)
                 self.assertEqual(self.plan(fake), "")
                 t = fake.issues["TASK-1"]
                 self.assertEqual(
@@ -3510,7 +3424,7 @@ class RunPlanning(Base):
 
     def test_skipped_move_posts_no_comment(self):
         fake = Moved(
-            [issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))],
+            [issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3))],
             "In Review",
         )
         self.assertEqual(self.plan(fake), "")
@@ -3524,7 +3438,7 @@ class HistoryReads(Base):
     def test_one_history_fetch_per_issue(self):
         fake = FakeLinear([issue("TASK-1", "In Progress", "researcher")])
         for sid in "abcd":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         queries = []
         self.plan(lambda q, **v: queries.append(q) or fake(q, **v))
         self.assertEqual(sum("history" in q for q in queries), 1)
@@ -3549,7 +3463,7 @@ class StaleRunRecovery(Base):
                         "TASK-1",
                         "In Progress",
                         "researcher",
-                        facts=IssueFacts(updated=ago(hours=3)),
+                        updated=ago(hours=3),
                     )
                 )
                 self.resumable("TASK-1", "a", 60)
@@ -3563,7 +3477,7 @@ class StaleRunRecovery(Base):
                 self.lines, self.hist = [], {}
                 fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
                 self.moved("TASK-1", minutes + 1)
-                self.add(Attempt(kind="start", ident="TASK-1", sid="a", minutes_ago=minutes))
+                self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=minutes)
                 self.api.statuses[self.sid("a")] = SessionStatus("no", None, "")
                 self.assertEqual(self.plan(fake), out)
                 t = fake.issues["TASK-1"]
@@ -3590,7 +3504,7 @@ class StaleRunRecovery(Base):
                         "TASK-1",
                         "In Progress",
                         "researcher",
-                        facts=IssueFacts(updated=ago(hours=3)),
+                        updated=ago(hours=3),
                     )
                 )
                 self.resumable("TASK-1", "a", 300)
@@ -3608,9 +3522,7 @@ class StaleRunRecovery(Base):
                     self.assertEqual(f.read(), "".join(f"{line}\n" for line in self.lines))
 
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
-        fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(updated=ago(hours=3)))
-        )
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
         self.resumable("TASK-1", "a", 300)
         self.api.statuses[self.sid("a")] = DriverError("boom")
 
@@ -3642,8 +3554,8 @@ class ClaimRechecks(Base):
             with self.subTest(assignee=assignee):
                 fake = Changed(
                     [
-                        issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                        issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
+                        issue("TASK-1", "Todo", "researcher", priority=1),
+                        issue("TASK-2", "Todo", "researcher", priority=2),
                     ],
                     {"TASK-1": {"assignee": assignee}},
                 )
@@ -3664,14 +3576,16 @@ class ClaimRechecks(Base):
     def test_reassigned_to_another_role_is_claimed_as_that_role(self):
         fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"assignee": who("pm")}})
         self.assertEqual(
-            self.claim(fake, options=ClaimOptions(gate=True)),
+            self.claim(fake, gate=True),
             "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
         taken, task, role, runtime = self.taken
         self.assertEqual((taken["assignee"], task, role, runtime), (who("pm"), None, "pm", "b"))
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
-        a = router.begin(("new", taken, "s1", role, task, runtime), self.runs)
+        a = router.begin(
+            self.runs, mode="new", issue=taken, sid="s1", role=role, task=task, runtime=runtime
+        )
         self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
 
     def test_the_task_label_is_checked_against_the_new_role(self):
@@ -3682,7 +3596,7 @@ class ClaimRechecks(Base):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(labels=[label("Light Research", LIGHT)]),
+                    labels=[label("Light Research", LIGHT)],
                 )
             ],
             {"TASK-1": {"assignee": who("pm")}},
@@ -3702,7 +3616,7 @@ class ClaimRechecks(Base):
 
     def test_a_full_new_role_is_skipped(self):
         fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"assignee": who("pm")}})
-        self.assertEqual(self.claim(fake, options=ClaimOptions(full={"pm"})), "")
+        self.assertEqual(self.claim(fake, full={"pm"}), "")
         self.assertEqual(
             self.said(),
             [
@@ -3719,7 +3633,15 @@ class ClaimRechecks(Base):
             {"TASK-1": {"project": {"id": IDS[PD], "name": PD}}},
         )
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
-        a = router.begin(("new", self.taken[0], "s1", "researcher", None, "a"), self.runs)
+        a = router.begin(
+            self.runs,
+            mode="new",
+            issue=self.taken[0],
+            sid="s1",
+            role="researcher",
+            task=None,
+            runtime="a",
+        )
         self.assertEqual(a.project, IDS[PD])
 
     def test_a_removed_project_is_skipped(self):
@@ -3746,7 +3668,7 @@ class LiveLimits(Base):
         self.limit("a", at)
         fake = two()
         self.assertEqual(
-            self.claim(fake, options=ClaimOptions(gate=True)),
+            self.claim(fake, gate=True),
             f"TASK-2 https://linear.app/x/TASK-2 {PD}",
         )
         self.assertEqual(
@@ -3775,14 +3697,14 @@ class LiveLimits(Base):
                 self.limit("a", resets_at)
                 fake = two()
                 self.assertEqual(
-                    self.claim(fake, options=ClaimOptions(gate=True)),
+                    self.claim(fake, gate=True),
                     "TASK-1 https://linear.app/x/TASK-1 Deep Research",
                 )
                 self.assertEqual(self.api.usage_calls, ["a"])
 
     def test_limit_rows_are_no_attempts(self):
         for sid in "abc":
-            self.add(Attempt(kind="start", ident="TASK-1", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
         for _ in range(4):
             self.limit("b", (NOW + timedelta(hours=1)).isoformat(), ident="TASK-1")
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -3826,7 +3748,7 @@ class ScheduledRuns(TickScenario):
         for hour, ran in ((0, False), (1, True), (6, True), (7, False), (12, False), (23, False)):
             with self.subTest(hour=hour):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, options=TickOptions(hour=hour)), 0)
+                self.assertEqual(self.tick(fake, hour=hour), 0)
                 self.assertEqual(len(self.start.launches), int(ran))
                 self.assertEqual(self.said() == [], not ran)
                 self.assertEqual(self.api.order == [], not ran)
@@ -3838,7 +3760,7 @@ class ScheduledRuns(TickScenario):
 
     def test_now_skips_hours_and_starts(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.tick(fake, "--now", options=TickOptions(hour=12))
+        self.tick(fake, "--now", hour=12)
         (launch,) = self.start.launches
         self.assertEqual(
             launch,
@@ -3859,7 +3781,7 @@ class ScheduledRuns(TickScenario):
     def test_begin_appends_one_json_line_to_runs_jsonl(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         with frozen("2026-10-09T00:26:33-04:00"):
-            self.tick(fake, "--now", options=TickOptions(hour=12))
+            self.tick(fake, "--now", hour=12)
         (launch,) = self.start.launches
         self.assertEqual(
             self.state,
@@ -3879,26 +3801,22 @@ class ScheduledRuns(TickScenario):
         ]
         for hour, live, listed in cases:
             with self.subTest(hour=hour, live=live):
-                self.assertEqual(
-                    self.tick(FakeLinear(listed), options=TickOptions(hour=hour, live=live)), 0
-                )
+                self.assertEqual(self.tick(FakeLinear(listed), hour=hour, live=live), 0)
                 self.assertEqual((self.said(), self.err), ([], ""))
         self.assertFalse(os.path.exists(os.path.join(self.logs, "orchestrator.jsonl")))
-        blocked = [
-            issue("TASK-1", "Todo", "researcher", facts=IssueFacts(inverse=[blocker("TASK-7")]))
-        ]
+        blocked = [issue("TASK-1", "Todo", "researcher", inverse=[blocker("TASK-7")])]
         self.tick(FakeLinear(blocked))
         self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7"]'])
-        self.tick(FakeLinear(blocked), options=TickOptions(again=True))
+        self.tick(FakeLinear(blocked), again=True)
         self.assertEqual(self.said(), [])
 
     def test_unknown_agent_runs_change_nothing(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         before = self.before()
         for argv in ((), ("--dry-run",), ("--now",)):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, *argv, options=TickOptions(live=None)), 0)
+                self.assertEqual(self.tick(fake, *argv, live=None), 0)
                 self.assertEqual(self.said(), ["skip reason=agent runs unknown"])
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.api.usage_calls, self.state),
@@ -3906,7 +3824,7 @@ class ScheduledRuns(TickScenario):
                 )
 
     def test_all_full_skips_before_linear(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         for cfg, live in ((CONFIG, FULL), (CONFIG_ENG2, [*FULL, "agent-pm-engineer-TASK-9"])):
             self.write_config(cfg)
             counts = json.dumps(
@@ -3917,7 +3835,7 @@ class ScheduledRuns(TickScenario):
             )
             for argv in ((), ("--dry-run",), ("--now",)):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, *argv, options=TickOptions(live=live)), 0)
+                self.assertEqual(self.tick(fake, *argv, live=live), 0)
                 self.assertEqual(
                     self.said(),
                     [f"skip reason=all roles full live={counts}"] if "--dry-run" in argv else [],
@@ -3931,12 +3849,12 @@ class ScheduledRuns(TickScenario):
     def test_partly_full_role_gets_a_launch(self):
         self.write_config(CONFIG_ENG2)
         fake = self.fake(
-            issue("TASK-1", "In Progress", "engineer", facts=IssueFacts(priority=1, project=PD)),
-            issue("TASK-2", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
-            issue("TASK-3", "Todo", "engineer", facts=IssueFacts(priority=3, project=PD)),
+            issue("TASK-1", "In Progress", "engineer", priority=1, project=PD),
+            issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
+            issue("TASK-3", "Todo", "engineer", priority=3, project=PD),
         )
         self.resumable("TASK-1", "a", 60)
-        self.tick(fake, options=TickOptions(live=["agent-pm-engineer-TASK-1"]))
+        self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),
             [
@@ -3960,11 +3878,11 @@ class ScheduledRuns(TickScenario):
         self.write_config(CONFIG_ENG2)
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "engineer", facts=IssueFacts(priority=1, project=PD)),
-                issue("TASK-2", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
+                issue("TASK-1", "Todo", "engineer", priority=1, project=PD),
+                issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
             ]
         )
-        self.tick(fake, options=TickOptions(live=["agent-pm-engineer-TASK-1"]))
+        self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),
             [
@@ -3985,18 +3903,19 @@ class ScheduledRuns(TickScenario):
                 "TASK-1",
                 "In Progress",
                 "engineer",
-                facts=IssueFacts(priority=1, updated=ago(hours=3)),
+                priority=1,
+                updated=ago(hours=3),
             ),
-            issue("TASK-2", "In Progress", "engineer", facts=IssueFacts(updated=ago(hours=3))),
+            issue("TASK-2", "In Progress", "engineer", updated=ago(hours=3)),
             issue("TASK-3", "In Progress", "engineer"),
-            issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=1)),
-            issue("TASK-5", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
-            issue("TASK-6", "Todo", "engineer", facts=IssueFacts(priority=1)),
+            issue("TASK-4", "Todo", "engineer", priority=1),
+            issue("TASK-5", "Todo", "pm", priority=3, project=PD),
+            issue("TASK-6", "Todo", "engineer", priority=1),
         )
         for ident in ("TASK-1", "TASK-3", "TASK-4"):
             for m in (390, 380, 370, 360):
-                self.add(Attempt(kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m))
-        self.tick(fake, options=TickOptions(live=["agent-pm-engineer-TASK-1"]))
+                self.add(kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m)
+        self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),
             [
@@ -4029,13 +3948,13 @@ class ScheduledRuns(TickScenario):
 
     def test_full_role_resume_not_launched(self):
         fake = self.fake(
-            issue("TASK-1", "In Progress", "pm", facts=IssueFacts(priority=1, project=PD)),
-            issue("TASK-2", "In Progress", "researcher", facts=IssueFacts(priority=3)),
-            issue("TASK-3", "Todo", "engineer", facts=IssueFacts(priority=1)),
+            issue("TASK-1", "In Progress", "pm", priority=1, project=PD),
+            issue("TASK-2", "In Progress", "researcher", priority=3),
+            issue("TASK-3", "Todo", "engineer", priority=1),
         )
         self.resumable("TASK-1", "a", 120, "pm")
         self.resumable("TASK-2", "b", 60)
-        self.tick(fake, options=TickOptions(live=["agent-pm-pm-TASK-9"]))
+        self.tick(fake, live=["agent-pm-pm-TASK-9"])
         self.assertEqual(self.said()[0], 'plan TASK-2 mode=resume sid=b live={"pm": "1/1"}')
         self.assertEqual(self.launched_runs(), [("TASK-2", "resume")])
         self.assertEqual(
@@ -4053,10 +3972,10 @@ class ScheduledRuns(TickScenario):
         fake = FakeLinear(
             [
                 issue("TASK-1", "Todo", "engineer"),
-                issue("TASK-2", "In Progress", "engineer", facts=IssueFacts(updated=ago(hours=3))),
+                issue("TASK-2", "In Progress", "engineer", updated=ago(hours=3)),
             ]
         )
-        self.tick(fake, options=TickOptions(live=["agent-pm-engineer-TASK-2"]))
+        self.tick(fake, live=["agent-pm-engineer-TASK-2"])
         self.assertEqual(self.said(), [])
         self.assertEqual((self.api.order, self.api.usage_calls), (SESSIONS, []))
         self.assertEqual(
@@ -4068,11 +3987,11 @@ class ScheduledRuns(TickScenario):
     def test_one_run_per_tick_resume_first(self):
         self.write_config(CONFIG_ENG2)
         fake = self.fake(
-            issue("TASK-1", "In Progress", "researcher", facts=IssueFacts(priority=3)),
-            issue("TASK-8", "In Progress", "engineer", facts=IssueFacts(priority=4, project=PD)),
-            issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=1)),
-            issue("TASK-3", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
-            issue("TASK-4", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
+            issue("TASK-1", "In Progress", "researcher", priority=3),
+            issue("TASK-8", "In Progress", "engineer", priority=4, project=PD),
+            issue("TASK-2", "Todo", "researcher", priority=1),
+            issue("TASK-3", "Todo", "pm", priority=2, project=PD),
+            issue("TASK-4", "Todo", "engineer", priority=2, project=PD),
         )
         self.resumable("TASK-1", "a", 60)
         self.resumable("TASK-8", "h", 70, "engineer")
@@ -4095,9 +4014,9 @@ class ScheduledRuns(TickScenario):
         self.write_config(CONFIG_ENG2)
         fake = FakeLinear(
             [
-                issue("TASK-1", "Todo", "researcher", facts=IssueFacts(priority=1)),
-                issue("TASK-2", "Todo", "pm", facts=IssueFacts(priority=2, project=PD)),
-                issue("TASK-3", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
+                issue("TASK-1", "Todo", "researcher", priority=1),
+                issue("TASK-2", "Todo", "pm", priority=2, project=PD),
+                issue("TASK-3", "Todo", "engineer", priority=2, project=PD),
             ]
         )
         self.tick(fake)
@@ -4119,13 +4038,13 @@ class ScheduledRuns(TickScenario):
     def test_dry_run_plans_one_run(self):
         self.write_config(CONFIG_ENG2)
         fake = self.fake(
-            issue("TASK-3", "Todo", "pm", facts=IssueFacts(priority=1, project=PD)),
-            issue("TASK-4", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
-            issue("TASK-5", "Todo", "engineer", facts=IssueFacts(priority=2, project=PD)),
-            issue("TASK-6", "Todo", "engineer", facts=IssueFacts(priority=3, project=PD)),
+            issue("TASK-3", "Todo", "pm", priority=1, project=PD),
+            issue("TASK-4", "Todo", "pm", priority=3, project=PD),
+            issue("TASK-5", "Todo", "engineer", priority=2, project=PD),
+            issue("TASK-6", "Todo", "engineer", priority=3, project=PD),
         )
         for sid in "wxyz":
-            self.add(Attempt(kind="start", ident="TASK-3", sid=sid, minutes_ago=300))
+            self.add(kind="start", ident="TASK-3", sid=sid, minutes_ago=300)
         before = self.before()
         self.assertEqual(self.tick(fake, "--dry-run"), 0)
         self.assertEqual(
@@ -4160,14 +4079,15 @@ class ScheduledRuns(TickScenario):
         self.assertEqual((fake.mutations, self.start.launches), ([], []))
 
     def test_dry_run(self):
-        self.add(Attempt(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8))
+        self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         fake = FakeLinear(
             [issue("TASK-1", "Todo", "engineer"), issue("TASK-2", "Todo", "researcher")]
         )
         self.tick(
             fake,
             "--dry-run",
-            options=TickOptions(hour=12, live=["agent-pm-pm-TASK-5", "agent-pm-engineer-TASK-6"]),
+            hour=12,
+            live=["agent-pm-pm-TASK-5", "agent-pm-engineer-TASK-6"],
         )
         self.assertEqual(
             self.said(),
@@ -4189,19 +4109,20 @@ class ScheduledRuns(TickScenario):
                     "TASK-1",
                     "Todo",
                     "researcher",
-                    facts=IssueFacts(inverse=[blocker("TASK-2", "unstarted")]),
+                    inverse=[blocker("TASK-2", "unstarted")],
                 ),
                 issue(
                     "TASK-2",
                     "Todo",
                     "pm",
-                    facts=IssueFacts(project=PD, inverse=[blocker("TASK-1", "unstarted")]),
+                    project=PD,
+                    inverse=[blocker("TASK-1", "unstarted")],
                 ),
                 issue(
                     "TASK-3",
                     "Todo",
                     "engineer",
-                    facts=IssueFacts(inverse=[blocker("TASK-9", "started")]),
+                    inverse=[blocker("TASK-9", "started")],
                 ),
             ]
 
@@ -4228,10 +4149,11 @@ class ScheduledRuns(TickScenario):
                         "TASK-1",
                         "Todo",
                         "researcher",
-                        facts=IssueFacts(priority=1, inverse=[blocker("TASK-7")]),
+                        priority=1,
+                        inverse=[blocker("TASK-7")],
                     ),
-                    issue("TASK-2", "Todo", "researcher", facts=IssueFacts(priority=2)),
-                    issue("TASK-3", "Todo", "pm", facts=IssueFacts(priority=3, project=PD)),
+                    issue("TASK-2", "Todo", "researcher", priority=2),
+                    issue("TASK-3", "Todo", "pm", priority=3, project=PD),
                 ]
             )
             self.assertEqual(self.tick(fake, *argv), 0, argv)

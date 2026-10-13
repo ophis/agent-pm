@@ -11,7 +11,6 @@ import unittest
 from datetime import UTC, datetime
 
 from agent_pm.linear_orchestrator.linear import linear
-from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
@@ -73,13 +72,11 @@ class Run(Flow):
         self.role = role
         self.fake.issue(
             "Session registry",
-            seed=fake_linear.IssueSeed(
-                identifier=ID,
-                id=UUID,
-                state="in_progress",
-                assignee=self.ids[ACCOUNTS[role]],
-                project=PROJECT,
-            ),
+            identifier=ID,
+            id=UUID,
+            state="in_progress",
+            assignee=self.ids[ACCOUNTS[role]],
+            project=PROJECT,
         )
 
     def run_py(self, steps, mode="new", **scenario):

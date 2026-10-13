@@ -29,16 +29,7 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.engine.types import Stopped
-from agent_pm.session import (
-    MODES,
-    Activity,
-    Blocked,
-    DriverError,
-    Exited,
-    IdleTimeout,
-    LimitHit,
-    StartOptions,
-)
+from agent_pm.session import MODES, Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit
 from agent_pm.utils import printable
 
 from delegate.tests.case import Case
@@ -308,9 +299,7 @@ class Idle(Base):
         with mock.patch.object(
             self.driver,
             "start",
-            side_effect=lambda *a, **kw: start(
-                *a, options=replace(kw["options"], idle_timeout=0.3)
-            ),
+            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
         ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
@@ -476,9 +465,7 @@ class InProcess(Base):
         with mock.patch.object(
             self.driver,
             "start",
-            side_effect=lambda *a, **kw: start(
-                *a, options=replace(kw["options"], idle_timeout=0.3)
-            ),
+            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
         ):
             r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
@@ -861,7 +848,7 @@ class TuiPolicy(Base):
                 self.assertEqual(
                     (given, args[3].sid, args[3].name),
                     (
-                        {"options": StartOptions(idle_timeout=IDLE_TIMEOUT, **want[0])},
+                        {"idle_timeout": IDLE_TIMEOUT, **want[0]},
                         self.events[0].sid,
                         want[1],
                     ),
@@ -1092,5 +1079,5 @@ class TuiPolicy(Base):
         args, given = self.started.call_args
         self.assertEqual(
             (given, args[3].sid),
-            ({"options": StartOptions(idle_timeout=IDLE_TIMEOUT)}, self.events[0].sid),
+            ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
         )

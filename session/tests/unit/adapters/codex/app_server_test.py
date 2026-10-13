@@ -27,12 +27,12 @@ class ClientTest(Case):
             mock.patch("time.monotonic", return_value=1),
             self.assertRaisesRegex(app_server.Error, "no answer"),
         ):
-            next(app_server.Lines(42, app_server.RpcOptions(env={}, wait=0, limit=1)))
+            next(app_server.Lines(42, wait=0, limit=1))
         with (
             mock.patch("select.select", return_value=([42], [], [])),
             mock.patch("os.read", return_value=b"x"),
         ):
-            lines = app_server.Lines(42, app_server.RpcOptions(env={}, wait=999999999999, limit=8))
+            lines = app_server.Lines(42, wait=999999999999, limit=8)
             lines.buf = bytearray(8)
             with self.assertRaisesRegex(app_server.Error, "over"):
                 next(lines)

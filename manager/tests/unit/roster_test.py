@@ -16,7 +16,6 @@ import unittest
 import unittest.mock
 
 from agent_pm.manager.engine import roster
-from agent_pm.manager.engine.types import Entry
 from agent_pm.session import DriverError, SessionRow
 from agent_pm.utils import LOCAL, read_project
 
@@ -71,10 +70,9 @@ def row(name, *, own=False):
 CHILD = """
 import sys
 from agent_pm.manager.engine import roster
-from agent_pm.manager.engine.types import Entry
 for i in range(15):
-    spec = Entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"])
-    roster.put(sys.argv[1], sys.argv[2] + str(i), roster.entry(spec))
+    value = roster.entry("worker", sid=None, cwd="/w", resume=["/p", "/x/crew.py"])
+    roster.put(sys.argv[1], sys.argv[2] + str(i), value)
 """
 
 
@@ -763,26 +761,24 @@ class CursorTest(Base):
 
 class EntriesTest(RosterCase):
     def test_entry_defaults_and_validity(self):
-        e = roster.entry(Entry("worker", sid=SID, cwd="/w", resume=good()["resume"]))
+        e = roster.entry("worker", sid=SID, cwd="/w", resume=good()["resume"])
         self.assertEqual(sorted(e), sorted(good()))
         self.assertEqual({**e, "started": WHEN}, good())
         self.assertEqual(e["state"], "working")
         self.assertIsNotNone(datetime.datetime.fromisoformat(e["started"]).tzinfo)
         full = roster.entry(
-            Entry(
-                "role",
-                sid=None,
-                cwd="/w",
-                resume=["/p", "/x/drive.py"],
-                note="n",
-                opener="mgr",
-                pane="%3",
-                split="right",
-                split_from="a",
-                tui="t",
-                state="done",
-                started=WHEN,
-            )
+            "role",
+            sid=None,
+            cwd="/w",
+            resume=["/p", "/x/drive.py"],
+            note="n",
+            opener="mgr",
+            pane="%3",
+            split="right",
+            split_from="a",
+            tui="t",
+            state="done",
+            started=WHEN,
         )
         self.assertEqual(
             full,
@@ -800,10 +796,10 @@ class EntriesTest(RosterCase):
             ),
         )
         with self.assertRaises(roster.RosterError) as cm:
-            roster.entry(Entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"]))
+            roster.entry("boss", sid=SID, cwd="/w", resume=["/p", "/x/crew.py"])
         self.assertEqual(str(cm.exception), "entry: " + KIND.format("boss"))
         with self.assertRaisesRegex(roster.RosterError, "^entry: cwd: 'rel': want"):
-            roster.entry(Entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"]))
+            roster.entry("worker", sid=SID, cwd="rel", resume=["/p", "/x/crew.py"])
 
     def test_set_entry_and_record_validate_replace_and_leave_the_dict_on_a_fault(self):
         for setter in (roster.set_entry, roster.record):

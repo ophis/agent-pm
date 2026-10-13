@@ -39,7 +39,6 @@ from agent_pm.session import (
     IdleTimeout,
     LimitHit,
     Reply,
-    StartOptions,
     Stderr,
     TurnEnd,
     holds,
@@ -81,11 +80,9 @@ class Headless:
             s.mode,
             p.prompt,
             replace(p.session, sid=s.sid, name=name),
-            options=StartOptions(
-                resume=s.sid if s.resume else None,
-                idle_timeout=IDLE_TIMEOUT,
-                events=events,
-            ),
+            resume=s.sid if s.resume else None,
+            idle_timeout=IDLE_TIMEOUT,
+            events=events,
         )
 
     def fix(self, _handle: Handle, p: Plan, text: str, /) -> Handle:
@@ -95,7 +92,8 @@ class Headless:
             s.mode,
             text,
             p.session,
-            options=StartOptions(resume=s.sid, idle_timeout=IDLE_TIMEOUT),
+            resume=s.sid,
+            idle_timeout=IDLE_TIMEOUT,
         )
 
     def turn_end(self, _handle: Handle, _reply: str, _pending: int, /) -> str | GiveUp | None:

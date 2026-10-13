@@ -26,7 +26,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     Team,
     Unavailable,
 )
-from agent_pm.linear_orchestrator.linear.types import Transition
 from agent_pm.utils import append_line, printable
 
 URL = "https://api.linear.app/graphql"
@@ -289,10 +288,10 @@ def move(gql, issue, to, frm):
     return None
 
 
-def comment_and_move(gql, issue, body, transition: Transition):
+def comment_and_move(gql, issue, body, *, to, frm, emails=()):
     # move first: a failed or skipped move posts no comment, so a retry never repeats it
-    notes = subscribe(gql, issue, transition.emails)
-    left = move(gql, issue, transition.to, transition.frm)
+    notes = subscribe(gql, issue, emails)
+    left = move(gql, issue, to, frm)
     if left is None:
         comment(gql, issue, body + notes)
     return left

@@ -4,7 +4,7 @@ import re
 import tempfile
 from dataclasses import replace
 
-from agent_pm.delegate.composer import ConfigError, ConfigSource, RunOverrides, RunParams
+from agent_pm.delegate.composer import ConfigError, RunParams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import (
     OUTCOME,
@@ -83,8 +83,9 @@ class Fake(Case):
             role,
             task,
             team=self.found(found),
-            source=ConfigSource(path=self.config, local=self.local_file),
-            overrides=RunOverrides(values=overlays),
+            config=self.config,
+            local=self.local_file,
+            overlays=overlays,
         )
 
     def found(self, given=None):

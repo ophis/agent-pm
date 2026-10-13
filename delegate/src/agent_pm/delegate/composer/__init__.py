@@ -29,22 +29,10 @@ from agent_pm.delegate.composer.teams import (
     team_dirs,
     team_paths,
 )
-from agent_pm.delegate.composer.types import (
-    DELIVERABLE,
-    ConfigError,
-    ConfigSource,
-    RunConfig,
-    RunLocation,
-    RunOverrides,
-    RunParams,
-    Team,
-)
+from agent_pm.delegate.composer.types import DELIVERABLE, ConfigError, RunConfig, RunParams, Team
 
 __all__ = [
     "ConfigError",
-    "ConfigSource",
-    "RunOverrides",
-    "RunLocation",
     "TEAM",
     "DELIVERABLE",
     "RunConfig",

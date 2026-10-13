@@ -39,20 +39,6 @@ class InjectedFailure:
     seconds: float
 
 
-@dataclass(frozen=True, kw_only=True)
-class IssueSeed:
-    identifier: str | None = None
-    id: str | None = None
-    state: str = "todo"
-    assignee: str | None = None
-    project: dict | None = None
-    description: str = ""
-    priority: int = 0
-    labels: tuple = ()
-    created: str | None = None
-    updated: str | None = None
-
-
 @dataclass(frozen=True)
 class HttpReply:
     status: int
@@ -558,31 +544,44 @@ class FakeLinear(Operations):
             for lid, lname in labels.items():
                 self.labels[lid] = {"id": lid, "name": lname, "isGroup": False, "parent": id}
 
-    def issue(self, title="Issue", *, seed: IssueSeed | None = None):
-        seed = seed or IssueSeed()
+    def issue(
+        self,
+        title="Issue",
+        *,
+        identifier=None,
+        id=None,
+        state="todo",
+        assignee=None,
+        project=None,
+        description="",
+        priority=0,
+        labels=(),
+        created=None,
+        updated=None,
+    ):
         with self.lock:
             if (
-                seed.assignee is not None
-                and seed.assignee not in self.users
-                or any(i not in self.labels for i in seed.labels)
+                assignee is not None
+                and assignee not in self.users
+                or any(i not in self.labels for i in labels)
             ):
                 raise FixtureError.unseeded_access()
-            if seed.project:
-                self.projects[seed.project["id"]] = seed.project["name"]
-            at = stamp(seed.created)
+            if project:
+                self.projects[project["id"]] = project["name"]
+            at = stamp(created)
             try:
                 return self._add(
-                    seed.id or str(uuid.uuid4()),
-                    seed.identifier,
+                    id or str(uuid.uuid4()),
+                    identifier,
                     title=title,
-                    description=seed.description,
-                    priority=seed.priority,
-                    state=IDS[seed.state],
-                    assignee=seed.assignee,
-                    project=seed.project and dict(seed.project),
-                    labels=list(seed.labels),
+                    description=description,
+                    priority=priority,
+                    state=IDS[state],
+                    assignee=assignee,
+                    project=project and dict(project),
+                    labels=list(labels),
                     createdAt=at,
-                    updatedAt=stamp(seed.updated) if seed.updated else at,
+                    updatedAt=stamp(updated) if updated else at,
                 )
             except Problem as e:
                 raise ValueError(str(e)) from None

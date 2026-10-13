@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.adapters.claude.launch.types import ClaudeCommand
 from agent_pm.session.engine.types import LimitHit, SessionRequest
 from agent_pm.utils import read_regular
 
@@ -71,7 +70,7 @@ class ClaudeTui(Tui):
         }
         tail = ("--", prompt) if prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(request, settings, command=ClaudeCommand(tail=(*flags, *tail)))
+        return common.launch(request, settings, tail=(*flags, *tail))
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")

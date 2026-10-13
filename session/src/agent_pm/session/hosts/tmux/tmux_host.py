@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -243,62 +243,12 @@ class Command:
     env: Mapping[str, str]
 
 
-@dataclass(frozen=True, kw_only=True)
-class StartOptions:
-    events: str | None = None
-    status_line: bool = False
-    tags: Mapping[str, str] | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class DetachOptions:
-    block: tuple[int, ...] = ()
-    opener: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class PaneOptions:
-    split: str | None = None
-    split_from: str | None = None
-    opener: str | None = None
-    per_column: int | None = None
-    retile: str | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class PaneServices:
-    script: str
-    proc: Callable[..., subprocess.CompletedProcess] = subprocess.run
-    tile_window: Callable[..., None] | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class GridSettings:
-    per_column: int
-    retile: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class GridGeometry:
-    width: int
-    height: int
-    manager_width: int
-    per_column: int
-
-
 @dataclass(frozen=True)
 class Rectangle:
     w: int
     h: int
     x: int
     y: int
-
-
-@dataclass(frozen=True, kw_only=True)
-class GridFrame:
-    manager: str
-    panes: list[str]
-    layout: Cell
 
 
 def mark(
@@ -892,9 +842,7 @@ def grid_tree(
 
     paths = layout_paths(layout)
     rank = {pane: i for i, pane in enumerate(paths)}
-    spans = adopt_orphans(
-        parent, owner, paths, GridFrame(manager=manager, panes=panes, layout=layout)
-    )
+    spans = adopt_orphans(parent, owner, paths, manager=manager, panes=panes, layout=layout)
     reached, todo = set(), [None]
     while todo:
         key = todo.pop()
@@ -907,12 +855,12 @@ def grid_tree(
     return [*family_slots(parent, owner, rank), *(Slot(p) for p in manual)]
 
 
-def grid_layout(cells: list[Slot], manager: str, *, geometry: GridGeometry) -> Cell | None:
+def grid_layout(
+    cells: list[Slot], manager: str, *, width: int, height: int, manager_width: int, per_column: int
+) -> Cell | None:
     """The manager left at manager_width (narrowed to fit), cells in columns of per_column; None: it
     does not fit.
     """
-    width, height = geometry.width, geometry.height
-    manager_width, per_column = geometry.manager_width, geometry.per_column
     columns = tuple(
         Slot(None, tuple(cells[i : i + per_column])) for i in range(0, len(cells), per_column)
     )
@@ -1010,8 +958,7 @@ def descendants(key, owner, parent) -> list[str]:
     ]
 
 
-def adopt_orphans(parent, owner, paths, frame: GridFrame):
-    manager, panes, layout = frame.manager, frame.panes, frame.layout
+def adopt_orphans(parent, owner, paths, *, manager, panes, layout):
     columns = (
         layout.children[1]
         if layout.kind == LEFT_RIGHT
@@ -1114,13 +1061,16 @@ def find_grid(
 def open_grid(
     window: str,
     manager: str,
-    settings: GridSettings,
-    services: PaneServices,
+    *,
+    per_column: int,
+    retile: str,
+    script: str = __file__,
+    proc=subprocess.run,
+    tile_window=None,
 ) -> str | None:
     """Sets the grid options and retile's hooks (none when tmux would misread a path), then tiles
     unless off. None or the failure.
     """
-    per_column, retile, proc = settings.per_column, settings.retile, services.proc
     args = [
         "set-option",
         "-w",
@@ -1144,7 +1094,7 @@ def open_grid(
         GRID_BUSY,
     ]
     mode = RETILE_HOOKS[retile]
-    paths = (sys.executable or "", os.path.abspath(services.script))
+    paths = (sys.executable or "", os.path.abspath(script))
     bad = [p for p in paths if not HOOK_PATH.fullmatch(p)] if mode else []
     if bad:
         print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
@@ -1161,9 +1111,7 @@ def open_grid(
     try:
         checked_tmux(args, proc)
         if mode:
-            (tile if services.tile_window is None else services.tile_window)(
-                window, per_column=per_column, proc=proc
-            )
+            (tile if tile_window is None else tile_window)(window, per_column=per_column, proc=proc)
     except TuiError as e:
         return str(e)
     return None
@@ -1312,12 +1260,10 @@ def grid_pass(
         want = grid_layout(
             grid_tree(manager, order, sessions, at),
             manager,
-            geometry=GridGeometry(
-                width=int(width),
-                height=int(height),
-                manager_width=next(c.w for c in layout_leaves(at) if c.pane == manager),
-                per_column=per_column,
-            ),
+            width=int(width),
+            height=int(height),
+            manager_width=next(c.w for c in layout_leaves(at) if c.pane == manager),
+            per_column=per_column,
         )
         if want is None or layout_leaves(want) == layout_leaves(at):
             break
@@ -1383,7 +1329,9 @@ def start(
     session: str,
     command: Command,
     *,
-    options: StartOptions | None = None,
+    events: str | None = None,
+    status_line: bool = False,
+    tags: Mapping[str, str] | None = None,
     proc=subprocess.run,
     sleep=time.sleep,
 ) -> None:
@@ -1394,9 +1342,7 @@ def start(
     replaced; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
     raising, it leaves no session of its own.
     """
-    settings = StartOptions() if options is None else options
     argv, cwd, env = command.argv, command.cwd, command.env
-    events, status_line, tags = settings.events, settings.status_line, settings.tags
     session_name(session)
     tag_options = session_tags(session, tags or {})
     argv = prepare_command(argv, env)
@@ -1465,7 +1411,8 @@ def detach(
     session: str,
     command: Command,
     *,
-    options: DetachOptions | None = None,
+    block: tuple[int, ...] = (),
+    opener: str | None = None,
     proc=subprocess.run,
     sleep=time.sleep,
 ) -> None:
@@ -1473,9 +1420,7 @@ def detach(
     $ITERM_SESSION_ID stays and opener becomes @opener. No decoration, no kept pane. An existing
     session is refused untouched.
     """
-    settings = DetachOptions() if options is None else options
     argv, cwd, env = command.argv, command.cwd, command.env
-    block, opener = settings.block, settings.opener
     session_name(session)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(
@@ -1637,18 +1582,31 @@ def show(
     session: str,
     template: str | None = None,
     *,
-    options: PaneOptions | None = None,
-    services: PaneServices | None = None,
+    split: str | None = None,
+    split_from: str | None = None,
+    opener: str | None = None,
+    per_column: int | None = None,
+    retile: str | None = None,
+    script: str = ENTRY_PATH,
+    proc=subprocess.run,
+    tile_window=None,
 ) -> str | None:
     """Prints how to attach, then runs template, else open_pane; "" runs nothing. A failure is
     returned, never raised, but open_pane's TuiError for a bad argument.
     """
-    options = PaneOptions() if options is None else options
-    services = PaneServices(script=ENTRY_PATH) if services is None else services
-    proc = services.proc
     print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
     if template is None:
-        why = open_pane(session, options=options, services=services)
+        why = open_pane(
+            session,
+            split=split,
+            split_from=split_from,
+            opener=opener,
+            per_column=per_column,
+            retile=retile,
+            script=script,
+            proc=proc,
+            tile_window=tile_window,
+        )
     else:
         why = run_template(session, template, proc) if template else None
     if why:
@@ -1659,19 +1617,20 @@ def show(
 def open_pane(
     session: str,
     *,
-    options: PaneOptions | None = None,
-    services: PaneServices | None = None,
+    split: str | None = None,
+    split_from: str | None = None,
+    opener: str | None = None,
+    per_column: int | None = None,
+    retile: str | None = None,
+    script: str = ENTRY_PATH,
+    proc=subprocess.run,
+    tile_window=None,
 ) -> str | None:
     """Opens a pane on the session, recording @opener and @pane. Grid mode (_grid): splits the pane
     _grid picks and tiles the window per retile and per_column, ignoring split and split_from. Else
     below the newest open @pane of the opener's other sessions, else right of the opener's pane; or
     beside split_from's pane on side split. None or the failure.
     """
-    options = PaneOptions() if options is None else options
-    services = PaneServices(script=ENTRY_PATH) if services is None else services
-    split, split_from, opener = options.split, options.split_from, options.opener
-    per_column, retile = options.per_column, options.retile
-    proc = services.proc
     validate_layout(split, split_from, opener)
     validate_per_column(per_column)
     validate_retile(retile)
@@ -1681,7 +1640,9 @@ def open_pane(
     tmux = os.path.abspath(tmux)
     own = grid = new = None
     try:
-        opener, own, sessions, grid = pane_context(options, proc)
+        opener, own, sessions, grid = pane_context(
+            proc, split=split, split_from=split_from, opener=opener
+        )
         if grid is not None:
             window, manager, at, side = grid
             if split is not None or split_from is not None:
@@ -1716,11 +1677,11 @@ def open_pane(
     return open_grid(
         window,
         manager,
-        GridSettings(
-            per_column=PER_COLUMN if per_column is None else per_column,
-            retile=RETILE if retile is None else retile,
-        ),
-        services,
+        script=script,
+        proc=proc,
+        tile_window=tile_window,
+        per_column=PER_COLUMN if per_column is None else per_column,
+        retile=RETILE if retile is None else retile,
     )
 
 
@@ -1862,8 +1823,7 @@ def run_template(session: str, template: str, proc) -> str | None:
     return f"exit status {res.returncode}" if res.returncode else None
 
 
-def pane_context(options: PaneOptions, proc):
-    split, split_from, opener = options.split, options.split_from, options.opener
+def pane_context(proc, *, split=None, split_from=None, opener=None):
     own = None
     if opener is None:
         try:
@@ -1951,7 +1911,7 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
             actions["start"](
                 a.session,
                 Command(argv=command, cwd=os.getcwd(), env=dict(os.environ)),
-                options=StartOptions(events=a.events),
+                events=a.events,
             )
         elif a.cmd == "send":
             actions["send"](a.session, a.text)
@@ -1967,12 +1927,10 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
                 if actions["show"](
                     a.session,
                     a.show,
-                    options=PaneOptions(
-                        split=a.split,
-                        split_from=a.split_from,
-                        per_column=a.per_column,
-                        retile=a.grid_retile,
-                    ),
+                    split=a.split,
+                    split_from=a.split_from,
+                    per_column=a.per_column,
+                    retile=a.grid_retile,
                 )
                 else 0
             )

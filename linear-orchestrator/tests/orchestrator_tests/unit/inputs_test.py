@@ -1,7 +1,6 @@
 import json
 import os
 import re
-from dataclasses import dataclass
 from types import SimpleNamespace
 
 from agent_pm import delegate
@@ -46,26 +45,16 @@ def note(body, at, who=AGENT):
     return issues.Note(body, at, who[0] if who else None, who[1] if who else None)
 
 
-@dataclass(frozen=True, kw_only=True)
-class IssueFacts:
-    ident: str = "RES-4"
-    title: str = "Compare queues"
-    notes: tuple = ()
-    links: tuple = ()
-    linked: tuple = ()
-    project: str | None = "p-1"
-
-
-def issue(description="", *, facts: IssueFacts | None = None):
-    facts = facts or IssueFacts()
-    ident, title, notes, links, linked, project = (
-        facts.ident,
-        facts.title,
-        facts.notes,
-        facts.links,
-        facts.linked,
-        facts.project,
-    )
+def issue(
+    description="",
+    *,
+    ident="RES-4",
+    title="Compare queues",
+    notes=(),
+    links=(),
+    linked=(),
+    project="p-1",
+):
     return issues.Issue(
         "uuid-4",
         ident,
@@ -96,7 +85,7 @@ def research_issue():
         note("Focus on cost.", "2026-09-02T00:00:00.000Z", ANN),
         note("Deploy ok", "2026-09-01T11:00:00.000Z", (None, None)),
     )
-    return issue(desc, facts=IssueFacts(notes=sorted(ns, key=lambda n: n.at)))
+    return issue(desc, notes=sorted(ns, key=lambda n: n.at))
 
 
 RESEARCH_PRECEDENCE = (
@@ -150,14 +139,14 @@ class BuildInputs(Case):
             lines(
                 "Build the registry.", "Only the API.", "", "## Comments", "- Ann, t:", "  > quoted"
             ),
-            facts=IssueFacts(ident="ENG-7", title="ENG: Session Registry!", notes=self.notes()),
+            ident="ENG-7",
+            title="ENG: Session Registry!",
+            notes=self.notes(),
         )
         src = inputs.Sources(
             (inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r"), self.PRD), None
         )
-        got = inputs.render(
-            iss, "engineer", src, inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS)
-        )
+        got = inputs.render(iss, "engineer", src, humans=HUMANS, target=self.TARGET, docs=DOCS)
         self.assertEqual(
             got,
             lines(
@@ -240,10 +229,12 @@ class BuildInputs(Case):
         ):
             with self.subTest(target=t):
                 got = inputs.render(
-                    issue(d, facts=IssueFacts(ident="ENG-7", title="ENG: Registry")),
+                    issue(d, ident="ENG-7", title="ENG: Registry"),
                     "engineer",
                     inputs.Sources((), None),
-                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
+                    humans=HUMANS,
+                    target=t,
+                    docs=DOCS,
                 )
                 self.assertEqual(
                     got,
@@ -272,10 +263,12 @@ class BuildInputs(Case):
         d = lines("Handoff from PM-9: u", "", "## Instructions", "Ann, t:", "Go.")
         src = inputs.Sources((self.PRD,), None)
         got = inputs.render(
-            issue(d, facts=IssueFacts(ident="ENG-7")),
+            issue(d, ident="ENG-7"),
             "engineer",
             src,
-            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=self.TARGET,
+            docs=DOCS,
         )
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {self.PRD.url}\n", got)
         self.assertIn(
@@ -298,10 +291,12 @@ class BuildInputs(Case):
         )
         report = inputs.Doc(BASE + "Research/r.md", "Research/r.md", "r")
         got = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7")),
+            issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report, self.PRD, other), None),
-            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=self.TARGET,
+            docs=DOCS,
         )
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`", got)
         self.assertIn(
@@ -312,10 +307,12 @@ class BuildInputs(Case):
         )
         self.assertNotIn("### `Product Design/2026-09-05-PM-9-q.md`", got)
         none = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7")),
+            issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((report,), None),
-            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=self.TARGET,
+            docs=DOCS,
         )
         self.assertIn("## PRD\n\nNone linked.", none)
         self.assertIn("## Linked documents (context)\n\n### `Research/r.md`", none)
@@ -323,10 +320,12 @@ class BuildInputs(Case):
     def test_missing_prd_text_names_the_branch(self):
         prd = inputs.Doc(self.PRD.url, self.PRD.path, None)
         got = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7")),
+            issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((prd,), None),
-            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=self.TARGET,
+            docs=DOCS,
         )
         self.assertIn("## PRD: `Product Design/2026-09-05-PM-9-q.md`\n\n(not found on main)", got)
 
@@ -337,10 +336,12 @@ class BuildInputs(Case):
         )
         ns = tuple(sorted(ns, key=lambda n: n.at))
         got = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7", notes=ns)),
+            issue("D", ident="ENG-7", notes=ns),
             "engineer",
             inputs.Sources((), None),
-            inputs.InputContext(humans=HUMANS, target=self.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=self.TARGET,
+            docs=DOCS,
         )
         self.assertIn(
             (
@@ -370,7 +371,7 @@ class HandoffComments(Case):
                 f"  > {BASE}Research/r.md",
             ]
         )
-        iss = issue(d, facts=IssueFacts(ident="ENG-7", title="ENG: Registry"))
+        iss = issue(d, ident="ENG-7", title="ENG: Registry")
         instructions = issues.parse_handoff(d).instructions
         self.assertTrue(instructions.endswith(f"\nRepo: ophis/agent-pm\nPRD: {prd}"))
         self.assertEqual(target.parse_repo(d), ("ophis", "agent-pm"))
@@ -381,7 +382,9 @@ class HandoffComments(Case):
             iss,
             "engineer",
             src,
-            inputs.InputContext(humans=HUMANS, target=BuildInputs.TARGET, docs=DOCS),
+            humans=HUMANS,
+            target=BuildInputs.TARGET,
+            docs=DOCS,
         )
         self.assertIn(f"\nLinks: https://linear.app/t/issue/ENG-7, {prd}\n", got)
         self.assertIn(
@@ -393,10 +396,12 @@ class InputCheckout(Case):
     def test_a_build_prompts_repo_py_commands_take_the_inputs_checkout(self):
         t = target.Target("ophis", "agent-pm", "ENG-7-x")
         text = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7")),
+            issue("D", ident="ENG-7"),
             "engineer",
             inputs.Sources((), None),
-            inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
+            humans=HUMANS,
+            target=t,
+            docs=DOCS,
         )
         name = re.search(r"^Checkout: (.+)$", text, re.M).group(1)
         self.assertEqual(
@@ -563,9 +568,7 @@ class DocumentGathering(Case):
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abce"}
             | {endpoint("Research"): listing()}
         )
-        src = inputs.gather(
-            issue(description, facts=IssueFacts(links=links)), "researcher", DOCS, run=gh
-        )
+        src = inputs.gather(issue(description, links=links), "researcher", DOCS, run=gh)
         self.assertEqual(
             [d.path for d in src.docs],
             ["Research/a.md", "Research/b.md", "Research/c.md", "Research/e.md"],
@@ -587,9 +590,7 @@ class DocumentGathering(Case):
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abcd"}
             | {endpoint("Research"): listing()}
         )
-        src = inputs.gather(
-            issue(description, facts=IssueFacts(links=links)), "researcher", DOCS, run=gh
-        )
+        src = inputs.gather(issue(description, links=links), "researcher", DOCS, run=gh)
         self.assertEqual(
             [x.path for x in src.docs],
             ["Research/a.md", "Research/b.md", "Research/c.md", "Research/d.md"],
@@ -617,25 +618,25 @@ class DocumentGathering(Case):
                 endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1"),
             }
         )
-        src = inputs.gather(issue(url, facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh)
+        src = inputs.gather(issue(url, ident="PM-9"), "pm", DOCS, run=gh)
         self.assertEqual(
             (src.earlier.path, src.earlier.url, src.earlier.text),
             ("Product Design/2026-08-01-PM-1-x.md", url, "p1"),
         )
         gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
         src = inputs.gather(
-            issue("", facts=IssueFacts(links=(issues.Link(url),), ident="ENG-7")),
+            issue("", links=(issues.Link(url),), ident="ENG-7"),
             "engineer",
             DOCS,
             run=gh,
         )
         got = inputs.render(
-            issue("D", facts=IssueFacts(ident="ENG-7")),
+            issue("D", ident="ENG-7"),
             "engineer",
             src,
-            inputs.InputContext(
-                humans=HUMANS, target=target.Target("o", "r", "ENG-7-x"), docs=DOCS
-            ),
+            humans=HUMANS,
+            target=target.Target("o", "r", "ENG-7-x"),
+            docs=DOCS,
         )
         self.assertIn("## PRD: `Product Design/2026-08-01-PM-1-x.md`\n\n" + fenced("p1"), got)
         self.assertIn(f"Links: https://linear.app/t/issue/ENG-7, {url}\n", got)
@@ -729,9 +730,7 @@ class DocumentGathering(Case):
                 endpoint("Research/2026-09-01-RES-4-r.md"): ok("r"),
             }
         )
-        src = inputs.gather(
-            issue(f"{report} {prd1} {prd2}", facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh
-        )
+        src = inputs.gather(issue(f"{report} {prd1} {prd2}", ident="PM-9"), "pm", DOCS, run=gh)
         self.assertEqual(src.earlier.path, "Product Design/2026-08-01-PM-1-x.md")
         self.assertEqual(src.earlier.url, prd1)
         self.assertEqual(
@@ -748,7 +747,7 @@ class DocumentGathering(Case):
                 endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1"),
             }
         )
-        src = inputs.gather(issue(prd, facts=IssueFacts(ident="PM-9")), "pm", DOCS, run=gh)
+        src = inputs.gather(issue(prd, ident="PM-9"), "pm", DOCS, run=gh)
         self.assertEqual(src.earlier.path, "Product Design/2026-09-01-PM-9-mine.md")
         self.assertEqual(src.earlier.url, BASE + "Product%20Design/2026-09-01-PM-9-mine.md")
         self.assertEqual([d.path for d in src.docs], ["Product Design/2026-08-01-PM-1-x.md"])
@@ -760,9 +759,7 @@ class DocumentGathering(Case):
         ):
             with self.subTest(role=role):
                 gh = Gh({endpoint(listed): listing(), endpoint(link): ok("x")})
-                src = inputs.gather(
-                    issue(f"{BASE}{link}", facts=IssueFacts(ident=ident)), role, DOCS, run=gh
-                )
+                src = inputs.gather(issue(f"{BASE}{link}", ident=ident), role, DOCS, run=gh)
                 self.assertIsNone(src.earlier)
                 self.assertEqual([d.path for d in src.docs], [path])
 
@@ -775,7 +772,7 @@ class DocumentGathering(Case):
             }
         )
         src = inputs.gather(
-            issue(f"{prd} {BASE}Research/r.md", facts=IssueFacts(ident="ENG-7")),
+            issue(f"{prd} {BASE}Research/r.md", ident="ENG-7"),
             "engineer",
             DOCS,
             run=gh,
@@ -808,9 +805,9 @@ class ResearchInputs(Case):
             iss,
             "researcher",
             src,
-            inputs.InputContext(
-                humans=HUMANS, target=target.Target("ophis", "agent-pm"), docs=DOCS
-            ),
+            humans=HUMANS,
+            target=target.Target("ophis", "agent-pm"),
+            docs=DOCS,
         )
         self.assertEqual(
             got,
@@ -866,7 +863,9 @@ class ResearchInputs(Case):
                     issue(description),
                     "researcher",
                     inputs.Sources((), None),
-                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
+                    humans=HUMANS,
+                    target=t,
+                    docs=DOCS,
                 )
                 self.assertEqual(
                     got,
@@ -890,10 +889,12 @@ class ResearchInputs(Case):
             issues.Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
         )
         got = inputs.render(
-            issue("Q", facts=IssueFacts(notes=ns)),
+            issue("Q", notes=ns),
             "researcher",
             inputs.Sources((), None),
-            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+            humans=HUMANS,
+            target=None,
+            docs=DOCS,
         )
         self.assertIn(
             (
@@ -910,7 +911,9 @@ class ResearchInputs(Case):
             issue("Q"),
             "researcher",
             src,
-            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+            humans=HUMANS,
+            target=None,
+            docs=DOCS,
         )
         self.assertTrue(
             got.endswith(
@@ -926,7 +929,9 @@ class DocumentFences(Case):
             issue("Q"),
             "researcher",
             src,
-            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+            humans=HUMANS,
+            target=None,
+            docs=DOCS,
         )
 
     def test_fence_is_longer_than_any_backtick_run_and_trailing_newlines_add_no_blank_lines(self):
@@ -970,14 +975,12 @@ class DesignInputs(Case):
         )
         iss = issue(
             self.HANDOFF,
-            facts=IssueFacts(
-                ident="PM-9",
-                title="PRD: Compare queues",
-                notes=ns,
-                linked=(
-                    issues.Linked("RES-4", "Compare\nqueues  now", "Done"),
-                    issues.Linked("ENG-1", "Other", "Todo"),
-                ),
+            ident="PM-9",
+            title="PRD: Compare queues",
+            notes=ns,
+            linked=(
+                issues.Linked("RES-4", "Compare\nqueues  now", "Done"),
+                issues.Linked("ENG-1", "Other", "Todo"),
             ),
         )
         src = inputs.Sources(
@@ -994,9 +997,7 @@ class DesignInputs(Case):
                 "# Mine",
             ),
         )
-        got = inputs.render(
-            iss, "pm", src, inputs.InputContext(humans=HUMANS, target=None, docs=DOCS)
-        )
+        got = inputs.render(iss, "pm", src, humans=HUMANS, target=None, docs=DOCS)
         self.assertEqual(
             got,
             lines(
@@ -1052,10 +1053,12 @@ class DesignInputs(Case):
         ):
             with self.subTest(target=t):
                 got = inputs.render(
-                    issue("Build a PRD for X.", facts=IssueFacts(ident="PM-9", title="Queues PRD")),
+                    issue("Build a PRD for X.", ident="PM-9", title="Queues PRD"),
                     "pm",
                     inputs.Sources((), None),
-                    inputs.InputContext(humans=HUMANS, target=t, docs=DOCS),
+                    humans=HUMANS,
+                    target=t,
+                    docs=DOCS,
                 )
                 self.assertEqual(
                     got,
@@ -1080,10 +1083,12 @@ class DesignInputs(Case):
             (), inputs.Doc(BASE + "Product%20Design/p.md", "Product Design/p.md", None)
         )
         got = inputs.render(
-            issue("Desc", facts=IssueFacts(ident="PM-9", notes=ns)),
+            issue("Desc", ident="PM-9", notes=ns),
             "pm",
             src,
-            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+            humans=HUMANS,
+            target=None,
+            docs=DOCS,
         )
         self.assertTrue(
             got.endswith(
@@ -1102,10 +1107,12 @@ class DesignInputs(Case):
     def test_handoff_without_comments_has_no_source_comments_section(self):
         d = lines("Handoff from RES-4: u", "", "## Instructions", "Ann, t:", "Go.")
         got = inputs.render(
-            issue(d, facts=IssueFacts(ident="PM-9")),
+            issue(d, ident="PM-9"),
             "pm",
             inputs.Sources((), None),
-            inputs.InputContext(humans=HUMANS, target=None, docs=DOCS),
+            humans=HUMANS,
+            target=None,
+            docs=DOCS,
         )
         self.assertNotIn("## Comments on", got)
         self.assertIn("## Brief\n\nCompare queues\n\nAnn, t:\nGo.", got)

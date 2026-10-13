@@ -600,10 +600,11 @@ class ConfigurationLoading(ConfigFile, Case):
                 mock.call(
                     r,
                     None,
-                    overrides=delegate.RunOverrides(
-                        values=(overlay,), source=LABEL[0], table=LABEL[1]
-                    ),
-                    source=delegate.ConfigSource(path=CORE, local=config.LOCAL, table=core),
+                    overlays=(overlay,),
+                    label=LABEL,
+                    config=CORE,
+                    local=config.LOCAL,
+                    cfg=core,
                 )
                 for r in roles
             ],
@@ -617,9 +618,8 @@ class ConfigurationLoading(ConfigFile, Case):
             {
                 r: delegate.resolve_run(
                     r,
-                    overrides=delegate.RunOverrides(
-                        values=(overlay,), source=LABEL[0], table=LABEL[1]
-                    ),
+                    overlays=(overlay,),
+                    label=LABEL,
                 )
                 for r in roles
             },

@@ -35,7 +35,6 @@ from agent_pm.session import (
     IdleTimeout,
     SessionBound,
     SessionRow,
-    StartOptions,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, save
@@ -269,14 +268,12 @@ class Api:
             if match is None or re.fullmatch(match, n)
         ]
 
-    def start(self, runtime, mode, prompt, spec, *, options=None):
-        options = StartOptions() if options is None else options
-        resume = options.resume
+    def start(self, runtime, mode, prompt, spec, *, resume=None, idle_timeout=None, events=None):
         kw = {
             "name": spec.name,
             "sid": spec.sid,
-            "idle_timeout": options.idle_timeout,
-            "events": options.events,
+            "idle_timeout": idle_timeout,
+            "events": events,
         }
         self.calls.append(("start", kw["name"]))
         self.starts.append(
@@ -2211,7 +2208,9 @@ class ResumeTest(RosterCase):
                     },
                 )
                 with mock.patch.dict(os.environ, envs["b"], clear=True):
-                    crew._drop_import_root()
+                    with self.assertRaises(SystemExit) as cm:
+                        self.run_main("--help")
+                    self.assertEqual(cm.exception.code, 0)
                     self.assertEqual(os.environ.get("PYTHONPATH"), user)
 
     def test_a_failing_recovery_stops_none_and_attach_exits_1(self):

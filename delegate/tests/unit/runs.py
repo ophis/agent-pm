@@ -7,7 +7,7 @@ import os
 from unittest import mock
 
 from agent_pm.delegate import Result
-from agent_pm.session import Exited, StartOptions, TurnEnd
+from agent_pm.session import Exited, TurnEnd
 
 from session.tests.case import SPAWNS
 
@@ -57,10 +57,9 @@ class FakeHandle:
         self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
-    def start(self, _runtime, _mode, _prompt, spec, *, options=None):
-        options = StartOptions() if options is None else options
+    def start(self, _runtime, _mode, _prompt, spec, *, resume=None, idle_timeout=None, events=None):
         os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = spec.name or NAME, options.resume or spec.sid
+        self.name, self.sid = spec.name or NAME, resume or spec.sid
         return self
 
     def events(self):
