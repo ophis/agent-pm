@@ -1311,6 +1311,85 @@ def shared_types(repo: str) -> list[str]:
     return sorted(found)
 
 
+def object_exports(repo: str) -> list[str]:
+    packages = {"agent_pm.delegate.event": "delegate/src/agent_pm/delegate/event/__init__.py"}
+    trees = {
+        rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text))
+        for project in PROJECTS
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py")
+    }
+    bindings = {
+        module: _export_bindings(module, tree, package=rel.endswith("/__init__.py"))
+        for module, (rel, tree) in trees.items()
+    }
+    functions = {
+        f"{module}.{name}"
+        for module, (_, tree) in trees.items()
+        for _, _, name in _suppression_functions(tree)
+    }
+    functions.update(
+        f"{module}.{target.id}"
+        for module, (_, tree) in trees.items()
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    )
+    found = []
+    for module, rel in packages.items():
+        if module not in trees:
+            found.append(f"{rel}: want one __all__ assignment")
+            continue
+        _, tree = trees[module]
+        exports = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign | ast.AnnAssign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            )
+        ]
+        if len(exports) != 1:
+            found.append(f"{rel}: want one __all__ assignment")
+            continue
+        value = exports[0].value
+        if not isinstance(value, ast.List | ast.Tuple) or not all(
+            isinstance(name, ast.Constant) and isinstance(name.value, str) for name in value.elts
+        ):
+            found.append(f"{rel}:{exports[0].lineno}: __all__ must be a literal list of names")
+            continue
+        for name in value.elts:
+            if _resolve_boundary(f"{module}.{name.value}", bindings) in functions:
+                found.append(f"{rel}:{name.lineno}: exported function {name.value}")
+    return sorted(found)
+
+
+def _export_bindings(module, tree, *, package):
+    bound = {node.name: f"{module}.{node.name}" for node in _module_nodes(tree)}
+    parent = (module if package else module.rpartition(".")[0]).split(".")
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                bound[name.asname or name.name.split(".")[0]] = (
+                    name.name if name.asname else name.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom):
+            source = node.module or ""
+            if node.level:
+                source = ".".join([*parent[: len(parent) - node.level + 1], source]).rstrip(".")
+            for name in node.names:
+                bound[name.asname or name.name] = f"{source}.{name.name}"
+        elif isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(
+            node.value, ast.Name | ast.Attribute
+        ):
+            value = _dotted(node.value, bound)
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                if isinstance(target, ast.Name):
+                    bound[target.id] = value
+    return bound
+
+
 def _data_type(node, bound):
     return any(
         _dotted(decorator.func if isinstance(decorator, ast.Call) else decorator, bound)

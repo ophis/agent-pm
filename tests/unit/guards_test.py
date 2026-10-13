@@ -188,6 +188,124 @@ class EveryTest(Sample):
         )
 
 
+class ObjectExports(Sample):
+    EVENT = "delegate/src/agent_pm/delegate/event/"
+
+    def test_package_must_define_all(self):
+        root = self.tree({self.EVENT + "__init__.py": "class Event: pass\n"})
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py: want one __all__ assignment"],
+        )
+
+    def test_missing_package_is_rejected(self):
+        self.assertEqual(
+            guards.object_exports(self.tree({})),
+            [self.EVENT + "__init__.py: want one __all__ assignment"],
+        )
+
+    def test_all_must_name_literal_exports(self):
+        for sample in ("__all__ = names\n", "__all__ = [123]\n"):
+            with self.subTest(sample=sample):
+                root = self.tree({self.EVENT + "__init__.py": sample})
+                self.assertEqual(
+                    guards.object_exports(root),
+                    [self.EVENT + "__init__.py:1: __all__ must be a literal list of names"],
+                )
+
+    def test_direct_functions_and_lambdas_are_rejected(self):
+        for definition in (
+            "def action(): pass\n",
+            "async def action(): pass\n",
+            "action = lambda: None\n",
+        ):
+            with self.subTest(definition=definition):
+                root = self.tree(
+                    {self.EVENT + "__init__.py": definition + "__all__ = ['action']\n"}
+                )
+                self.assertEqual(
+                    guards.object_exports(root),
+                    [self.EVENT + "__init__.py:2: exported function action"],
+                )
+
+    def test_import_and_assignment_aliases_cannot_hide_reexported_functions(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from .bridge import action as public\n"
+                    "renamed = public\n__all__ = ['renamed']\n"
+                ),
+                self.EVENT + "bridge.py": "from .reply import parse as action\n",
+                self.EVENT + "reply.py": "def parse(): pass\n",
+            }
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:3: exported function renamed"],
+        )
+
+    def test_module_attribute_aliases_cannot_hide_functions(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "import agent_pm.delegate.event.reply as replies\n"
+                    "public = replies.parse\n__all__ = ['public']\n"
+                ),
+                self.EVENT + "reply.py": "def parse(): pass\n",
+            }
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:3: exported function public"],
+        )
+
+    def test_exported_class_methods_are_rejected(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "class Event:\n    @classmethod\n    def parse(cls): pass\n"
+                    "public = Event.parse\n__all__ = ['public']\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.object_exports(root),
+            [self.EVENT + "__init__.py:5: exported function public"],
+        )
+
+    def test_classes_exceptions_constants_and_unexported_functions_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from .reply import Event, EventError, TAG\n"
+                    "def helper(): pass\n__all__: list[str] = ['Event', 'EventError', 'TAG']\n"
+                ),
+                self.EVENT + "reply.py": (
+                    "class Event:\n    def parse(self): pass\n"
+                    "class EventError(ValueError): pass\nTAG = 'event'\n"
+                ),
+            }
+        )
+        self.assertEqual(guards.object_exports(root), [])
+
+    def test_other_packages_remain_outside_this_ticket(self):
+        files = {self.EVENT + "__init__.py": "__all__ = []\n"}
+        files.update(
+            {
+                f"{project}/src/agent_pm/{package}/__init__.py": "def run(): pass\n__all__ = ['run']\n"
+                for project, package in (
+                    ("utils", "utils"),
+                    ("session", "session"),
+                    ("delegate", "delegate"),
+                    ("delegate", "delegate/composer"),
+                    ("manager", "manager"),
+                    ("linear-orchestrator", "linear_orchestrator"),
+                )
+            }
+        )
+        self.assertEqual(guards.object_exports(self.tree(files)), [])
+
+
 class SessionNames(Sample):
     def test_configuration_forwarding_exemption_names_its_owner(self):
         self.assertEqual(
