@@ -167,6 +167,7 @@ class SameNameTest(Live):
         )
         events = handle.events()
         self.assertEqual(next(events), TurnEnd("r1", 0))
+        self.lines(f"{name} done")
         return handle, events
 
     def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
