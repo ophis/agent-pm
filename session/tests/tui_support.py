@@ -19,7 +19,7 @@ from agent_pm.session.engine.types import (
 
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import Case, settings
-from session.tests.modules import module_slot
+from session.tests.modules import adapter_loader
 
 MANAGER = "mgr"
 
@@ -100,8 +100,10 @@ class Live(Case):
                 }
             }
         )
-        self.enterContext(module_slot("agent_pm.session.adapters.fake", fake_adapter))
-        self.driver = Driver(**self.config)
+        self.driver = Driver(
+            **self.config,
+            class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+        )
 
     def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events

@@ -1,19 +1,19 @@
-"""Register or restore one synthetic module without removing unrelated imports."""
+"""Load adapters from a caller-owned fake module table."""
 
-import sys
-from contextlib import contextmanager
+import importlib
+from unittest import mock
+
+from agent_pm.utils import load_class
 
 
-@contextmanager
-def module_slot(name, module=None):
-    previous = sys.modules.get(name)
-    present = name in sys.modules
-    if module is not None:
-        sys.modules[name] = module
-    try:
-        yield
-    finally:
-        if present:
-            sys.modules[name] = previous
-        else:
-            sys.modules.pop(name, None)
+def adapter_loader(modules):
+    def load(path, base):
+        original = importlib.import_module
+
+        def imported(name, package=None):
+            return modules[name] if name in modules else original(name, package)
+
+        with mock.patch("importlib.import_module", new=imported):
+            return load_class(path, base)
+
+    return load

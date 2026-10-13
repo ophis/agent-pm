@@ -15,15 +15,11 @@ from pathlib import Path
 
 
 def _sibling(name):
-    key = "_agent_pm_" + name
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py")
-    if key in sys.modules:
-        found = getattr(sys.modules[key], "__file__", None)
-        if found != path:
-            raise ImportError(f"{key} is {found}, not {path}")
-        return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, path)
-    module = sys.modules[key] = importlib.util.module_from_spec(spec)
+    spec = importlib.util.spec_from_file_location("_agent_pm_" + name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{path}: cannot load Python module")
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 

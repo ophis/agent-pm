@@ -42,7 +42,7 @@ from agent_pm.session.hosts.tables import NAME
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.utils import STATE, printable_abs, sid_error
+from agent_pm.utils import STATE, load_class, printable_abs, sid_error
 
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
@@ -513,10 +513,13 @@ class Driver:
         host=tmux_host,
         probe=headless.probe,
         clock: Callable[[], float] | None = None,
+        class_loader=load_class,
     ):
         self._logger = diagnostics()
         self.host, self.probe, self.clock = host, probe, clock
-        self.registry = registry.Registry(adapters=adapters, hosts=hosts, default_host=default_host)
+        self.registry = registry.Registry(
+            adapters=adapters, hosts=hosts, default_host=default_host, class_loader=class_loader
+        )
 
     @classmethod
     def from_config(
@@ -526,9 +529,16 @@ class Driver:
         host=tmux_host,
         probe=headless.probe,
         clock: Callable[[], float] | None = None,
+        class_loader=load_class,
     ):
         try:
-            return cls(**registry.settings(config), host=host, probe=probe, clock=clock)
+            return cls(
+                **registry.settings(config),
+                host=host,
+                probe=probe,
+                clock=clock,
+                class_loader=class_loader,
+            )
         except ValueError as error:
             raise ConfigError(str(error)) from error
 

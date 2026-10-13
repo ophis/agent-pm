@@ -39,11 +39,14 @@ from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, St
 ATTACH = """import importlib.util, json, sys
 fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
-sys.modules["agent_pm.session.adapters.fake"] = module = importlib.util.module_from_spec(spec)
+module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 from agent_pm.session.engine import api
 from agent_pm.session import IdleTimeout, Driver
-driver = Driver(**json.loads(config))
+from agent_pm.utils import load_class
+def adapter_class(path, base):
+    return module.FakeAdapter if path == "agent_pm.session.adapters.fake:FakeAdapter" else load_class(path, base)
+driver = Driver(**json.loads(config), class_loader=adapter_class)
 handle = driver.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)

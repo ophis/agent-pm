@@ -958,6 +958,33 @@ class TestBoundaries(Sample):
             with self.subTest(call=call):
                 self.assertTrue(self.violations(sample, "session"))
 
+    def test_module_table_mutations_have_exact_diagnostics(self):
+        statements = (
+            "modules['fake'] = object()",
+            "del modules['fake']",
+            "modules.pop('fake', None)",
+            "modules.update({'fake': object()})",
+            "cleanup(modules.pop, 'fake', None)",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                self.assertEqual(
+                    self.violations("from sys import modules\n" + statement, "session"),
+                    ["session/tests/probe.py:2: sys.modules mutation"],
+                )
+
+    def test_multiple_and_own_dictionary_patches_have_exact_diagnostics(self):
+        prefix = "from unittest.mock import patch\nimport agent_pm.session.engine.api as api\n"
+        for statement, reason in (
+            ("patch.multiple('agent_pm.session.engine.api', start=object())", "shipped code patch"),
+            ("patch.dict(api.MODES, {})", "own project dictionary patch"),
+        ):
+            with self.subTest(statement=statement):
+                self.assertEqual(
+                    self.violations(prefix + statement, "session"),
+                    [f"session/tests/probe.py:3: {reason}"],
+                )
+
     def test_standard_library_and_lower_layer_fakes_are_allowed(self):
         sample = "from unittest.mock import patch\nimport os\nfrom session.tests import fake_adapter\npatch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\nfake_adapter.start = object()\npatch.dict(os.environ, {})\n"
         self.assertEqual(self.violations(sample, "delegate"), [])
@@ -1109,8 +1136,6 @@ class ConfigOnce(Sample):
             ],
         )
 
-
-class OrchestratorAbsent(Sample):
     def test_an_absent_or_empty_tree_is_clean(self):
         for root in (os.path.join(self.tree({}), "missing"), self.tree({"config.toml": ""})):
             for guard in (guards.orchestrator_text, guards.config_once):

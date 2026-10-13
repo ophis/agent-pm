@@ -30,19 +30,15 @@ RUN_WITH = os.pathsep.join(
 
 
 @contextlib.contextmanager
-def substitute_module(name, module):
-    present, original = name in sys.modules, sys.modules.get(name)
+def foreign_modules(case, name, module):
+    table = dict(sys.modules)
     if module is None:
-        sys.modules.pop(name, None)
+        table.pop(name, None)
     else:
-        sys.modules[name] = module
-    try:
+        table[name] = module
+    foreign = case._foreign
+    with mock.patch.object(case, "_foreign", side_effect=lambda: foreign(table)):
         yield
-    finally:
-        if present:
-            sys.modules[name] = original
-        else:
-            sys.modules.pop(name, None)
 
 
 class Checks:
@@ -134,7 +130,7 @@ class Checks:
         for sub, root in self.case.SRC.items():
             name = f"agent_pm.{sub}"
             elsewhere = {name: self.module(name, "/elsewhere/src")}
-            with self.subTest(name), substitute_module(name, elsewhere[name]):
+            with self.subTest(name), foreign_modules(self.case, name, elsewhere[name]):
                 self.assert_fails_before_set_up(
                     f"{name} is imported from /elsewhere/src, not this tree's {root}"
                 )
@@ -161,7 +157,7 @@ class Checks:
         self.assertTrue(os.path.isfile(self.module(name, orch).__file__))
         for found in (None, self.module(name, orch)):
             ran = []
-            with self.subTest(found=found), substitute_module(name, found):
+            with self.subTest(found=found), foreign_modules(self.case, name, found):
                 result = self.run_inner(ran.append)
             self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
             self.assertEqual(len(ran), 1)

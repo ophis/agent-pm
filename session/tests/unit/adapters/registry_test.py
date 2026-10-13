@@ -1,8 +1,6 @@
 """adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts'
 tables and the default host), settings() from a read session config, the tui settings from
-[hosts.tmux] and Adapter loading. Adapter packages are registered in sys.modules or the import
-system only for the test's span; the registry itself is never patched. Each test constructs fresh
-settings.
+[hosts.tmux] and Adapter loading. Caller-owned fake module tables supply the adapter loader; each test constructs fresh settings.
 """
 
 import importlib
@@ -28,7 +26,7 @@ from agent_pm.utils import read_project
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, Case, settings
-from session.tests.modules import module_slot
+from session.tests.modules import adapter_loader
 
 FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
 MISSING = (
@@ -76,14 +74,18 @@ class SourceFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 class Base(Case):
     def configure(self, text, tmux=None):
         """Construct Driver from TOML adapters, HOSTS and supplied tmux settings."""
-        self.driver = Driver(**settings(tomllib.loads(text).get("adapters", {}), tmux))
+        self.driver = Driver(
+            **settings(tomllib.loads(text).get("adapters", {}), tmux),
+            class_loader=adapter_loader(getattr(self, "modules", {})),
+        )
 
     def register(self, **modules):
-        """Each name's module as sys.modules["agent_pm.session.adapters.<name>"] for the rest of the
-        test.
-        """
-        for name, m in modules.items():
-            self.enterContext(module_slot(f"agent_pm.session.adapters.{name}", m))
+        self.modules = {
+            **getattr(self, "modules", {}),
+            **{f"agent_pm.session.adapters.{name}": module for name, module in modules.items()},
+        }
+        if hasattr(self, "driver"):
+            self.driver.registry.class_loader = adapter_loader(self.modules)
 
     def refused(self, message, call):
         with self.assertRaises(ConfigError) as caught:
@@ -119,7 +121,7 @@ class ConfigureTest(Base):
         given = settings(
             {"fake": {"implementation": "adapters.fake:FakeAdapter", "log": {"a": [1]}}}
         )
-        self.driver = Driver(**given)
+        self.driver = Driver(**given, class_loader=adapter_loader(getattr(self, "modules", {})))
         given["adapters"]["fake"]["log"]["a"].append(2)
         self.assertEqual(self.driver.registry.adapter("fake").config, {"log": {"a": [1]}})
 
@@ -326,7 +328,6 @@ class AdapterTest(Base):
         ):
             with (
                 self.subTest(source=source),
-                module_slot("agent_pm.session.adapters.broken"),
                 mock.patch.object(
                     sys,
                     "meta_path",

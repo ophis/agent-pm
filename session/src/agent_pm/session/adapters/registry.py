@@ -32,7 +32,9 @@ def settings(config: Mapping) -> dict:
 class Registry:
     """Caller-owned adapter and host configuration."""
 
-    def __init__(self, *, adapters: Mapping, hosts: Mapping, default_host: str) -> None:
+    def __init__(
+        self, *, adapters: Mapping, hosts: Mapping, default_host: str, class_loader=load
+    ) -> None:
         if not isinstance(adapters, Mapping) or not all(
             isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
         ):
@@ -47,6 +49,7 @@ class Registry:
             copy.deepcopy({k: dict(t) for k, t in adapters.items()}), found.tables, found.default
         )
         self.settings = settings
+        self.class_loader = class_loader
 
     def configured(self) -> list[str]:
         return sorted(self.settings.adapters)
@@ -78,7 +81,7 @@ class Registry:
                 f'[adapters.{name}].implementation must be "adapters.{name}:<Class>Adapter"'
             )
         try:
-            cls = load(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
+            cls = self.class_loader(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
         except ValueError as e:
             raise ConfigError(f"adapter {name!r}: {e}") from e
         return cls(config)

@@ -51,7 +51,7 @@ def _missing() -> str | None:
     return None if agent_pm else f"agent_pm is not importable: run with PYTHONPATH={RUN_WITH}"
 
 
-def _foreign() -> str | None:
+def _foreign(modules=None) -> str | None:
     if missing := _missing():
         return missing
     own = {os.path.realpath(os.path.join(r, "agent_pm")) for r in ROOTS}
@@ -62,7 +62,7 @@ def _foreign() -> str | None:
         return (
             f"agent_pm.__path__ lacks {', '.join(sorted(missing))}: run with PYTHONPATH={RUN_WITH}"
         )
-    for name, module in list(sys.modules.items()):
+    for name, module in list((sys.modules if modules is None else modules).items()):
         top, _, sub = name.partition(".")
         where = getattr(module, "__file__", None)
         if top == "agent_pm" and sub and "." not in sub and where:

@@ -48,7 +48,7 @@ from agent_pm.session.modes import headless, in_process, tui
 
 from session.tests import fake_adapter
 from session.tests.case import SPAWNS, Case
-from session.tests.modules import module_slot
+from session.tests.modules import adapter_loader
 
 WAIT = 10
 
@@ -232,8 +232,11 @@ class Base(Case):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "runtime.log")
         self.steps()
-        for name, m in PACKAGES.items():
-            self.enterContext(module_slot(f"agent_pm.session.adapters.{name}", m))
+        self.driver_dependencies = {
+            "class_loader": adapter_loader(
+                {f"agent_pm.session.adapters.{name}": module for name, module in PACKAGES.items()}
+            )
+        }
         self.configure()
 
     def steps(self, *steps):
@@ -392,7 +395,7 @@ class TuiBase(Base):
         self.root = os.path.join(os.path.dirname(self.probe_dir), "tui")
         self.events = os.path.join(self.dir, "events")
         self.host = fake_host()
-        self.driver_dependencies = {"host": self.host}
+        self.driver_dependencies = {**self.driver_dependencies, "host": self.host}
         self.driver.host = self.host
 
     def tui(self, **kwargs) -> api.Handle:

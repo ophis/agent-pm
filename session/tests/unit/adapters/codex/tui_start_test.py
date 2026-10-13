@@ -19,7 +19,6 @@ from agent_pm.session.engine.types import Spec
 
 from session.tests import case
 from session.tests.case import Case
-from session.tests.modules import module_slot
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -47,13 +46,23 @@ class SiblingTest(Case):
                 self.assertEqual(json.loads(result.stdout), [[], True])
 
     def test_registered_private_names_do_not_override_path_dependencies(self):
-        foreign = types.ModuleType(SIBLINGS[1])
-        foreign.__file__ = os.path.join(self.home, "sessions.py")
+        code = """import json, runpy, sys, types
+name = "_agent_pm_codex_sessions"
+foreign = types.ModuleType(name)
+foreign.__file__ = "/foreign/sessions.py"
+sys.modules[name] = foreign
+loaded = runpy.run_path(sys.argv[1])
+print(json.dumps([loaded["sessions"].__file__, sys.modules[name] is foreign]))
+"""
         for name in SCRIPTS:
-            with self.subTest(name=name), module_slot(SIBLINGS[1], foreign):
-                loaded = runpy.run_path(str(DIRECTORY / name))
-                self.assertEqual(loaded["sessions"].__file__, str(DIRECTORY / "sessions.py"))
-                self.assertIs(sys.modules[SIBLINGS[1]], foreign)
+            with self.subTest(name=name):
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", code, str(DIRECTORY / name)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(json.loads(result.stdout), [str(DIRECTORY / "sessions.py"), True])
 
     def test_scripts_load_dependencies_without_registration(self):
         for script in (tui_start, tui_hook):

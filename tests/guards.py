@@ -414,6 +414,17 @@ def _boundary_violations(text, own, modules=None, *, shipped=False):
             and _within(name, f"agent_pm.{own}")
         ):
             found.add((node.lineno, "own project attribute mutation"))
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store | ast.Del)
+            and _boundary_name(node.value, aliases) == "sys.modules"
+        ) or (
+            isinstance(node, ast.Attribute)
+            and _boundary_name(node.value, aliases) == "sys.modules"
+            and node.attr
+            in {"pop", "popitem", "update", "clear", "setdefault", "__setitem__", "__delitem__"}
+        ):
+            found.add((node.lineno, "sys.modules mutation"))
         if isinstance(node, ast.Call):
             found.update(
                 (node.lineno, reason) for reason in _boundary_calls(node, aliases, own, modules)
@@ -447,10 +458,13 @@ def _boundary_calls(node, aliases, own, modules):
     call, raw = _boundary_name(node.func, aliases), _boundary_name(arguments[0], aliases)
     target = _resolve_boundary(raw, modules)
     rules = {
-        "shipped code patch": call.endswith(".patch") and raw.startswith("agent_pm."),
+        "shipped code patch": call.endswith((".patch", ".patch.multiple"))
+        and raw.startswith("agent_pm."),
         "own project object patch": call.endswith(".patch.object")
         and _within(target, f"agent_pm.{own}"),
         "sys.modules dictionary patch": call.endswith(".patch.dict") and target == "sys.modules",
+        "own project dictionary patch": call.endswith(".patch.dict")
+        and _within(target, f"agent_pm.{own}"),
         "own project attribute mutation": call in {"setattr", "delattr"}
         and _within(target, f"agent_pm.{own}"),
         "test module import": (call.endswith("import_module") or call == "__import__")
