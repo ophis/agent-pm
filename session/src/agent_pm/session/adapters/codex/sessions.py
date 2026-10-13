@@ -412,10 +412,10 @@ class SessionStore:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
         return os.path.join(root, digest + ".json")
 
-    def snapshot(self, state: SessionState) -> dict:
-        return self._snapshot(self._resolve_root(), state)
+    def validate_recovery(self, state: SessionState) -> dict:
+        return self._validate_recovery(self._resolve_root(), state)
 
-    def _snapshot(self, root: str, state: SessionState) -> dict:
+    def _validate_recovery(self, root: str, state: SessionState) -> dict:
         snapshot = validate_snapshot(state.snapshot)
         paths = [
             snapshot["cwd"],
@@ -454,7 +454,7 @@ class SessionStore:
         state = _state(data, workdir, sid)
         if path != self._path(root, workdir, sid):
             raise RecoveryError("invalid recovery state identity")
-        self._snapshot(root, state)
+        self._validate_recovery(root, state)
         check_writable_roots(root, state.writable_roots)
         return state
 
@@ -545,16 +545,20 @@ class SessionStore:
             workdir,
             sid,
         )
-        self._snapshot(root, state)
-        check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-        return self._save(root, state) if persist else state
+        if persist:
+            return self._save(root, state)
+        self._validate_for_save(root, state)
+        return state
 
     def save(self, state: SessionState) -> SessionState:
         return self._save(self._resolve_root(), state)
 
-    def _save(self, root: str, state: SessionState) -> SessionState:
-        self._snapshot(root, state)
+    def _validate_for_save(self, root: str, state: SessionState) -> None:
+        self._validate_recovery(root, state)
         check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
+
+    def _save(self, root: str, state: SessionState) -> SessionState:
+        self._validate_for_save(root, state)
         self._directory(root, create=True)
         self._write(root, state, exclusive=True)
         return state
