@@ -2,7 +2,6 @@
 sibling loading.
 """
 
-import ast
 import contextlib
 import copy
 import dataclasses
@@ -27,7 +26,6 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 SCRIPTS = ("tui_hook.py", "tui_start.py")
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py")
 SIBLINGS = ["_agent_pm_codex_hook_schema", "_agent_pm_codex_sessions"]
-ROOTS = ("agent_pm", "session", "delegate", "manager", "adapters", "utils")
 LOADED = """import json, runpy, sys
 before = list(sys.path)
 runpy.run_path(sys.argv[1])
@@ -145,7 +143,15 @@ class StartTest(Base):
             tui_start.trusted(result, str(self.cwd), commands)
 
     def test_standalone_dependencies_use_stdlib(self):
-        directory = pathlib.Path(tui_start.__file__).parent
+        script = """import json, runpy, sys
+imports = set()
+def record(event, args):
+    if event == "import":
+        imports.add(args[0].partition(".")[0])
+sys.addaudithook(record)
+runpy.run_path(sys.argv[1])
+print(json.dumps(sorted(imports - sys.stdlib_module_names)))
+"""
         for name in (
             "sessions.py",
             "tui_start.py",
@@ -154,12 +160,13 @@ class StartTest(Base):
             "app_server.py",
         ):
             with self.subTest(name=name):
-                tree = ast.parse((directory / name).read_text())
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ImportFrom):
-                        self.assertFalse((node.module or "").startswith(ROOTS))
-                    if isinstance(node, ast.Import):
-                        self.assertFalse(any(n.name.startswith(ROOTS) for n in node.names))
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", script, str(DIRECTORY / name)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                self.assertEqual(json.loads(result.stdout), [])
 
     def test_start_adds_transient_trust_and_execs_saved_home_without_config_write(self):
         run = self.adapter.tui()

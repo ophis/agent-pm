@@ -13,7 +13,11 @@ import time
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_pm.session.adapters.codex.persistence.types import SessionFile, SessionState
+
 
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -68,10 +72,13 @@ def added_dirs(flags, cwd: str) -> list[str]:
 _load_file = runpy.run_path(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../hosts/tmux/loading/types.py")
 )["load_file"]
-RecoveryError = _load_file(
+_records = _load_file(
     "agent_pm.session.adapters.codex.persistence.types",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "persistence/types.py"),
-).RecoveryError
+)
+RecoveryError = _records.RecoveryError
+if not TYPE_CHECKING:
+    SessionFile, SessionState = _records.SessionFile, _records.SessionState
 
 
 def absolute_path(path: object, label: str) -> str:
@@ -136,13 +143,6 @@ def validate_snapshot(value: dict) -> dict:
 
 def inside(path: str, root: str) -> bool:
     return os.path.commonpath((path, root)) == root
-
-
-@dataclass(frozen=True)
-class SessionFile:
-    path: str
-    mtime: float
-    metadata: dict
 
 
 def read_metadata(path: str) -> SessionFile:
@@ -237,15 +237,6 @@ _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id",
 
 
 _MAX_SESSION_BYTES = 64 * 1024
-
-
-@dataclass(frozen=True)
-class SessionState:
-    workdir: str
-    sid: str
-    snapshot: dict
-    writable_roots: list[str]
-    native_id: str | None = None
 
 
 def recovery_snapshot(state: SessionState, *, root: str | None = None) -> dict:
