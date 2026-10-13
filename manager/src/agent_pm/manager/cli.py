@@ -84,7 +84,7 @@ def _status(args) -> int:
 
 def _resume(args) -> int:
     crew = _crew(args)
-    failed = False
+    failed = 0
     for name in args.names:
         try:
             record = crew.resume(name)
@@ -92,8 +92,8 @@ def _resume(args) -> int:
                 print(record.to_line())
         except (RosterError, RuntimeError, ValueError) as error:
             print(f"crew: {error}", file=sys.stderr)
-            failed = True
-    return int(failed)
+            failed = max(failed, 2 if isinstance(error, ValueError) else 1)
+    return failed
 
 
 def _stop(args) -> int:

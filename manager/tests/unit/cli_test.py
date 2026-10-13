@@ -116,3 +116,12 @@ class CliTest(Case):
         result, _, stderr = self.invoke("note", "worker", "", "--manager", "mgr")
         self.assertEqual(result, 0, stderr)
         self.assertIsNone(self.roster.entries()["worker"].note)
+
+    def test_missing_entry_is_usage_error_for_every_named_control_command(self):
+        for command in ("stop", "status", "forget", "resume"):
+            with self.subTest(command=command):
+                result, stdout, stderr = self.invoke(command, "missing", "--manager", "mgr")
+                self.assertEqual(result, 2, stderr)
+                self.assertEqual(stdout, "")
+                self.assertIn("not in roster", stderr)
+                self.assertFalse(os.path.exists(self.directory))
