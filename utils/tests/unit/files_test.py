@@ -112,6 +112,13 @@ class ReadRegular(Base):
         self.assertIsNone(files.read_regular(self.path))
         self.assertIsNone(files.read_regular(os.path.join(self.path, "under-a-missing-dir")))
 
+    def test_own_checks_owner_without_affecting_default_reads(self):
+        self.write()
+        self.assertEqual(files.read_regular(self.path, own=True), DATA)
+        with mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
+            self.assertIsNone(files.read_regular(self.path, own=True))
+            self.assertEqual(files.read_regular(self.path), DATA)
+
     def test_an_os_error_while_reading_is_none(self):
         self.write()
         with unittest.mock.patch.object(os, "fstat", side_effect=OSError(errno.EIO, "I/O error")):
@@ -125,6 +132,10 @@ class AppendLine(Base):
         files.append_line(self.path, "one\n")
         files.append_line(self.path, "two\n")
         self.assertEqual(self.content(), b"one\ntwo\n")
+
+    def test_bytes_are_preserved_without_decoding(self):
+        files.append_line(self.path, b"raw\xff\n")
+        self.assertEqual(self.content(), b"raw\xff\n")
 
     def test_a_short_write_continues_with_the_rest(self):
         real = os.write
@@ -211,6 +222,49 @@ class Save(Base):
             self.assertEqual(
                 (os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n")
             )
+
+    def test_own_refuses_foreign_destination_without_changing_it(self):
+        files.save(self.path, "keep")
+        with (
+            mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
+            self.assertRaises(OSError) as error,
+        ):
+            files.save(self.path, "new", own=True)
+        self.assertEqual(error.exception.errno, errno.EPERM)
+        self.assertEqual(Path(self.path).read_text(), "keep")
+
+    def test_own_refuses_symlink_and_fifo_destination(self):
+        Path(self.path).parent.mkdir()
+        outside = Path(self.dir) / "outside"
+        outside.write_text("keep")
+        Path(self.path).symlink_to(outside)
+        with self.assertRaises(OSError):
+            files.save(self.path, "new", own=True)
+        self.assertEqual(outside.read_text(), "keep")
+        Path(self.path).unlink()
+        os.mkfifo(self.path)
+        with self.assertRaises(OSError):
+            self.promptly(lambda: files.save(self.path, "new", own=True))
+
+    def test_durable_syncs_temp_before_replace_and_directory_after(self):
+        events = []
+        real_sync, real_replace = os.fsync, os.replace
+
+        def synced(fd):
+            events.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+            real_sync(fd)
+
+        def replaced(source, destination):
+            events.append("replace")
+            real_replace(source, destination)
+
+        with (
+            mock.patch.object(os, "fsync", side_effect=synced),
+            mock.patch.object(os, "replace", side_effect=replaced),
+        ):
+            files.save(self.path, "durable", own=True, durable=True)
+        self.assertEqual(events, ["file", "replace", "directory"])
+        self.assertEqual(Path(self.path).read_text(), "durable")
 
     def test_no_temp_is_left_when_the_replace_fails(self):
         files.save(self.path, "old\n")

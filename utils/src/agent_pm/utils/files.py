@@ -9,19 +9,23 @@ from pathlib import Path
 
 
 def read_regular(
-    path: str | os.PathLike, *, offset: int = 0, limit: int | None = None, tail: bool = False
+    path: str | os.PathLike,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+    tail: bool = False,
+    own: bool = False,
 ) -> bytes | None:
     """From byte `offset`: to the end, else the first `limit` bytes (the last with `tail`); None: a
-    symlink, no regular file, an OSError. Never waits on a FIFO.
+    symlink, no regular file, an OSError. Never waits on a FIFO; own also checks ownership.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(
-            os.fstat(fd).st_mode
-        ):  # first: fdopen raises on a directory, leaving fd open
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or own and opened.st_uid != os.getuid():
             return None
         with os.fdopen(fd, "rb", closefd=False) as f:
             f.seek(offset)
@@ -36,11 +40,13 @@ def read_regular(
         os.close(fd)
 
 
-def append_line(path: str | Path, text: str, *, durable: bool = False, own: bool = False) -> None:
+def append_line(
+    path: str | Path, text: str | bytes, *, durable: bool = False, own: bool = False
+) -> None:
     """Refuses a symlink or anything but a regular file, never waits on a FIFO; `durable` syncs it
     and its directory; `own` also refuses one another user owns (EPERM).
     """
-    data = memoryview(text.encode(errors="replace"))
+    data = memoryview(text.encode(errors="replace") if isinstance(text, str) else text)
     fd = os.open(
         path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
     )
@@ -66,18 +72,39 @@ def append_line(path: str | Path, text: str, *, durable: bool = False, own: bool
             os.close(parent)
 
 
-def save(path: str | Path, text: str) -> None:
-    """Writes `text` to `path` atomically; replaces a symlink planted there, never follows it."""
+def save(path: str | Path, text: str, *, own: bool = False, durable: bool = False) -> None:
+    """Writes atomically. `own` refuses a nonregular or foreign destination; otherwise replaces
+    symlinks without following. `durable` syncs the replacement and its directory.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if own:
+        try:
+            opened = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError(errno.EINVAL, "not a regular file", str(path))
+            if opened.st_uid != os.getuid():
+                raise OSError(errno.EPERM, "not owned by you", str(path))
     with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".tmp-", delete=False) as f:
         try:
             f.write(text)
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
             f.close()
             os.replace(f.name, path)
         except BaseException:
             os.unlink(f.name)
             raise
+    if durable:
+        parent = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
 
 
 class ConfinedReason(Enum):
