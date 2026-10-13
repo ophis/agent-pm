@@ -1427,7 +1427,7 @@ class TuiStartTest(TuiBase):
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
 
-        def status(name):
+        def status(_name):
             order.append(("status", os.path.exists(records.path(self.workdir))))
 
         self.host.status.side_effect = status
@@ -1735,7 +1735,7 @@ class AttachTest(TuiBase):
         self.started(("tool", {"session_id": "n1"}))
         records.note(records.path(self.workdir), "result", outcome={"status": "done"})
 
-        def metadata(adapter, info):
+        def metadata(_adapter, info):
             self.assertEqual(info.native_id, "n1")
             return dataclasses.replace(info, transcript="/attached", resume="resume n1")
 
