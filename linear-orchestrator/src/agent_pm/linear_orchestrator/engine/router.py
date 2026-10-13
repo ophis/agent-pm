@@ -32,11 +32,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import PYTHONPATH
-from agent_pm.linear_orchestrator.engine import config, inputs, target
+from agent_pm.linear_orchestrator.engine import config, inputs, startup, target
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
     SERVICE_ERRORS,
-    ConfigError,
     Invalid,
     LinearError,
     Transient,
@@ -45,7 +44,6 @@ from agent_pm.linear_orchestrator.engine.types import (
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from agent_pm.linear_orchestrator.linear.linear import (
     ISSUE_ID,
-    config_error,
     humans,
     linear_error,
     linear_gql,
@@ -794,16 +792,10 @@ def main(
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
         return 2
     os.environ["PATH"] = config.path()
-    try:
-        cfg = config.load(path=config_path)
-    except ConfigError as e:
-        if not e.logs_dir:
-            print(e.msg, file=sys.stderr)
-            return 1
-        linear.use_logs(e.logs_dir)
-        return config_error("router", e, dry=opts["dry"])
+    cfg = startup.configured("router", config_path, dry=opts["dry"])
+    if cfg is None:
+        return 1
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
-    linear.use_logs(cfg.logs_dir)
     if opts["brake"] is not None:
         if opts["brake"] not in cfg.roles:
             print(f"router.py: no role {opts['brake']}", file=sys.stderr)

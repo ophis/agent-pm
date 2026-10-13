@@ -4,17 +4,15 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine import config, startup
 from agent_pm.linear_orchestrator.engine.types import (
     CALL_ERRORS,
     SERVICE_ERRORS,
-    ConfigError,
     Promotion,
     Unavailable,
 )
 from agent_pm.linear_orchestrator.linear import issues, linear, sessions
 from agent_pm.linear_orchestrator.linear.linear import (
-    config_error,
     linear_error,
     linear_gql,
     log,
@@ -315,15 +313,9 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
         print(HELP.strip(), file=sys.stderr)
         return 2
     dry = "--dry-run" in argv
-    try:
-        cfg = config.load(path=config_path)
-    except ConfigError as e:
-        if not e.logs_dir:
-            print(e.msg, file=sys.stderr)  # no log dir yet
-            return 1
-        linear.use_logs(e.logs_dir)
-        return config_error("promote", e, dry=dry)
-    linear.use_logs(cfg.logs_dir)
+    cfg = startup.configured("promote", config_path, dry=dry)
+    if cfg is None:
+        return 1
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
     try:
