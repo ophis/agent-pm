@@ -776,6 +776,7 @@ class SharedTypes(Sample):
         for source in (
             "from typing import NamedTuple\nclass A(NamedTuple):\n    value: int\n",
             "from enum import Enum\nclass A(Enum):\n    value = 1\n",
+            "from enum import StrEnum\nclass A(StrEnum):\n    value = 'one'\n",
             "from typing import TypedDict\nclass A(TypedDict):\n    value: int\n",
         ):
             with self.subTest(source=source):
@@ -866,6 +867,11 @@ class TypesOnly(Sample):
 
     def found(self, source, name="types.py"):
         return guards.types_only(self.tree({f"{self.HOME}/{name}": source}))
+
+    def test_strenum_is_a_data_type(self):
+        self.assertEqual(
+            self.found("from enum import StrEnum\nclass State(StrEnum):\n    LIVE = 'live'\n"), []
+        )
 
     def test_top_level_sync_and_async_functions_are_reported(self):
         self.assertEqual(

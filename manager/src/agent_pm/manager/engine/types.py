@@ -1,22 +1,35 @@
-"""The manager's types: crew.py's Spec, crew.py's and roster.py's errors."""
+"""Crew launch intent, roster entries, states and errors."""
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+from agent_pm.utils import Record
 
 
 @dataclass(frozen=True)
 class Spec:
-    """One worker for crew.start: `resume` the session id it resumes; `client` None: the caller's
-    runtime, else the config's; `overrides` KEY=VALUE env entries; `note` its roster note.
-    """
-
     name: str
-    cwd: str
-    prompt: str | None = None
+    argv: tuple[str, ...]
     note: str | None = None
-    flags: tuple[str, ...] = ()
-    client: str | None = None
-    overrides: tuple[str, ...] = ()
-    resume: str | None = None
+
+
+class State(StrEnum):
+    STARTING = "starting"
+    LIVE = "live"
+    DONE = "done"
+    WAITING = "waiting"
+    GONE = "gone"
+    LOST = "lost"
+    RESUMING = "resuming"
+
+
+@dataclass(frozen=True)
+class Entry:
+    record: Record | None
+    state: State
+    note: str | None
+    started: str
+    argv: tuple[str, ...] = ()
 
 
 class RosterError(Exception):
@@ -24,4 +37,8 @@ class RosterError(Exception):
 
 
 class Stale(RosterError):
+    pass
+
+
+class Held(RosterError):
     pass
