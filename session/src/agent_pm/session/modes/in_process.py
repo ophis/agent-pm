@@ -10,7 +10,7 @@ import signal
 import threading
 import traceback
 
-from agent_pm.session.adapters.base import InProcess
+from agent_pm.session.adapters.types import InProcess
 from agent_pm.session.engine.types import DriverError, Event, Spec, Stderr
 
 END = object()

@@ -3,8 +3,8 @@ in_process.py), which hands the composed prompt back as the deliverable and star
 config keys, no runtime note.
 """
 
-from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProcess
+from agent_pm.session.adapters.types import Adapter
 
 
 class PrintPromptAdapter(Adapter):

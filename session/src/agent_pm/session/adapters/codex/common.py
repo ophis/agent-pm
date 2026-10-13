@@ -100,7 +100,7 @@ def refuse(flags) -> None:
     for name, value, text in options(flags):
         key = value.partition("=")[0].split(".", 1)[0].strip().strip("\"'") if name == "-c" else ""
         if name in RESERVED or key in RESERVED_KEYS:
-            raise ConfigError(f"{text}: the Driver sets Codex's hooks, session and cwd")
+            raise ConfigError.codex_reserved_flag(text)
 
 
 def passed(flags) -> list[str]:
@@ -121,19 +121,14 @@ def _recover(method):
 def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
     if not inside(real_cwd, real_workdir):
-        raise ConfigError(
-            f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load"
-        )
+        raise ConfigError.codex_untrusted_cwd(cwd)
 
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
     config_home = _config_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
     if inside(config_home, workdir) or inside(real_config_home, real_workdir):
-        raise ConfigError(
-            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; "
-            "move Codex config outside the workdir"
-        )
+        raise ConfigError.codex_untrusted_home(config_home, workdir)
 
     for start in (cwd, real_cwd):
         ancestor = start
@@ -151,10 +146,7 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
                     and not inside(real_candidate, real_workdir)
                 )
                 if not genuine_user_home:
-                    raise ConfigError(
-                        f"project Codex settings at {candidate} may load in an untrusted run; "
-                        "use a clean workdir or trusted_dirs"
-                    )
+                    raise ConfigError.codex_project_settings(candidate)
             parent = os.path.dirname(ancestor)
             if parent == ancestor:
                 break
@@ -238,7 +230,7 @@ class CodexCommon:
             return None
         result = self.config.get(name, {}).get(str(value))
         if result is None:
-            raise ConfigError(f"no mapping for {value!r} in {TABLE}.{name}")
+            raise ConfigError.codex_mapping(value, TABLE, name)
         return result
 
     @_recover
@@ -246,16 +238,16 @@ class CodexCommon:
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
-                raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+                raise ConfigError.codex_recovery(spec.sid)
             if state.native_id is None:
-                raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
+                raise ConfigError.codex_native_id(spec.sid)
             snapshot = recovery_snapshot(state)
             refuse(tuple(snapshot["flags"]))
             check_writable_roots(
                 store_root(), implicit_writable_roots({**os.environ, **snapshot["env"]})
             )
             if session_file(snapshot, state.native_id) is None:
-                raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
+                raise ConfigError.codex_session_file(state.native_id)
             if not snapshot["project"]:
                 _guard_untrusted_project(state.workdir, snapshot["cwd"], snapshot["codex_home"])
             return state
@@ -310,7 +302,7 @@ class CodexCommon:
         if resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
-                raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
+                raise ConfigError.codex_recovery(spec.sid)
             roots = state.writable_roots
         else:
             roots = self._new_roots(spec)
@@ -397,7 +389,7 @@ class CodexCommon:
                     if state is not None and state.sid == sid and state.snapshot["cwd"] == cwd:
                         matches.append(state)
         if len(matches) > 1:
-            raise ConfigError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")
+            raise ConfigError.codex_binding(sid, cwd)
         return matches[0] if matches else None
 
     @_recover
@@ -428,7 +420,7 @@ class CodexCommon:
             if not added:
                 return newest
             if len(children) != len(added):
-                raise ConfigError("duplicate Codex descendant session files")
+                raise ConfigError.codex_descendants()
             related.update(added)
             newest = max([newest, *(stamp for identifier, stamp in children)])
 

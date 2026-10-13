@@ -38,7 +38,7 @@ CHECKS = (
 def check(config: Mapping, table: str, checks=CHECKS) -> None:
     for key, ok, what in checks:
         if key in config and not ok(config[key]):
-            raise ConfigError(f"{table}.{key} must be {what}")
+            raise ConfigError.adapter_setting(table, key, what)
 
 
 def number(value) -> float | None:

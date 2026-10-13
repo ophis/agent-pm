@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from agent_pm.session.engine.configuration.types import ConfigError
 from agent_pm.utils import printable_abs
 
 __all__ = [
@@ -37,10 +38,6 @@ __all__ = [
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TAG = re.compile(r"[A-Za-z0-9_-]+")
-
-
-class ConfigError(Exception):
-    pass
 
 
 def _strings(value) -> bool:
@@ -76,11 +73,9 @@ class Access:
     def __post_init__(self):
         for name in ("dirs", "commands", "reads"):
             if not _strings(getattr(self, name)):
-                raise ConfigError(f"{name} must be a tuple of strings")
+                raise ConfigError.string_tuple(name)
         if not env_ok(self.env):
-            raise ConfigError(
-                "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
-            )
+            raise ConfigError.access_environment()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -100,36 +95,32 @@ class Spec:
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
-            raise ConfigError(
-                f"workdir must be a printable absolute path, got {self.workdir!r:.80}"
-            )
+            raise ConfigError.workdir(self.workdir)
         if self.tier is not None and (
             isinstance(self.tier, bool) or not isinstance(self.tier, int) or not 1 <= self.tier <= 4
         ):
-            raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
+            raise ConfigError.tier(self.tier)
         if self.effort is not None and self.effort not in EFFORTS:
-            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
+            raise ConfigError.effort(EFFORTS, self.effort)
         if self.access.cwd != "" and not printable_abs(self.access.cwd):
-            raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
+            raise ConfigError.cwd(self.access.cwd)
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
         if not (isinstance(self.flags, tuple) and all(map(_clean, self.flags))):
-            raise ConfigError("flags must be a tuple of strings without NUL")
+            raise ConfigError.flags()
         if not env_ok(self.env):
-            raise ConfigError("env must map variable names to strings without NUL")
+            raise ConfigError.environment()
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if self.name is not None and not isinstance(self.name, str):
-            raise ConfigError("name must be None or a string")
+            raise ConfigError.name_type()
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
-            raise ConfigError("protect must be a tuple of printable absolute paths")
+            raise ConfigError.protected_paths()
         if self.reply_tags is not None and not (
             isinstance(self.reply_tags, tuple)
             and len(self.reply_tags) == 2
             and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
         ):
-            raise ConfigError(
-                "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
-            )
+            raise ConfigError.reply_tags()
 
 
 @dataclass(frozen=True)
@@ -145,7 +136,7 @@ class Launch:
 
     def __post_init__(self):
         if self.project is not None and not isinstance(self.project, bool):
-            raise ConfigError("launch: project must be a bool or None")
+            raise ConfigError.launch_project()
         env = self.env
         for name, ok in (
             ("argv", isinstance(self.argv, tuple) and all(map(_clean, self.argv))),
@@ -156,7 +147,7 @@ class Launch:
             ("unset", isinstance(self.unset, tuple) and all(map(_clean, self.unset))),
         ):
             if not ok:
-                raise ConfigError(f"launch: {name} must be strings without NUL")
+                raise ConfigError.launch_strings(name)
 
 
 @dataclass(frozen=True)
@@ -244,6 +235,11 @@ class Key:
 
 class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
+
+    @classmethod
+    def sessions_unavailable(cls, cause: Exception | None = None) -> "DriverError":
+        detail = "tmux failed" if cause is None else str(cause)
+        return cls(f"tmux sessions unknown: {detail}")
 
 
 @dataclass(frozen=True)

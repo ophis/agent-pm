@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
+from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import LimitHit
 from agent_pm.utils import read_regular
 

@@ -5,7 +5,6 @@ import shlex
 import shutil
 import sys
 
-from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex import sessions
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
@@ -17,6 +16,7 @@ from agent_pm.session.adapters.codex.common import (
     reset_at,
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
+from agent_pm.session.adapters.types import Tui
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit
 from agent_pm.utils import import_roots
 
@@ -55,10 +55,10 @@ class CodexTui(Tui):
         store = self.store = sessions.store_root()
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
-            raise ConfigError("codex not found on PATH")
+            raise ConfigError.codex_executable()
         exe = os.path.abspath(exe)
         if not hook or not os.path.isabs(hook[0]):
-            raise ConfigError("Codex tui requires an absolute Driver hook command")
+            raise ConfigError.codex_hook()
         roots = import_roots()
         dependencies = [
             *roots,

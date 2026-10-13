@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import Driver, Spec
-from agent_pm.session.adapters import registry
+from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.utils import read_project

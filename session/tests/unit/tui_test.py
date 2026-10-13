@@ -19,7 +19,7 @@ import threading
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END
+from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END
 from agent_pm.session.engine import api
 from agent_pm.session.engine.types import (
     Activity,

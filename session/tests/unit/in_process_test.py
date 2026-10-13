@@ -8,7 +8,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter, InProcess
+from agent_pm.session.adapters.types import Adapter, InProcess
 from agent_pm.session.engine.types import DriverError, Reply, Spec, Stderr
 from agent_pm.session.modes.in_process import InProcessMode
 

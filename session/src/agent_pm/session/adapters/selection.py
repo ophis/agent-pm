@@ -14,7 +14,7 @@ def select(
     uuid: bool = False,
 ) -> tuple[str, ...]:
     if uuid and not UUID.fullmatch(native):
-        raise ConfigError(f"session ids are UUIDs, got {native!r:.80}")
+        raise ConfigError.session_uuid(native)
     prefix = syntax[int(resume)]
     return (*prefix, native) if prefix else ()
 
@@ -36,4 +36,4 @@ def scan(flags: tuple[str, ...], valued: tuple[str, ...] = ()) -> Iterator[tuple
 def check(flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str, ...] = ()) -> None:
     for flag, word, _ in scan(flags, valued):
         if flag in forbidden or word in forbidden:
-            raise ConfigError(f"{flag}: picks the session; use sid= or resume=")
+            raise ConfigError.session_selection(flag)

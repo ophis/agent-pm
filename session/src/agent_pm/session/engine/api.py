@@ -21,9 +21,9 @@ from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import Protocol
 
-from agent_pm.session.adapters import registry
-from agent_pm.session.adapters.base import Adapter, Headless, InProcess, Tui
+from agent_pm.session.adapters import types as registry
 from agent_pm.session.adapters.selection import check as check_selection
+from agent_pm.session.adapters.types import Adapter, Headless, InProcess, Tui
 from agent_pm.session.engine import records
 from agent_pm.session.engine.records import holds, session_record
 from agent_pm.session.engine.types import (
@@ -240,12 +240,12 @@ def _identity_drop(registry: registry.Registry) -> frozenset[str]:
 def _no_tui_keys(name, events) -> None:
     for key, value in (("name", name), ("events", events)):
         if value is not None:
-            raise ConfigError(f"{key}: tui mode only")
+            raise ConfigError.tui_option(key)
 
 
 def _no_tui_fields(spec: Spec) -> Spec:
     if spec.protect:
-        raise ConfigError("protect: tui mode only")
+        raise ConfigError.protect_mode()
     return spec
 
 
@@ -257,7 +257,7 @@ class _LaunchSteps:
     def info(self, prompt: str, spec: Spec, resumed: bool) -> SessionInfo:
         self.command = launch = self.launch(prompt, spec, resumed)
         if not launch.argv:
-            raise ConfigError(f"runtime {self.runtime!r} gave no command")
+            raise ConfigError.empty_command(self.runtime)
         self.cwd = launch.cwd or spec.access.cwd or spec.workdir
         return SessionInfo(
             spec.sid,
@@ -417,14 +417,12 @@ def _idle(idle_timeout) -> None:
         or not isinstance(idle_timeout, (int, float))
         or not idle_timeout > 0
     ):
-        raise ConfigError(
-            f"idle_timeout must be a positive number of seconds, got {idle_timeout!r}"
-        )
+        raise ConfigError.idle_timeout(idle_timeout)
 
 
 def _name(name) -> str:
     if not isinstance(name, str) or not tmux_host.NAME.fullmatch(name):
-        raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+        raise ConfigError.session_name(name)
     return name
 
 
@@ -432,7 +430,7 @@ def _events(events, *, host=tmux_host) -> str | None:
     if events is None:
         return None
     if not isinstance(events, str) or not events.isprintable():
-        raise ConfigError(f"events must be a printable path, got {events!r:.80}")
+        raise ConfigError.events_path(events)
     try:
         return host.events_file(events)
     except tmux_host.TuiError as e:
@@ -456,15 +454,13 @@ def _row(found: Mapping, own: str | None) -> SessionRow:
 
 def _placement(split, split_from, opener=None) -> None:
     if split is not None and split not in tmux_host.SPLITS:
-        raise ConfigError(f"split must be right or below, got {split!r:.80}")
+        raise ConfigError.split_direction(split)
     if split_from is not None and not (
         isinstance(split_from, str) and tmux_host.NAME.fullmatch(split_from)
     ):
-        raise ConfigError(f"split_from must match [A-Za-z0-9_-]+, got {split_from!r:.80}")
+        raise ConfigError.split_source(split_from)
     if opener is not None and not (isinstance(opener, str) and tmux_host.OPENER.fullmatch(opener)):
-        raise ConfigError(
-            f"opener must be a tmux session name or $ITERM_SESSION_ID's value, got {opener!r:.80}"
-        )
+        raise ConfigError.opener(opener)
 
 
 def _probe_dir() -> str | None:
@@ -519,17 +515,17 @@ class Driver:
         lines; spec.protect gains the hook paths.
         """
         if mode not in MODES:
-            raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
+            raise ConfigError.mode(MODES, mode)
         _idle(idle_timeout)
         if resume is not None and not (isinstance(resume, str) and resume):
-            raise ConfigError(f"resume must be a session id, got {resume!r:.80}")
+            raise ConfigError.resume(resume)
         if spec.sid is not None and resume is not None and spec.sid != resume:
-            raise ConfigError(f"sid {spec.sid!r:.80} differs from resume {resume!r:.80}")
+            raise ConfigError.resume_mismatch(spec.sid, resume)
         adapter = self.registry.adapter(runtime)
         kind = _STEPS[mode]
         run = kind.run_of(adapter)
         if run is None:
-            raise ConfigError(f"runtime {runtime!r} does not support {mode} mode")
+            raise ConfigError.runtime_mode(runtime, mode)
         spec = replace(spec, sid=resume or spec.sid or str(uuid.uuid4()))
         steps = kind(run, runtime, spec, events, registry=self.registry, host=self.host)
         check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
@@ -659,7 +655,7 @@ class Driver:
         if error := sid_error(sid):
             raise ConfigError(error)
         if not printable_abs(cwd):
-            raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+            raise ConfigError.cwd(cwd)
         adapter = self.registry.adapter(runtime)
         try:
             return adapter.session_status(sid, cwd)
@@ -671,32 +667,32 @@ class Driver:
         closed.
         """
         if spec.sid is not None:
-            raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
+            raise ConfigError.writable_sid()
         if resume is not None and (error := sid_error(resume)):
             raise ConfigError(error)
         adapter = self.registry.adapter(runtime)
         try:
             return tuple(adapter.writable_dirs(replace(spec, sid=resume), resume is not None))
         except OSError as e:
-            raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
+            raise ConfigError.writable_directories(runtime, e) from e
 
     def sessions(self, match: str | None = None) -> list[SessionRow]:
         """Names re.fullmatching `match`, by name; DriverError, never [], when tmux's state is
         unknown.
         """
         if match is not None and not isinstance(match, str):
-            raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
+            raise ConfigError.match_type(match)
         try:
             pattern = None if match is None else re.compile(match)
         except re.error as e:
-            raise ConfigError(f"match {match!r:.80}: {e}") from None
+            raise ConfigError.invalid_match(match, e) from None
         found = self.host.listing(pattern)
         if found is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
+            raise DriverError.sessions_unavailable()
         try:
             own = self.host.own_session() if found else None
         except tmux_host.TuiError as e:
-            raise DriverError(f"tmux sessions unknown: {e}") from None
+            raise DriverError.sessions_unavailable(e) from None
         return [_row(f, own) for f in found]
 
     def close(self, name: str) -> None:
@@ -709,7 +705,7 @@ class Driver:
         """
         _placement(split, split_from)
         if split_from is not None and self.host.status(split_from) is None:
-            raise ConfigError(f"no tmux session {split_from}")
+            raise ConfigError.missing_tmux_session(split_from)
         try:
             self.host.anchor(split_from)
             try:
@@ -743,11 +739,11 @@ class Driver:
             or not argv
             or not all(isinstance(a, str) for a in argv)
         ):
-            raise ConfigError(f"argv must be a non-empty list of str, got {argv!r:.80}")
+            raise ConfigError.argv(argv)
         if not printable_abs(cwd):
-            raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+            raise ConfigError.cwd(cwd)
         if not os.path.isdir(cwd):
-            raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
+            raise ConfigError.cwd_directory(cwd)
         _placement(None, None, opener)
         try:
             self.host.detach(name, list(argv), cwd=cwd, env=dict(env), block=SIGNALS, opener=opener)

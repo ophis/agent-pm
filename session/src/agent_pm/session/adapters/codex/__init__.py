@@ -1,9 +1,9 @@
 """Codex's abstract factory."""
 
-from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.codex.common import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
 from agent_pm.session.adapters.codex.tui import CodexTui
+from agent_pm.session.adapters.types import Adapter
 
 
 class CodexAdapter(Adapter):

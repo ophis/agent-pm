@@ -16,12 +16,12 @@ from functools import partial
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.adapters.selection import select
+from agent_pm.session.adapters.types import ACTIVITY, BLOCKED, TURN_END
 from agent_pm.session.engine.types import (
     Access,
     Activity,
