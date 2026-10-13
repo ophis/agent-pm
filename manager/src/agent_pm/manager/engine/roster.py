@@ -93,7 +93,7 @@ class Roster:
 
     @property
     def events(self) -> str:
-        with self._locked() as data:
+        with self._locked(create=True) as data:
             self._lease(data)
             self._events.ensure()
         return self._events.path
@@ -122,8 +122,11 @@ class Roster:
             raise RosterError(f"{self.directory}: group or other permission bits set")
 
     @contextlib.contextmanager
-    def _locked(self) -> Iterator[dict]:
+    def _locked(self, *, create: bool = False) -> Iterator[dict]:
         try:
+            if not create and not os.path.lexists(self.directory):
+                yield self._read()
+                return
             self._ensure()
             lock = os.path.join(self.directory, "roster.lock")
             fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
@@ -241,6 +244,8 @@ class Roster:
         return fd
 
     def _active_holder(self) -> bool:
+        if not os.path.lexists(self.directory):
+            return False
         fd = self._open_holder()
         try:
             try:
@@ -283,7 +288,7 @@ class Roster:
         previous = self._lease_token
         fd = None
         try:
-            with self._locked() as data:
+            with self._locked(create=True) as data:
                 fd = self._open_holder()
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -388,7 +393,7 @@ class Roster:
             or not intent.argv[0]
         ):
             raise RosterError("argv: want a nonempty command")
-        with self._locked() as data:
+        with self._locked(create=True) as data:
             self._lease(data)
             if intent.name in data["entries"]:
                 raise RosterError(f"{intent.name}: already in roster")
@@ -583,7 +588,7 @@ class Roster:
         _name(record.name)
         if not _uuid4(record.sid):
             raise RosterError("sid: want a canonical uuid4")
-        with self._locked() as data:
+        with self._locked(create=True) as data:
             self._lease(data)
             matches = [
                 name

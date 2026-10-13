@@ -48,6 +48,51 @@ class RosterTest(Case):
     def content(self):
         return json.loads(Path(self.roster.path).read_text())
 
+    def test_missing_roster_reads_do_not_create_directories(self):
+        self.assertEqual(self.roster.entries(), {})
+        self.assertEqual(self.roster.backlog(), (0, 0, []))
+        self.assertEqual(self.roster.next_event(0, 0), (0, None))
+        self.assertEqual(self.roster.advance(0, 0), 0)
+        self.assertEqual(self.roster.advance(None, 0), 0)
+        self.roster.check_lease()
+        self.assertFalse(self.roster.rotate_events())
+        self.assertEqual(os.listdir(self.agent_pm), [])
+        self.assertFalse(Path(self.directory).exists())
+
+    def test_missing_entry_mutations_do_not_create_directories(self):
+        for operation in (
+            lambda: self.roster.note("missing", "note"),
+            lambda: self.roster.remove("missing"),
+            lambda: self.roster.mark("missing", State.GONE),
+            lambda: self.roster.claim_resume("missing"),
+            lambda: self.roster.commit("missing", self.record),
+            lambda: self.roster.receipt_record("missing"),
+        ):
+            with (
+                self.subTest(operation=operation),
+                self.assertRaisesRegex(RosterError, "not in roster"),
+            ):
+                operation()
+            self.assertEqual(os.listdir(self.agent_pm), [])
+        with (
+            self.assertRaisesRegex(RosterError, "not in roster"),
+            self.roster.open_receipt("missing"),
+        ):
+            self.fail("missing launch receipt opened")
+        self.assertFalse(Path(self.directory).exists())
+
+    def test_missing_roster_with_stale_lease_does_not_create_directories(self):
+        self.roster.bind(Lease(str(uuid4()), 1))
+        with self.assertRaises(Stale):
+            self.roster.check_lease()
+        self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_explicit_hold_and_events_can_create_missing_manager_directory(self):
+        with self.roster.hold("owner"):
+            self.assertTrue(Path(self.directory).is_dir())
+        events_directory = str(Path(self.agent_pm, "managers", "events"))
+        self.assertTrue(Path(Roster(events_directory).events).is_file())
+
     def test_begin_commit_preserves_record_and_note(self):
         self.begin(note="keep")
         entry = self.roster.entries()["x"]
@@ -861,7 +906,7 @@ class RosterTest(Case):
             self.assertIsNone(self.content()["holder"])
 
     def test_holder_lock_symlink_fifo_and_other_lock_errors_refuse_even_force(self):
-        self.roster.entries()
+        Path(self.directory).mkdir(parents=True, mode=0o700)
         path = Path(self.directory, "holder.lock")
         for kind in ("symlink", "fifo"):
             with self.subTest(kind=kind):
