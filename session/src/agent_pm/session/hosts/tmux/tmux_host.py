@@ -583,7 +583,7 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
         hosts = {tty: session for dead, tty, session in panes if dead != "1"}
     out = []
     for name, dead, sid, runtime, state, pane, opener in rows:
-        host = hosts.get(recent.get(name), "")
+        host = hosts.get(recent.get(name, ""), "")
         out.append(
             {
                 "name": name,
@@ -781,7 +781,7 @@ def open_pane(
                     raise
         in_tmux = opener is not None and ":" not in opener
         sessions = _sessions(proc) if in_tmux or (split is None and split_from is None) else []
-        grid = _grid(opener, own, sessions, proc) if in_tmux else None
+        grid = _grid(opener, own, sessions, proc) if opener is not None and in_tmux else None
         if grid is not None:
             window, manager, at, side = grid
             if split is not None or split_from is not None:
@@ -797,8 +797,10 @@ def open_pane(
         elif split_from is not None:
             new, why = _split(session, split or "right", anchor(split_from, proc=proc), tmux, proc)
         elif split is not None:
+            assert opener is not None
             new, why = _split(session, split, _opener_pane(opener, own, proc), tmux, proc)
         else:
+            assert opener is not None
             new, why = _stack(session, opener, sessions, tmux, proc) or _split(
                 session, "right", _opener_pane(opener, own, proc), tmux, proc
             )
@@ -855,6 +857,7 @@ def _grid(
     if found is None:
         return None
     window, manager, areas, socket = found
+    assert manager is not None
     workers = [p for p in areas if p != manager]
     if not workers:
         return window, manager, Anchor(None, manager, socket), "right"
@@ -871,12 +874,15 @@ def _window(
 ) -> tuple[str, str | None, dict[str, int], str] | None:
     """pane's window id, manager, pane areas and socket; None when tmux fails."""
     res = _tmux(["list-panes", "-t", pane, "-F", GRID_PANES], proc)
-    rows = (
-        [GRID_ROW.fullmatch(line) for line in res.stdout.splitlines()]
-        if res.returncode == 0
-        else []
-    )
-    if not rows or not all(rows):
+    rows = []
+    if res.returncode:
+        return None
+    for line in res.stdout.splitlines():
+        match = GRID_ROW.fullmatch(line)
+        if match is None:
+            return None
+        rows.append(match)
+    if not rows:
         return None
     areas = {m[3]: int(m[4]) * int(m[5]) for m in rows}
     window, stored = rows[0].group(1, 2)
@@ -983,6 +989,7 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
         except TuiError:
             if a.pane is None:
                 raise
+    assert a.pane is not None and a.socket is not None
     command = [
         "env",
         "-u",
@@ -1163,7 +1170,7 @@ def _grid_pass(
     panes = _tmux_ok(["list-panes", "-t", window, "-F", "#{pane_id}"], proc).stdout.split()
     current = _parse_layout(layout)
     leaves = [] if current is None else _leaves(current)
-    if current is None or sorted(leaf.pane for leaf in leaves) != sorted(panes):
+    if current is None or sorted(_leaf_pane(leaf) for leaf in leaves) != sorted(panes):
         return None
     if manager not in panes or len(panes) == 1:
         _grid_down(window, proc)
@@ -1200,7 +1207,7 @@ def _grid_pass(
         )
         if want is None or _leaves(want) == _leaves(at):
             break
-        order, at = [c.pane for c in _leaves(want)], want
+        order, at = [_leaf_pane(c) for c in _leaves(want)], want
     if _leaves(at) == leaves:
         return None if recorded == pane_set else ([], None, tiles, pane_set)
     return _swaps(panes, order), at, tiles, pane_set
@@ -1288,8 +1295,13 @@ def _render_layout(cell: Cell) -> str:
 def _body(c: Cell) -> str:
     head = f"{c.w}x{c.h},{c.x},{c.y}"
     if c.kind == LEAF:
-        return f"{head},{c.pane[1:]}"
+        return f"{head},{_leaf_pane(c)[1:]}"
     return head + c.kind[0] + ",".join(_body(child) for child in c.children) + c.kind[1]
+
+
+def _leaf_pane(cell: Cell) -> str:
+    assert cell.pane is not None
+    return cell.pane
 
 
 def _leaves(cell: Cell) -> list[Cell]:
@@ -1303,7 +1315,7 @@ def _leaves(cell: Cell) -> list[Cell]:
 
 def _paths(cell: Cell, above: tuple[Cell, ...] = ()) -> dict[str, list[Cell]]:
     if cell.kind == LEAF:
-        return {cell.pane: [*above, cell]}
+        return {_leaf_pane(cell): [*above, cell]}
     return {
         pane: path
         for child in cell.children
