@@ -17,7 +17,7 @@
 
 ## Import rules
 
-Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session through Delegate, except the legacy launch in `engine/router.py` and `engine/run.py` until TASK-374; `tests/guard_data/linear_orchestrator.py`'s `ORCH_SESSION_IMPORTS` pins those remaining imports. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session only through Delegate: its contract ignores no import. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
 Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guard_checks/` enforces those names and literal dynamic imports.
 
