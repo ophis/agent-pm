@@ -1,5 +1,6 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `failed` rows (a new
+run that failed before its LinearRun) as Failures, `trim` to KEEP.
 """
 
 import json
@@ -22,6 +23,11 @@ class Entry(NamedTuple):
     role: str
     client: str
     delegate_kind: str | None
+
+
+class Failure(NamedTuple):
+    ts: datetime
+    issue: str
 
 
 def note(path, kind, *, now=datetime.now, **fields):
@@ -131,6 +137,20 @@ def _limit(line, now):
     return None
 
 
+def _failure(line):
+    try:
+        d = json.loads(line)
+        if d["kind"] == "failed" and isinstance(d["issue"], str):
+            return Failure(datetime.fromisoformat(d["ts"]).astimezone(UTC), d["issue"])
+    except ERRORS:
+        pass
+    return None
+
+
+def failures(path):
+    return [f for line in _lines(path) if (f := _failure(line))]
+
+
 def _lines(path):
     try:
         with open(path, encoding="utf-8", newline="") as f:
@@ -169,6 +189,8 @@ def trim(path, now):
         if (e := parse_line(line))
         and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid)
         or _limit(line, now)
+        or (f := _failure(line))
+        and f.ts >= now - KEEP
     ]
     if len(keep) < len(lines):
         save(path, "".join(keep))

@@ -260,6 +260,23 @@ class Trim(Case):
         runs.trim(self.log, NOW)
         self.assertEqual(self.read(), live + "\n" + start + "\n")
 
+    def test_keeps_failed_launch_rows_for_keep(self):
+        def failed(**ago):
+            return json.dumps(
+                {
+                    "ts": stamp(NOW - timedelta(**ago)),
+                    "kind": "failed",
+                    "issue": "TASK-1",
+                    "sid": "s",
+                }
+            )
+
+        recent = failed(days=7)
+        self.write([failed(days=7, seconds=1), recent])
+        runs.trim(self.log, NOW)
+        self.assertEqual(self.read(), recent + "\n")
+        self.assertEqual(runs.failures(self.log), [runs.Failure(NOW - timedelta(days=7), "TASK-1")])
+
     def test_no_temp_left_when_the_rewrite_fails(self):
         self.write([row("start", "TASK-1", "a", days=8), row("start", "TASK-1", "b", hours=1)])
         with (

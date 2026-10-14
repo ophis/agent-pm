@@ -840,6 +840,26 @@ class RouterEntry(OuterBase):
                 self.assertIn("claim TASK-7 role=engineer client=a", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
+    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+        self.missing.add(KEY)
+        for _ in range(router.CAP):
+            self.todo["state"] = "Todo"
+            self.assertEqual(self.entry("--issue", ID), 2)
+            self.assertEqual(self.todo["state"], "In Progress")
+            self.lines = self.raw_runs().splitlines()
+        rows = [json.loads(line) for line in self.lines]
+        self.assertEqual(
+            [{k: v for k, v in row.items() if k != "ts"} for row in rows],
+            [{"kind": "failed", "issue": ID, "sid": row["sid"]} for row in rows],
+        )
+        self.todo["state"] = "Todo"
+        self.assertEqual(self.entry("--issue", ID), 1)
+        self.assertIn(
+            f"claim-skip TASK-7 to=in_review reason=reached {router.CAP} attempts", self.said()
+        )
+        self.assertEqual(self.todo["state"], "In Review")
+        self.assertEqual(self.todo["subscribers"], ["Me@X.com"])
+
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
             with self.subTest(role=role):
@@ -2023,8 +2043,10 @@ class RunLaunching(OuterBase):
 
     def test_no_keychain_item(self):
         self.missing.add(KEY)
-        for mode, kinds in (("new", []), ("resume", ["start", "resume"])):
+        for mode, kinds in (("new", ["failed"]), ("resume", ["start", "resume"])):
             with self.subTest(mode=mode):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.runs)
                 self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
@@ -2045,7 +2067,7 @@ class RunLaunching(OuterBase):
 
     def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
         for attr, error, kinds in (
-            ("construct_error", DelegateConfigError("role engineer: refused"), []),
+            ("construct_error", DelegateConfigError("role engineer: refused"), ["failed"]),
             ("detach_error", DriverError("detach: duplicate"), ["start"]),
         ):
             with self.subTest(attr=attr):

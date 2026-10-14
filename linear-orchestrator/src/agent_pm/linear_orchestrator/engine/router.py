@@ -51,6 +51,7 @@ from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
+    failures,
     latest,
     note,
     parse_log,
@@ -187,6 +188,7 @@ class Board:
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
+        self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
         task_group(gql, cfg)
@@ -242,12 +244,13 @@ class Board:
         )
 
     def attempts(self, issue):
-        n = attempt_count(self.entries, issue["identifier"])
+        tried = [*self.entries, *self.failures]
+        n = attempt_count(tried, issue["identifier"])
         return (
             n
             if n < CAP
             else attempt_count(
-                self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True)
+                tried, issue["identifier"], self.last_move(issue, "todo", by_user=True)
             )
         )
 
@@ -510,8 +513,19 @@ def fail(ident, kind, reason, rc):
 def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
     """Prepares the issue's input, then detaches its LinearRun. Its runs.jsonl row, an attempt
     toward CAP, comes once Recover can read the run back: a resume's first, a new run's once its
-    LinearRun (its Delegate's state) is built, before its detach.
+    LinearRun (its Delegate's state) is built, before its detach; a new run failing before then
+    leaves a `failed` row, an attempt that Recover cannot read back.
     """
+    rc = None
+    try:
+        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now)
+        return rc
+    finally:
+        if a.mode == "new" and rc != 0 and a.sid not in {e.sid for e in parse_log(cfg.runs_log)}:
+            note(cfg.runs_log, "failed", issue=a.issue, sid=a.sid, now=now)
+
+
+def _outer(a, cfg, *, gql, run, keychain, now):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)

@@ -603,7 +603,7 @@ class OuterBase(TickBase):
 
     def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, client="a"):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it."""
-        if mode == "resume" and not os.path.exists(self.runs):
+        if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
             role = config.role_for(self.cfg().roles, assignee) or "engineer"
             runs.note(
                 self.runs,
