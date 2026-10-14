@@ -294,6 +294,9 @@ class Projects(Case):
             f.write('[delegate]\nruntime = "q"\n')
         self.assertEqual(self.read("delegate", local=local)["runtime"], "q")
 
+    def test_devnull_remains_an_empty_explicit_project_file(self):
+        self.assertEqual(self.read("delegate", path=os.devnull), self.read("session"))
+
     def test_malformed_files_propagate(self):
         self.local("x = [\n")
         with self.assertRaises(tomllib.TOMLDecodeError):

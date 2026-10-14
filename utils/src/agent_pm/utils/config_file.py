@@ -101,7 +101,9 @@ def read_project(
         return packed if os.path.exists(packed) else os.path.join(root, project, "config.toml")
 
     own_file = path or location(name)
-    if (path or name not in UNCONFIGURED) and not os.path.isfile(own_file):
+    if (path or name not in UNCONFIGURED) and (
+        os.path.isdir(own_file) or not os.path.exists(own_file)
+    ):
         raise FileNotFoundError(f"{own_file}: missing")
     configs, known = {}, {}
     for level in LEVELS[: rank + 1]:
@@ -109,7 +111,7 @@ def read_project(
         for project in level:
             section = project.replace("-", "_")
             default = _load(location(project))
-            value = load(path) if project == name and path else default
+            value = _load(path) if project == name and path else default
             if clash := sorted(set(layer) & set(value)):
                 raise ConfigFileError(
                     f"{project}/config.toml: {clash[0]} is also a same-level project's"
