@@ -184,6 +184,18 @@ def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
     return args
 
 
+def _recorded(session: str) -> list[str]:
+    """The creating call's last command: @process, its new pane's PROCESS."""
+    return [";", "set-option", "-F", "-t", f"={session}:", "@process", PROCESS]
+
+
+def _identity(res: subprocess.CompletedProcess) -> str:
+    found = res.stdout.strip()
+    if not PROCESS_ID.fullmatch(found):
+        raise TuiError(f"tmux: bad new session {found!r:.80}")
+    return found
+
+
 def _started(path: str, pipe: int, command: str, sleep) -> bool:
     """
     Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises.
@@ -302,12 +314,14 @@ class Tmux:
         events: str | None = None,
         status_line: bool = False,
         tags: Mapping[str, str] | None = None,
-    ) -> None:
+    ) -> str:
         """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its
         terminal keys the pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line
-        to @events), the `<session> <state>` border and the status line set in the same tmux call (an
-        instant death still gets its dead line); opens no pane. An existing session is refused untouched; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
-        raising, it leaves no session of its own.
+        to @events), the `<session> <state>` border, the status line and @process set in the same tmux
+        call (an instant death still gets its dead line); opens no pane. An existing session is
+        refused untouched; argv reaches the pane through a 0600 handover file. Returns its pane's
+        process(), read as tmux made it, once argv has exec'd; raising, it leaves no session of its
+        own.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
@@ -338,6 +352,9 @@ class Tmux:
                 [
                     "new-session",
                     "-d",
+                    "-P",
+                    "-F",
+                    PROCESS,
                     "-s",
                     session,
                     "-x",
@@ -354,6 +371,7 @@ class Tmux:
                     "on",
                     *tag_options,
                     *decorations,
+                    *_recorded(session),
                 ],
                 self.proc,
             )
@@ -363,11 +381,14 @@ class Tmux:
                 ):  # another start took the name: not ours to kill
                     may_run = False
                 raise TuiError(f"tmux: {error(res)}")
+            found = _identity(res)
             if not _started(path, pipe, argv[0], self.sleep):
                 raise TuiError("the session did not start")
             may_run = False
         except OSError as e:
             raise TuiError(f"handover: {e}") from e
+        else:
+            return found
         finally:
             if tmp:
                 shutil.rmtree(
@@ -393,8 +414,9 @@ class Tmux:
         """Runs argv as start does; env's full iTerm2
         $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
         No decoration; with events, @events and a kept pane whose pane-died hook appends
-        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. An existing
-        session is refused untouched. Returns its pane's process(), read as tmux made it.
+        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. @process set
+        in the same tmux call. An existing session is refused untouched. Returns its pane's
+        process(), read as tmux made it.
         """
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         session_name(session)
@@ -448,6 +470,7 @@ class Tmux:
                     *wrapper,
                     *exited,
                     *tag_options,
+                    *_recorded(session),
                 ],
                 self.proc,
             )
@@ -456,9 +479,7 @@ class Tmux:
                     may_run = False
                     raise TuiError(f"session {session} exists")
                 raise TuiError(f"tmux: {error(res)}")
-            found = res.stdout.strip()
-            if not PROCESS_ID.fullmatch(found):
-                raise TuiError(f"tmux: bad new session {found!r:.80}")
+            found = _identity(res)
             if not _started(path, pipe, argv[0], self.sleep):
                 raise TuiError(f"session {session} did not start")
             may_run = False
@@ -503,9 +524,6 @@ class Tmux:
 
     def set_option(self, target: str, name: str, value: str) -> None:
         transport.set_option(target, name, value, proc=self.proc)
-
-    def send(self, session: str, text: str) -> None:
-        transport.send(session, text, proc=self.proc, sleep=self.sleep)
 
     def read(self, target: str, lines: int | None = None) -> str:
         return transport.read(target, lines, proc=self.proc)
@@ -942,11 +960,10 @@ class TmuxHost(Host, Displayable):
             launch.argv, launch.cwd, env=launch.env, blocked_signals=launch.blocked_signals
         )
         process = None
-        created = False
         try:
             command = Launch(tuple(control.command()), cwd=launch.cwd, env=launch.env)
             if terminal:
-                self.tmux.start(
+                process = self.tmux.start(
                     name,
                     command,
                     events=events,
@@ -969,10 +986,6 @@ class TmuxHost(Host, Displayable):
                         **({"@record": record.to_line()} if record is not None else {}),
                     },
                 )
-                created = True
-                process = self.tmux.process(name)
-                if process is None:
-                    raise TuiError(f"session {name} disappeared during start")
             else:
                 process = self.tmux.detach(
                     name,
@@ -985,7 +998,7 @@ class TmuxHost(Host, Displayable):
                 )
             control.wait_started()
         except (TuiError, OSError) as error:
-            cleanup = self._cancel_launch(control, process, name if created else None)
+            cleanup = self._cancel_launch(control, process)
             detail = f"; {cleanup}" if cleanup else ""
             failure = (
                 f"cannot run {error.filename or launch.argv[0]}: {os.strerror(error.errno)}"
@@ -1051,9 +1064,7 @@ class TmuxHost(Host, Displayable):
             raise ConfigError(f"grid_retile: want one of {', '.join(Retile)}")
         return TuiSettings(line, per, retile)
 
-    def _cancel_launch(
-        self, control: ProcessControl, process: str | None = None, name: str | None = None
-    ) -> str:
+    def _cancel_launch(self, control: ProcessControl, process: str | None = None) -> str:
         errors = []
         try:
             control.cancel()
@@ -1066,31 +1077,32 @@ class TmuxHost(Host, Displayable):
                     self.tmux.kill(pane)
             except TuiError as error:
                 errors.append(f"close pane: {error}")
-        elif name is not None:
-            try:
-                if self.tmux.option(name, "@control") == control.path:
-                    self.tmux.kill(name)
-            except TuiError as error:
-                errors.append(f"close session: {error}")
         return "; ".join(errors)
 
     def attach(self, name: str) -> TmuxProcess:
+        """A session it launched is the pane its launch recorded (@process), whichever pane is
+        active; any other session is its active pane.
+        """
         state = self.tmux.status(_session(name))
         if state is None:
             raise DriverError(f"no tmux session {name}")
         if state == PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {name}: tmux failed")
         try:
-            process = self.tmux.process(name)
+            kind = self.tmux.option(name, "@kind")
+            launched = kind in ("detach", "terminal")
+            process = self.tmux.option(name, "@process") if launched else self.tmux.process(name)
         except TuiError as e:
             raise DriverError(f"tmux session {name}: {e}") from None
+        if launched and process is None:
+            raise DriverError(
+                f"tmux session {name}: missing @process; close sessions before upgrading"
+            )
+        if launched and not PROCESS_ID.fullmatch(process or ""):
+            raise DriverError(f"tmux session {name}: bad @process {process!r:.80}")
         if process is None:
             raise DriverError(f"no tmux session {name}")
-        try:
-            terminal = self.tmux.option(name, "@kind") == "terminal"
-        except TuiError as e:
-            raise DriverError(f"tmux session {name}: {e}") from None
-        return (TmuxTerminal if terminal else TmuxProcess)(name, process, tmux=self.tmux)
+        return (TmuxTerminal if kind == "terminal" else TmuxProcess)(name, process, tmux=self.tmux)
 
     def list(self, display: Display = None) -> list[str]:
         if display == "":
