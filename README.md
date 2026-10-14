@@ -106,7 +106,7 @@ launchd scheduling of router and promote returns with [TASK-379](https://linear.
 
 ### Local configuration migration
 
-Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. Remove obsolete `show` keys. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
+Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. A `show` key belongs under `[delegate]` or `[delegate.roles.<role>]`. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
 
 ```toml
 [session.hosts.tmux]
@@ -188,7 +188,7 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment.
+A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment. How a started `tui` session with a display is shown (a pane, only its attach command, or a command of yours): the same file's `show` comment.
 
 The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
 

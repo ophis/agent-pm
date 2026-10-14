@@ -562,11 +562,11 @@ class HostedSession(Session):
     def displayable(self) -> bool:
         return self._tui() is not None and isinstance(self._host, Displayable)
 
-    def show(self, *, display: Display = None) -> str | None:
+    def show(self, *, display: Display = None, command: str | None = None) -> str | None:
         host, name = self._shown("show")
         if display is None:
             display = self._host.attach(name).display()
-        return host.show(name, display=display)
+        return host.show(name, display=display, command=command)
 
     def attach_command(self) -> str:
         host, name = self._shown("attach_command")

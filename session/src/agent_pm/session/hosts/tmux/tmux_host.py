@@ -29,6 +29,7 @@ from agent_pm.session.hosts.tmux.placement import (
     open_pane,
     opener,
     own_session,
+    run_command,
     show,
 )
 from agent_pm.session.hosts.tmux.transport import (
@@ -72,6 +73,7 @@ __all__ = [
     "open_pane",
     "opener",
     "own_session",
+    "run_command",
     "show",
     "tile",
 ]

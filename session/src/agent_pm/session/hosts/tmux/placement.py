@@ -89,7 +89,7 @@ def show(
             tile_window=tile_window,
         )
     else:
-        why = _run(session, template, proc) if template else None
+        why = run_command(session, template, proc=proc) if template else None
     if why:
         print(f"tui: show: {why}", file=sys.stderr)
     return why
@@ -337,7 +337,10 @@ def _layout(split: str | None, split_from: str | None, opener: str | None = None
         )
 
 
-def _run(session: str, template: str, proc) -> str | None:
+def run_command(session: str, template: str, *, proc=subprocess.run) -> str | None:
+    """Runs template with /bin/sh, each {{session}} the quoted session name; why it failed, else
+    None.
+    """
     unknown = [m.group(0) for m in SLOT.finditer(template) if m.group(1) not in PLACEHOLDERS]
     if unknown:
         return f"unknown placeholder {unknown[0]}"

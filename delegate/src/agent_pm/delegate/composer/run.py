@@ -40,6 +40,7 @@ RUN_KEYS = frozenset(
         "language",
         "cwd",
         "idle_timeout",
+        "show",
     }
 )
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})

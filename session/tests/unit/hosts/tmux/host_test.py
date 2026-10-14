@@ -374,6 +374,16 @@ class DisplayableTest(Base):
             "w1", split=None, split_from=None, opener=None, per_column=2, retile=None
         )
 
+    def test_show_with_a_command_runs_it_instead_of_opening_a_pane(self):
+        self.tmux.run_command.return_value = None
+        self.assertIsNone(self.host.show("w1", command="open -a T {{session}}"))
+        self.tmux.run_command.assert_called_once_with("w1", "open -a T {{session}}")
+        self.tmux.open_pane.assert_not_called()
+        self.tmux.run_command.return_value = "exit status 3"
+        with self.assertLogs("session", logging.WARNING) as logs:
+            self.assertEqual(self.host.show("w1", command="false"), "tmux attach -t '=w1'")
+        self.assertEqual(logs.output, ["WARNING:session:show w1: exit status 3"])
+
     def test_show_refuses_an_absent_session_a_foreign_display_or_a_bad_setting(self):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(DriverError, "^no tmux session w1$"):

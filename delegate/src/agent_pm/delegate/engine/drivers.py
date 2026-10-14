@@ -14,6 +14,7 @@ from agent_pm.utils import Display, save
 class Driver(ABC):
     session_based = True
     session: Session | None = None
+    display: Display = None
 
     def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
         return (), {}

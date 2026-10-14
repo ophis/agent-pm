@@ -215,10 +215,15 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: display completed once its display destination is found."""
+    """show: None once shown, else an attach command; command: a shell command run instead of
+    opening a pane, `{{session}}` the session name; layout: display completed once its display
+    destination is found.
+    """
 
     @abstractmethod
-    def show(self, name: str, *, display: Display = None) -> str | None: ...
+    def show(
+        self, name: str, *, display: Display = None, command: str | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

@@ -86,10 +86,10 @@ class RecordingHost(Host):
 
 
 class ShowingHost(RecordingHost, Displayable):
-    shown: list[tuple[str, str | None]] = []
+    shown: list[tuple[str, str | None, str | None]] = []
 
-    def show(self, name, *, display=None):
-        self.shown.append((name, display))
+    def show(self, name, *, display=None, command=None):
+        self.shown.append((name, display, command))
         return self.attach_command(name)
 
     def attach_command(self, name):
@@ -156,11 +156,11 @@ class HarnessSession(SessionClass):
     def displayable(self):
         return isinstance(self.host(self.host_names[self.name]), Displayable)
 
-    def show(self, *, display=None):
+    def show(self, *, display=None, command=None):
         host = self.host(self.host_names[self.name])
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"host {host.name} cannot display")
-        return host.show(self.name, display=display)
+        return host.show(self.name, display=display, command=command)
 
     def attach_command(self):
         host = self.host(self.host_names[self.name])

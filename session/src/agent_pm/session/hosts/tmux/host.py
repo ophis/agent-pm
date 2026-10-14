@@ -540,18 +540,22 @@ class TmuxHost(Host, Displayable):
             "pane it goes beside; any other printable value not ending in ; is kept as given"
         )
 
-    def show(self, name: str, *, display: Display = None) -> str | None:
+    def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
         opener, split, split_from = self._parts(display)
         if self.tmux.status(_session(name)) is None:
             raise DriverError(f"no tmux session {name}")
         try:
-            why = self.tmux.open_pane(
-                name,
-                split=split,
-                split_from=split_from,
-                opener=opener,
-                per_column=self.settings.get("workers_per_column"),
-                retile=self.settings.get("grid_retile"),
+            why = (
+                self.tmux.open_pane(
+                    name,
+                    split=split,
+                    split_from=split_from,
+                    opener=opener,
+                    per_column=self.settings.get("workers_per_column"),
+                    retile=self.settings.get("grid_retile"),
+                )
+                if command is None
+                else self.tmux.run_command(name, command)
             )
         except TuiError as e:
             raise ConfigError(str(e)) from None

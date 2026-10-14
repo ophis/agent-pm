@@ -62,7 +62,7 @@ class SessionClassMethods(Case):
             (Session.class_roots, [("runtime", either)]),
             (Session.inspect, [("spec", either)]),
             (Session.layout, [("display", key)]),
-            (Session.show, [("self", either), ("display", key)]),
+            (Session.show, [("self", either), ("display", key), ("command", key)]),
         ):
             with self.subTest(method=method.__name__):
                 found = inspect.signature(method).parameters.values()

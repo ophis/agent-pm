@@ -59,7 +59,10 @@ class Abstract(Case):
     def test_displayable_placement_is_keyword_only(self):
         key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
         for method, parameters in (
-            (Displayable.show, [("self", either), ("name", either), ("display", key)]),
+            (
+                Displayable.show,
+                [("self", either), ("name", either), ("display", key), ("command", key)],
+            ),
             (Displayable.layout, [("self", either), ("display", key)]),
         ):
             with self.subTest(method=method.__name__):

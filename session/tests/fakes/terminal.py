@@ -173,8 +173,8 @@ class ScreenHost(MemoryHost, Displayable):
             raise DriverError(f"terminal {name.name} is not running")
         return self.calls.screen(name, lines)
 
-    def show(self, name, *, display=None):
-        return self.calls.show(name, display=display)
+    def show(self, name, *, display=None, command=None):
+        return self.calls.show(name, display=display, command=command)
 
     def attach_command(self, name):
         return self.calls.attach_command(name)

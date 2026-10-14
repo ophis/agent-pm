@@ -1333,11 +1333,16 @@ class TuiStartTest(HostedTuiBase):
         self.host.calls.show.return_value = None
         self.assertIsNone(session.show())
         self.assertIsNone(session.show(display="other/right/m1"))
+        self.assertIsNone(session.show(command="open {{session}}"))
         with self.assertRaises(TypeError):
             session.show("other/right/m1")
         self.assertEqual(
             self.host.calls.show.call_args_list,
-            [mock.call("w1", display="mgr/below"), mock.call("w1", display="other/right/m1")],
+            [
+                mock.call("w1", display="mgr/below", command=None),
+                mock.call("w1", display="other/right/m1", command=None),
+                mock.call("w1", display="mgr/below", command="open {{session}}"),
+            ],
         )
 
     def test_its_record_is_its_hosts(self):

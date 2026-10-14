@@ -49,13 +49,16 @@ STOP = turn("Working.")
 class FakeHandle:
     """agent_pm.session.Handle as the Delegate uses it: events() goes on through `events` across
     calls, up to an Exited (none left: AssertionError); send (raising `fail`) and stop (raising
-    `stop_fail`) recorded in `calls`. start: the Delegate Driver's stand-in.
+    `stop_fail`) recorded in `calls`; show's commands (raising `show_fail`) in `shown`. start: the
+    Delegate Driver's stand-in.
     """
 
     displayable = True
+    show_fail: Exception | None = None
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
+        self.shown: list[str | None] = []
         self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
@@ -67,6 +70,12 @@ class FakeHandle:
 
     def attach_command(self):
         return f"tmux attach -t '={self.name}'"
+
+    def show(self, *, display=None, command=None):
+        self.shown.append(command)
+        if self.show_fail:
+            raise self.show_fail
+        return None
 
     def events(self):
         for event in self.left:
