@@ -95,6 +95,7 @@ class Crew:
                 if result.returncode:
                     reason = result.stderr.strip() or f"exit {result.returncode}"
                     raise RuntimeError(f"{shlex.join(argv)}: {reason}")
+                sys.stderr.write(result.stderr)
                 return self.roster.receipt_record(name)
         except OSError as error:
             raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
