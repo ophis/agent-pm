@@ -9,17 +9,19 @@ import threading
 import time
 from unittest import mock
 
-from agent_pm.session import Driver, Session
+from agent_pm.session import Session
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
     Exited,
     IdleTimeout,
+    Mode,
     Spec,
 )
 from agent_pm.session.hosts.tmux import transport
 from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
 
 from session.tests import fake_adapter, live_tmux
-from session.tests.case import Case, settings
+from session.tests.case import Case, configured
 from session.tests.modules import adapter_loader
 from session.tests.threads import capture_errors
 
@@ -62,7 +64,7 @@ def fake_host() -> mock.Mock:
 
 
 class Stream:
-    """A Handle's events drained by a daemon; its scoped exception hook carries failures."""
+    """A session's events drained by a daemon; its scoped exception hook carries failures."""
 
     def __init__(self, case, handle: Session):
         self.queue = queue.Queue()
@@ -123,38 +125,41 @@ class Live(Case):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.events = os.path.join(self.dir, "events")
-        self.config = settings(
-            {
-                "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
-                    "tui": True,
-                    "scenario": os.path.join(self.dir, "scenario.json"),
-                    "log": os.path.join(self.dir, "client.log"),
-                }
+        self.adapters = {
+            "fake": {
+                "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                "tui": True,
+                "scenario": os.path.join(self.dir, "scenario.json"),
+                "log": os.path.join(self.dir, "client.log"),
             }
-        )
-        self.driver = self.driven()
+        }
+        self.session_cls = self.fake_session()
 
-    def driven(self, **dependencies) -> Driver:
-        """A Driver of self.config loading the fake client, with `dependencies`."""
-        return Driver(
-            **self.config,
+    def fake_session(self, **dependencies) -> type[HostedSession]:
+        """A session class of self.adapters loading the fake client, with `dependencies`."""
+        return configured(
+            self.adapters,
             class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
             **dependencies,
         )
 
-    def start(self, name: str, *steps, sid=None, **kwargs) -> Session:
+    def start(self, name: str, *steps, sid=None, events=None, **kwargs) -> Session:
         """Tui session `name` of the fake client running `steps`, its events file self.events
         unless given.
         """
-        with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
+        with open(self.adapters["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
-        handle = self.driver.start(
-            "fake",
-            "tui",
-            "hello",
-            Spec(workdir=self.workdir, name=name, sid=sid),
-            **{"events": self.events, **kwargs},
+        handle = self.session_cls.start(
+            Spec(
+                workdir=self.workdir,
+                name=name,
+                sid=sid,
+                client="fake",
+                mode=Mode.TUI,
+                prompt="hello",
+                events=self.events if events is None else events,
+            ),
+            **kwargs,
         )
         self.addCleanup(handle.stop)
         return handle

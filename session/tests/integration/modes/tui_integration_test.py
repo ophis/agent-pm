@@ -36,7 +36,7 @@ class CloseTest(Case):
                 events=os.path.join(self.home, "events"),
             ),
             fake_adapter.FakeAdapter({"tui": True, "scenario": "", "log": ""}),
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=lambda _info: None,
             host=host,
         )
@@ -71,10 +71,10 @@ class RawSessionCloseTest(Live):
         folder = Path(self.agent_pm, "tui", name)
         folder.mkdir(parents=True)
         (folder / "session.json").write_text("{}")
-        self.driver.close(name)
+        self.session_cls.retire(name)
         self.assertNotEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
         self.assertFalse(folder.exists())
-        self.driver.close(name)
+        self.session_cls.retire(name)
 
 
 class PollCostTest(Live):
@@ -86,7 +86,7 @@ class PollCostTest(Live):
             return subprocess.run(argv, **kwargs)
 
         host = TmuxHost("tmux", tmux=Tmux(proc=counted))
-        scenario = self.config["adapters"]["fake"]["scenario"]
+        scenario = self.adapters["fake"]["scenario"]
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:
             json.dump([{"read": True}], f)
@@ -99,8 +99,8 @@ class PollCostTest(Live):
                 prompt="hello",
                 events=self.events,
             ),
-            self.driver.registry.adapter("fake"),
-            registry=self.driver.registry,
+            self.session_cls._config().registry.adapter("fake"),
+            registry=self.session_cls._config().registry,
             record=lambda _info: None,
             host=host,
         )

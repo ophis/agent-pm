@@ -82,18 +82,18 @@ class HookLifecycleTest(Live):
         self.assertEqual(stream.next(idle=False, poke=self.poke), Exited(7))
         self.lines(f"{name} dead")
         self.assertEqual(self.server.option(name, "@state"), "dead")
-        self.assertEqual([row.state for row in self.driver.sessions(name)], ["dead"])
+        self.assertEqual([row.state for row in self.session_cls.list(name)], ["dead"])
         self.assertEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
         self.poke()
         self.poke()
         self.assert_events(self.events, name, "dead")
-        self.driver.close(name)
-        self.assertEqual(self.driver.sessions(name), [])
+        self.session_cls.retire(name)
+        self.assertEqual(self.session_cls.list(name), [])
         self.assert_events(self.events, name, "dead")
 
     def test_successful_detach_writes_one_exit_event_before_its_session_is_forgotten(self):
         name = "successful-detach"
-        host = self.driver.session_cls.host()
+        host = self.session_cls.host()
         process = host.detach(
             name,
             Launch((sys.executable, "-I", "-c", "pass"), env=self.server.env(), cwd=self.home),

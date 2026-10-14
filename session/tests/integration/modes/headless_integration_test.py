@@ -302,7 +302,7 @@ class Start(Base):
             mode = HeadlessRuntime.start(
                 Spec(workdir=self.dir, sid=SID, client="stub"),
                 StubAdapter(Launch(python(SLEEPER))),
-                registry=self.driver.registry,
+                registry=self.session_cls._config().registry,
                 record=self.recorded.append,
                 host=MemoryHost(),
             )

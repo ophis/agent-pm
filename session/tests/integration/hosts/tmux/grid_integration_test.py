@@ -11,6 +11,7 @@ import tempfile
 import time
 from unittest import mock
 
+from agent_pm.session import Displayable
 from agent_pm.session.engine.types import DriverError, Launch
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
@@ -68,11 +69,17 @@ class Live(Case):
         with mock.patch.dict(os.environ, self.server.inside(session) if session else {}):
             yield
 
-    def show(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
-        """show(name, **kwargs) from inside `inside`, a pane then showing it; its stderr."""
+    def show(self, name: str, inside: str | None = MANAGER, split=None, split_from=None) -> str:
+        """The default Host's show(name) at split and split_from from inside `inside`, a pane then
+        showing it; its stderr.
+        """
         err = io.StringIO()
+        display = TmuxHost.fold(None, split, split_from)
+        host = self.session_cls.host()
+        if not isinstance(host, Displayable):
+            self.fail(f"host {host.name} cannot display")
         with self.inside(inside), contextlib.redirect_stderr(err):
-            self.assertIsNone(self.driver.show(name, **kwargs))
+            self.assertIsNone(host.show(name, display=display))
         return err.getvalue()
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
@@ -157,7 +164,7 @@ class GridTest(Live):
         self.grid([["w1", "w2"]], width)
         self.started("w3")
         self.grid([["w1", "w2"], ["w3"]], width)
-        self.driver.close("w2")
+        self.session_cls.retire("w2")
         self.grid([["w1", "w3"]], width)
 
     def test_name_order(self):
@@ -182,12 +189,12 @@ class GridTest(Live):
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
         self.grid([["m1", ("m2", ["z1", "z2"]), "m3"]])
-        self.driver.close("z1")
-        self.driver.close("z2")
+        self.session_cls.retire("z1")
+        self.session_cls.retire("z2")
         self.grid([["m1", "m2", "m3"]])
         self.started("z3", inside="m2")
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
-        self.driver.close("m2")
+        self.session_cls.retire("m2")
         self.grid([["m1", ["z3"], "m3"]])
 
     def test_an_unshown_session_reopens_in_the_grid(self):
@@ -208,10 +215,11 @@ class SplitsTest(Live):
     def test_split_outside_grid(self):
         manager = self.server.inside(MANAGER)["TMUX_PANE"]
         with self.inside(MANAGER):
-            self.assertEqual(self.driver.layout(), MANAGER)
-        self.assertIsNone(self.driver.layout("below", MANAGER))
+            self.assertEqual(self.session_cls.layout(), MANAGER)
+        beside = f"/below/{MANAGER}"
+        self.assertEqual(self.session_cls.layout(display=beside), beside)
         with self.assertRaises(DriverError) as caught:
-            self.driver.layout("below")
+            self.session_cls.layout(display="/below")
         self.assertTrue(
             str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),
             caught.exception,
@@ -326,10 +334,10 @@ class RetileTest(Live):
         # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the
         # window's pane-exited hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
-        self.driver.close("w2")
+        self.session_cls.retire("w2")
         self.grid([["w1", "w3"]], width)
         self.open_close_hooks(MANAGER)
-        self.driver.close("w3")
+        self.session_cls.retire("w3")
         self.grid([["w1"]], width)
         live_tmux.wait(
             lambda: (

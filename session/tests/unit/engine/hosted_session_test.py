@@ -1,6 +1,6 @@
-"""HostedSession: its configured classes and Setup, its class methods (start, attach, list, usage,
-layout, writable_dirs, display, host, class_roots) and a session's own methods, each test on a Driver's
-configured class (self.session) with caller-owned dependencies.
+"""HostedSession: its configured classes and Setup, its class methods (start, attach, retire, list,
+usage, layout, writable_dirs, display, host, class_roots, inspect) and a session's own methods, each
+test on a configured class (self.session) with caller-owned dependencies.
 """
 
 import contextlib
@@ -216,6 +216,39 @@ class InspectTest(Base):
             self.inspect(spec)
         self.assertFalse(os.path.exists(self.workdir))
 
+    def recorded(self, client="probe") -> Spec:
+        """`client`'s inspection of session s1, recorded in self.workdir with cwd self.dir."""
+        os.makedirs(self.workdir)
+        RunLog(self.workdir).note(
+            "session", sid="s1", cwd=self.dir, project=False, transcript="", resume=""
+        )
+        return Spec(workdir=self.workdir, client=client, sid="s1")
+
+    def test_an_adapters_driver_error_propagates_as_raised(self):
+        error = DriverError("inspection refused")
+        spec = self.recorded()
+        with (
+            mock.patch.object(ProbeAdapter, "session_status", side_effect=error),
+            self.assertRaises(DriverError) as caught,
+        ):
+            self.inspect(spec)
+        self.assertIs(caught.exception, error)
+
+    def test_an_os_error_from_the_adapter_is_unknown(self):
+        spec = self.recorded()
+        with mock.patch.object(
+            ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
+        ):
+            self.assertEqual(self.inspect(spec), SessionStatus("unknown", None, ""))
+
+    def test_an_unknown_client_is_the_registrys_config_error(self):
+        spec = self.recorded("nope")
+        with self.assertRaises(ConfigError) as caught:
+            self.inspect(spec)
+        self.assertEqual(
+            str(caught.exception), "no [adapters.nope] table in the configured adapters"
+        )
+
     def test_inspection_requires_client_and_sid(self):
         for spec, message in (
             (Spec(workdir=self.workdir, sid=SID), "spec.client: required to inspect"),
@@ -241,9 +274,9 @@ class HistoricalRecordTest(Case):
         log.note("session", **info.persisted())
         log.note("session_metadata", sid=SID, transcript=str(transcript), resume="rm -rf ~")
         request = Spec(workdir=str(self.work), client=client, sid=SID)
-        self.assertEqual(self.driver.session_cls.inspect(request), expected)
+        self.assertEqual(self.session_cls.inspect(request), expected)
         log.note("session_metadata", sid=SID, transcript="", resume="printf forged-command")
-        fresh = self.driver.session_cls.inspect(request)
+        fresh = self.session_cls.inspect(request)
         self.assertEqual(fresh, SessionStatus("yes", 100.0, expected.resume_command))
         self.assertNotIn("forged-command", fresh.resume_command)
 
@@ -511,7 +544,7 @@ class SessionTest(Base):
                 }
             },
             hosts=parsed({**HOSTS, **FAKE_HOSTS}, "tmux"),
-            class_loader=self.driver_dependencies["class_loader"],
+            class_loader=self.session_dependencies["class_loader"],
         )
         session = configured.start(
             self.spec(client="fake", mode=Mode.IN_PROCESS, prompt="hi"), host="fake"
@@ -959,7 +992,7 @@ class UsageTest(Base):
         unless given), the Setup's probe a mock giving `out`.
         """
         probe = mock.Mock(return_value=out)
-        self.driver_dependencies = {**self.driver_dependencies, "probe": probe}
+        self.session_dependencies = {**self.session_dependencies, "probe": probe}
         self.configure("probe", probe={"argv": ("probe-cmd", "-x"), **launch})
         return probe
 
@@ -1355,6 +1388,9 @@ class TuiStartTest(HostedTuiBase):
         self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach("w1")])
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
+    def test_retire_refuses_a_bad_name_before_tmux_or_a_path(self):
+        self.name_refused(self.session.retire)
+
     def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)
         session, other = self.tui(client="probe", name="w1"), ScreenHost("other")
@@ -1456,7 +1492,7 @@ class AttachTest(HostedTuiBase):
         self.assertEqual(session.reply, "r1")
 
     def test_attach_restores_its_one_adapters_fresh_tui_once(self):
-        built, restored, load = [], [], self.driver_dependencies["class_loader"]
+        built, restored, load = [], [], self.session_dependencies["class_loader"]
 
         def counted(path, base):
             found = load(path, base)
@@ -1479,7 +1515,7 @@ class AttachTest(HostedTuiBase):
 
             return Counted
 
-        self.driver_dependencies = {**self.driver_dependencies, "class_loader": counted}
+        self.session_dependencies = {**self.session_dependencies, "class_loader": counted}
         self.configure(tui=True)
         self.started()
         for _ in range(2):
@@ -1509,7 +1545,7 @@ class AttachTest(HostedTuiBase):
         """
         hooks = os.path.join(self.root, "w1", "hooks.jsonl")
         now = [0.0]
-        self.driver_dependencies = {**self.driver_dependencies, "clock": lambda: now[0]}
+        self.session_dependencies = {**self.session_dependencies, "clock": lambda: now[0]}
         self.configure(tui=True)
         for hooked, state, first in (
             ((("tool", {}), ("ask", {})), None, (Activity(""), 10)),
@@ -1612,7 +1648,7 @@ class MultipleHostsTest(HostedTuiBase):
         self.session.configure(
             adapters=self.session._config().registry.settings.adapters,
             hosts=parsed(tables, "tmux"),
-            class_loader=self.driver_dependencies["class_loader"],
+            class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
         )
 
@@ -1715,7 +1751,7 @@ class MultipleHostsTest(HostedTuiBase):
         self.session.configure(
             adapters=setup.registry.settings.adapters,
             hosts=Hosts("second", setup.hosts.tables),
-            class_loader=self.driver_dependencies["class_loader"],
+            class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
         )
         self.assertIs(self.session.host(), self.other)
@@ -1901,7 +1937,7 @@ class ChecksTest(Base):
             ConfigError, "unknown key 'model' in FakeAdapter's config", lambda: self.start()
         )
 
-    def test_a_failed_session_record_propagates_before_the_start(self):
+    def test_a_failed_session_line_propagates_before_the_start(self):
         os.mkdir(self.workdir)
         target = os.path.join(self.dir, "elsewhere")
         os.symlink(target, RunLog(self.workdir).path)

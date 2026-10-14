@@ -1,11 +1,11 @@
-"""HostedSession, through the Driver wrapper, with client claude end to end: the real ClaudeAdapter, its [adapters.claude]
-table given to Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py
-(on PATH as `claude`) through Driver.start, Driver.usage and Driver.session_status; one case runs
-the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are
-temp dirs.
+"""HostedSession with client claude end to end: the real ClaudeAdapter, its [adapters.claude] table
+given to a configured session class, runs session/tests/integration/adapters/claude/fake_claude.py
+(on PATH as `claude`) through start, usage and inspect; one case runs the session in a caller
+process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are temp dirs.
 """
 
 import contextlib
+import dataclasses
 import json
 import os
 import shlex
@@ -19,7 +19,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session import Session, session_record
+from agent_pm.session import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -28,7 +28,9 @@ from agent_pm.session.engine.types import (
     Exited,
     IdleTimeout,
     LimitHit,
+    Mode,
     Reply,
+    SessionInfo,
     SessionStatus,
     Spec,
     Stderr,
@@ -67,10 +69,10 @@ PROBE = [
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.session import Driver, Spec
+from agent_pm.session import Host, Mode, Session, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
-driver = Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
-handle = driver.start("claude", "headless", "hello", Spec(workdir=sys.argv[2]))
+Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
+handle = Session.start(Spec(workdir=sys.argv[2], client="claude", mode=Mode.HEADLESS, prompt="hello"))
 try:
     for event in handle.events():
         print(type(event).__name__, flush=True)
@@ -121,11 +123,21 @@ class Base(Case):
         with open(self.file, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **fields}, f)
 
-    def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> Session:
-        spec = spec or Spec(workdir=self.workdir, sid=sid)
-        handle = self.driver.start("claude", "headless", prompt, spec, **kwargs)
+    def start(self, prompt="hello", spec=None, *, idle_timeout=None, **fields) -> Session:
+        """A headless claude session on `prompt`: `spec` (else one in self.workdir) with `fields`."""
+        spec = dataclasses.replace(
+            spec or Spec(workdir=self.workdir),
+            client="claude",
+            mode=Mode.HEADLESS,
+            prompt=prompt,
+            **fields,
+        )
+        handle = self.session_cls.start(spec, idle_timeout=idle_timeout)
         self.addCleanup(handle.stop)
         return handle
+
+    def inspect(self, sid: str) -> SessionStatus:
+        return self.session_cls.inspect(Spec(workdir=self.workdir, client="claude", sid=sid))
 
     def drain(self, handle, on=lambda _event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
@@ -184,7 +196,7 @@ class RunTest(Base):
                 spec = Spec(workdir=self.workdir, access=Access(cwd=cwd))
                 first = self.start(spec=spec)
                 self.assertEqual(self.drain(first)[-1], Exited(0))
-                again = self.start("more", spec=spec, resume=first.sid)
+                again = self.start("more", spec=spec, sid=first.sid, resume=True)
                 self.assertEqual(self.drain(again)[-1], Exited(0))
                 self.assertEqual(json.loads(first.reply), want)
                 self.assertEqual(json.loads(again.reply), want)
@@ -195,7 +207,7 @@ class RunTest(Base):
                 spec = Spec(workdir=self.workdir, access=Access(project=project))
                 first = self.start(spec=spec)
                 self.assertEqual(self.drain(first)[-1], Exited(0))
-                again = self.start("more", spec=spec, resume=first.sid)
+                again = self.start("more", spec=spec, sid=first.sid, resume=True)
                 self.assertEqual(self.drain(again)[-1], Exited(0))
                 for entry in self.logged()[-2:]:
                     argv = entry["argv"]
@@ -241,8 +253,8 @@ class RunTest(Base):
             self.written(), [session, {"kind": "client_session", "sid": sid, "client_id": sid}]
         )
         self.assertEqual(
-            session_record(self.workdir, sid),
-            {k: v for k, v in session.items() if k != "kind"},
+            RunLog(self.workdir).session(sid),
+            SessionInfo(**{k: v for k, v in session.items() if k != "kind"}),
         )
 
     def test_resume_continues_the_transcript(self):
@@ -250,7 +262,7 @@ class RunTest(Base):
         first = self.start()
         self.assertEqual(self.drain(first)[-1], Exited(0))
         self.scenario(steps=["second"])
-        again = self.start("more", resume=first.sid)
+        again = self.start("more", sid=first.sid, resume=True)
         self.assertEqual(again.sid, first.sid)
         self.assertEqual(
             self.drain(again),
@@ -284,22 +296,16 @@ class RunTest(Base):
         resume = (
             f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
         )
-        recorded = session_record(self.workdir, sid)
         self.assertEqual(
-            recorded,
-            {
-                "sid": sid,
-                "cwd": proj,
-                "project": False,
-                "transcript": transcript,
-                "resume": resume,
-            },
+            RunLog(self.workdir).session(sid),
+            SessionInfo(sid=sid, cwd=proj, project=False, transcript=transcript, resume=resume),
         )
 
         again = self.start(
             "more",
-            Spec(workdir=self.workdir, access=Access(cwd=recorded["cwd"])),
-            resume=sid,
+            Spec(workdir=self.workdir, access=Access(cwd=proj)),
+            sid=sid,
+            resume=True,
         )
         self.assertEqual(self.drain(again)[-1], Exited(0))
         calls = self.logged()
@@ -321,12 +327,9 @@ class RunTest(Base):
                 os.kill(self.logged()[0]["pid"], signal.SIGKILL)
 
         self.assertEqual(self.drain(first, on), [Reply("first"), Exited(-signal.SIGKILL)])
-        self.assertEqual(
-            self.driver.session_status("claude", sid, self.workdir, workdir=self.workdir).resumable,
-            "yes",
-        )
+        self.assertEqual(self.inspect(sid).resumable, "yes")
         self.scenario(steps=["second"])
-        again = self.start("more", resume=sid)
+        again = self.start("more", sid=sid, resume=True)
         self.assertEqual(self.drain(again), [Reply("second"), TurnEnd("second", 0), Exited(0)])
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", sid])
 
@@ -370,7 +373,7 @@ class RunTest(Base):
 
     def test_resuming_a_session_without_a_transcript_exits_1_and_its_stderr_is_recorded(self):
         said = f"No conversation found with session ID: {SID}"
-        self.assertEqual(self.drain(self.start(resume=SID)), [Stderr(said), Exited(1)])
+        self.assertEqual(self.drain(self.start(sid=SID, resume=True)), [Stderr(said), Exited(1)])
         self.assertEqual([e["kind"] for e in self.written()], ["session", "stderr"])
         self.assertEqual(self.written()[1]["text"], said)
 
@@ -448,7 +451,7 @@ class UsageTest(Base):
             }
         )
         self.assertEqual(
-            self.driver.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
+            self.session_cls.usage("claude"), Usage(Window(25.0, RESETS), Window(100.0, RESETS + 1))
         )
         (entry,) = self.logged()
         self.assertEqual(entry["argv"], PROBE)
@@ -459,11 +462,11 @@ class UsageTest(Base):
 
     def test_a_reading_without_windows_has_none(self):
         self.scenario(rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": "high"}})
-        self.assertEqual(self.driver.usage("claude"), Usage(None, None))
+        self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
 
     def test_a_successful_probe_without_an_event_has_no_telemetry(self):
         self.scenario()
-        self.assertEqual(self.driver.usage("claude"), Usage(None, None))
+        self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
 
     def test_unknown_is_none(self):
         for name, fields in (
@@ -474,7 +477,7 @@ class UsageTest(Base):
                 self.scenario(**fields)
                 if name == "no claude":
                     os.environ["PATH"] = self.dir
-                self.assertIsNone(self.driver.usage("claude"))
+                self.assertIsNone(self.session_cls.usage("claude"))
 
 
 class SessionInfoTest(Base):
@@ -482,7 +485,7 @@ class SessionInfoTest(Base):
         handle = self.start(sid=SID)
         self.assertEqual(self.drain(handle)[-1], Exited(0))
         self.assertEqual(
-            self.driver.session_status("claude", SID, self.workdir, workdir=self.workdir),
+            self.inspect(SID),
             SessionStatus(
                 "yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)
             ),
@@ -492,7 +495,7 @@ class SessionInfoTest(Base):
             "session", sid=other, cwd=self.workdir, project=False, transcript="", resume=""
         )
         self.assertEqual(
-            self.driver.session_status("claude", other, self.workdir, workdir=self.workdir),
+            self.inspect(other),
             SessionStatus("no", None, self.resume_command(other)),
         )
 
