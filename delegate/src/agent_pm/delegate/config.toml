@@ -138,7 +138,7 @@ tier = 3
 effort = "low"
 
 # [delegates]
-#   harness_host  the [hosts.<name>] (session/src/agent_pm/session/config.toml) the harness runs on; "" → [hosts] default
+#   harness_host  the [hosts.<name>] (session/src/agent_pm/session/config.toml) the harness runs on; "" → the agent's Host
 [delegates]
 harness_host = ""
 

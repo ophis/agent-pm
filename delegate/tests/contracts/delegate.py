@@ -51,7 +51,9 @@ class DelegateContract:
         record, workdir = self.detached()
         self.assertIsInstance(record, Record)
         self.assertEqual(Record.parse(record.to_line()), record)
-        self.assertEqual((record.kind, record.ctl), (self.ROLE, ("agent-pm-delegate",)))
+        self.assertEqual(
+            (record.kind, record.ctl, record.detail), ("role", ("agent-pm-delegate",), self.ROLE)
+        )
         self.assertEqual(record.resume[:2], ("agent-pm-delegate", "resume"))
         self.assertEqual(len(record.resume), 3)
         for path in (record.workdir, record.resume[2]):

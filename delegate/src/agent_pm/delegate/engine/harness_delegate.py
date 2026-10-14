@@ -42,6 +42,7 @@ from agent_pm.session import (
     HostProcess,
     Launch,
     Liveness,
+    Mode,
     NotDisplayable,
     Session,
     SessionStatus,
@@ -92,6 +93,7 @@ class _State:
     detached: bool = False
     completed: bool = False
     result: Result | None = None
+    events: str | None = None
 
 
 class HarnessDelegate(Delegate):
@@ -154,39 +156,47 @@ class HarnessDelegate(Delegate):
             self._settings = thaw(self.composer.config.values)
             self.session_cls = session_cls
             self._configure()
+            hosts = Host.parse_hosts(self._settings.get("hosts")).tables
             agent_host = session_cls.host(host)
             self._harness_override = harness_host if isinstance(harness_host, Host) else None
             harness = (
                 harness_host
                 if isinstance(harness_host, Host)
                 else session_cls.host(
-                    harness_host
-                    or config.harness_host(
-                        self._settings, Host.parse_hosts(self._settings.get("hosts")).tables
-                    )
-                    or agent_host.name
+                    harness_host or config.harness_host(self._settings, hosts) or agent_host.name
                 )
             )
             display = session_cls.display(display, host=agent_host.name)
+            events = harness.events_path(spec.events)
         except (OSError, ValueError, SessionConfigError, DriverError) as error:
             raise ConfigError(str(error)) from None
+        if harness.name not in hosts:
+            raise ConfigError(
+                f"harness_host {harness.name}: want one of {', '.join(sorted(hosts))}"
+            )
         self.driver = driver or AgentDriver(
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
+        tui = spec.mode == Mode.TUI
         run = self.composer.resolve(role, spec.task)
         accepted = plan(
             run,
-            replace(spec, team=self.composer.team),
+            replace(
+                spec,
+                team=self.composer.team,
+                name=spec.name if tui else None,
+                events=events if tui else None,
+            ),
             driver=self.driver,
             composition=self.composer,
         )
         name = spec.name or f"{role}-{accepted.sid[:8]}"
         accepted = replace(
             accepted,
-            spec=replace(accepted.spec, name=name if spec.mode == "tui" else None),
+            spec=replace(accepted.spec, name=name if tui else None),
             session=replace(
                 accepted.session,
-                name=name if spec.mode == "tui" else None,
+                name=name if tui else None,
                 protect=tuple(
                     dict.fromkeys((*spec.protect, *package_dirs(), *self.composer.team.dirs))
                 ),
@@ -206,7 +216,14 @@ class HarnessDelegate(Delegate):
             f"{name}-drive",
             1,
             {},
+            events=events,
         )
+        try:
+            harness.validate(
+                self._state.harness_name, self._harness_launch(self._state), display=display
+            )
+        except (SessionConfigError, DriverError) as error:
+            raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
         try:
@@ -455,7 +472,7 @@ class HarnessDelegate(Delegate):
             sessions += (state.agent_name,)
         return Record(
             1,
-            state.outer.get("kind", state.role),
+            state.outer.get("kind", "role"),
             state.agent_name,
             sessions,
             state.plan.sid,
@@ -536,6 +553,9 @@ class HarnessDelegate(Delegate):
         )
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
+        state = self._state
+        if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
+            raise ConfigError("events: a headless run writes them only when detached")
         with self.store.run_lock():
             with self.store.mutex():
                 if self._current().completed:
@@ -570,46 +590,61 @@ class HarnessDelegate(Delegate):
             raise ConfigError(f"{self.workdir}: delegate attempt was replaced")
         return state
 
-    def _detach(self, state: _State) -> Record:
-        state = replace(state, detached=True)
-        self._save(state)
-        record = self._record(state)
+    def _harness_launch(self, state: _State) -> Launch:
         environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
         environment.update(import_env(config, session_package, utils_package))
-        self._harness_host.detach(
-            state.harness_name,
-            Launch(
-                (
-                    sys.executable,
-                    "-P",
-                    "-m",
-                    "agent_pm.delegate.engine.harness_delegate",
-                    self.workdir,
-                ),
-                cwd=state.plan.session.access.cwd or self.workdir,
-                env=environment,
-                blocked_signals=SIGNALS,
-            ),
-            display=state.display,
-            events=state.plan.spec.events,
-            record=record,
+        return Launch(
+            (sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness_delegate", self.workdir),
+            cwd=state.plan.session.access.cwd or self.workdir,
+            env=environment,
+            blocked_signals=SIGNALS,
         )
+
+    def _launch(self, previous: _State, state: _State) -> Record:
+        """`state` saved detached before its harness starts; `previous` again when it cannot."""
+        state = replace(state, detached=True)
+        record = self._record(state)
+        self._save(state)
+        try:
+            self._harness_host.detach(
+                state.harness_name,
+                self._harness_launch(state),
+                display=state.display,
+                events=state.events,
+                record=record,
+            )
+        except BaseException as error:
+            self._save(previous)
+            if isinstance(error, SessionConfigError):
+                raise ConfigError(str(error)) from None
+            raise
         self._state = state
         return record
 
     def detach(self, *, outer: Outer | None = None) -> Record:
+        mode = str(self._state.plan.spec.mode)
+        if mode not in (Mode.HEADLESS, Mode.TUI):
+            raise ConfigError(f"detach: mode must be headless or tui, got {mode!r}")
+        if not self.driver.session_based:
+            raise ConfigError("instruction cannot detach")
+        given: Outer = {} if outer is None else outer.copy()
+        if unknown := next((key for key in given if key not in Outer.__annotations__), None):
+            raise ConfigError(f"outer: unknown key {unknown}")
+        try:
+            self._record(replace(self._state, outer=given))
+        except ValueError as error:
+            raise ConfigError(f"outer: {error}") from None
         with self.store.mutex():
-            state = self._current()
-            if self._alive(state):
-                return self._record(state)
-            if state.completed:
+            previous = self._current()
+            if self._alive(previous):
+                return self._record(previous)
+            if previous.completed:
                 raise ConfigError(f"{self.workdir}: delegate run already completed")
-            state = replace(state, outer={} if outer is None else outer.copy())
-            return self._detach(state)
+            return self._launch(previous, replace(previous, outer=given))
 
     def resume(self) -> Record:
         with self.store.mutex():
-            state = self._state = self._read()
+            state = previous = self._state = self._read()
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
             agent = self._agent(state)
@@ -653,7 +688,7 @@ class HarnessDelegate(Delegate):
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )
-            return self._detach(state)
+            return self._launch(previous, state)
 
 
 def _stop(signum, _frame):
