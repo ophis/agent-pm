@@ -98,7 +98,8 @@ class Attended(Segment):
     def interrupted(self, stop, *, written_back=True):
         """An attended run waiting on after its start mark, its harness ended by stop(ident, sid):
         its TUI ends too, the issue stays In Progress; router.py --issue --tui resumes it to done.
-        written_back False: the stop may kill the harness's last callback, so no session comment.
+        written_back False: the stop may kill the harness's last callback before or after it updates
+        the session comment.
         """
         ident, account = self.pm_ready(), ACCOUNTS["pm"]
         sid = self.claim(ident, "pm", self.agent_script("pm", "open", ident), tui=True)
@@ -119,8 +120,9 @@ class Attended(Segment):
                 live_tmux.wait(lambda name=name: not self.live(name), TIMEOUT, f"{name} gone")
             self.pending = None
             self.assertEqual(self.state(ident), "in_progress")
-            if written_back:
-                self.expect_session(ident, sid, "interrupted")
+            status = "interrupted" if written_back else self.session_status(ident, sid)
+            self.assertIn(status, ("running", "interrupted"))
+            self.expect_session(ident, sid, status)
         self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident), tui=True)
         self.agent_run()
 
