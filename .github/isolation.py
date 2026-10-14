@@ -1,12 +1,14 @@
 """Interpreter gates for unit logic and sandboxed integration tools."""
 
 import contextlib
+import fcntl
 import inspect
 import os
 import sys
 import tempfile
 import traceback
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 DENIED = {
     "subprocess.Popen",
@@ -27,6 +29,31 @@ GIT_ALLOWED = {
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
 }
+WRITE_PATHS = {
+    "os.mkdir": ((0, 2),),
+    "os.rename": ((0, 2), (1, 3)),
+    "os.remove": ((0, 1),),
+    "os.rmdir": ((0, 1),),
+    "os.chmod": ((0, 2),),
+    "os.chown": ((0, 3),),
+    "os.chflags": ((0, None),),
+    "os.symlink": ((0, None), (1, 2)),
+    "os.link": ((0, 2), (1, 3)),
+    "os.truncate": ((0, None),),
+    "os.utime": ((0, 3),),
+    "os.setxattr": ((0, None),),
+    "os.removexattr": ((0, None),),
+    "shutil.rmtree": ((0, 1),),
+    "shutil.move": ((0, None), (1, None)),
+    "shutil.chown": ((0, None),),
+    "shutil.copyfile": ((1, None),),
+    "shutil.copymode": ((1, None),),
+    "shutil.copystat": ((1, None),),
+    "shutil.copytree": ((1, None),),
+    "shutil.make_archive": ((0, None),),
+    "shutil.unpack_archive": ((1, None),),
+    "sqlite3.connect": ((0, None),),
+}
 
 
 class Gate:
@@ -43,9 +70,25 @@ class Gate:
             f"test isolation: {self.current}: {message}\n{''.join(traceback.format_stack())}"
         )
 
+    def path(self, path, dir_fd=None):
+        if isinstance(path, int):
+            if sys.platform == "darwin":
+                path = fcntl.fcntl(path, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0]
+            else:
+                path = os.readlink(f"/proc/self/fd/{path}")
+        path = Path(os.fsdecode(path))
+        if dir_fd is not None and dir_fd != -1 and not path.is_absolute():
+            path = self.path(dir_fd) / path
+        return path
+
     def inside(self, path):
-        actual = Path(path).resolve()
+        actual = self.path(path).resolve()
         return actual.is_relative_to(self.sandbox) or actual.is_relative_to(self.workspace)
+
+    def write_path(self, path, dir_fd=None):
+        path = self.path(path, dir_fd)
+        if not self.inside(path):
+            self.fail(f"write outside temporary directory: {path}")
 
     def audit(self, event, args):
         if event in DENIED and self.unit:
@@ -69,6 +112,19 @@ class Gate:
                 and Path(path).resolve() != self.reporting_file
             ):
                 self.fail(f"write outside temporary directory: {path}")
+        elif self.unit and event in WRITE_PATHS:
+            for index, fd_index in WRITE_PATHS[event]:
+                path = args[index]
+                if event == "sqlite3.connect":
+                    if path == ":memory:":
+                        continue
+                    if os.fsdecode(path).startswith("file:"):
+                        path = unquote(urlsplit(os.fsdecode(path)).path)
+                if event == "shutil.unpack_archive" and path is None:
+                    path = os.getcwd()
+                if event == "os.symlink" and index == 0 and not os.path.isabs(path):
+                    path = self.path(args[1], args[2]).parent / os.fsdecode(path)
+                self.write_path(path, args[fd_index] if fd_index is not None else None)
 
     def command(self, executable, argv, cwd, env):
         name = os.path.basename(os.fsdecode(executable))

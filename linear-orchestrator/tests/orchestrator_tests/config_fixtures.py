@@ -13,6 +13,14 @@ PIPELINE = (
 )
 
 
+BASE = (
+    HEADER
+    + role("researcher", 'next = "pm"')
+    + role("pm", 'next = "engineer"')
+    + role("engineer")
+    + role("solo")
+)
+
 CORE_TOP = '[delegate]\nlanguage = "Chinese"\n'
 
 

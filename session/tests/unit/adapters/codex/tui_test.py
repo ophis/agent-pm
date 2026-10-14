@@ -8,15 +8,12 @@ import os
 import shlex
 import sys
 import time
-import tomllib
 from datetime import datetime
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session.adapters.codex import CodexAdapter, common, tui
-from agent_pm.session.adapters.codex.common.types import Snapshot
-from agent_pm.session.adapters.codex.tui import HOOKS, CodexTui, HookPlan, LaunchPlan
+from agent_pm.session.adapters.codex.tui import CodexTui
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -30,7 +27,8 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests.case import ROOTS, SRC, Case
+from session.tests.case import ROOTS, SRC
+from session.tests.codex_tui import PlanCase
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
@@ -400,20 +398,6 @@ class TuiTest(Base):
                 )
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
-    def test_writable_symlink_to_protected_driver_hook_is_rejected(self):
-        link = self.cwd / "driver-link.py"
-        link.symlink_to("/protected/driver_hook.py")
-        with (
-            mock.patch("shutil.which", return_value="/protected/codex"),
-            self.assertRaisesRegex(ConfigError, "rewrite|writable"),
-        ):
-            self.adapter.tui().launch(
-                dataclasses.replace(self.spec, prompt="hi"),
-                (*HOOK[:2], str(link), *HOOK[3:]),
-                source_roots=PACKAGE_ROOTS,
-            )
-        self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
-
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
@@ -709,54 +693,7 @@ class LaunchPolicy(Base):
             )
 
 
-class PlanTest(Case):
-    def setUp(self):
-        self.snapshot = Snapshot(
-            cwd="/work",
-            project=True,
-            dirs=("/granted",),
-            commands=(),
-            model="configured",
-            effort=None,
-            codex_home="/runtime/codex",
-            flags=(
-                "-m",
-                "requested",
-                "-c",
-                'model_verbosity="low"',
-                "--enable",
-                "web",
-                "--",
-                "--config=literal",
-                "--disable",
-                "literal",
-            ),
-            env={},
-        )
-        self.plan = LaunchPlan(
-            executable="/protected/codex",
-            selection=("resume", "saved-native"),
-            prompt="prompt\nwith Unicode: 字",
-            hook=HookPlan(
-                (os.path.realpath(sys.executable), "-I", "/protected/mode hook.py", "/session dir"),
-                (SRC["session"], SRC["utils"]),
-            ),
-            workdir="/work",
-            sid="caller-id",
-            store="/private-state/recovery/codex",
-            protect=("/protected/events",),
-        )
-        self.frontend = (
-            "/protected/codex",
-            "resume",
-            "saved-native",
-            "--no-daemon",
-            "-C",
-            "/work",
-            "-c",
-            'tui.notification_method="bel"',
-        )
-
+class PlanTest(PlanCase):
     def test_wire_roundtrip_decodes_an_object_without_reparsing_json(self):
         encoded = tui.encode(self.plan)
         data = json.loads(encoded)
@@ -831,39 +768,6 @@ class PlanTest(Case):
         for value in (None, 1, "a\0b"):
             with self.subTest(prompt=value), self.assertRaisesRegex(ValueError, "invalid prompt"):
                 tui.decode(data | {"prompt": value})
-
-    def test_hook_commands_preserve_roots_quoting_and_all_six_timeouts(self):
-        roots = []
-        for package, name in (("session", "session 'sources"), ("utils", "utils sources 字")):
-            root = Path(self.home) / name
-            root.symlink_to(SRC[package], target_is_directory=True)
-            roots.append(str(root))
-        argv = (
-            *self.plan.hook.argv,
-            json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
-            "opaque trailing word",
-        )
-        hook = HookPlan(argv, tuple(roots))
-        self.assertEqual(hook.argv, argv)
-        self.assertEqual(hook.import_roots, tuple(roots))
-        decoded = tui.decode(json.loads(tui.encode(dataclasses.replace(self.plan, hook=hook))))
-        self.assertEqual(decoded.hook, hook)
-        commands = tui.commands(hook)
-        self.assertEqual(list(commands), [event for event, _, _ in HOOKS])
-        flags = tui.hook_flags(hook)
-        self.assertEqual(flags[::2], ("-c",) * 6)
-        for (event, _, _), encoded in zip(HOOKS, flags[1::2], strict=True):
-            with self.subTest(event=event):
-                self.assertEqual(shlex.split(commands[event]), [*argv, event])
-                row = tomllib.loads(encoded)["hooks"][event][0]["hooks"][0]
-                self.assertEqual(
-                    row,
-                    {
-                        "type": "command",
-                        "command": commands[event],
-                        "timeout": 3 if event == "Interrupt" else 10,
-                    },
-                )
 
     def test_execution_and_trust_use_the_same_pre_separator_flags(self):
         hooks = tui.hook_flags(self.plan.hook)

@@ -79,6 +79,90 @@ print(json.dumps(sorted(blocked)))
 
 
 class SandboxGates(Case):
+    def test_every_filesystem_mutation_is_confined_to_owned_roots(self):
+        script = """import os, shutil, sqlite3, sys
+from pathlib import Path
+import isolation
+
+root = Path(sys.argv[1])
+sandbox = root / "sandbox"
+sandbox.mkdir()
+outside = root / "outside"
+outside.mkdir()
+source = outside / "source"
+source.write_text("original")
+directory = outside / "directory"
+directory.mkdir()
+owned = sandbox / "owned"
+owned.write_text("owned")
+fd = os.open(source, os.O_RDWR)
+dir_fd = os.open(outside, os.O_RDONLY)
+gate = isolation.Gate(root, sandbox)
+gate.current = "sentinel.filesystem"
+sys.addaudithook(gate.audit)
+operations = [
+    ("mkdir", lambda: os.mkdir(outside / "new")),
+    ("rename source", lambda: os.rename(source, sandbox / "renamed")),
+    ("rename destination", lambda: os.rename(owned, outside / "renamed")),
+    ("replace", lambda: os.replace(owned, source)),
+    ("move", lambda: shutil.move(owned, outside / "moved")),
+    ("remove", lambda: os.remove(source)),
+    ("rmdir", lambda: os.rmdir(directory)),
+    ("rmtree", lambda: shutil.rmtree(directory)),
+    ("chmod", lambda: os.chmod(source, 0o777)),
+    ("chown", lambda: os.chown(source, os.getuid(), os.getgid())),
+    ("symlink destination", lambda: os.symlink(owned, outside / "link")),
+    ("symlink source", lambda: os.symlink(source, sandbox / "link")),
+    ("link source", lambda: os.link(source, sandbox / "hardlink")),
+    ("link destination", lambda: os.link(owned, outside / "hardlink")),
+    ("truncate", lambda: os.truncate(source, 0)),
+    ("ftruncate", lambda: os.ftruncate(fd, 0)),
+    ("utime", lambda: os.utime(source, (0, 0))),
+    ("sqlite", lambda: sqlite3.connect(str(outside / "db"))),
+    ("sqlite URI", lambda: sqlite3.connect((outside / "db").as_uri(), uri=True)),
+    ("mkdir dir_fd", lambda: os.mkdir("new", dir_fd=dir_fd)),
+    ("remove dir_fd", lambda: os.remove("source", dir_fd=dir_fd)),
+    ("chmod fd", lambda: os.fchmod(fd, 0o777)),
+]
+for name, operation in operations:
+    try:
+        operation()
+    except RuntimeError as error:
+        assert "sentinel.filesystem" in str(error), (name, error)
+        assert "write outside temporary directory" in str(error), (name, error)
+    else:
+        raise AssertionError("escaped " + name)
+assert source.read_text() == "original"
+assert owned.read_text() == "owned"
+assert sorted(p.name for p in outside.iterdir()) == ["directory", "source"]
+allowed = sandbox / "allowed"
+allowed.mkdir()
+file = allowed / "file"
+file.write_text("ok")
+os.chmod(file, 0o600)
+os.chown(file, os.getuid(), os.getgid())
+os.utime(file, (1, 1))
+os.truncate(file, 1)
+os.symlink(file, allowed / "link")
+os.link(file, allowed / "hardlink")
+os.rename(file, allowed / "renamed")
+os.replace(allowed / "renamed", file)
+os.remove(allowed / "link")
+sqlite3.connect(str(allowed / "db")).close()
+sqlite3.connect(":memory:").close()
+shutil.rmtree(allowed)
+os.close(fd)
+os.close(dir_fd)
+"""
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", script, self.home],
+            env=clean_env(None, str(Path(REPO, ".github"))),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     def test_hooks_reject_unit_effects_and_unisolated_integration_tools(self):
         sandbox = Path(self.home, "sandbox")
         sandbox.mkdir()
