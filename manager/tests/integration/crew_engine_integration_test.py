@@ -551,6 +551,29 @@ class CrewTest(Case):
         self.assertEqual(self.calls("show"), [])
         self.assertEqual(self.roster.entries()["two"].state, State.LIVE)
 
+    def test_attach_shows_the_cwd_each_status_reports(self):
+        record = self.start("one")
+        self.start("two")
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == (self.command, "status"):
+                lines = (
+                    Status(
+                        name, alive=True, state="working", outcome=None, attach=None, cwd=cwd
+                    ).to_line()
+                    for name, cwd in (("one", "/w/repo one"), ("two", None))
+                )
+                return subprocess.CompletedProcess(argv, 0, "\n".join(lines) + "\n", "")
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run), self.listed():
+            table = self.crew.attach().splitlines()
+        rows = {row.split("\t")[0]: row.split("\t") for row in table[1:] if "\t" in row}
+        self.assertEqual(table[0].split("\t")[5], "cwd")
+        self.assertEqual((rows["one"][5], rows["two"][5]), ("/w/repo one", "-"))
+        self.assertNotEqual(rows["one"][5], record.workdir)
+
     def test_a_key_its_ctl_fails_is_the_only_status_lost(self):
         self.start("one")
         self.start("two")

@@ -52,10 +52,12 @@ def gone(name: str) -> Status:
     return Status(name=name, alive=False, state="gone", outcome=None, attach=None)
 
 
-def live(name: str, state: str, *, displayable: bool = True) -> Status:
-    """A live session's Status: its tmux attach command, none when its Host cannot display."""
+def live(name: str, state: str, *, displayable: bool = True, cwd: str | None = None) -> Status:
+    """A live session's Status: its tmux attach command, none when its Host cannot display; a
+    worker's cwd.
+    """
     command = attach(name) if displayable else None
-    return Status(name=name, alive=True, state=state, outcome=None, attach=command)
+    return Status(name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd)
 
 
 def pid_alive(pid: int) -> bool:
@@ -89,7 +91,7 @@ class ControlCase(CliCase):
 class StatusTest(ControlCase):
     def test_status_answers_each_name_or_record_in_input_order(self):
         w1 = self.done("w1")
-        done = live("w1", "done")
+        done = live("w1", "done", cwd=self.cwd)
         for argv, stdin, expected in (
             (("w1", "nope"), None, [done, gone("nope")]),
             (("nope", "w1"), None, [gone("nope"), done]),
@@ -125,7 +127,7 @@ class StatusTest(ControlCase):
                     self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
         self.assertEqual(self.sessions(), [MANAGER, "w1"])
         self.assertEqual(self.server.pane_of("w1"), pane)
-        self.assertEqual(self.status("w1"), [live("w1", "done")])
+        self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 
     def test_stdin_that_is_not_utf_8_is_a_usage_error(self):
@@ -164,7 +166,7 @@ class ControlTest(ControlCase):
         self.assertTrue(pid_alive(pids["w3"]))
         self.assertEqual(
             self.status("w1", "w2", "w3"),
-            [gone("w1"), gone("w2"), live("w3", "done")],
+            [gone("w1"), gone("w2"), live("w3", "done", cwd=self.cwd)],
         )
 
     def test_close_and_show_refuse_a_record_whose_sid_its_session_does_not_carry(self):

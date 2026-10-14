@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from io import StringIO
 
 from agent_pm.utils import answer_keys, number
@@ -46,7 +46,9 @@ TEXT = "want a non-empty printable str"
 NULL_TEXT = "want null or a non-empty printable str"
 ARGV = "want a non-empty list of str"
 SESSIONS = "sessions: want a list of non-empty printable str"
-STATUS = Status(name="n", alive=True, state="working", outcome="done", attach="tmux attach -t n")
+STATUS = Status(
+    name="n", alive=True, state="working", outcome="done", attach="tmux attach -t n", cwd="/w/repo"
+)
 
 
 def line(base, **changes) -> str:
@@ -211,11 +213,16 @@ class StatusLine(Case):
                 self.assertEqual(Status.parse(text + "\n"), status)
         self.assertEqual(
             Status(name="n", alive=False, state="gone", outcome=None, attach=None).to_line(),
-            '{"name":"n","alive":false,"state":"gone","outcome":null,"attach":null}',
+            '{"name":"n","alive":false,"state":"gone","outcome":null,"attach":null,"cwd":null}',
         )
 
+    def test_a_line_without_cwd_has_none(self):
+        data = asdict(STATUS)
+        del data["cwd"]
+        self.assertEqual(Status.parse(json.dumps(data)), replace(STATUS, cwd=None))
+
     def test_each_missing_key_and_an_extra_one(self):
-        for field in asdict(STATUS):
+        for field in [field for field in asdict(STATUS) if field != "cwd"]:
             with self.subTest(field=field):
                 data = asdict(STATUS)
                 del data[field]
@@ -231,6 +238,9 @@ class StatusLine(Case):
             ("state", None, f"state: {TEXT}"),
             ("outcome", 1, "outcome: want null or a str"),
             ("attach", ["fake-ctl"], "attach: want null or a str"),
+            ("cwd", "", f"cwd: {NULL_TEXT}"),
+            ("cwd", "/w\n", f"cwd: {NULL_TEXT}"),
+            ("cwd", 1, f"cwd: {NULL_TEXT}"),
         ):
             with self.subTest(field=field, value=value):
                 self.refused(line(STATUS, **{field: value}), message)

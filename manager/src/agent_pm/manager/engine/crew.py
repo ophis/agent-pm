@@ -281,7 +281,7 @@ class Crew:
                 if entry.state == State.LIVE
                 else entry.state,
                 entry.note or "-",
-                "-" if record is None else record.workdir or "-",
+                "-" if status is None else status.cwd or "-",
                 "-" if status is None else status.attach or "-",
             )
             output.append("\t".join(printable(field).replace("\t", " ") for field in fields))

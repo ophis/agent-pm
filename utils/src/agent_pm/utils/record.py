@@ -1,14 +1,14 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
-nothing else), and Status, the line `<ctl> status` prints per Record. Display is opaque: only the
-session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records
-yields JSON objects from text or byte lines.
+nothing else), and Status, the line `<ctl> status` prints per Record (cwd, optional: where the
+run works). Display is opaque: only the session layer interprets it. answer_keys is the one batch
+rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 
 import json
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
 from enum import StrEnum
 from typing import Self, TextIO, TypeVar
 
@@ -52,8 +52,8 @@ class _Line:
             raise RecordError(f"{kind}: not JSON ({e})") from None
         _check(ok=isinstance(data, dict), message=f"{kind}: want a JSON object")
         names = [f.name for f in fields(cls)]
-        for name in names:
-            _check(ok=name in data, message=f"{name}: missing")
+        for f in fields(cls):
+            _check(ok=f.name in data or f.default is not MISSING, message=f"{f.name}: missing")
         for name in data:
             _check(ok=name in names, message=f"{name}: unknown field")
         return cls(**{k: tuple(v) if isinstance(v, list) else v for k, v in data.items()})
@@ -118,6 +118,7 @@ class Status(_Line):
     state: str
     outcome: str | None
     attach: str | None
+    cwd: str | None = None
 
     def __post_init__(self):
         _check(ok=_text(self.name), message="name: want a non-empty printable str")
@@ -128,6 +129,10 @@ class Status(_Line):
             _check(
                 ok=value is None or isinstance(value, str), message=f"{field}: want null or a str"
             )
+        _check(
+            ok=self.cwd is None or _text(self.cwd),
+            message="cwd: want null or a non-empty printable str",
+        )
 
 
 def answer_keys(
