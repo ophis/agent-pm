@@ -345,6 +345,8 @@ class Crew:
     def forget(self, name: str, *, force: bool = False) -> None:
         self._listed = None
         self.roster.check_lease()
+        if name not in self.roster.entries():
+            raise ValueError(f"{name}: not in roster")
         if not force and self.status((name,))[0].alive:
             raise RuntimeError(f"{name}: still alive; stop it before forgetting")
         self.roster.remove(name)

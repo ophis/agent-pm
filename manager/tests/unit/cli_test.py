@@ -126,6 +126,19 @@ class CliTest(Case):
                 self.assertIn("not in roster", stderr)
                 self.assertFalse(os.path.exists(self.directory))
 
+    def test_force_forget_missing_entry_is_usage_error_without_controller_or_writes(self):
+        with mock.patch("subprocess.run", side_effect=FileNotFoundError("missing ctl")) as run:
+            for extra in ((), ("--force",)):
+                with self.subTest(extra=extra):
+                    result, stdout, stderr = self.invoke(
+                        "forget", "missing", "--manager", "mgr", *extra
+                    )
+                    self.assertEqual(result, 2, stderr)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("not in roster", stderr)
+                    self.assertFalse(os.path.exists(self.directory))
+        run.assert_not_called()
+
     def test_empty_stop_all_reports_nothing_without_creating_a_manager(self):
         with self.listed():
             result, stdout, stderr = self.invoke("stop-all", "--manager", "mgr")
