@@ -28,6 +28,7 @@ from agent_pm.session.engine.types import (
     HookKind,
     Launch,
     Prepared,
+    ProcessOptions,
     Tier,
     Word,
 )
@@ -39,6 +40,18 @@ class EnvironmentSources(Case):
     def test_spec_accepts_both_environment_sources(self):
         spec = Spec(workdir="/w", access=Access(env={"A": "1"}), env={"B": "2"})
         self.assertEqual((spec.access.env, dict(spec.env)), ({"A": "1"}, {"B": "2"}))
+
+
+class ProcessOptionsTest(Case):
+    def test_options_own_an_immutable_copy_of_the_environment(self):
+        source = {"TOKEN": "original"}
+        options = ProcessOptions(flags=("--flag",), env=source)
+        source["TOKEN"] = "changed"
+        self.assertEqual((options.flags, dict(options.env)), (("--flag",), {"TOKEN": "original"}))
+        with self.assertRaises(TypeError):
+            options.env["TOKEN"] = "changed"
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            options.flags = ()
 
 
 INFO = SessionInfo(sid="s", cwd="/w", project=False, transcript="", resume="")
@@ -100,6 +113,13 @@ class FrozenConfig(Case):
 
 
 class WhatToStart(Case):
+    def test_the_spec_constructor_stays_keyword_only(self):
+        parameters = inspect.signature(Spec).parameters
+        self.assertTrue(parameters)
+        self.assertTrue(all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters.values()))
+        with self.assertRaises(TypeError):
+            Spec("/w")
+
     def test_the_start_fields_default_so_an_adapters_partial_spec_stays_valid(self):
         spec = Spec(workdir="/w")
         self.assertEqual(

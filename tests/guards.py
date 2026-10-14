@@ -1592,36 +1592,12 @@ def _type_methods(project, rel, node, kind, bound):
             and not decorators & {"staticmethod", "classmethod"}
         ):
             continue
-        if (
-            kind == "dataclass"
-            and "classmethod" in decorators
-            and (_builds(method, args) or _validates_fields(method, fields, bound))
-        ):
+        if kind == "dataclass" and "classmethod" in decorators and _builds(method, args):
             continue
         found.append(
             f"{project}/src/{rel}:{method.lineno}: {node.name}.{method.name}: business method in types module"
         )
     return found
-
-
-def _validates_fields(method, fields, bound):
-    parameters = {arg.arg for arg in [*method.args.args[1:], *method.args.kwonlyargs]}
-    if not parameters or not parameters <= fields or len(method.body) != 1:
-        return False
-    result = method.body[0]
-    return (
-        isinstance(result, ast.Return)
-        and isinstance(result.value, ast.Call)
-        and isinstance(result.value.func, ast.Name)
-        and _private(result.value.func.id)
-        and result.value.func.id not in bound
-        and isinstance(method.returns, ast.BinOp)
-        and ast.unparse(method.returns) in {"str | None", "None | str"}
-        and all(
-            isinstance(arg, ast.Name) and arg.id in parameters
-            for arg in [*result.value.args, *(kw.value for kw in result.value.keywords)]
-        )
-    )
 
 
 def _builds(method, args):

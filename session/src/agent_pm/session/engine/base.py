@@ -9,11 +9,11 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from agent_pm.session.engine.types import (
-    ConfigError,
     Hosts,
     IdleTimeout,
     Liveness,
     Mode,
+    ProcessOptions,
     SessionEvent,
     SessionInfo,
     SessionRow,
@@ -85,8 +85,7 @@ class Session(ABC):
 
     @staticmethod
     def validate_policy(*, flags, env) -> None:
-        if error := Spec.process_options_error(flags=flags, env=env):
-            raise ConfigError(error)
+        ProcessOptions(flags=flags, env=env)
 
     @classmethod
     def configure(cls, *, adapters: Mapping, hosts: Hosts) -> None:

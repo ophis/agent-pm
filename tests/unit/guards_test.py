@@ -1450,23 +1450,6 @@ class TypesOnly(Sample):
         source = "from dataclasses import dataclass\n@dataclass\nclass Team:\n    root: str\n    def custom(self, path): return path != self.root\n    def source(self, path): return path if self.custom(path) else 'built-in'\n"
         self.assertEqual(self.found(source), [])
 
-    def test_a_type_owned_field_validation_classmethod_delegates_only_to_its_private_check(self):
-        source = (
-            "from dataclasses import dataclass\n"
-            "def _valid(*, value): return None if value else 'empty'\n"
-            "@dataclass\nclass Data:\n    value: str\n"
-            "    @classmethod\n"
-            "    def error(cls, *, value) -> str | None: return _valid(value=value)\n"
-        )
-        self.assertEqual(self.found(source), [])
-        for changed in (
-            source.replace("value=value", "value=other"),
-            source.replace("def error(cls, *, value)", "def error(cls, *, other)"),
-            source.replace("-> str | None", "-> object"),
-        ):
-            with self.subTest(changed=changed):
-                self.assertTrue(self.found(changed))
-
     def test_a_dataclass_classmethod_building_the_class_is_allowed(self):
         source = "from dataclasses import dataclass\n@dataclass\nclass Data:\n    value: int\n    @classmethod\n    def parse(cls, fields): return cls(fields['v']) if 'v' in fields else None\n    @classmethod\n    def other(cls, value): return value\n"
         self.assertEqual(

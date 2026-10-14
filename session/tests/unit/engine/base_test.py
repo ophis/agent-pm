@@ -9,6 +9,7 @@ from agent_pm.session import (
     Session,
     Spec,
 )
+from agent_pm.session.engine.types import ProcessOptions
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost
@@ -79,6 +80,9 @@ class SessionClassMethods(Case):
                 with self.assertRaises(ConfigError) as spec_error:
                     Spec(workdir=self.home, flags=flags, env=env)
                 self.assertEqual(str(spec_error.exception), message)
+                with self.assertRaises(ConfigError) as options_error:
+                    ProcessOptions(flags=flags, env=env)
+                self.assertEqual(str(options_error.exception), message)
 
     def test_on_a_subclass_each_is_its_own(self):
         self.assertIsInstance(FakeSession.host(), FakeHost)

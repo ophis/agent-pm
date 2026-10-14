@@ -38,6 +38,7 @@ __all__ = [
     "NoRecordedSession",
     "Paste",
     "Prepared",
+    "ProcessOptions",
     "Reply",
     "Resumable",
     "SessionEvent",
@@ -63,14 +64,6 @@ def _environment_ok(env) -> bool:
         isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
         for k, v in env.items()
     )
-
-
-def _process_options_error(*, flags, env) -> str | None:
-    if not (isinstance(flags, tuple) and all(map(_clean_string, flags))):
-        return "flags must be a tuple of strings without NUL"
-    if not _environment_ok(env):
-        return "env must map variable names to strings without NUL"
-    return None
 
 
 class ConfigError(Exception):
@@ -174,14 +167,25 @@ class Access:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Spec:
+class ProcessOptions:
+    flags: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
+            raise ConfigError("flags must be a tuple of strings without NUL")
+        if not _environment_ok(self.env):
+            raise ConfigError("env must map variable names to strings without NUL")
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+
+
+@dataclass(frozen=True, kw_only=True)
+class Spec(ProcessOptions):
     workdir: str
     access: Access = field(default_factory=Access)
     tier: int | None = None
     effort: Effort | None = None
     sid: str | None = None
-    flags: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
     name: str | None = None
     protect: tuple[str, ...] = ()  # paths no writable dir may overlap (a sandboxing Adapter only)
     reply_tags: tuple[str, str] | None = None  # caller's (progress, outcome) tags for in_process
@@ -190,10 +194,6 @@ class Spec:
     prompt: str = ""
     resume: bool = False  # resume session sid
     events: str | None = None
-
-    @classmethod
-    def process_options_error(cls, *, flags, env) -> str | None:
-        return _process_options_error(flags=flags, env=env)
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -212,9 +212,7 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
-        if error := _process_options_error(flags=self.flags, env=self.env):
-            raise ConfigError(error)
-        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        super().__post_init__()
         if self.name is not None and not isinstance(self.name, str):
             raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
