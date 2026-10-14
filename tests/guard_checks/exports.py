@@ -1,4 +1,4 @@
-"""Entry-module export checks and the session's frozen interface."""
+"""Entry-module export checks and the session's and delegate's frozen interfaces."""
 
 import ast
 import builtins
@@ -13,6 +13,7 @@ import types
 
 from tests.guard_checks.common import _at_import, _bindings, _dotted, _files, _resolve_boundary
 from tests.guard_data import OBJECT_EXPORT_MODULES, OBJECT_EXPORTS_ALLOWED
+from tests.guard_data.delegate import DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES
 from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
 from tests.guards import PROJECTS
 
@@ -317,30 +318,40 @@ def _typing(node, *, operand=False):
 
 
 def session_interface_snapshot(repo: str) -> list[str]:
-    """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369,
-    TASK-387, TASK-414, TASK-420, TASK-427 and TASK-433 change it on purpose, rewriting the file
-    from _session_interface().
+    """The session's public interface equals SESSION_INTERFACE. Only TASK-369, TASK-387, TASK-414,
+    TASK-420, TASK-427 and TASK-433 change it on purpose, rewriting the file from _interface().
     """
+    return _snapshot_drift(repo, SESSION_INTERFACE, SESSION_INTERFACE_MODULES)
+
+
+def delegate_interface_snapshot(repo: str) -> list[str]:
+    """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-405 changes it on
+    purpose, rewriting the file from _interface().
+    """
+    return _snapshot_drift(repo, DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES)
+
+
+def _snapshot_drift(repo: str, path: str, modules: tuple[str, ...]) -> list[str]:
     try:
-        with open(os.path.join(repo, SESSION_INTERFACE), encoding="utf-8") as f:
+        with open(os.path.join(repo, path), encoding="utf-8") as f:
             want = json.load(f)
     except FileNotFoundError:
-        return [f"{SESSION_INTERFACE}: missing"]
-    have = _session_interface()
+        return [f"{path}: missing"]
+    have = _interface(modules)
     return [
-        f"{SESSION_INTERFACE}: {key}: {want.get(key, 'absent')} -> {have.get(key, 'absent')}"
+        f"{path}: {key}: {want.get(key, 'absent')} -> {have.get(key, 'absent')}"
         for key in sorted(want.keys() | have.keys())
         if want.get(key) != have.get(key)
     ]
 
 
-def _session_interface() -> dict[str, str]:
-    """Each SESSION_INTERFACE_MODULES export and its classes' public members: kind, bases, enum
-    values and parameters (name, kind, default); annotations are left out (their text varies by
-    Python version).
+def _interface(modules: tuple[str, ...]) -> dict[str, str]:
+    """Each export of `modules` and its classes' public members: kind, bases, enum values and
+    parameters (name, kind, default); annotations are left out (their text varies by Python
+    version).
     """
     found = {}
-    for name in SESSION_INTERFACE_MODULES:
+    for name in modules:
         module = importlib.import_module(name)
         for export in module.__all__:
             value = getattr(module, export)
