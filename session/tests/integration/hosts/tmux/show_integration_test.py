@@ -1,0 +1,87 @@
+"""Display placement against a private server, including partial-success recovery."""
+
+import io
+import os
+import subprocess
+import sys
+from contextlib import redirect_stderr
+from unittest import mock
+
+from agent_pm.session.engine.types import Launch
+from agent_pm.session.hosts.tmux import TmuxHost, placement
+
+from session.tests import live_tmux
+from session.tests.case import Case
+
+
+class ShowTest(Case):
+    def setUp(self):
+        self.server = live_tmux.Server(self, self.home)
+        self.server.start("mgr")
+        self.server.attach("mgr")
+        self.enterContext(mock.patch.dict(os.environ, self.server.env(), clear=True))
+        self.host = TmuxHost("tmux")
+        self.host.terminal(
+            "worker",
+            Launch(
+                (sys.executable, "-I", "-c", "import time; time.sleep(300)"),
+                self.server.env(),
+                cwd=self.home,
+            ),
+        )
+        self.environment = self.server.env(**self.server.inside("mgr"))
+        self.environment.update(ITERM_SESSION_ID="w0t0p0:ABC", TERM_PROGRAM="iTerm.app")
+        self.calls = []
+        self.fail_metadata = False
+
+    def transport(self, argv, **kwargs):
+        self.calls.append(argv)
+        if argv[0] == "pgrep":
+            raise FileNotFoundError("pgrep unavailable")
+        if argv[0] == "osascript":
+            self.fail("a private-server test must not address iTerm2")
+        if self.fail_metadata and argv[1:4] == ["set-option", "-t", "=worker:"]:
+            return subprocess.CompletedProcess(argv, 1, "", "metadata refused")
+        return subprocess.run(argv, **kwargs)
+
+    def show(self):
+        self.stderr = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, self.environment, clear=True),
+            redirect_stderr(self.stderr),
+        ):
+            return placement.show(
+                "worker", split="below", split_from="mgr", opener="mgr", proc=self.transport
+            )
+
+    def assert_visible_private_attach(self):
+        live_tmux.wait(
+            lambda: bool(self.server.tmux("list-clients", "-t", "=worker").stdout.strip()),
+            what="the nested display attaches to the worker on the private server",
+        )
+        split = next(argv for argv in self.calls if argv[:2] == ["tmux", "split-window"])
+        executable = split[split.index("TMUX") + 1]
+        self.assertTrue(os.path.isabs(executable))
+        self.assertEqual(split[split.index("-S") + 1], self.server.socket)
+        self.assertIn(["env", "-u", "TMUX"], [split[i : i + 3] for i in range(len(split) - 2)])
+        self.assertEqual(split[-3:], ["attach", "-t", "=worker"])
+        self.assertEqual(self.server.tmux("has-session", "-t", "=mgr").returncode, 0)
+
+    def test_nested_display_uses_the_private_socket_with_restricted_path(self):
+        os.symlink(self.server.program, os.path.join(self.server.bin, "tmux"))
+        self.environment["PATH"] = self.server.bin
+        self.assertIsNone(self.show())
+        self.assert_visible_private_attach()
+        self.assertEqual(self.server.option("worker", "@opener"), "mgr")
+        self.assertRegex(self.server.option("worker", "@pane"), r"^%[0-9]+$")
+
+    def test_metadata_failure_leaves_the_successful_split_and_unrelated_parent_alive(self):
+        self.fail_metadata = True
+        before = set(self.server.panes("=mgr:"))
+        self.assertIsNone(self.show())
+        self.assert_visible_private_attach()
+        after = set(self.server.panes("=mgr:"))
+        self.assertLess(before, after)
+        self.assertEqual(len(after - before), 1)
+        self.assertEqual(self.server.option("worker", "@pane"), "")
+        self.assertIn("metadata refused", self.stderr.getvalue())

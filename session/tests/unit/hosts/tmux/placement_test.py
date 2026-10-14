@@ -1,7 +1,4 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Placement context and iTerm fallback through recorded command transport."""
 
 import io
 import os
@@ -9,7 +6,7 @@ import re
 import tempfile
 from contextlib import redirect_stderr
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import iterm, placement, tmux_host, transport, types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -57,7 +54,7 @@ class PaneAnchorTest(PaneFixture):
         fake, err = Tmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
             self.assertIsNone(
-                tmux_host.open_pane("s", split="below", proc=fake, script=tmux_host.__file__)
+                placement.open_pane("s", split="below", proc=fake, script=tmux_host.__file__)
             )
         self.assertEqual(
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
@@ -141,35 +138,31 @@ class PaneAnchorTest(PaneFixture):
         mixed = self.clients((5, "/dev/ttys004", "%9"), (3, "/dev/ttys006", "%8", "1"))
         nested = expected_panes(("0", "/dev/ttys001", "%1"), ("0", "/dev/ttys004", "%5"))
         cases = [
-            (ITERM, {}, None, tmux_host.ItermAnchor(("id", ["ABC"]))),
+            (ITERM, {}, None, types.ItermAnchor(("id", ["ABC"]))),
             (
                 INSIDE,
                 {**own, "list-clients": shown},
                 None,
-                tmux_host.ItermAnchor(
-                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%3", SOCK, "own")
-                ),
+                types.ItermAnchor(("tty", ["/dev/ttys004"]), types.TmuxAnchor("%3", SOCK, "own")),
             ),
             (
                 INSIDE,
                 {**own, "list-clients": shown, "list-panes": nested},
                 None,
-                tmux_host.TmuxAnchor("%5", SOCK, "own"),
+                types.TmuxAnchor("%5", SOCK, "own"),
             ),
-            (INSIDE, own, None, tmux_host.ItermAnchor(("id", ["ABC"]))),
+            (INSIDE, own, None, types.ItermAnchor(("id", ["ABC"]))),
             (
                 {},
                 {"list-clients": shown},
                 "b",
-                tmux_host.ItermAnchor(
-                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
-                ),
+                types.ItermAnchor(("tty", ["/dev/ttys004"]), types.TmuxAnchor("%9", SOCK, "b")),
             ),
             (
                 {},
                 {"list-clients": shown, "list-panes": nested},
                 "b",
-                tmux_host.TmuxAnchor("%5", SOCK, "b"),
+                types.TmuxAnchor("%5", SOCK, "b"),
             ),
             (
                 {},
@@ -181,34 +174,30 @@ class PaneAnchorTest(PaneFixture):
                     )
                 },
                 "b",
-                tmux_host.ItermAnchor(
-                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
-                ),
+                types.ItermAnchor(("tty", ["/dev/ttys004"]), types.TmuxAnchor("%9", SOCK, "b")),
             ),
             (
                 INSIDE,
                 {**own, "list-clients": control, "list-panes": nested},
                 None,
-                tmux_host.TmuxAnchor("%3", SOCK, "own"),
+                types.TmuxAnchor("%3", SOCK, "own"),
             ),
             (
                 {},
                 {"list-clients": control, "list-panes": nested},
                 "b",
-                tmux_host.TmuxAnchor("%9", SOCK, "b"),
+                types.TmuxAnchor("%9", SOCK, "b"),
             ),
             (
                 {},
                 {"list-clients": mixed},
                 "b",
-                tmux_host.ItermAnchor(
-                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
-                ),
+                types.ItermAnchor(("tty", ["/dev/ttys004"]), types.TmuxAnchor("%9", SOCK, "b")),
             ),
         ]
         for env, results, split_from, want in cases:
             with self.subTest(env=env, results=results, split_from=split_from), environ(**env):
-                self.assertEqual(tmux_host.anchor(split_from, proc=Tmux(results=results)), want)
+                self.assertEqual(placement.anchor(split_from, proc=Tmux(results=results)), want)
         no_iterm = {k: v for k, v in INSIDE.items() if k != "ITERM_SESSION_ID"}
         cases = [
             ({}, {}, None, "no anchor pane: not in tmux"),
@@ -227,41 +216,39 @@ class PaneAnchorTest(PaneFixture):
             with (
                 self.subTest(env=env, split_from=split_from),
                 environ(**env),
-                self.assertRaisesRegex(tmux_host.TuiError, msg),
+                self.assertRaisesRegex(types.TuiError, msg),
             ):
-                tmux_host.anchor(split_from, proc=Tmux(results=results))
+                placement.anchor(split_from, proc=Tmux(results=results))
 
     def test_a_dead_pane_sharing_the_clients_tty_is_skipped(self):
         # a dead worker pane keeps its tty, which a later terminal may get
         shown = self.clients((5, "/dev/ttys004", "%9"))
         live, dead = ("0", "/dev/ttys004", "%5"), ("1", "/dev/ttys004", "%6")
         for rows, want in (
-            ([live, dead], tmux_host.TmuxAnchor("%5", SOCK, "b")),
+            ([live, dead], types.TmuxAnchor("%5", SOCK, "b")),
             (
                 [dead],
-                tmux_host.ItermAnchor(
-                    ("tty", ["/dev/ttys004"]), tmux_host.TmuxAnchor("%9", SOCK, "b")
-                ),
+                types.ItermAnchor(("tty", ["/dev/ttys004"]), types.TmuxAnchor("%9", SOCK, "b")),
             ),
         ):
             with self.subTest(rows=rows), environ():
                 fake = Tmux(results={"list-clients": shown, "list-panes": expected_panes(*rows)})
-                self.assertEqual(tmux_host.anchor("b", proc=fake), want)
+                self.assertEqual(placement.anchor("b", proc=fake), want)
 
     def test_own_session(self):
         fake = Tmux(results={"display-message": (0, "own\n")})
         with environ(**INSIDE):
-            self.assertEqual(tmux_host.own_session(proc=fake), "own")
+            self.assertEqual(placement.own_session(proc=fake), "own")
         self.assertEqual(fake.calls, [OWN])
         fake = Tmux()
         with environ():
-            self.assertIsNone(tmux_host.own_session(proc=fake))
+            self.assertIsNone(placement.own_session(proc=fake))
         self.assertEqual(fake.calls, [])
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
-            self.assertRaisesRegex(tmux_host.TuiError, "TMUX_PANE"),
+            self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
         ):
-            tmux_host.own_session(proc=fake)
+            placement.own_session(proc=fake)
 
     def test_bad_tmux_pane(self):
         for env in (
@@ -285,7 +272,7 @@ class OpenerTest(Case):
     def test_in_tmux_its_session(self):
         fake = Tmux(results={"display-message": (0, "cmd\n")})
         with environ(**INSIDE, TERM_PROGRAM="iTerm.app"):
-            self.assertEqual(tmux_host.opener(proc=fake), "cmd")
+            self.assertEqual(placement.opener(proc=fake), "cmd")
         self.assertEqual(fake.calls, [OWN])
 
     def test_in_iterm2_the_full_iterm_session_id(self):
@@ -295,7 +282,7 @@ class OpenerTest(Case):
                 self.subTest(value=value),
                 environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"),
             ):
-                self.assertEqual(tmux_host.opener(proc=fake), value)
+                self.assertEqual(placement.opener(proc=fake), value)
             self.assertEqual(fake.calls, [])
 
     def test_neither(self):
@@ -311,11 +298,11 @@ class OpenerTest(Case):
                 self.subTest(env=env),
                 environ(**env),
                 self.assertRaisesRegex(
-                    tmux_host.TuiError,
+                    types.TuiError,
                     r"^no anchor pane: not in tmux, no iTerm2 pane \(\$ITERM_SESSION_ID\)$",
                 ),
             ):
-                tmux_host.opener(proc=fake)
+                placement.opener(proc=fake)
             self.assertEqual(fake.calls, [])
 
     def test_a_bad_iterm_session_id(self):
@@ -332,49 +319,49 @@ class OpenerTest(Case):
             with (
                 self.subTest(value=value),
                 environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"),
-                self.assertRaisesRegex(tmux_host.TuiError, r"^bad \$ITERM_SESSION_ID"),
+                self.assertRaisesRegex(types.TuiError, r"^bad \$ITERM_SESSION_ID"),
             ):
-                tmux_host.opener(proc=Tmux())
+                placement.opener(proc=Tmux())
 
     def test_bad_tmux_pane(self):
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
-            self.assertRaisesRegex(tmux_host.TuiError, "TMUX_PANE"),
+            self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
         ):
-            tmux_host.opener(proc=Tmux())
+            placement.opener(proc=Tmux())
 
     def test_patterns(self):
         for value in ("cmd", "a_b-1", "w0t0p0:ABC", "w0t1p0:6D7E-8F"):
-            self.assertTrue(tmux_host.OPENER.fullmatch(value), value)
+            self.assertTrue(transport.OPENER.fullmatch(value), value)
         for value in ("", "a b", "a:", ":b", "a:b:c", "a_b:c", "a:b_c", "a;", "%1", "a\n"):
-            self.assertFalse(tmux_host.OPENER.fullmatch(value), value)
-        self.assertTrue(tmux_host.ITERM_ID.fullmatch("6D7E-8F"))
+            self.assertFalse(transport.OPENER.fullmatch(value), value)
+        self.assertTrue(transport.ITERM_ID.fullmatch("6D7E-8F"))
         for value in ("", "a_b", "a:b", "%1", "a b"):
-            self.assertFalse(tmux_host.ITERM_ID.fullmatch(value), value)
+            self.assertFalse(transport.ITERM_ID.fullmatch(value), value)
 
 
 class SplitTest(Case):
     def test_sides(self):
-        self.assertEqual(list(tmux_host.Split), ["right", "below"])
-        for split in (None, *tmux_host.Split, "below"):
+        self.assertEqual(list(types.Split), ["right", "below"])
+        for split in (None, *types.Split, "below"):
             with self.subTest(split=split):
-                self.assertIsNone(tmux_host._layout(split, None))
+                self.assertIsNone(placement._layout(split, None))
         for bad in ("up", "", "RIGHT", 1, ["right"]):
             with (
                 self.subTest(split=bad),
                 self.assertRaisesRegex(
-                    tmux_host.TuiError,
+                    types.TuiError,
                     f"^split must be one of right, below, not {re.escape(repr(bad))}$",
                 ),
             ):
-                tmux_host._layout(bad, None)
+                placement._layout(bad, None)
 
 
 class ShowTest(Case):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return tmux_host.show(session, template, proc=fake, script=tmux_host.__file__, **kw)
+            return placement.show(session, template, proc=fake, script=tmux_host.__file__, **kw)
 
     def test_attach_line_then_the_template(self):
         fake = Tmux()
@@ -452,7 +439,7 @@ class ContainerTest(Case):
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tmux_host.show("s", proc=fake, script=tmux_host.__file__)
+            return placement.show("s", proc=fake, script=tmux_host.__file__)
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])
@@ -652,7 +639,7 @@ class PanePlacementTest(PaneFixture):
         ):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaises(tmux_host.TuiError):
+                with self.assertRaises(types.TuiError):
                     self.show(fake, ITERM, **kw)
                 self.assertEqual(fake.calls, [])
 
@@ -736,7 +723,7 @@ class PanePlacementTest(PaneFixture):
                 self.assertNotIn("set-option", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = tmux_host.APPLESCRIPT
+        script = iterm.APPLESCRIPT
         self.assertNotIn(TMUX, script)
         for part in (
             "on run argv",
@@ -760,7 +747,7 @@ class PanePlacementTest(PaneFixture):
 class StackTest(Case):
     """Panes stack by opener. The caller is in tmux session `own`, pane %3, shown by a terminal
     client (tty /dev/ttys004) whose pane is %9; list-sessions prints `rows`, list-panes -a the
-    `live` pane ids (`hosts`, panes() rows, for the tty format); pgrep finds no iTerm2 unless told;
+    `live` pane ids (`hosts`, pane_ids() rows, for the tty format); pgrep finds no iTerm2 unless told;
     a tmux split prints %99.
     """
 
@@ -799,7 +786,7 @@ class StackTest(Case):
     def show(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return tmux_host.show(
+            return placement.show(
                 "s", kw.pop("template", None), **kw, proc=fake, script=tmux_host.__file__
             )
 
@@ -1142,6 +1129,6 @@ class StackTest(Case):
         ):
             with self.subTest(opener=opener):
                 fake = self.fake()
-                with self.assertRaisesRegex(tmux_host.TuiError, "opener"):
+                with self.assertRaisesRegex(types.TuiError, "opener"):
                     self.show(fake, opener=opener)
                 self.assertEqual(fake.calls, [])

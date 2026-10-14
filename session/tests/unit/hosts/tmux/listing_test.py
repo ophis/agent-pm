@@ -1,11 +1,8 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Listing row validation, shown-client precedence and diagnostic tails."""
 
 import re
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import listing
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -34,7 +31,7 @@ class ListingTest(Case):
                 "capture-pane": capture,
             }
         )
-        return tmux_host.listing(match, proc=fake), fake
+        return listing.listing(match, proc=fake), fake
 
     def test_every_field_sorted_by_name_one_call_each(self):
         got, fake = self.listing(
@@ -76,7 +73,7 @@ class ListingTest(Case):
         )
         self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES, captured("w1")])
         self.assertEqual(fake.kwargs, [TMUX_KW] * 4)
-        self.assertEqual(tmux_host.LAST_LINES, 2000)
+        self.assertEqual(listing.LAST_LINES, 2000)
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(

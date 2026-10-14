@@ -1,11 +1,9 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Pure layout codec, ownership tree and geometry vectors."""
 
 import itertools
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import layout as layouts
+from agent_pm.session.hosts.tmux import types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -26,8 +24,8 @@ class GridTreeTest(Case):
         if layout is None:
             layout = grid([slot(p) for p in panes if p != "%0"], per_column=len(panes))
         else:
-            layout = tmux_host._parse_layout(layout)
-        return tmux_host._grid_tree("%0", panes, [self.MGR, *rows], layout)
+            layout = layouts.parse_layout(layout)
+        return layouts.grid_tree("%0", panes, [self.MGR, *rows], layout)
 
     def test_cells_by_session_name_sub_workers_in_their_parents_cell(self):
         names = [
@@ -241,7 +239,7 @@ class GridTreeTest(Case):
         ]
         orphans = slot(None, slot("%3"), slot("%4"))
         for layout in (
-            tmux_host._render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
+            layouts.render_layout(grid([slot("%1"), orphans, slot("%5")], 1)),
             "160x48,0,0{79x48,0,0,0,80x48,80,0{40x48,80,0,1,39x48,121,0[39x24,121,0[39x12,121,0,3,"
             "39x11,121,13,4],39x23,121,25,5]}}",
         ):
@@ -255,7 +253,7 @@ class GridTreeTest(Case):
         # N=1: main [a, P1 (c1 %3, c2 %4), P2 (d1 %6, d2 %7)], both killed; either group resolved
         # first
         groups = slot(None, slot("%3"), slot("%4")), slot(None, slot("%6"), slot("%7"))
-        layout = tmux_host._render_layout(grid([slot("%1"), *groups], 1))
+        layout = layouts.render_layout(grid([slot("%1"), *groups], 1))
         for p1, p2, want in (("p", "q", groups), ("q", "p", groups[::-1])):
             with self.subTest(p1=p1, p2=p2):
                 rows = [
@@ -281,7 +279,7 @@ class GridTreeTest(Case):
                 layout = grid([slot(p) for p in panes[1:]], per_column)
                 rows = [(int(p[1:]) + 1, f"w{p[1:]}", "old", p) for p in panes[1:]]
                 self.assertEqual(
-                    self.tree(rows, panes, tmux_host._render_layout(layout)),
+                    self.tree(rows, panes, layouts.render_layout(layout)),
                     [slot(p) for p in panes[1:]],
                 )
 
@@ -291,10 +289,10 @@ class GridLayoutTest(Case):
 
     def tiles(self, cell):
         """Each container's children tile it exactly, one-cell borders between them."""
-        if cell.kind == tmux_host.LEAF:
+        if cell.kind == layouts.LEAF:
             return
         self.assertGreaterEqual(len(cell.children), 2)
-        across = cell.kind == tmux_host.LEFT_RIGHT
+        across = cell.kind == layouts.LEFT_RIGHT
         at = cell.x if across else cell.y
         for child in cell.children:
             if across:
@@ -312,18 +310,18 @@ class GridLayoutTest(Case):
         self.tiles(root)
         self.assertEqual(
             (root.kind, root.w, root.h, root.x, root.y),
-            (tmux_host.LEFT_RIGHT, width, height, 0, 0),
+            (layouts.LEFT_RIGHT, width, height, 0, 0),
         )
         manager, area = root.children
         self.assertEqual((manager.pane, manager.h), ("%0", height))
         c = -(-n // per_column)
         if c > 1:
-            self.assertEqual(area.kind, tmux_host.LEFT_RIGHT)
+            self.assertEqual(area.kind, layouts.LEFT_RIGHT)
         columns = list(area.children) if c > 1 else [area]
         self.assertEqual(len(columns), c)
         self.assertLessEqual(max(col.w for col in columns) - min(col.w for col in columns), 1)
         for j, column in enumerate(columns):
-            cells = list(column.children) if column.kind == tmux_host.TOP_BOTTOM else [column]
+            cells = list(column.children) if column.kind == layouts.TOP_BOTTOM else [column]
             self.assertEqual(
                 [cell.pane for cell in cells],
                 [f"%{i + 1}" for i in range(j * per_column, min(n, (j + 1) * per_column))],
@@ -374,7 +372,7 @@ class GridLayoutTest(Case):
         for width in (1, 30, 100):
             with self.subTest(width=width):
                 root = grid(4, manager_width=width)
-                self.assertEqual(root.children[0], tmux_host.Cell(width, 48, 0, 0, "%0"))
+                self.assertEqual(root.children[0], types.Cell(width, 48, 0, 0, "%0"))
                 self.check(root, 4, 3)
 
     def test_compress_when_too_wide(self):
@@ -449,17 +447,17 @@ class GridLayoutTest(Case):
             [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5"), slot("%7")]
         )
         self.assertEqual(
-            [leaf.pane for leaf in tmux_host._leaves(root)],
+            [leaf.pane for leaf in layouts.leaf_cells(root)],
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
         self.assertEqual(
-            tmux_host._panes(root),
+            layouts.pane_ids(root),
             ["%0", "%1", "%2", "%3", "%6", "%4", "%5", "%7"],
         )
 
     def test_panes_require_leaf_pane(self):
         with self.assertRaises(AssertionError):
-            tmux_host._panes(tmux_host.Cell(1, 1, 0, 0))
+            layouts.pane_ids(types.Cell(1, 1, 0, 0))
 
 
 class SwapsTest(Case):
@@ -467,7 +465,7 @@ class SwapsTest(Case):
         have = ["%0", "%1", "%2", "%3"]
         for want in itertools.permutations(have):
             with self.subTest(want=want):
-                swaps = tmux_host._swaps(have, list(want))
+                swaps = layouts.swaps(have, list(want))
                 order = list(have)
                 for source, target in swaps:
                     i, j = order.index(source), order.index(target)
@@ -486,10 +484,10 @@ class LayoutStringTest(Case):
     def test_checksum_of_tmux_samples(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
             csum, text = sample.split(",", 1)
-            self.assertEqual(tmux_host._checksum(text), csum)
+            self.assertEqual(layouts._checksum(text), csum)
 
     def test_parse(self):
-        Cell, lr, tb = tmux_host.Cell, tmux_host.LEFT_RIGHT, tmux_host.TOP_BOTTOM
+        Cell, lr, tb = types.Cell, layouts.LEFT_RIGHT, layouts.TOP_BOTTOM
         want = Cell(
             160,
             48,
@@ -508,12 +506,12 @@ class LayoutStringTest(Case):
                 ),
             ),
         )
-        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL), want)
-        self.assertEqual(tmux_host._parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
+        self.assertEqual(layouts.parse_layout(MAIN_VERTICAL), want)
+        self.assertEqual(layouts.parse_layout(MAIN_VERTICAL.split(",", 1)[1]), want)
 
     def test_round_trip(self):
         for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            self.assertEqual(tmux_host._render_layout(tmux_host._parse_layout(sample)), sample)
+            self.assertEqual(layouts.render_layout(layouts.parse_layout(sample)), sample)
 
     def test_malformed(self):
         text = MAIN_VERTICAL.split(",", 1)[1]
@@ -534,4 +532,4 @@ class LayoutStringTest(Case):
             "160x48,0,0,1\n",
         ):
             with self.subTest(bad=bad):
-                self.assertIsNone(tmux_host._parse_layout(bad))
+                self.assertIsNone(layouts.parse_layout(bad))

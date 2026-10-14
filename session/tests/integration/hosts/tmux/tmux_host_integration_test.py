@@ -2,6 +2,7 @@
 the file standing alone.
 """
 
+import base64
 import errno
 import json
 import os
@@ -14,6 +15,8 @@ import time
 import unittest
 from contextlib import suppress
 
+import agent_pm.session
+import agent_pm.utils
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests.case import Case
@@ -24,13 +27,19 @@ for _ in range(3000):
     time.sleep(0.01)"""
 
 
-class SingleFileTest(Case):
-    def test_runs_alone(self):
+class PackageEntryTest(Case):
+    def test_runs_with_only_the_explicit_package_roots(self):
         with tempfile.TemporaryDirectory() as d:
-            bundle = shutil.copytree(os.path.dirname(tmux_host.__file__), os.path.join(d, "host"))
-            copy = os.path.join(bundle, "tmux_host.py")
+            roots = []
+            for package in (agent_pm.session, agent_pm.utils):
+                root = os.path.join(d, package.__name__.rsplit(".", 1)[1])
+                destination = os.path.join(root, *package.__name__.split("."))
+                shutil.copytree(os.path.dirname(package.__file__), destination)
+                roots.append(root)
+            entry = os.path.join(roots[0], "agent_pm", "session", "hosts", "tmux", "entry.py")
+            encoded = base64.urlsafe_b64encode(json.dumps(roots).encode()).decode()
             res = subprocess.run(
-                [sys.executable, "-I", copy, "--help"],
+                [sys.executable, "-I", entry, encoded, "--help"],
                 cwd=d,
                 capture_output=True,
                 text=True,

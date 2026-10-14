@@ -1,7 +1,4 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Recorded tmux transport and shared launch, placement and grid fixtures."""
 
 import fcntl
 import io
@@ -17,7 +14,10 @@ import unittest.mock
 from contextlib import contextmanager, redirect_stderr
 from types import SimpleNamespace
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.engine.types import Launch
+from agent_pm.session.hosts.tmux import grid as grids
+from agent_pm.session.hosts.tmux import iterm, placement, tmux_host, types
+from agent_pm.session.hosts.tmux import layout as layouts
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
@@ -172,7 +172,7 @@ def grid_set(window, manager, n=3, *, hooks=True, retile="all"):
     flags = "--no-wait --if-panes-changed" if retile == "open-close" else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{@grid-busy}},{window}}}' '' "
-        f"\"run-shell -b '{PY} -I {SCRIPT} tile {flags} {window} >/dev/null 2>&1 || true'\""
+        f"\"run-shell -b '{PY} -I {SCRIPT} {grids.entry_roots()} tile {flags} {window} >/dev/null 2>&1 || true'\""
     )
     mode = MODE_HOOKS[retile]
     return [
@@ -275,7 +275,7 @@ def which(tmux=TMUX):
 
 
 def osa(split, kind, session, *anchors):
-    return ["osascript", "-e", tmux_host.APPLESCRIPT, split, kind, TMUX, session, *anchors]
+    return ["osascript", "-e", iterm.APPLESCRIPT, split, kind, TMUX, session, *anchors]
 
 
 def decorations(session, events=None, status="off"):
@@ -440,23 +440,23 @@ def seq(*results):
 
 
 def slot(pane, *children):
-    return tmux_host.Slot(pane, children)
+    return types.Slot(pane, children)
 
 
 def body(cell):
-    return tmux_host._render_layout(cell).split(",", 1)[1]
+    return layouts.render_layout(cell).split(",", 1)[1]
 
 
 def dump(text):
     """A layout body as #{window_layout} prints it, with its checksum."""
-    return f"{tmux_host._checksum(text)},{text}"
+    return f"{layouts._checksum(text)},{text}"
 
 
 def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     """The grid of manager %0 in a width x height window; cells: main cells, or n for %1..%n."""
     if isinstance(cells, int):
         cells = [slot(f"%{i}") for i in range(1, cells + 1)]
-    return tmux_host._grid_layout(
+    return layouts.grid_layout(
         cells, "%0", width=width, height=height, manager_width=manager_width, per_column=per_column
     )
 
@@ -498,7 +498,7 @@ class StartFixture(Case):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
             tmux_host.start(
-                session, list(argv), **kw, proc=fake, sleep=self.sleep, cwd=self.cwd, env=env
+                session, Launch(tuple(argv), env, cwd=self.cwd), **kw, proc=fake, sleep=self.sleep
             )
 
 
@@ -506,8 +506,8 @@ class PaneFixture(Case):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return tmux_host.show(
-                "s", kw.pop("template", None), **kw, proc=fake, script=tmux_host.__file__
+            return placement.show(
+                "s", kw.pop("template", None), **kw, proc=fake, script=grids.ENTRY
             )
 
     def clients(self, *rows):
@@ -672,7 +672,7 @@ class TileFixture(Case):
     ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(layout, panes, rows, **kw)
-        tmux_host.tile(
+        grids.tile(
             "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake
         )
         return fake

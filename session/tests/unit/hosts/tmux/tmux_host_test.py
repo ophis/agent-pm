@@ -1,9 +1,5 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Launch handoff, events and terminal transport through recorded commands."""
 
-import ast
 import errno
 import os
 import re
@@ -16,7 +12,8 @@ import unittest
 import unittest.mock
 from contextlib import ExitStack
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.engine.types import ConfigError, Launch
+from agent_pm.session.hosts.tmux import tmux_host, types
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 
 from session.tests.case import Case
@@ -31,7 +28,6 @@ from session.tests.tmux_fixtures import (
     NEW,
     NEW_PROCESS,
     PREFIXES,
-    RUNTIME,
     SIGNALS,
     TMUX,
     TMUX_KW,
@@ -45,31 +41,13 @@ from session.tests.tmux_fixtures import (
 from utils.tests.process_fixtures import TimeoutExpired
 
 
-class SingleFileTest(Case):
-    def setUp(self):
-        with open(tmux_host.__file__) as f:
-            self.source = f.read()
-
-    def test_imports_only_the_stdlib(self):
-        names = set()
-        for node in ast.walk(ast.parse(self.source)):
-            if isinstance(node, ast.Import):
-                names |= {a.name.split(".")[0] for a in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                names.add("." * node.level + (node.module or "").split(".")[0])
-        self.assertLessEqual(names, set(sys.stdlib_module_names))
-
-    def test_no_runtime_name(self):
-        self.assertEqual(RUNTIME.findall(self.source), [])
-
-
 class DetachTest(StartFixture):
     """Session d hosting argv as old drive.detach did: no decoration, no dead pane kept."""
 
     def detach(self, fake, session="d", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         return tmux_host.detach(
-            session, list(argv), **kw, proc=fake, sleep=self.sleep, cwd=self.cwd, env=env
+            session, Launch(tuple(argv), env, cwd=self.cwd), **kw, proc=fake, sleep=self.sleep
         )
 
     def test_new_session_runs_the_wrapper_and_returns_its_process_once_argv_execd(self):
@@ -320,7 +298,7 @@ class DetachTest(StartFixture):
         ):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                with self.assertRaisesRegex(types.TuiError, error):
                     self.detach(fake, **kw)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
@@ -329,14 +307,14 @@ class DetachTest(StartFixture):
         for out in ("", "4242 $3 %7\n", "4242 $3 %7 x\n"):
             with self.subTest(out=out):
                 fake = Tmux(results={"new-session": (0, out, "")})
-                with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: bad new session "):
+                with self.assertRaisesRegex(types.TuiError, "^tmux: bad new session "):
                     self.detach(fake)
                 self.assertEqual(fake.commands(), ["new-session", "kill-session"])
                 self.assertEqual(os.listdir(self.temp), [])
 
     def test_an_existing_session_is_refused_untouched(self):
         fake = Tmux(results={"new-session": (1, "", "duplicate session: d\n")})
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^session d exists$"):
+        with self.assertRaisesRegex(types.TuiError, r"^session d exists$"):
             self.detach(fake, opener="mgr")
         self.assertEqual(fake.commands(), ["new-session"])
         self.assertEqual(os.listdir(self.temp), [])
@@ -346,7 +324,7 @@ class DetachTest(StartFixture):
             with self.subTest(fail=fail):
                 self.sleep.reset_mock()
                 fake = Tmux(fail=fail, hand_over=False)
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^session d did not start$"):
+                with self.assertRaisesRegex(types.TuiError, r"^session d did not start$"):
                     self.detach(fake)
                 self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
                 self.assertIs(fake.dir_at_kill, expr2=False)
@@ -358,7 +336,7 @@ class DetachTest(StartFixture):
     def test_an_exec_failure_raises_its_error_and_kills_the_session(self):
         fake = Tmux(wrapper=errno.ENOENT)
         with self.assertRaisesRegex(
-            tmux_host.TuiError,
+            types.TuiError,
             "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.ENOENT)}") + "$",
         ):
             self.detach(fake)
@@ -368,7 +346,7 @@ class DetachTest(StartFixture):
 
     def test_never_execd_kills_it(self):
         fake = Tmux(wrapper="hang")
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^session d did not start$"):
+        with self.assertRaisesRegex(types.TuiError, r"^session d did not start$"):
             self.detach(fake)
         os.close(fake.writer)
         self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
@@ -381,7 +359,7 @@ class DetachTest(StartFixture):
         fake = Tmux(
             fail={"new-session"}
         )  # e.g. the chained set-option failed after new-session made the session
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             self.detach(fake, opener="mgr")
         self.assertEqual(fake.calls[1:], [["tmux", "kill-session", "-t", "=d"]])
         self.assertEqual(os.listdir(self.temp), [])
@@ -397,11 +375,17 @@ class DetachTest(StartFixture):
         self.assertIs(fake.dir_at_kill, expr2=False)
         self.assertEqual(os.listdir(self.temp), [])
 
+    def test_launch_rejects_nul_before_tmux(self):
+        fake = Tmux()
+        with self.assertRaisesRegex(ConfigError, "launch: argv must be strings without NUL"):
+            self.detach(fake, argv=("tool", "a\0b"))
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_refused_before_tmux(self):
         for kw, error in (
             ({"argv": ()}, "^no command$"),
             ({"argv": ("no-such-tool",)}, "no-such-tool"),
-            ({"argv": ("tool", "a\0b")}, "NUL"),
             ({"argv": ("tool", "\ud800")}, "encoded"),
             ({"opener": "a b"}, "opener"),
             ({"opener": "a:b:c"}, "opener"),
@@ -409,13 +393,13 @@ class DetachTest(StartFixture):
         ):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                with self.assertRaisesRegex(types.TuiError, error):
                     self.detach(fake, **kw)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
         with (
             unittest.mock.patch.object(sys, "executable", "/opt/py#3/bin/python3"),
-            self.assertRaisesRegex(tmux_host.TuiError, "tmux would misread"),
+            self.assertRaisesRegex(types.TuiError, "tmux would misread"),
         ):
             self.detach(fake)
         self.assertEqual(fake.calls, [])
@@ -425,7 +409,7 @@ class DetachTest(StartFixture):
         fake = Tmux()
         with (
             unittest.mock.patch.object(tempfile, "tempdir", os.path.join(self.root, "missing")),
-            self.assertRaisesRegex(tmux_host.TuiError, "^handover: "),
+            self.assertRaisesRegex(types.TuiError, "^handover: "),
         ):
             self.detach(fake)
         self.assertEqual(fake.calls, [])
@@ -519,7 +503,7 @@ class MarkTest(Case):
                 self.subTest(path=path, error=error),
                 ExitStack() as stack,
                 self.assertRaisesRegex(
-                    tmux_host.TuiError, f"^events file {re.escape(path)}: .*{error}"
+                    types.TuiError, f"^events file {re.escape(path)}: .*{error}"
                 ),
             ):
                 if patches:
@@ -543,7 +527,7 @@ class MarkTest(Case):
             (Tmux(pane="w1"), {"pane": "w1:0"}, "^bad tmux pane 'w1:0'$"),
         )
         for fake, kw, error in cases:
-            with self.subTest(error=error), self.assertRaisesRegex(tmux_host.TuiError, error):
+            with self.subTest(error=error), self.assertRaisesRegex(types.TuiError, error):
                 tmux_host.mark("done", self.events, proc=fake, **kw)
         self.assertEqual(self.text(), "old\n")
 
@@ -575,7 +559,7 @@ class EventsFileTest(Case):
         for path in (link, self.root, os.path.join(self.root, "missing", "e")):
             with (
                 self.subTest(path=path),
-                self.assertRaisesRegex(tmux_host.TuiError, f"^events file {re.escape(path)}: "),
+                self.assertRaisesRegex(types.TuiError, f"^events file {re.escape(path)}: "),
             ):
                 tmux_host.events_file(path)
         fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
@@ -586,7 +570,7 @@ class EventsFileTest(Case):
             with (
                 self.subTest(patch=patch),
                 patch,
-                self.assertRaisesRegex(tmux_host.TuiError, "owned by you"),
+                self.assertRaisesRegex(types.TuiError, "owned by you"),
             ):
                 tmux_host.events_file(target)
 
@@ -617,7 +601,7 @@ class EventsFileTest(Case):
             with (
                 self.subTest(name=name),
                 self.assertRaisesRegex(
-                    tmux_host.TuiError, f"^events file {re.escape(path)}: tmux would misread"
+                    types.TuiError, f"^events file {re.escape(path)}: tmux would misread"
                 ),
             ):
                 tmux_host.events_file(path)
@@ -665,10 +649,10 @@ class ProcessIdentityTest(Case):
         ):
             with self.subTest(printed=printed):
                 fake = Tmux(results={"display-message": printed})
-                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                with self.assertRaisesRegex(types.TuiError, error):
                     tmux_host.process("s", proc=fake)
         fake = Tmux()
-        with self.assertRaisesRegex(tmux_host.TuiError, "invalid target"):
+        with self.assertRaisesRegex(types.TuiError, "invalid target"):
             tmux_host.process("a b", proc=fake)
         self.assertEqual(fake.calls, [])
 
@@ -677,13 +661,13 @@ class StatusTest(Case):
     def test_states(self):
         # a signal death: -n (tmux prints the signal's name where libc has one, else its number)
         for pane, want in (
-            ("0  ", tmux_host.PaneStatus.RUNNING),
+            ("0  ", types.PaneStatus.RUNNING),
             ("1 3 ", 3),
             ("1 0 ", 0),
             ("1  kill", -9),
             ("1  9", -9),
             ("1  term", -15),
-            ("1  ", tmux_host.PaneStatus.RUNNING),
+            ("1  ", types.PaneStatus.RUNNING),
             ("  ", None),
             (None, None),
         ):
@@ -696,13 +680,13 @@ class StatusTest(Case):
                 self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_a_pane_status_is_a_str_enum_member(self):
-        self.assertEqual(list(tmux_host.PaneStatus), ["running", "unknown"])
+        self.assertEqual(list(types.PaneStatus), ["running", "unknown"])
         for name in ("RUNNING", "UNKNOWN"):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(tmux_host, name))
         for result, want in (
-            ((0, "0  \n"), tmux_host.PaneStatus.RUNNING),
-            ((0, "x\n"), tmux_host.PaneStatus.UNKNOWN),
+            ((0, "0  \n"), types.PaneStatus.RUNNING),
+            ((0, "x\n"), types.PaneStatus.UNKNOWN),
         ):
             with self.subTest(result=result):
                 fake = Tmux(results={"display-message": result})
@@ -712,13 +696,13 @@ class StatusTest(Case):
         missing = FileNotFoundError(2, "No such file or directory", "tmux")
         for result, want in (
             *(((1, "", err + "\n"), None) for err in ABSENT),
-            *(((1, "", err + "\n"), tmux_host.PaneStatus.UNKNOWN) for err in FAILED),
-            ((0, "x\n"), tmux_host.PaneStatus.UNKNOWN),
-            ((0, "2 0 \n"), tmux_host.PaneStatus.UNKNOWN),
-            ((0, "1 0\n"), tmux_host.PaneStatus.UNKNOWN),
-            ((0, ""), tmux_host.PaneStatus.UNKNOWN),
-            (missing, tmux_host.PaneStatus.UNKNOWN),
-            (PermissionError(13, "Permission denied"), tmux_host.PaneStatus.UNKNOWN),
+            *(((1, "", err + "\n"), types.PaneStatus.UNKNOWN) for err in FAILED),
+            ((0, "x\n"), types.PaneStatus.UNKNOWN),
+            ((0, "2 0 \n"), types.PaneStatus.UNKNOWN),
+            ((0, "1 0\n"), types.PaneStatus.UNKNOWN),
+            ((0, ""), types.PaneStatus.UNKNOWN),
+            (missing, types.PaneStatus.UNKNOWN),
+            (PermissionError(13, "Permission denied"), types.PaneStatus.UNKNOWN),
         ):
             with self.subTest(result=result):
                 fake = Tmux(results={"display-message": result})
@@ -754,7 +738,7 @@ class KillTest(Case):
         self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.kill("s", proc=Tmux(fail={"kill-session"}))
 
 
@@ -806,7 +790,7 @@ class SendTest(Case):
         ):
             with self.subTest(step=step):
                 fake, sleep = Tmux(fail={step}), unittest.mock.Mock()
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+                with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
                     tmux_host.send("s", "hi", proc=fake, sleep=sleep)
                 self.assertEqual(fake.commands(), commands)
                 sleep.assert_not_called()
@@ -833,7 +817,7 @@ class PasteTest(Case):
         for delete in ((0,), (1, "", "no buffer\n"), OSError("gone")):
             with self.subTest(delete=delete):
                 fake = Tmux(results={"paste-buffer": (1, "", "boom\n"), "delete-buffer": delete})
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+                with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
                     tmux_host.paste("s", "hi", proc=fake)
                 buffer = fake.calls[0][3]
                 self.assertEqual(
@@ -844,7 +828,7 @@ class PasteTest(Case):
                     ],
                 )
         fake = Tmux(fail={"load-buffer"})
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.paste("s", "hi", proc=fake)
         self.assertEqual(fake.commands(), ["load-buffer"])
 
@@ -860,12 +844,12 @@ class KeysTest(Case):
         for name in ("-l", "-", "Enter;", ";"):
             with self.subTest(name=name):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, "^tmux would misread"):
+                with self.assertRaisesRegex(types.TuiError, "^tmux would misread"):
                     tmux_host.keys("s", "Escape", name, proc=fake)
                 self.assertEqual(fake.calls, [])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.keys("s", "Enter", proc=Tmux(fail={"send-keys"}))
 
 
@@ -886,12 +870,12 @@ class ReadTest(Case):
     def test_lines_must_be_a_positive_int(self):
         fake = Tmux()
         for lines in (0, -1, True, 1.5, "3"):
-            with self.subTest(lines=lines), self.assertRaises(tmux_host.TuiError):
+            with self.subTest(lines=lines), self.assertRaises(types.TuiError):
                 tmux_host.read("s", lines, proc=fake)
         self.assertEqual(fake.calls, [])
 
     def test_failure(self):
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.read("s", proc=Tmux(fail={"capture-pane"}))
 
 
@@ -916,14 +900,14 @@ class OptionTest(Case):
             (1, "", "boom\n"),
             FileNotFoundError(2, "No such file", "tmux"),
         ):
-            with self.subTest(result=result), self.assertRaisesRegex(tmux_host.TuiError, "^tmux: "):
+            with self.subTest(result=result), self.assertRaisesRegex(types.TuiError, "^tmux: "):
                 tmux_host.option("s", "@sid", proc=Tmux(results={"show-options": result}))
 
     def test_only_a_user_option(self):
         for name in ("status", "@", "@a b", "@a;", "", "-g"):
             with self.subTest(name=name):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, "^option "):
+                with self.assertRaisesRegex(types.TuiError, "^option "):
                     tmux_host.option("s", name, proc=fake)
                 self.assertEqual(fake.calls, [])
 
@@ -951,7 +935,7 @@ class PaneIdTest(Case):
             ((0, "5\n"), "^bad tmux pane '5'$"),
             ((0, "%5\n%6\n"), "^bad tmux pane"),
         ):
-            with self.subTest(result=result), self.assertRaisesRegex(tmux_host.TuiError, error):
+            with self.subTest(result=result), self.assertRaisesRegex(types.TuiError, error):
                 tmux_host.pane("s", proc=Tmux(results={"display-message": result}))
 
 
@@ -992,7 +976,7 @@ class PaneTargetTest(Case):
         self.assertIsNone(
             tmux_host.option("%12", "@sid", proc=Tmux(results={"show-options": gone}))
         )
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: can't find pane: %12$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: can't find pane: %12$"):
             tmux_host.kill("%12", proc=Tmux(results={"kill-session": gone}))
 
     def test_a_bad_target_is_refused_before_tmux(self):
@@ -1000,7 +984,7 @@ class PaneTargetTest(Case):
             with self.subTest(target=target):
                 fake = Tmux()
                 for call in self.calls(target, fake):
-                    with self.assertRaisesRegex(tmux_host.TuiError, "^invalid target "):
+                    with self.assertRaisesRegex(types.TuiError, "^invalid target "):
                         call()
                 self.assertEqual(fake.calls, [])
 
@@ -1112,6 +1096,13 @@ class StartTest(StartFixture):
         self.assertEqual(fake._handover["cwd"], self.cwd)
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
 
+    def test_launch_rejects_nul_before_tmux(self):
+        fake = Tmux()
+        with self.assertRaisesRegex(ConfigError, "launch: argv must be strings without NUL"):
+            self.start(fake, argv=("tool", "a\0b"))
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(os.listdir(self.temp), [])
+
     def test_refused_before_tmux(self):
         # the command resolved with the env's PATH (no sh there); an events file that is no regular
         # file
@@ -1126,7 +1117,7 @@ class StartTest(StartFixture):
         ):
             with self.subTest(**kw):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                with self.assertRaisesRegex(types.TuiError, error):
                     self.start(fake, **kw)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
@@ -1135,7 +1126,7 @@ class StartTest(StartFixture):
         fake = Tmux()
         with (
             unittest.mock.patch.object(tempfile, "tempdir", os.path.join(self.root, "missing")),
-            self.assertRaisesRegex(tmux_host.TuiError, "^handover: "),
+            self.assertRaisesRegex(types.TuiError, "^handover: "),
         ):
             self.start(fake)
         real = os.open
@@ -1147,7 +1138,7 @@ class StartTest(StartFixture):
 
         with (
             unittest.mock.patch("os.open", side_effect=refuse),
-            self.assertRaisesRegex(tmux_host.TuiError, "^handover: "),
+            self.assertRaisesRegex(types.TuiError, "^handover: "),
         ):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
@@ -1167,7 +1158,7 @@ class StartTest(StartFixture):
             with self.subTest(env=env), unittest.mock.patch.dict(os.environ, env):
                 fake = Tmux(pane="0  ")
                 with self.assertRaisesRegex(
-                    tmux_host.TuiError,
+                    types.TuiError,
                     "^" + re.escape(f"session s is running; {prefix}tmux attach -t '=s'") + "$",
                 ):
                     self.start(fake)
@@ -1199,7 +1190,7 @@ class StartTest(StartFixture):
                 "new-session": (1, "", "duplicate session: s\n"),
             }
         )
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: duplicate session: s$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: duplicate session: s$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
 
@@ -1245,7 +1236,7 @@ class StartTest(StartFixture):
         ):
             with self.subTest(tags=tags):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, "^tag "):
+                with self.assertRaisesRegex(types.TuiError, "^tag "):
                     self.start(fake, tags=tags)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
@@ -1258,7 +1249,7 @@ class StartTest(StartFixture):
         ):
             with self.subTest(tags=tags):
                 fake = Tmux()
-                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                with self.assertRaisesRegex(types.TuiError, error):
                     self.start(fake, tags=tags)
                 self.assertEqual(fake.calls, [])
 
@@ -1266,7 +1257,7 @@ class StartTest(StartFixture):
         fake = Tmux(
             fail={"new-session"}
         )  # e.g. the chained set-option failed after new-session made the session
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: boom$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
         self.assertEqual(fake.calls[2], ["tmux", "kill-session", "-t", "=s"])
@@ -1277,7 +1268,7 @@ class StartTest(StartFixture):
         fake = Tmux(
             results={"new-session": (1, "", "duplicate session: s\n")}
         )  # another start took the name
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: duplicate session: s$"):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: duplicate session: s$"):
             self.start(fake)
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
         self.assertEqual(os.listdir(self.temp), [])
@@ -1299,7 +1290,7 @@ class StartTest(StartFixture):
         def missing(_argv, **_kw):
             raise FileNotFoundError(2, "No such file or directory", "tmux")
 
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^tmux: "):
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: "):
             self.start(missing)
         self.assertEqual(os.listdir(self.temp), [])
 
@@ -1308,7 +1299,7 @@ class StartTest(StartFixture):
             with self.subTest(fail=fail):
                 self.sleep.reset_mock()
                 fake = Tmux(fail=fail, hand_over=False)
-                with self.assertRaisesRegex(tmux_host.TuiError, r"^the session did not start$"):
+                with self.assertRaisesRegex(types.TuiError, r"^the session did not start$"):
                     self.start(fake)
                 self.assertEqual(
                     fake.commands(), ["display-message", "new-session", "kill-session"]
@@ -1352,7 +1343,7 @@ class StartTest(StartFixture):
     def test_an_exec_failure_raises_its_error_and_kills_the_session(self):
         fake = Tmux(wrapper=errno.ENOEXEC)
         with self.assertRaisesRegex(
-            tmux_host.TuiError,
+            types.TuiError,
             "^" + re.escape(f"cannot run {self.tool}: {os.strerror(errno.ENOEXEC)}") + "$",
         ):
             self.start(fake)
@@ -1382,7 +1373,7 @@ class StartTest(StartFixture):
             with self.subTest(data=data):
                 fake = Tmux(wrapper=data)
                 with self.assertRaisesRegex(
-                    tmux_host.TuiError,
+                    types.TuiError,
                     "^" + re.escape(f"cannot run {self.tool}: bad errpipe data") + "$",
                 ):
                     self.start(fake)
@@ -1393,7 +1384,7 @@ class StartTest(StartFixture):
 
     def test_never_execd_is_not_started(self):
         fake = Tmux(wrapper="hang")
-        with self.assertRaisesRegex(tmux_host.TuiError, r"^the session did not start$"):
+        with self.assertRaisesRegex(types.TuiError, r"^the session did not start$"):
             self.start(fake)
         os.close(fake.writer)
         self.assertEqual(fake.commands(), ["display-message", "new-session", "kill-session"])
@@ -1406,7 +1397,7 @@ class StartTest(StartFixture):
         for exe in ("/opt/py#3/bin/python3", "/opt/bin/python3;"):
             with self.subTest(exe=exe), unittest.mock.patch.object(sys, "executable", exe):
                 fake = Tmux()
-                with self.assertRaises(tmux_host.TuiError):
+                with self.assertRaises(types.TuiError):
                     self.start(fake)
                 self.assertNotIn("new-session", fake.commands())
         hashed = os.path.join(self.root, "t#mp")
@@ -1414,7 +1405,7 @@ class StartTest(StartFixture):
         fake = Tmux()
         with (
             unittest.mock.patch.object(tempfile, "tempdir", hashed),
-            self.assertRaises(tmux_host.TuiError),
+            self.assertRaises(types.TuiError),
         ):
             self.start(fake)
         self.assertNotIn("new-session", fake.commands())
@@ -1430,11 +1421,9 @@ class StartTest(StartFixture):
                     lambda *, fake=fake, name=name: tmux_host.status(name, proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.detach(
                         name,
-                        ["tool"],
+                        Launch(("tool",), {"PATH": self.bin}, cwd=self.cwd),
                         proc=fake,
                         sleep=self.sleep,
-                        cwd=self.cwd,
-                        env={"PATH": self.bin},
                     ),
                     lambda *, fake=fake, name=name: tmux_host.kill(name, proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.send(
@@ -1446,7 +1435,7 @@ class StartTest(StartFixture):
                     lambda *, fake=fake, name=name: tmux_host.option(name, "@sid", proc=fake),
                     lambda *, fake=fake, name=name: tmux_host.pane(name, proc=fake),
                 ):
-                    with self.assertRaises(tmux_host.TuiError):
+                    with self.assertRaises(types.TuiError):
                         call()
                 self.assertEqual(fake.calls, [])
 

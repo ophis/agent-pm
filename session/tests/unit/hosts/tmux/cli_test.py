@@ -1,7 +1,4 @@
-"""hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
-the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
-(running them: its integration test)."""
+"""Tmux command parsing and injected operation dispatch."""
 
 import io
 import os
@@ -9,7 +6,9 @@ import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.engine.types import Launch
+from agent_pm.session.hosts.tmux import cli, types
+from agent_pm.session.hosts.tmux import grid as grids
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -23,7 +22,7 @@ class CliTest(Case):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                rc = tmux_host.main(list(argv), operations=getattr(self, "actions", {}))
+                rc = cli.main(list(argv), operations=getattr(self, "actions", {}))
             except SystemExit as e:
                 rc = e.code
         return rc, out.getvalue(), err.getvalue()
@@ -47,7 +46,9 @@ class CliTest(Case):
                 start.reset_mock()
                 self.assertEqual(self.main(*argv.split())[0], 0)
                 start.assert_called_once_with(
-                    session, command, events=events, cwd=os.getcwd(), env=dict(os.environ)
+                    session,
+                    Launch(tuple(command), dict(os.environ), cwd=os.getcwd()),
+                    events=events,
                 )
 
     def test_start_usage_errors(self):
@@ -98,7 +99,7 @@ class CliTest(Case):
         read.return_value, show.return_value, status.return_value = (
             "pane\ntext",
             None,
-            tmux_host.PaneStatus.RUNNING,
+            types.PaneStatus.RUNNING,
         )
         self.assertEqual(self.main("send", "s", "hi there"), (0, "", ""))
         send.assert_called_once_with("s", "hi there")
@@ -128,7 +129,7 @@ class CliTest(Case):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_per_column(self):
         show = self.patch("show", return_value=None)
-        self.patch("status", return_value=tmux_host.PaneStatus.RUNNING)
+        self.patch("status", return_value=types.PaneStatus.RUNNING)
         for value, n in (("1", 1), ("2", 2), ("9999", 9999), ("0003", 3)):
             with self.subTest(value=value):
                 self.assertEqual(self.main("show", "--per-column", value, "s")[0], 0)
@@ -145,7 +146,7 @@ class CliTest(Case):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_grid_retile(self):
         show = self.patch("show", return_value=None)
-        self.patch("status", return_value=tmux_host.PaneStatus.RUNNING)
+        self.patch("status", return_value=types.PaneStatus.RUNNING)
         for mode in ("all", "open-close", "off"):
             with self.subTest(mode=mode):
                 self.assertEqual(self.main("show", "--grid-retile", mode, "s")[0], 0)
@@ -174,7 +175,7 @@ class CliTest(Case):
         show.assert_not_called()
 
     def test_tile(self):
-        real, fake = tmux_host.tile, Tmux()
+        real, fake = grids.tile, Tmux()
         tile = self.patch("tile", return_value=None)
         self.assertEqual(self.main("tile", "@3"), (0, "", ""))
         self.assertEqual(self.main("tile", "--no-wait", "@3"), (0, "", ""))
@@ -201,7 +202,7 @@ class CliTest(Case):
 
     def test_exit_1(self):
         for name in ("start", "send", "read", "tile"):
-            self.patch(name, side_effect=tmux_host.TuiError("tmux: boom"))
+            self.patch(name, side_effect=types.TuiError("tmux: boom"))
         for argv in ("start a -- cmd", "send s hi", "read s", "tile @3"):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(*argv.split()), (1, "", "tui: tmux: boom\n"))
@@ -211,7 +212,7 @@ class CliTest(Case):
         )
         self.assertEqual(self.main("show", "s"), (1, "", "tui: no session s\n"))
         show.assert_not_called()
-        status.return_value = tmux_host.PaneStatus.RUNNING
+        status.return_value = types.PaneStatus.RUNNING
         self.assertEqual(self.main("show", "s")[0], 1)
 
     def test_exit_2(self):

@@ -11,11 +11,10 @@ import tempfile
 import time
 from unittest import mock
 
-from agent_pm.session.engine.types import DriverError
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux import tmux_host as grids
-from agent_pm.session.hosts.tmux import tmux_host as layout
-from agent_pm.session.hosts.tmux import tmux_host as tmux_model
+from agent_pm.session.engine.types import DriverError, Launch
+from agent_pm.session.hosts.tmux import TmuxHost, layout, tmux_host
+from agent_pm.session.hosts.tmux import grid as grids
+from agent_pm.session.hosts.tmux import grid as tmux_model
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -25,7 +24,7 @@ MANAGER = "mgr"
 
 TIMEOUT = 60
 
-TUI = os.path.abspath(tmux_host.__file__)
+TUI = grids.ENTRY
 
 IGNORED = "tui: show: grid: --split/--split-from ignored"
 
@@ -52,6 +51,7 @@ class Live(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.cwd = os.path.realpath(tmp.name)
+        self.host = TmuxHost("tmux")
         self.settings = {}
         self.configure()
 
@@ -81,7 +81,7 @@ class Live(Case):
 
     def started(self, name: str, inside: str | None = MANAGER, **kwargs) -> str:
         """Session `name` started with no pane, then show()n; show's stderr."""
-        tmux_host.start(name, list(live_tmux.IDLE), cwd=self.cwd, env=self.server.env())
+        self.host.terminal(name, Launch(live_tmux.IDLE, self.server.env(), cwd=self.cwd))
         return self.show(name, inside, **kwargs)
 
     def tmux(self, *args: str) -> str:
@@ -92,7 +92,7 @@ class Live(Case):
     def tui(self, *args: str) -> None:
         """tmux_host.py's CLI, run from inside the manager's pane."""
         res = subprocess.run(
-            [sys.executable, "-I", TUI, *args],
+            [sys.executable, "-I", TUI, grids.entry_roots(), *args],
             env=self.server.env(**self.server.inside(MANAGER)),
             cwd=self.cwd,
             capture_output=True,
@@ -237,7 +237,9 @@ class StartTest(Live):
     def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
         events = os.path.join(self.cwd, "events")
         tmux_host.start(
-            "s1", ["/bin/sh", "-c", "exit 3"], events=events, cwd=self.cwd, env=self.server.env()
+            "s1",
+            Launch(tuple(["/bin/sh", "-c", "exit 3"]), self.server.env(), cwd=self.cwd),
+            events=events,
         )
 
         def dead():
@@ -411,8 +413,8 @@ class SettleTest(Live):
             self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split(),
             [w2, w1, self.manager],
         )
-        old = layout._render_layout(
-            layout._parse_layout(
+        old = layout.render_layout(
+            layout.parse_layout(
                 f"200x50,0,0[200x25,0,0{{100x25,0,0,{w2[1:]},99x25,101,0,{w1[1:]}}},200x24,0,26,{self.manager[1:]}]"
             )
         )
@@ -425,13 +427,13 @@ class SettleTest(Live):
     def grid_up(self) -> None:
         with self.inside(MANAGER):
             self.assertIsNone(
-                grids._grid_up(
+                grids.configure(
                     self.window,
                     self.manager,
                     per_column=1,
                     retile="all",
                     proc=subprocess.run,
-                    script=tmux_host.__file__,
+                    script=grids.ENTRY,
                 )
             )
 
@@ -478,7 +480,7 @@ class SettleTest(Live):
         env = self.server.env(**self.server.inside(MANAGER))
         tiles = [
             subprocess.Popen(
-                [sys.executable, "-I", TUI, "tile", *flag, self.window],
+                [sys.executable, "-I", TUI, grids.entry_roots(), "tile", *flag, self.window],
                 env=env,
                 cwd=self.cwd,
                 stdin=subprocess.DEVNULL,
