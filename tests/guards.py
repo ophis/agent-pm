@@ -1771,7 +1771,8 @@ def _package_paths(node, bound, paths, depth, project, *, scope=""):
         )
         if (
             is_join
-            and _package_climb(base, bound, paths) is not None
+            and (climb := _package_climb(base, bound, paths)) is not None
+            and climb > depth
             and any(
                 isinstance(part, ast.Constant)
                 and isinstance(part.value, str)

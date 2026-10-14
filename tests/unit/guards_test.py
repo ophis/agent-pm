@@ -53,17 +53,23 @@ class PackageClimbs(Sample):
             )
         )
 
+    def test_project_name_segments_inside_the_package_pass(self):
+        for text in (
+            "from pathlib import Path\np = Path(__file__).parent / 'session' / 'config.toml'\n",
+            "from pathlib import Path\np = Path(__file__).parent.parent / 'session' / 'config.toml'\n",
+            "import os\nx = os.path.join(os.path.dirname(__file__), 'linear-orchestrator/config.toml')\n",
+            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'linear-orchestrator/config.toml')\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.violations(text), [])
+
     def test_rejects_sibling_paths_and_listing_a_root_outside_the_package(self):
-        self.assertTrue(
-            self.violations(
-                "from pathlib import Path\np = Path(__file__).parent / 'session' / 'config.toml'\n"
-            )
-        )
-        self.assertTrue(
-            self.violations(
-                "import os\nx = os.path.join(os.path.dirname(__file__), 'linear-orchestrator/config.toml')\n"
-            )
-        )
+        for text in (
+            "from pathlib import Path\np = Path(__file__).parent.parent.parent / 'session' / 'config.toml'\n",
+            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'linear-orchestrator/config.toml')\n",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self.violations(text))
         self.assertTrue(
             self.violations(
                 "import os\nfrom agent_pm.utils.paths import ROOT\nx = os.listdir(ROOT)\n"
