@@ -5,14 +5,17 @@ dirs (Codex's rule), and the crew run as a module with only utils and manager im
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm.manager import Entry, Roster
+from agent_pm.manager import Entry, Roster, State
+from agent_pm.manager.engine.crew import RECOVERY_AGE
 from agent_pm.utils import Record
 
 from manager.tests.case import PY, REPO, SRC, Case
@@ -25,6 +28,8 @@ ROLE = "dummy-tester"
 TIMEOUT = 90
 CREW = (*PY, "-m", "agent_pm.manager.cli")
 BIN = os.path.join(REPO, "bin")
+# Runs the starter argv, then marks $1 and waits for $2: its Record printed, its crew run waiting.
+WRAP = ("sh", "-c", 'e=$1 g=$2; shift 2; "$@"; : > "$e"; until [ -e "$g" ]; do sleep 0.05; done')
 
 
 def logged(path: str) -> list[dict]:
@@ -161,6 +166,71 @@ class LiveCrew(Case):
 
     def workdir(self, name: str) -> str:
         return os.path.join(self.root, f"{name}-work")
+
+    def crashed(self, name: str, argv, **scene: str) -> Record:
+        """crew run `name` --note keep -- argv, killed after argv's Record; attach RECOVERY_AGE later."""
+        emitted, gate = (os.path.join(self.root, f"{name}.{n}") for n in ("emitted", "gate"))
+        crew = subprocess.Popen(
+            (*CREW, "run", name, "--note", "keep", "--", *WRAP, "wrap", emitted, gate, *argv),
+            env=self.env(**self.crew_env(), **scene),
+            cwd=self.cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(crew.wait)
+        self.addCleanup(lambda: open(gate, "a").close())
+        with self.poking():
+            live_tmux.wait(lambda: os.path.exists(emitted), 60, what=f"{name}'s Record printed")
+        crew.send_signal(signal.SIGKILL)
+        crew.wait()
+        intent = self.roster()[name]
+        self.assertEqual((intent.state, intent.record), (State.STARTING, None))
+        path = os.path.join(self.agent_pm, "managers", MANAGER, "roster.json")
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        old = datetime.now(UTC) - timedelta(seconds=RECOVERY_AGE + 1)
+        data["entries"][name]["started"] = old.isoformat()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        self.ok(self.crew("attach"))
+        listed = self.ok(self.session("ls", "--here", "--records")).stdout.splitlines()
+        (record,) = {r for r in map(Record.parse, listed) if r.sid == intent.sid}
+        entries = self.roster()
+        self.assertEqual(list(entries), [name])
+        self.assertEqual(
+            (entries[name].state, entries[name].record, entries[name].note),
+            (State.LIVE, record, "keep"),
+        )
+        (status,) = (
+            json.loads(line) for line in self.ok(self.crew("status", name)).stdout.splitlines()
+        )
+        self.assertEqual((status["name"], status["alive"]), (name, True))
+        return record
+
+    def words(self, name: str) -> list[list[str]]:
+        return [
+            line.split(" ")[2:]
+            for line in live_tmux.events(self.events)
+            if line.split(" ")[1] == name
+        ]
+
+    def killed(self, name: str, record: Record) -> None:
+        """Kills tui run `name`'s sessions after its first turn; attach then says gone."""
+        harness, tui = record.sessions
+        self.wait_event(tui, "done")
+        self.kill(harness)
+        self.server.tmux(
+            "kill-session", "-t", f"={tui}"
+        )  # the harness, stopping, may close it first
+        self.until(
+            lambda: self.gone(tui) and ["outcome", "error"] in self.words(harness),
+            f"{tui} gone, the harness's outcome",
+        )
+        out = self.ok(self.crew("attach")).stdout.splitlines()
+        self.assertIn(f"resume: agent-pm-crew resume --manager mgr {name}", out)
+        self.assertEqual(self.roster()[name].state, State.GONE)
+        self.assertTrue(self.gone(harness, tui))
 
     def spy(self, command: str) -> str:
         """Puts a `command` before <repo>/bin that logs its argv, then runs the real one; its log."""
