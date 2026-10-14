@@ -296,7 +296,7 @@ class Overlaps(Case):
                     self.assertEqual(overlaps(str(a), str(b)), expected)
 
 
-class ImportEnvironment(unittest.TestCase):
+class ImportEnvironment(Case):
     def setUp(self):
         self.enterContext(
             mock.patch(

@@ -2,16 +2,18 @@
 
 import contextlib
 import itertools
+import json
 import os
+import subprocess
 import tempfile
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.session import Access, ConfigError, Effort, Host, Mode, Session, Spec, read_config
+from agent_pm.session import Access, ConfigError, Effort, Host, Mode, Spec, read_config
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.hosts.tmux import tmux_host
 
-from session.tests.case import HOSTS, REPO, SPAWNS, Case
+from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
 from session.tests.fakes.preflight import PreflightAdapter, SandboxedPreflightAdapter
 from session.tests.hosted_support import SID, fake_tmux
 
@@ -93,13 +95,32 @@ class Preflight(Case):
                 self.assertEqual(PreflightAdapter.prepared[-1].resume, resume)
 
     def test_abc_forwards_preflight_to_the_configured_session_class(self):
-        Session.configure(
-            adapters={"fake": {"implementation": "session.tests.fakes.preflight:PreflightAdapter"}},
-            hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
-        )
+        code = """import contextlib, json, sys
+from unittest import mock
+from agent_pm.session import Host, Mode, Session, Spec
+from session.tests.case import HOSTS, SPAWNS
+from session.tests.fakes.preflight import PreflightAdapter
+Session.configure(
+    adapters={"fake": {"implementation": "session.tests.fakes.preflight:PreflightAdapter"}},
+    hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
+)
+spec = Spec(workdir=sys.argv[1], runtime="fake", mode=Mode.HEADLESS, prompt="input", sid=sys.argv[2])
+with contextlib.ExitStack() as stack:
+    for target in (*SPAWNS, "threading.Thread.start"):
+        stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
+    result = Session.preflight(spec)
+print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.committed, PreflightAdapter.ran]))
+"""
         before = self.tree()
-        with self.no_runtime():
-            self.assertIsNone(Session.preflight(self.spec()))
+        child = subprocess.run(
+            [*PY, "-c", code, self.work, SID],
+            env=child_env(None, REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(json.loads(child.stdout), [None, SID, [], []])
         self.unchanged(before)
 
     def test_missing_sid_can_be_prepared_without_mutating_the_callers_spec(self):
