@@ -2,7 +2,7 @@
   "name": "agent-pm",
   "description": "agent-pm's Claude Code plugin",
   "owner": {
-    "name": "Frank Wang"
+    "name": "Yinze Wang"
   },
   "plugins": [
     {
