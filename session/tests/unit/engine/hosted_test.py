@@ -49,8 +49,7 @@ from agent_pm.session.modes import tui
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, SPAWNS, Case
 from session.tests.fakes.host import FakeHost
-from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.engine.support import (
+from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
     SID,
@@ -62,6 +61,7 @@ from session.tests.unit.engine.support import (
     fake_tmux,
     listed,
 )
+from session.tests.source_roots import PACKAGE_ROOTS
 
 UNCONFIGURED = "session not configured: call Session.configure first"
 FAKE_HOSTS = {"fake": {"implementation": "session.tests.fakes.host:FakeHost"}}

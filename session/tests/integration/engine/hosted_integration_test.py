@@ -21,7 +21,7 @@ from agent_pm.session.engine.types import (
     Window,
 )
 
-from session.tests.unit.engine.support import (
+from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
     Base,
