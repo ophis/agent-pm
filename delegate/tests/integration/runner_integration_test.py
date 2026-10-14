@@ -1,12 +1,13 @@
 """Real process behavior in isolated integration fixtures."""
 
 import dataclasses
+import io
 import os
 import re
 import signal
 import stat
-import sys
 import subprocess
+import sys
 import time
 from datetime import datetime
 from types import SimpleNamespace
@@ -19,7 +20,18 @@ from agent_pm.delegate.engine.types import Stopped
 from agent_pm.utils import printable
 
 from delegate.tests.replies import bare, block, running
-from delegate.tests.runner import FAILED, GH, INVALID, INVALID_ERROR, NEEDS, PR, SID, Base, UnstreamedAdapter, ended
+from delegate.tests.runner import (
+    FAILED,
+    GH,
+    INVALID,
+    INVALID_ERROR,
+    NEEDS,
+    PR,
+    SID,
+    Base,
+    UnstreamedAdapter,
+    ended,
+)
 from delegate.tests.unit.runs import DONE, START, limit, said
 from session.tests.modules import adapter_loader
 
@@ -261,7 +273,6 @@ class Stops(Base):
             (os.path.lexists(self.channel), os.path.lexists(self.log), self.events),
             (False, False, []),
         )
-
 
     def test_a_stream_setup_failure_is_the_result(self):
         self.driver_dependencies = {

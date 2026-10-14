@@ -148,6 +148,7 @@ class UnstreamedHeadless(fake_adapter.FakeHeadless):
     def events(self, lines):
         raise ValueError("no stream")
 
+
 class UnstreamedAdapter(fake_adapter.FakeAdapter):
     def headless(self):
         return UnstreamedHeadless(self)

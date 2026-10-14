@@ -5,7 +5,6 @@ import os
 import signal
 from contextlib import redirect_stderr
 from datetime import datetime
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, plan, run
