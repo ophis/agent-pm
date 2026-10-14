@@ -707,6 +707,59 @@ class CrewTest(Case):
         self.assertEqual(self.calls("start"), [])
         self.assertNotIn("worker", self.roster.entries())
 
+    def test_run_failure_remains_primary_when_takeover_prevents_marking_lost(self):
+        command = (self.command, "start", "worker")
+        native_run = subprocess.run
+        with self.roster.hold("original") as lease:
+            crew = Crew(self.roster, lease=lease)
+
+            def run(argv, **options):
+                if tuple(argv) == command:
+                    with Roster(self.directory).hold("successor", force=True) as successor:
+                        self.assertGreater(successor.generation, lease.generation)
+                    return subprocess.CompletedProcess(argv, 7, None, "starter failed")
+                return native_run(argv, **options)
+
+            with (
+                mock.patch("subprocess.run", side_effect=run),
+                self.assertRaisesRegex(RuntimeError, "starter failed") as raised,
+            ):
+                crew.run(Spec("worker", command))
+            self.assertIsInstance(raised.exception.__cause__, Stale)
+            self.assertIn("stale holder generation", str(raised.exception.__cause__))
+        entry = self.roster.entries()["worker"]
+        self.assertEqual(entry.state, State.STARTING)
+        self.assertIsNone(entry.record)
+        self.assertIsNotNone(entry.receipt)
+
+    def test_resume_failure_remains_primary_when_unsafe_ledger_prevents_marking_gone(self):
+        original = self.gone("worker")
+        backup = os.path.join(self.home, "ledger-backup.json")
+        native_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == original.resume:
+                os.replace(self.roster.path, backup)
+                os.symlink(backup, self.roster.path)
+                return subprocess.CompletedProcess(argv, 7, None, "resume starter failed")
+            return native_run(argv, **options)
+
+        try:
+            with (
+                mock.patch("subprocess.run", side_effect=run),
+                self.assertRaisesRegex(RuntimeError, "resume starter failed") as raised,
+            ):
+                self.crew.resume("worker")
+            self.assertIsInstance(raised.exception.__cause__, RosterError)
+            self.assertIn("not a readable regular file", str(raised.exception.__cause__))
+        finally:
+            if os.path.islink(self.roster.path):
+                os.unlink(self.roster.path)
+                os.replace(backup, self.roster.path)
+        entry = self.roster.entries()["worker"]
+        self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
+        self.assertIsNotNone(entry.receipt)
+
     def test_failed_resume_restores_gone_and_keeps_previous_record(self):
         original = self.gone("worker")
         real_run = subprocess.run

@@ -110,8 +110,11 @@ class Crew:
         try:
             record = self._start(spec.argv, spec.name, sid)
             self.roster.commit(spec.name, record)
-        except (RosterError, RuntimeError, ValueError):
-            self.roster.mark_if(spec.name, intent, State.LOST)
+        except (RosterError, RuntimeError, ValueError) as error:
+            try:
+                self.roster.mark_if(spec.name, intent, State.LOST)
+            except RosterError as mark_error:
+                raise error from mark_error
             raise
         return record
 
@@ -292,8 +295,11 @@ class Crew:
         try:
             resumed = self._start(record.resume, name, claimed.sid)
             self.roster.commit(name, resumed)
-        except (RosterError, RuntimeError, ValueError):
-            self.roster.mark_if(name, claimed, State.GONE)
+        except (RosterError, RuntimeError, ValueError) as error:
+            try:
+                self.roster.mark_if(name, claimed, State.GONE)
+            except RosterError as mark_error:
+                raise error from mark_error
             raise
         return resumed
 
