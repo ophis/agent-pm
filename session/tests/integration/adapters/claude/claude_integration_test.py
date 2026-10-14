@@ -12,6 +12,7 @@ import shlex
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -39,7 +40,7 @@ from agent_pm.session.engine.types import (
     Window,
 )
 
-from session.tests.case import PY, Case, child_env
+from session.tests.case import PLUGIN_BIN, PY, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
 from utils.tests.sandbox import git
 
@@ -169,8 +170,10 @@ class Base(Case):
     def written(self) -> list[dict]:
         return [{k: v for k, v in e.items() if k != "ts"} for e in RunLog(self.workdir).read()]
 
-    def resume_command(self, sid: str) -> str:
-        return f"cd {shlex.quote(self.workdir)} && claude --resume {sid}"
+    def resume_command(self, sid: str, cwd: str | None = None) -> str:
+        cwd = shlex.quote(cwd or self.workdir)
+        store = shlex.quote(os.path.realpath(os.path.expanduser("~/.agent-pm/sessions/claude")))
+        return f"cd {cwd} && agent-pm-session client-resume claude {store} {cwd} {sid}"
 
 
 class RunTest(Base):
@@ -293,9 +296,7 @@ class RunTest(Base):
         self.assertEqual(self.drain(first)[-1], Exited(0))
         self.assertTrue(os.path.isfile(transcript))
         self.assertEqual(os.listdir(self.workdir), ["run.jsonl"])
-        resume = (
-            f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
-        )
+        resume = self.resume_command(sid, proj)
         self.assertEqual(
             RunLog(self.workdir).session(sid),
             SessionInfo(sid=sid, cwd=proj, project=False, transcript=transcript, resume=resume),
@@ -498,6 +499,46 @@ class SessionInfoTest(Base):
             self.inspect(other),
             SessionStatus("no", None, self.resume_command(other)),
         )
+
+    def test_fake_credentials_stay_out_of_public_text_and_replay_on_resume(self):
+        secrets = {"CFG_TOKEN": "sk-fake-1", "ACCESS_TOKEN": "sk-fake-2", "SPEC_TOKEN": "sk-fake-3"}
+        self.configure_session({"claude": {**TABLE, "env": {"CFG_TOKEN": "sk-fake-1"}}})
+        spec = Spec(workdir=self.workdir, access=Access(env={"ACCESS_TOKEN": "sk-fake-2"}))
+        handle = self.start(spec=spec, sid=SID, env={"SPEC_TOKEN": "sk-fake-3"})
+        self.assertEqual(self.drain(handle)[-1], Exited(0))
+        resume = handle.info().resume
+        status = self.inspect(SID)
+        with open(os.path.join(self.workdir, "run.jsonl"), encoding="utf-8") as f:
+            log = f.read()
+        for text in (resume, status.resume_command, log):
+            for value in secrets.values():
+                self.assertNotIn(value, text)
+        self.assertEqual((resume, status.resume_command), (self.resume_command(SID),) * 2)
+        record, recorder = os.path.join(self.dir, "resumed.json"), os.path.join(self.dir, "rec")
+        os.mkdir(recorder)
+        with open(os.path.join(recorder, "claude"), "w", encoding="utf-8") as f:
+            f.write(
+                f"#!{sys.executable}\nimport json, os, sys\n"
+                "with open(os.environ['RESUME_RECORD'], 'w') as f:\n"
+                "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': dict(os.environ)}, f)\n"
+            )
+        os.chmod(os.path.join(recorder, "claude"), 0o700)
+        path = os.pathsep.join((recorder, PLUGIN_BIN, "/usr/bin", "/bin"))
+        result = subprocess.run(
+            ["/bin/sh", "-c", resume],
+            env={**os.environ, "PATH": path, "RESUME_RECORD": record},
+            capture_output=True,
+            text=True,
+            timeout=WAIT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(record, encoding="utf-8") as f:
+            resumed = json.load(f)
+        self.assertEqual(
+            (resumed["argv"], os.path.realpath(resumed["cwd"])), (["--resume", SID], self.workdir)
+        )
+        self.assertEqual({key: resumed["env"].get(key) for key in secrets}, secrets)
 
 
 if __name__ == "__main__":

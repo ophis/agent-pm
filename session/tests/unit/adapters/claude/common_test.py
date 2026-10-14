@@ -1,8 +1,12 @@
 """Claude common behavior."""
 
+import contextlib
+import dataclasses
+import io
 import json
 import os
 import shlex
+import stat
 import unittest
 from functools import partial
 from unittest import mock
@@ -11,6 +15,7 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
     Access,
     Mode,
+    SessionInfo,
     SessionStatus,
     Usage,
     Window,
@@ -34,7 +39,9 @@ from session.tests.unit.adapters.claude.support import (
     event,
     info_line,
     probe_init,
+    reference,
     stdout,
+    store,
     tui_launch,
     unified,
     usage,
@@ -184,37 +191,6 @@ class ReadRulesTest(Base):
 
 
 class EnvTest(Base):
-    def test_resume_command_clears_repository_selectors_and_keeps_session_environment(self):
-        git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
-        for resume in (False, True):
-            spec = Spec(
-                workdir=self.work,
-                sid=SID,
-                resume=resume,
-                access=Access(env={**git_env, "KEEP": "access", "ACCESS_ONLY": "kept"}),
-                env={**git_env, "KEEP": "session", "SESSION_ONLY": "kept"},
-            )
-            adapter = ClaudeAdapter({})
-            for launch in (
-                adapter.headless().launch(spec),
-                adapter.tui().launch(spec, HOOK),
-            ):
-                with self.subTest(resume=resume, argv=launch.argv):
-                    self.assertEqual(
-                        shlex.split(launch.resume),
-                        [
-                            "cd",
-                            self.work,
-                            "&&",
-                            "KEEP=session",
-                            "ACCESS_ONLY=kept",
-                            "SESSION_ONLY=kept",
-                            "claude",
-                            "--resume",
-                            SID,
-                        ],
-                    )
-
     def test_repository_selection_environment_is_removed_from_every_launch_source(self):
         git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
         config = {"env": {**git_env, "KEEP": "configured"}}
@@ -256,7 +232,6 @@ class EnvTest(Base):
         launch = self.launch(flags=flags, env={"K": "session", "CUSTOM": "value"})
         self.assertEqual(launch.argv[-4:], (*flags, "--", "hi"))
         self.assertEqual(dict(launch.env), {**CEILING, "K": "session", "CUSTOM": "value"})
-        self.assertIn("K=session CUSTOM=value claude", launch.resume)
 
     def test_the_session_env_wins_over_the_config_env(self):
         config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
@@ -596,40 +571,129 @@ class TranscriptTest(Base):
                     )
 
 
+SECRETS = {
+    "CFG_TOKEN": "sk-fake-config",
+    "ACCESS_TOKEN": "sk-fake-access",
+    "SPEC_TOKEN": "sk-fake-spec",
+}
+
+
 class ResumeTest(Base):
-    def test_the_command_quoted(self):
-        self.assertEqual(
-            ClaudeCommon({}).resume("/w d", SID), f"cd '/w d' && claude --resume {SID}"
+    def setUp(self):
+        super().setUp()
+        self.cwd = os.path.join(self.tmp, "cwd d")
+        os.mkdir(self.cwd)
+        git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
+        self.adapter = ClaudeAdapter({"env": {**git_env, "CFG_TOKEN": SECRETS["CFG_TOKEN"]}})
+        self.spec = Spec(
+            workdir=self.work,
+            sid=SID,
+            prompt="hi",
+            access=Access(
+                cwd=self.cwd,
+                dirs=("/o x", "/p"),
+                env={**git_env, "ACCESS_TOKEN": SECRETS["ACCESS_TOKEN"], "K": "access"},
+            ),
+            env={"SPEC_TOKEN": SECRETS["SPEC_TOKEN"], "K": "spec"},
         )
 
-    def test_each_granted_dir_is_added(self):
-        self.assertEqual(
-            ClaudeCommon({}).resume("/w", SID, ("/o x", "/p")),
-            f"cd /w && claude --resume {SID} --add-dir '/o x' --add-dir /p",
-        )
+    def committed(self, mode="headless", **fields):
+        spec = dataclasses.replace(self.spec, **fields)
+        run = getattr(self.adapter, mode)()
+        launch = run.launch(spec) if mode == "headless" else run.launch(spec, HOOK)
+        run.commit()
+        return launch
 
-    def test_the_launch_resume_adds_the_granted_dirs_never_the_workdir(self):
-        cwd = os.path.join(self.tmp, "cwd")
-        q = shlex.quote
-        self.assertEqual(self.launch().resume, f"cd {q(self.work)} && claude --resume {SID}")
-        for launch in (self.launch, partial(tui_launch, self.work)):
-            with self.subTest(launch=launch):
+    def resumed(self, argv):
+        """resume_main(argv)'s exit code, stderr, and its chdir and execvpe calls."""
+        with (
+            mock.patch("os.chdir") as chdir,
+            mock.patch("os.execvpe") as execute,
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            code = self.adapter.resume_main(argv)
+        return code, err.getvalue(), chdir.call_args_list, execute.call_args_list
+
+    def test_the_command_names_only_the_state(self):
+        self.assertEqual(ClaudeCommon({}).resume("/w d", SID), reference("/w d"))
+
+    def test_no_env_value_reaches_a_resume_command_or_status(self):
+        texts = []
+        for mode in ("headless", "tui"):
+            for resume in (False, True):
+                launch = self.committed(mode, resume=resume)
+                texts += [launch.resume, "\0".join(launch.argv)]
+                self.assertEqual(launch.resume, reference(self.cwd))
+        env = {**self.spec.access.env, **self.spec.env}
+        status = self.adapter.session_status(
+            SessionInfo(sid=SID, cwd=self.cwd, project=False, transcript="", resume=""), env=env
+        )
+        self.assertEqual(status.resume_command, reference(self.cwd))
+        for text in (*texts, status.resume_command):
+            for secret in SECRETS.values():
+                self.assertNotIn(secret, text)
+
+    def test_the_resume_replays_the_committed_launch_in_its_cwd(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                words = shlex.split(self.committed(mode).resume)
                 self.assertEqual(
-                    launch(access=Access(cwd=cwd)).resume, f"cd {q(cwd)} && claude --resume {SID}"
+                    words[:6], ["cd", self.cwd, "&&", "agent-pm-session", "client-resume", "claude"]
                 )
+                code, err, chdir, execute = self.resumed(words[6:])
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(chdir, [mock.call(self.cwd)])
                 self.assertEqual(
-                    launch(access=Access(cwd=cwd, dirs=(self.work, "/d"))).resume,
-                    f"cd {q(cwd)} && claude --resume {SID} --add-dir {q(self.work)} --add-dir /d",
+                    execute,
+                    [
+                        mock.call(
+                            "claude",
+                            ["claude", "--resume", SID, "--add-dir", "/o x", "--add-dir", "/p"],
+                            {**os.environ, **SECRETS, "K": "spec"},
+                        )
+                    ],
                 )
 
-    def test_the_launch_resume_assigns_the_session_env_quoted(self):
-        env = {"PYTHONPATH": "/a b;c", "S": "s"}
-        resume = self.launch(access=Access(env=env)).resume
+    def test_the_state_is_private(self):
+        self.committed()
+        (name,) = os.listdir(store())
+        self.assertEqual(stat.S_IMODE(os.stat(store()).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(store(), name)).st_mode), 0o600)
+
+    def test_a_resume_it_cannot_run_prints_one_line_and_runs_nothing(self):
+        self.committed()
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        other = "1f8fad5b-d9cb-469f-a165-70867728950e"
+        rows = [
+            ([], "expected STORE CWD SID"),
+            ([store(), self.cwd, "x"], "claude session ids are UUIDs, got 'x'"),
+            (["relative", self.cwd, SID], "the store must be an absolute path"),
+            ([store(), self.cwd, other], f"no resume state for session {other}"),
+            ([store(), self.work, SID], f"no resume state for session {SID}"),
+        ]
+        for argv, message in rows:
+            with self.subTest(argv=argv):
+                code, err, chdir, execute = self.resumed(argv)
+                self.assertEqual((code, err), (1, f"claude resume: {message}\n"))
+                self.assertEqual((chdir, execute), ([], []))
+        os.chmod(path, 0o644)
         self.assertEqual(
-            resume,
-            f"cd {shlex.quote(self.work)} && PYTHONPATH='/a b;c' S=s claude --resume {SID}",
+            self.resumed([store(), self.cwd, SID])[:2],
+            (1, f"claude resume: {path}: not a private file of yours\n"),
         )
-        self.assertEqual(shlex.split(resume)[3:6], ["PYTHONPATH=/a b;c", "S=s", "claude"])
+        os.chmod(path, 0o600)
+        for data in (
+            "not json",
+            "{}",
+            json.dumps({"version": 1, "cwd": self.cwd, "sid": other, "dirs": [], "env": {}}),
+        ):
+            with self.subTest(data=data):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(data)
+                self.assertEqual(
+                    self.resumed([store(), self.cwd, SID])[:2],
+                    (1, f"claude resume: {path}: bad resume state\n"),
+                )
 
 
 class SessionStatusTest(Base):
@@ -637,7 +701,7 @@ class SessionStatusTest(Base):
         super().setUp()
         self.common = ClaudeCommon({})
         self.path = self.common.transcript(self.work, SID)
-        self.resume = f"cd {shlex.quote(self.work)} && claude --resume {SID}"
+        self.resume = reference(self.work)
 
     def write(self, path, mtime):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -652,20 +716,16 @@ class SessionStatusTest(Base):
         self.write(self.path, 1000)
         self.assertEqual(self.status(), SessionStatus("yes", 1000.0, self.resume))
 
-    def test_the_runs_env_config_dir_holds_its_transcript_and_its_resume(self):
+    def test_the_runs_env_config_dir_holds_its_transcript(self):
         env = {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "account"), "S": "s"}
         path = self.common.transcript(self.work, SID, env)
         self.assertTrue(path.startswith(env["CLAUDE_CONFIG_DIR"] + os.sep))
         self.write(path, 3000)
-        resume = (
-            f"cd {shlex.quote(self.work)} && "
-            f"CLAUDE_CONFIG_DIR={shlex.quote(env['CLAUDE_CONFIG_DIR'])} claude --resume {SID}"
-        )
         for recorded in ("", path):
             with self.subTest(recorded=recorded):
                 self.assertEqual(
                     self.common.session_status(SID, self.work, transcript=recorded, env=env),
-                    SessionStatus("yes", 3000.0, resume),
+                    SessionStatus("yes", 3000.0, self.resume),
                 )
         self.assertEqual(self.status(), SessionStatus("no", None, self.resume))
 
