@@ -384,6 +384,20 @@ class Resources(Case):
         with self.assertRaisesRegex(ConfigFileError, "unknown key 'unknown'"):
             read_resources(self.resources[:1])
 
+    def test_unprovided_layer_tables_need_no_project_inventory(self):
+        self.local(
+            "[plugin_settings]\nanything = 1\n[other_app]\nunknown = true\n[session.hosts.tmux]\nstatus_line = true\n"
+        )
+        self.assertEqual(
+            read_resources(self.resources[:1]),
+            {"hosts": {"default": "tmux", "tmux": {"status_line": True}}},
+        )
+        self.local("unknown_key = 1\n")
+        with self.assertRaisesRegex(
+            ConfigFileError, "unknown key 'unknown_key': flat local configuration"
+        ):
+            read_resources(self.resources[:1])
+
     def test_path_replaces_one_resource_with_defaults_as_schema(self):
         override = Path(self.root, "override.toml")
         override.write_text('runtime = "override"\nnew_key = "default"\n')
@@ -419,7 +433,10 @@ class Resources(Case):
     def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
         for text, error in (
             ("[delegate]\nunknown_field = 1\n", r"unknown key 'unknown_field' in \[delegate\]"),
-            ("session = 1\n", r"\[session\]: want a table"),
+            (
+                "session = 1\n",
+                r"unknown key 'session': flat local configuration; move it under \[session\]",
+            ),
         ):
             self.local(text)
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):

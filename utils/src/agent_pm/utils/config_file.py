@@ -126,8 +126,10 @@ def _layered(
     configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str, own=None
 ) -> dict:
     found = _load(os.path.expanduser(local))
-    sections = {p.replace("-", "_") for level in LEVELS for p in level} | configs.keys()
-    if flat := sorted(found.keys() - sections):
+    keys = {key for tables in known.values() for table in tables for key in table}
+    if flat := sorted(
+        key for key, value in found.items() if not isinstance(value, dict) or key in keys
+    ):
         key = flat[0]
         candidates = [p for p, table in known.items() if any(key in schema for schema in table)]
         target = candidates[0] if candidates else next(iter(configs), "session")
