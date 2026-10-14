@@ -5,11 +5,12 @@ import re
 import shlex
 import time
 from datetime import datetime, timedelta
+from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
+from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.engine.types import LimitHit, Spec
+from agent_pm.session.engine.types import HookKind, LimitHit, Spec
 from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
@@ -39,13 +40,15 @@ WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 
 
 class ClaudeTui(Tui):
-    hooks = {
-        "Stop": TURN_END,
-        "PermissionRequest": BLOCKED,
-        "Notification": BLOCKED,
-        "PostToolUse": ACTIVITY,
-        "UserPromptSubmit": ACTIVITY,
-    }
+    hooks = MappingProxyType(
+        {
+            "Stop": HookKind.TURN_END,
+            "PermissionRequest": HookKind.BLOCKED,
+            "Notification": HookKind.BLOCKED,
+            "PostToolUse": HookKind.ACTIVITY,
+            "UserPromptSubmit": HookKind.ACTIVITY,
+        }
+    )
     MATCHER = (
         "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input"
         "|quota_auto_resume_stale)$"
@@ -54,11 +57,11 @@ class ClaudeTui(Tui):
 
     def __init__(self, common: ClaudeCommon):
         self.common = common
+        self.sid = ""
 
-    def launch(
-        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
-    ):
+    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
+        self.sid = spec.sid or ""
         hooks = {
             label: [
                 {
@@ -68,9 +71,16 @@ class ClaudeTui(Tui):
             ]
             for label in self.hooks
         }
-        tail = ("--", prompt) if prompt else ()
+        tail = ("--", spec.prompt) if spec.prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, settings, tail=(*flags, *tail), resume=resume)
+        return common.launch(spec, settings, tail=(*flags, *tail), resume=spec.resume)
+
+    def restore(self, spec, state):
+        self.sid = spec.sid or ""
+
+    def session_id(self, payload):
+        """The sid it launched or restored: its native id."""
+        return self.sid if super().session_id(payload) else ""
 
     def reply(self, payload):
         message = payload.get("last_assistant_message")

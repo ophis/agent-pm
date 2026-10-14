@@ -1,5 +1,5 @@
-"""The Driver's in_process Mode: an InProcess's run iterated on a daemon thread into a queue; no
-child process. A run that raises ends with its traceback as Stderr lines and code 1. stop() never
+"""The in_process Mode: an InProcess's run iterated on a daemon thread into a queue; no child
+process. A run that raises ends with its traceback as Stderr lines and code 1. stop() never
 waits: what came before it is still polled, the code is -SIGKILL unless the run had ended, and the
 run is closed at its next yield.
 """
@@ -9,31 +9,72 @@ import queue
 import signal
 import threading
 import traceback
+from collections.abc import Callable
+from typing import Self
 
-from agent_pm.session.adapters.base import InProcess
-from agent_pm.session.engine.types import DriverError, Event, Spec, Stderr
+from agent_pm.session.adapters.base import Adapter, InProcess
+from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.engine.types import (
+    ClientBound,
+    ConfigError,
+    DriverError,
+    Liveness,
+    Mode,
+    Prepared,
+    SessionEvent,
+    SessionInfo,
+    Spec,
+    Stderr,
+)
+from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.modes.base import RunningMode
+from agent_pm.utils import Display
 
 END = object()
 
 
-class InProcessMode:
-    def __init__(self, run: InProcess):
-        self.run, self.begun, self.stopped, self.code = run, False, False, None
+class InProcessMode(RunningMode):
+    kind = Mode.IN_PROCESS
+
+    def __init__(self, prepared: Prepared):
+        super().__init__(prepared)
+        self.stopped, self.code = False, None
         self.items, self.lock, self.over = queue.Queue(), threading.Lock(), threading.Event()
 
-    def begin(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
+    @classmethod
+    def start(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        registry: Registry,
+        record: Callable[[SessionInfo], None],
+        host=tmux_host,
+        display: Display = None,
+    ) -> Self:
+        run = adapter.in_process()
+        if run is None:
+            raise cls._unsupported(spec)
+        cls._no_tui_keys(spec, display)
+        cls._selected(spec, adapter)
+        spec = cls._noted(cls._no_tui_fields(spec), adapter)
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
+        run.check(spec)
+        cwd = spec.access.cwd or spec.workdir
+        prepared = Prepared(spec, SessionInfo(spec.sid, cwd, spec.access.project, "", ""))
+        record(prepared.info)
+        mode = cls(prepared)
         try:
-            threading.Thread(
-                target=self._pump, args=(prompt, spec), kwargs={"resume": resume}, daemon=True
-            ).start()
+            threading.Thread(target=mode._pump, args=(run, spec), daemon=True).start()
         except RuntimeError as e:
             raise DriverError(f"cannot start the in_process run: {e}") from e
-        self.begun = True
+        return mode
 
-    def _pump(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
+    def _pump(self, run: InProcess, spec: Spec) -> None:
         events, code = None, 1
         try:
-            events = iter(self.run.run(prompt, spec, resume=resume))
+            events = iter(run.run(spec))
             for item in events:
                 with self.lock:
                     if self.stopped:
@@ -56,19 +97,18 @@ class InProcessMode:
                     self.items.put(END)
                 self.over.set()
 
-    def poll(self, timeout: float) -> tuple[list[Event | Stderr], bool]:
-        try:
+    def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
+        with contextlib.suppress(queue.Empty):
             item = self.items.get(timeout=timeout)
-        except queue.Empty:
-            return [], False
-        return ([], True) if item is END else ([item], False)
+            return ([], True) if item is END else ([item], False)
+        return [], False
 
     def returncode(self, timeout: float) -> int | None:
         self.over.wait(timeout)
         return self.code
 
-    def state(self) -> str:
-        return "live" if self.begun and not self.over.is_set() else "absent"
+    def state(self) -> Liveness:
+        return Liveness.ABSENT if self.over.is_set() else Liveness.LIVE
 
     def send(self, text: str) -> None:
         raise DriverError("send: tui mode only")
@@ -79,7 +119,7 @@ class InProcessMode:
     def stop(self) -> None:
         # A run blocked in a call goes on until its next yield or the process exits.
         with self.lock:
-            if not self.begun or self.stopped:
+            if self.stopped:
                 return
             self.stopped = True
             if not self.over.is_set():

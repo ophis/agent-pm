@@ -6,33 +6,46 @@ seconds.
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 
-from agent_pm.utils import printable_abs, sid_error
+from agent_pm.utils import freeze, printable_abs, sid_error
 
 __all__ = [
     "Access",
     "Activity",
+    "ActivityState",
     "Blocked",
+    "ClientBound",
     "ConfigError",
     "DriverError",
-    "Event",
+    "Effort",
     "Exited",
+    "HookError",
+    "HookKind",
+    "Hosts",
     "IdleTimeout",
     "Key",
     "Launch",
     "LimitHit",
+    "Liveness",
+    "Mode",
+    "NotDisplayable",
     "Paste",
+    "Prepared",
     "Reply",
-    "SessionBound",
+    "Resumable",
+    "SessionEvent",
     "SessionInfo",
     "SessionRow",
     "SessionStatus",
     "Spec",
     "Stderr",
+    "Tier",
     "TurnEnd",
     "Usage",
     "Window",
+    "Word",
 ]
 
 
@@ -40,7 +53,75 @@ class ConfigError(Exception):
     pass
 
 
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+class Mode(StrEnum):
+    HEADLESS = "headless"
+    TUI = "tui"
+    IN_PROCESS = "in_process"
+
+
+class Liveness(StrEnum):
+    LIVE = "live"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
+class Effort(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
+class Resumable(StrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+class HookKind(StrEnum):
+    TURN_END = "turn_end"
+    BLOCKED = "blocked"
+    ACTIVITY = "activity"
+
+
+class Tier(StrEnum):
+    """Spec.tier's values (an int there), as the keys of an adapter's tiers table."""
+
+    ONE = "1"
+    TWO = "2"
+    THREE = "3"
+    FOUR = "4"
+
+
+class Word(StrEnum):
+    """A tui hook's mark for its pane's activity (modes/tui_hook.py keeps a copy)."""
+
+    DONE = "done"
+    BLOCKED = "blocked"
+    WORKING = "working"
+
+
+class ActivityState(StrEnum):
+    """A listed session's activity: its pane's Word, dead once its pane died."""
+
+    WORKING = "working"
+    DONE = "done"
+    BLOCKED = "blocked"
+    DEAD = "dead"
+
+
+class HookError(Exception):
+    """One stderr line; the hook stops."""
+
+
+def _member(enum, field: str, value):
+    try:
+        return enum(value)
+    except ValueError:
+        raise ConfigError(f"{field} must be one of {', '.join(enum)}, got {value!r}") from None
+
+
 TAG = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -76,14 +157,15 @@ class Access:
             raise ConfigError(
                 "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
             )
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
 
 
 @dataclass(frozen=True, kw_only=True)
 class Spec:
     workdir: str
-    access: Access = Access()
+    access: Access = field(default_factory=Access)
     tier: int | None = None
-    effort: str | None = None
+    effort: Effort | None = None
     sid: str | None = None
     flags: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
@@ -92,6 +174,11 @@ class Spec:
     reply_tags: tuple[str, str] | None = (
         None  # the caller's (progress, outcome) tags (the prompt-printing Adapter only)
     )
+    runtime: str | None = None
+    mode: Mode | None = None
+    prompt: str = ""
+    resume: bool = False  # resume session sid
+    events: str | None = None
 
     def __post_init__(self):
         if not printable_abs(self.workdir):
@@ -99,11 +186,13 @@ class Spec:
                 f"workdir must be a printable absolute path, got {self.workdir!r:.80}"
             )
         if self.tier is not None and (
-            isinstance(self.tier, bool) or not isinstance(self.tier, int) or not 1 <= self.tier <= 4
+            isinstance(self.tier, bool)
+            or not isinstance(self.tier, int)
+            or str(self.tier) not in tuple(Tier)
         ):
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
-        if self.effort is not None and self.effort not in EFFORTS:
-            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
+        if self.effort is not None:
+            object.__setattr__(self, "effort", _member(Effort, "effort", self.effort))
         if self.access.cwd != "" and not printable_abs(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
@@ -125,6 +214,20 @@ class Spec:
             raise ConfigError(
                 "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
             )
+        if self.runtime is not None and not isinstance(self.runtime, str):
+            raise ConfigError("runtime must be None or a string")
+        if self.mode is not None:
+            object.__setattr__(self, "mode", _member(Mode, "mode", self.mode))
+        if not isinstance(self.prompt, str):
+            raise ConfigError("prompt must be a string")
+        if not isinstance(self.resume, bool):
+            raise ConfigError(f"resume must be a bool, got {self.resume!r:.80}")
+        if self.resume and self.sid is None:
+            raise ConfigError("resume: needs spec.sid, the session to resume")
+        if self.events is not None and not (
+            isinstance(self.events, str) and self.events.isprintable()
+        ):
+            raise ConfigError(f"events must be a printable path, got {self.events!r:.80}")
 
 
 @dataclass(frozen=True)
@@ -153,21 +256,79 @@ class Launch:
         ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")
+        object.__setattr__(self, "env", MappingProxyType(dict(env)))
+
+
+_IDENTITY = {
+    "sid": lambda v: sid_error(v) is None,
+    "cwd": printable_abs,
+    "transcript": lambda v: v == "" or printable_abs(v),
+    "project": lambda v: isinstance(v, bool),
+    "resume": lambda v: isinstance(v, str),
+}
 
 
 @dataclass(frozen=True)
 class SessionInfo:
+    """The one session identity; persisted() and from_fields are its one codec, for run.jsonl's
+    session line and session.json's identity keys. Read back from either (agent-writable), it is a
+    status hint, never an authorization, a path to open or argv to run without re-validation.
+    """
+
     sid: str
-    native_id: str
     cwd: str
     project: bool
     transcript: str
     resume: str
 
+    def persisted(self) -> dict:
+        return {
+            "sid": self.sid,
+            "cwd": self.cwd,
+            "project": self.project,
+            "transcript": self.transcript,
+            "resume": self.resume,
+        }
+
+    @classmethod
+    def from_fields(cls, fields: Mapping, *, strict: bool = False) -> "SessionInfo | None":
+        """persisted()'s fields (a missing transcript or resume is ""); invalid: None, or with
+        strict a ValueError naming the first bad key.
+        """
+        found = fields if isinstance(fields, Mapping) else {}
+        get = found.get
+        for key, ok in _IDENTITY.items():
+            if not ok(get(key, "" if key in ("transcript", "resume") else None)):
+                if strict:
+                    raise ValueError(key)
+                return None
+        return cls(
+            found["sid"], found["cwd"], found["project"], get("transcript", ""), get("resume", "")
+        )
+
 
 @dataclass(frozen=True)
-class SessionBound:
-    native_id: str
+class Prepared:
+    """A Mode's start, fixed before it starts: the Spec as started, its SessionInfo, argv and
+    child env (in_process, or a tui session attached: none).
+    """
+
+    spec: Spec
+    info: SessionInfo
+    argv: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+
+
+@dataclass(frozen=True)
+class ClientBound:
+    """An adapter's notice that its runtime bound client_id: a run.jsonl client_session line,
+    never a SessionEvent.
+    """
+
+    client_id: str
 
 
 @dataclass(frozen=True)
@@ -201,7 +362,7 @@ class Exited:
     returncode: int
 
 
-Event = SessionBound | Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
+SessionEvent = Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
 
 
 @dataclass(frozen=True)
@@ -218,9 +379,12 @@ class Usage:
 
 @dataclass(frozen=True)
 class SessionStatus:
-    resumable: str
+    resumable: Resumable  # given its plain value too
     last_active: float | None
     resume_command: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "resumable", _member(Resumable, "resumable", self.resumable))
 
 
 @dataclass(frozen=True)
@@ -242,6 +406,10 @@ class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
 
 
+class NotDisplayable(DriverError):
+    """From a Host that is not Displayable: `host <name> cannot display`."""
+
+
 @dataclass(frozen=True)
 class IdleTimeout:
     seconds: float
@@ -249,16 +417,32 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a Driver tui session's, else None; shown: the session showing it, "" unnamed, None
-    none.
+    """runtime: a tui session's (HostedSession's), else None; shown: the session showing it, ""
+    unnamed, None none; state: given its plain value too.
     """
 
     name: str
     sid: str | None
     runtime: str | None
-    state: str
+    state: ActivityState
     pane: str | None
     opener: str | None
     shown: str | None
     last_lines: str | None
     own: bool
+
+    def __post_init__(self):
+        object.__setattr__(self, "state", _member(ActivityState, "state", self.state))
+
+
+@dataclass(frozen=True)
+class Hosts:
+    """A parsed [hosts] table (Host.parse_hosts): the default Host's name and each [hosts.<name>],
+    a read-only copy.
+    """
+
+    default: str
+    tables: Mapping[str, Mapping]
+
+    def __post_init__(self):
+        object.__setattr__(self, "tables", freeze(self.tables))

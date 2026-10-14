@@ -67,7 +67,7 @@ class RefusingRun(fake_adapter.FakeInProcess):
         super().__init__(adapter)
         self.refusal = ConfigError("refused by check")
 
-    def check(self, prompt, spec, *, resume=False):
+    def check(self, spec):
         raise self.refusal
 
 
@@ -107,7 +107,7 @@ class Base(Case):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -692,7 +692,7 @@ class InProcess(Base):
         self.configure_session(
             {
                 name: {
-                    "implementation": f"adapters.{name}:{cls}",
+                    "implementation": f"agent_pm.session.adapters.{name}:{cls}",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -885,6 +885,16 @@ class Usage(Base):
 
     def test_resume_needs_sid(self):
         self.assertEqual(self.runs("--resume"), (2, "", "delegate: --resume needs --sid\n"))
+        self.assertEqual(self.launches(), [])
+
+    @mock.patch.dict(os.environ, {"NO_COLOR": "1"})
+    def test_an_unknown_mode_exits_2_naming_each_mode(self):
+        code, out, err = self.runs("--mode", "x")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(
+            "argument --mode: invalid choice: 'x' (choose from 'headless', 'tui', 'in_process')",
+            " ".join(err.split()),
+        )
         self.assertEqual(self.launches(), [])
 
     def test_runtime_given_twice_exits_2(self):

@@ -15,11 +15,13 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import datetime
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import (
@@ -38,7 +40,15 @@ from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.engine.types import Stopped
 from agent_pm.delegate.event.reply import marks
-from agent_pm.session import MODES, Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit
+from agent_pm.session import (
+    Activity,
+    Blocked,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    LimitHit,
+    Mode,
+)
 from agent_pm.utils import printable
 
 from delegate.tests.case import Case
@@ -76,6 +86,16 @@ def ended(text) -> dict:
 PENDING = turn("Waiting for the build.", pending=1)
 
 
+class UnstreamedHeadless(fake_adapter.FakeHeadless):
+    def events(self, lines):
+        raise ValueError("no stream")
+
+
+class UnstreamedAdapter(fake_adapter.FakeAdapter):
+    def headless(self):
+        return UnstreamedHeadless(self)
+
+
 class Base(Case):
     """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd
     the workdir.
@@ -97,7 +117,7 @@ class Base(Case):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -404,6 +424,30 @@ class Stops(Base):
         self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
         self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (r.error, 1))
 
+    def test_a_stream_setup_failure_is_the_result(self):
+        self.driver_dependencies = {
+            "class_loader": adapter_loader(
+                {"agent_pm.session.adapters.fake": SimpleNamespace(FakeAdapter=UnstreamedAdapter)}
+            )
+        }
+        self.configure_session(
+            {
+                "fake": {
+                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+            }
+        )
+        proc = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            r = self.go(said(START, block(DONE)))
+        popen.assert_called_once()
+        error = f"headless: cannot start {sys.executable}: no stream"
+        self.assertEqual((r, self.events), (Result(1, None, error), []))
+        self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
+        self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (error, 1))
+
     def test_a_driver_refusal_is_a_config_error_and_nothing_is_recorded(self):
         with self.assertRaises(ConfigError) as cm:
             self.go(said(START, block(DONE)), runtime="nope")
@@ -422,7 +466,7 @@ class InProcess(Base):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "adapters.fake:InProcessFakeAdapter",
+                    "implementation": "agent_pm.session.adapters.fake:InProcessFakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -434,7 +478,7 @@ class InProcess(Base):
             return super().go(*steps, mode="in_process", **kw)
 
     def test_a_policy_for_each_mode_in_process_the_headless_one(self):
-        self.assertEqual(set(POLICIES), set(MODES))
+        self.assertEqual(set(POLICIES), set(Mode))
         self.assertIs(POLICIES["in_process"], POLICIES["headless"])
 
     def test_a_done_run(self):

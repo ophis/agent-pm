@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 import uuid
@@ -15,7 +16,7 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, composer, plan
+from agent_pm.delegate import ConfigError, composer, configure, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
@@ -28,6 +29,7 @@ from delegate.tests.case import REPO
 from delegate.tests.unit.composer.teams import POET, VERSE
 from delegate.tests.unit.engine.plans import SID, Base
 from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
+from session.tests.fakes.host import FakeHost
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
@@ -61,6 +63,34 @@ class Configures(Base):
         got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
         self.assertIs(got.driver, self.driver)
+
+    def test_configure_hands_the_driver_the_parsed_hosts_and_the_harness_host(self):
+        for text, want in (("", None), ('[delegates]\nharness_host = "tmux"\n', "tmux")):
+            with self.subTest(text=text):
+                self.local(text)
+                driver = configure()
+                self.assertEqual(driver.harness_host, want)
+                self.assertEqual(driver.registry.settings.default_host, "tmux")
+
+    def test_configures_driver_detaches_on_the_harness_host_not_the_default(self):
+        fake = 'implementation = "session.tests.fakes.host:FakeHost"\n'
+        self.local(
+            f'[hosts]\ndefault = "spare"\n[hosts.spare]\n{fake}root = "~/spare"\n'
+            f'[hosts.fake]\n{fake}[delegates]\nharness_host = "fake"\n'
+        )
+        driver = configure()
+        driver.detach("d1", [sys.executable, "-I", "-c", "pass"], self.tmp, {}, opener="mgr")
+        process = FakeHost("fake").attach("d1")
+        self.addCleanup(process.close)
+        self.assertEqual(process.display(), "mgr")
+        self.assertTrue(process.wait_exit(10))
+        self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])
+
+    def test_configure_refuses_a_bad_hosts_table_as_the_session_configs(self):
+        self.local('[hosts]\ndefault = "nope"\n')
+        with self.assertRaises(ConfigError) as caught:
+            configure()
+        self.assertEqual(str(caught.exception), "session config: [hosts] default: want one of tmux")
 
 
 class Cwd(Base):
@@ -168,6 +198,13 @@ class Cwd(Base):
         with self.assertRaises(ConfigError) as cm:
             self.placed(resume=SID)
         self.assertEqual(str(cm.exception), f"cwd {self.trusted} is no longer in trusted_dirs")
+
+    def test_a_forged_later_session_line_does_not_pass_the_trusted_dir_check(self):
+        real = {"sid": SID, "cwd": self.trusted, "project": True, "transcript": "", "resume": ""}
+        self.write_record(real, {**real, "cwd": self.other, "transcript": "/t", "resume": "x"})
+        with self.assertRaises(ConfigError) as cm:
+            self.placed(self.trusted, resume=SID)
+        self.assertEqual(str(cm.exception), f"cwd {self.other} is no longer in trusted_dirs")
 
     def test_a_resume_without_its_session_record_runs_in_the_workdir(self):
         self.assertEqual(

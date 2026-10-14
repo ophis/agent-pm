@@ -1,8 +1,10 @@
 """
-utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset.
+utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset,
+freeze and thaw.
 """
 
 import copy
+import operator
 import os
 import tempfile
 import tomllib
@@ -10,7 +12,7 @@ import unittest
 from pathlib import Path
 
 from agent_pm.utils import config_file
-from agent_pm.utils.config_file import load, merge, read_project, unset
+from agent_pm.utils.config_file import freeze, load, merge, read_project, thaw, unset
 
 from utils.tests.case import REPO, Case
 
@@ -60,6 +62,32 @@ SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'
 DELEGATE = 'runtime = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
 ORCH = 'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = 3\n[core.roles.pm]\ngate = "g"\n'
 MANAGER = 'runtime = "m"\n'
+
+
+class FrozenTables(Case):
+    def test_freeze_is_a_read_only_deep_copy_its_lists_tuples(self):
+        source = {"a": {"l": [1, {"b": 2}], "t": (3, [4])}, "n": 5}
+        frozen = freeze(source)
+        source["a"]["l"][1]["b"] = 9
+        source["a"]["l"].append(6)
+        source["c"] = 7
+        self.assertEqual(frozen, {"a": {"l": (1, {"b": 2}), "t": (3, (4,))}, "n": 5})
+        for table, key in ((frozen, "c"), (frozen["a"], "c"), (frozen["a"]["l"][1], "c")):
+            with self.subTest(key=key), self.assertRaises(TypeError):
+                operator.setitem(table, key, 1)
+        self.assertFalse(hasattr(frozen["a"]["l"], "append"))
+        self.assertEqual(freeze(frozen), frozen)
+
+    def test_thaw_is_a_fresh_mutable_copy_lists_and_tuples_as_given(self):
+        source = {"a": {"l": [1, [2]], "t": (3, [4])}}
+        frozen = freeze(source)
+        first, second = thaw(frozen), thaw(freeze(frozen))
+        self.assertEqual((first, second), (source, source))
+        self.assertEqual([type(first["a"][k]) for k in ("l", "t")], [list, tuple])
+        self.assertEqual((type(first), type(first["a"]["t"][1])), (dict, list))
+        first["a"]["l"].append(5)
+        self.assertEqual(second, source)
+        self.assertIsNot(thaw(source)["a"]["l"], source["a"]["l"])
 
 
 class Projects(Case):

@@ -36,7 +36,6 @@ RUN_KEYS = frozenset(
         "output",
         "gate",
         "language",
-        "show",
         "cwd",
     }
 )

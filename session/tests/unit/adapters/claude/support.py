@@ -8,12 +8,12 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.common import select
 from agent_pm.session.engine.types import (
     ConfigError,
+    HookKind,
     Launch,
     Usage,
 )
@@ -113,8 +113,10 @@ class Base(Case):
         self.assertEqual(str(caught.exception), message)
 
     def launch(self, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
-        spec = Spec(**{"workdir": self.work, "sid": SID, **spec})
-        return ClaudeAdapter(config).headless().launch(prompt, spec, resume=resume)
+        spec = Spec(
+            **{"workdir": self.work, "sid": SID, "prompt": prompt, "resume": resume, **spec}
+        )
+        return ClaudeAdapter(config).headless().launch(spec)
 
 
 def stream_line(record) -> str:
@@ -171,11 +173,11 @@ def usage(*lines) -> Usage | None:
 HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
 
 HOOKS = {
-    "Stop": TURN_END,
-    "PermissionRequest": BLOCKED,
-    "Notification": BLOCKED,
-    "PostToolUse": ACTIVITY,
-    "UserPromptSubmit": ACTIVITY,
+    "Stop": HookKind.TURN_END,
+    "PermissionRequest": HookKind.BLOCKED,
+    "Notification": HookKind.BLOCKED,
+    "PostToolUse": HookKind.ACTIVITY,
+    "UserPromptSubmit": HookKind.ACTIVITY,
 }
 
 MATCHER = "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input|quota_auto_resume_stale)$"
@@ -222,12 +224,8 @@ WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 
 def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
-    spec = Spec(**{"workdir": work, "sid": SID, **spec})
-    return (
-        ClaudeAdapter(config)
-        .tui()
-        .launch(prompt, spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume)
-    )
+    spec = Spec(**{"workdir": work, "sid": SID, "prompt": prompt, "resume": resume, **spec})
+    return ClaudeAdapter(config).tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
 
 
 def said(mid, *blocks) -> dict:

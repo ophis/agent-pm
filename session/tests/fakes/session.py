@@ -1,7 +1,7 @@
 """FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions
 yield the class's script (FakeSession's is empty; scripted(*events) makes a subclass with those),
 then Exited(0) unless it ends with Exited. FakeSession and each subclass have their own started
-(start's arguments), live (name → session; stop and close remove it) and configured.
+(start's Spec and keywords), live (name → session; stop and close remove it) and configured.
 """
 
 from __future__ import annotations
@@ -11,9 +11,12 @@ import uuid
 
 from agent_pm.session import NotDisplayable, Session
 from agent_pm.session.engine.types import (
+    ConfigError,
     DriverError,
     Exited,
+    Liveness,
     Reply,
+    Resumable,
     SessionInfo,
     SessionRow,
     SessionStatus,
@@ -38,11 +41,12 @@ class FakeSession(Session):
     def scripted(cls, *events) -> type[FakeSession]:
         return type(cls.__name__, (cls,), {"script": events})
 
-    def __init__(self, runtime, mode, spec, sid, name, *, display) -> None:
-        self.runtime, self.mode, self.spec, self.sid, self.name = runtime, mode, spec, sid, name
+    def __init__(self, spec, sid, name, *, display) -> None:
+        self.spec, self.sid, self.name = spec, sid, name
+        self.runtime, self.mode = spec.runtime, spec.mode
         self.display_value = display
         self.sent: list[str] = []
-        self._state, self._reply = "live", None
+        self._state, self._reply = Liveness.LIVE, None
         ended = self.script and isinstance(self.script[-1], Exited)
         self._pending = iter(self.script if ended else (*self.script, Exited(0)))
 
@@ -57,11 +61,11 @@ class FakeSession(Session):
     def send(self, text: str) -> None:
         self.sent.append(text)
 
-    def state(self) -> str:
+    def state(self) -> Liveness:
         return self._state
 
     def stop(self) -> None:
-        self._state = "absent"
+        self._state = Liveness.ABSENT
         if self.live.get(self.name) is self:
             del self.live[self.name]
 
@@ -71,7 +75,6 @@ class FakeSession(Session):
     def info(self) -> SessionInfo:
         return SessionInfo(
             sid=self.sid,
-            native_id=self.sid,
             cwd=self.spec.access.cwd or self.spec.workdir,
             project=False,
             transcript="",
@@ -83,7 +86,7 @@ class FakeSession(Session):
         return self._reply
 
     def session_status(self) -> SessionStatus:
-        return SessionStatus("yes", None, "")
+        return SessionStatus(Resumable.YES, None, "")
 
     def record(self) -> None:
         return None
@@ -92,7 +95,7 @@ class FakeSession(Session):
     def displayable(self) -> bool:
         return False
 
-    def show(self, display=None):
+    def show(self, *, display=None):
         raise NotDisplayable("host none cannot display")
 
     def attach_command(self):
@@ -102,41 +105,22 @@ class FakeSession(Session):
         raise NotDisplayable("host none cannot display")
 
     @classmethod
-    def configure(cls, *, adapters, hosts, default_host) -> None:
-        cls.configured = {"adapters": adapters, "hosts": hosts, "default_host": default_host}
+    def configure(cls, *, adapters, hosts) -> None:
+        cls.configured = {"adapters": adapters, "hosts": hosts}
 
     @classmethod
-    def start(
-        cls,
-        runtime,
-        mode,
-        prompt,
-        spec,
-        *,
-        resume=None,
-        events=None,
-        idle_timeout=None,
-        display=None,
-        host=None,
-    ) -> FakeSession:
+    def start(cls, spec, *, display=None, host=None, idle_timeout=None) -> FakeSession:
+        for field in ("runtime", "mode"):
+            if getattr(spec, field) is None:
+                raise ConfigError(f"spec.{field}: required to start")
         cls.started.append(
-            {
-                "runtime": runtime,
-                "mode": mode,
-                "prompt": prompt,
-                "spec": spec,
-                "resume": resume,
-                "events": events,
-                "idle_timeout": idle_timeout,
-                "display": display,
-                "host": host,
-            }
+            {"spec": spec, "display": display, "host": host, "idle_timeout": idle_timeout}
         )
-        sid = resume or spec.sid or str(uuid.uuid4())
-        name = spec.name or f"{runtime}-{sid[:8]}"
+        sid = spec.sid or str(uuid.uuid4())
+        name = spec.name or f"{spec.runtime}-{sid[:8]}"
         if name in cls.live:
             raise DriverError(f"session {name} is live")
-        cls.live[name] = cls(runtime, mode, spec, sid, name, display=display)
+        cls.live[name] = cls(spec, sid, name, display=display)
         return cls.live[name]
 
     @classmethod
@@ -169,11 +153,11 @@ class FakeSession(Session):
         return cls.usage_result
 
     @classmethod
-    def layout(cls, display=None) -> None:
+    def layout(cls, *, display=None) -> None:
         return None
 
     @classmethod
-    def writable_dirs(cls, runtime, spec, resume=None) -> tuple[str, ...]:
+    def writable_dirs(cls, spec) -> tuple[str, ...]:
         return ()
 
     @classmethod

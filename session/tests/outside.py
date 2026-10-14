@@ -1,0 +1,113 @@
+"""A runtime and a Host written outside the session package, from its public modules alone
+(agent_pm.session.extension, agent_pm.session). OutsideAdapter: headless runs this Python printing
+`<prompt>` then `done`, one line each, read by its own events (no record parsing); in_process
+replies the prompt. OutsideHost: each process a child of this process, its Record and Display kept
+in memory; no terminal.
+"""
+
+import subprocess
+import sys
+
+from agent_pm.session.extension import (
+    Adapter,
+    Display,
+    DriverError,
+    Headless,
+    Host,
+    HostProcess,
+    InProcess,
+    Launch,
+    Record,
+    Reply,
+    Spec,
+    Stderr,
+    TurnEnd,
+)
+
+SCRIPT = "import sys; print(sys.argv[1]); print('done')"
+
+
+class OutsideAdapter(Adapter):
+    def headless(self):
+        return OutsideHeadless()
+
+    def in_process(self):
+        return OutsideInProcess()
+
+
+class OutsideHeadless(Headless):
+    def launch(self, spec: Spec) -> Launch:
+        return Launch((sys.executable, "-c", SCRIPT, spec.prompt))
+
+    def events(self, lines):
+        last = ""
+        for line in lines:
+            text = line.rstrip("\n")
+            if text == "done":
+                yield TurnEnd(last)
+            elif text:
+                last = text
+                yield Reply(text)
+            else:
+                yield Stderr("outside: empty line")
+
+
+class OutsideInProcess(InProcess):
+    def run(self, spec: Spec):
+        yield Reply(spec.prompt)
+        yield TurnEnd(spec.prompt)
+
+
+class OutsideProcess(HostProcess):
+    def __init__(self, name: str, child: subprocess.Popen, display: Display, record: Record | None):
+        self.name, self.child, self.shown, self.kept = name, child, display, record
+
+    def alive(self) -> bool:
+        return self.child.poll() is None
+
+    def close(self) -> None:
+        self.kill()
+
+    def wait_exit(self, timeout: float) -> bool:
+        try:
+            self.child.wait(timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+
+    def kill(self) -> None:
+        if self.alive():
+            self.child.kill()
+        self.child.wait()
+
+    def record(self) -> Record | None:
+        return self.kept
+
+    def display(self) -> Display:
+        return self.shown
+
+
+class OutsideHost(Host):
+    def __init__(self, name, settings=None):
+        super().__init__(name, settings)
+        self.processes: dict[str, OutsideProcess] = {}
+
+    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+        child = subprocess.Popen(
+            argv, cwd=cwd, env=dict(env), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL
+        )
+        self.processes[name] = OutsideProcess(name, child, display, record)
+        return self.processes[name]
+
+    def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+        raise DriverError(f"host {self.name} has no terminals")
+
+    def attach(self, name):
+        if name not in self.processes:
+            raise DriverError(f"no process {name}")
+        return self.processes[name]
+
+    def list(self, display=None):
+        if display == "":
+            return []
+        return sorted(n for n, p in self.processes.items() if display in (None, p.display()))

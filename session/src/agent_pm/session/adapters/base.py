@@ -1,25 +1,31 @@
-"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`. Its
-Headless (fresh per session: launch may keep state for parse) or Tui turns a prompt and a Spec into
-a Launch whose env and resume carry Access.env and Spec.env (the Adapter is their only owner), and
-the runtime's output into Events plus Stderr. Its InProcess checks (ConfigError refuses), then runs
-the session on a Driver thread, stopped at its next yield, changing no global state (cwd, environ,
-signals): it applies spec.access.cwd, not its env. Starts no process.
+"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`;
+headless(), tui() and in_process() each give a fresh mode object, None if unsupported. Each mode
+reads what to run from the Spec alone. Headless launch(spec) (it may keep state for events) and Tui
+launch(spec, hook) build a Launch whose env and resume carry Access.env and Spec.env (the Adapter is
+their only owner), and turn the runtime's output into SessionEvents, Stderr and ClientBound
+(JsonHeadless: parse(record) per JSON line). InProcess check(spec) refuses with ConfigError;
+run(spec) runs the session on a thread of the caller's process, stopped at its next yield, changing
+no global state (cwd, environ, signals): it applies spec.access.cwd, not its env. Starts no process.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
+from types import MappingProxyType
+from typing import ClassVar
 
 from agent_pm.session.adapters.common import select
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
+    ClientBound,
     ConfigError,
-    Event,
+    HookKind,
     Key,
     Launch,
     LimitHit,
     Paste,
-    SessionBound,
+    Resumable,
+    SessionEvent,
     SessionInfo,
     SessionStatus,
     Spec,
@@ -27,44 +33,37 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.utils import json_records
-
-TURN_END = "turn_end"
-BLOCKED = "blocked"
-ACTIVITY = "activity"
-RESUMABLE = ("yes", "no", "unknown")
+from agent_pm.utils import json_records, thaw
 
 
-class Adapter(ABC):
+class Adapter:
     selection: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
     forbidden_selection: tuple[str, ...] = ()
     valued_flags: tuple[str, ...] = ()
     selection_uuid: bool = False
     keys: frozenset[str] = frozenset()
     runtime_note: str = ""
-    session_env: str = ""
-    identity_env: tuple[str, ...] = ()
-    child_defaults: Mapping[str, str] = {}
+    session_env: ClassVar[str] = ""
+    identity_env: ClassVar[tuple[str, ...]] = ()
+    child_defaults: ClassVar[Mapping[str, str]] = MappingProxyType({})
 
     def __init__(self, config: Mapping):
         if extra := sorted(set(config) - self.keys):
             key = extra[0]
             adapter = type(self).__name__
             raise ConfigError(f"unknown key {key!r} in {adapter}'s config")
-        self.config = dict(config)
+        self.config = thaw(config)
 
     def select_session(self, native: str, *, resume: bool) -> tuple[str, ...]:
         return select(native, self.selection, uuid=self.selection_uuid, resume=resume)
 
-    @abstractmethod
     def headless(self) -> "Headless | None":
-        """A fresh Headless, or None."""
+        return None
 
-    @abstractmethod
-    def tui(self) -> "Tui | None": ...
+    def tui(self) -> "Tui | None":
+        return None
 
     def in_process(self) -> "InProcess | None":
-        """A fresh InProcess, or None."""
         return None
 
     def usage_probe(self) -> Launch | None:
@@ -78,52 +77,47 @@ class Adapter(ABC):
         return info
 
     def session_status(self, sid: str, cwd: str) -> SessionStatus:
-        return SessionStatus("unknown", None, "")
+        return SessionStatus(Resumable.UNKNOWN, None, "")
 
-    def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
-        """Own write dirs (resume: spec.sid's)."""
+    def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
+        """Own write dirs (spec.resume: spec.sid's)."""
         return ()
 
 
 class Headless(ABC):
-    def __init__(self, adapter: Adapter):
-        self.adapter = adapter
+    @abstractmethod
+    def launch(self, spec: Spec) -> Launch: ...
 
     @abstractmethod
-    def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
-        """The command; resume continues spec.sid."""
+    def events(self, lines: Iterable[str]) -> Iterator[SessionEvent | Stderr | ClientBound]: ...
 
+
+class JsonHeadless(Headless):
     @abstractmethod
-    def parse(self, record: dict) -> Iterable[Event | Stderr]: ...
+    def parse(self, record: dict) -> Iterable[SessionEvent | Stderr | ClientBound]: ...
 
-    def events(self, lines: Iterable[str]) -> Iterator[Event | Stderr]:
+    def events(self, lines: Iterable[str]) -> Iterator[SessionEvent | Stderr | ClientBound]:
         for record in json_records(lines):
             yield from self.parse(record)
 
 
 class Tui(ABC):
-    hooks: Mapping[str, str] = {}  # hook label → TURN_END, BLOCKED or ACTIVITY
+    hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
     dialogs: tuple[str, ...] = ()
-
-    def __init__(self, adapter: Adapter):
-        self.adapter = adapter
+    client = ""  # last ClientBound's id
 
     @abstractmethod
-    def launch(
-        self,
-        prompt: str,
-        spec: Spec,
-        hook: tuple[str, ...],
-        *,
-        source_roots: tuple[str, ...],
-        resume: bool = False,
-    ) -> Launch:
+    def launch(self, spec: Spec, hook: tuple[str, ...], *, source_roots: tuple[str, ...]) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
         payload on stdin. source_roots locates the loaded packages for isolated scripts.
         """
 
     def hook_state(self) -> dict:
         return {}
+
+    def restore(self, spec: Spec, state: Mapping) -> None:
+        """On attach, before hook_events; state: hook_state()'s adapter_state."""
+        return None
 
     @abstractmethod
     def reply(self, payload: dict) -> str: ...
@@ -148,28 +142,25 @@ class Tui(ABC):
     def submit(self, text: str) -> tuple[Paste | Key, ...]:
         return Paste(text), Key("Enter")
 
-    def hook_events(self, label: str, payload: dict, bound: str = "") -> list[Event]:
-        found = []
-        native = self.session_id(payload)
-        if native and native != bound:
-            found.append(SessionBound(native))
+    def hook_events(self, label: str, payload: dict) -> list[SessionEvent | ClientBound]:
+        found: list[SessionEvent | ClientBound] = []
+        client = self.session_id(payload)
+        if client and client != self.client:
+            self.client = client
+            found.append(ClientBound(client))
         kind = self.hooks.get(label)
-        if kind == TURN_END:
+        if kind == HookKind.TURN_END:
             found.append(TurnEnd(self.reply(payload), self.pending(payload)))
-        elif kind == BLOCKED:
+        elif kind == HookKind.BLOCKED:
             found.append(Blocked(self.blocked_reason(payload)))
-        elif kind == ACTIVITY:
+        elif kind == HookKind.ACTIVITY:
             found.append(Activity(self.activity(payload)))
         return found
 
 
 class InProcess(ABC):
-    def __init__(self, adapter: Adapter):
-        self.adapter = adapter
-
     @abstractmethod
-    def run(self, prompt: str, spec: Spec, *, resume: bool = False) -> Iterable[Event | Stderr]:
-        """The session's events; resume continues spec.sid."""
+    def run(self, spec: Spec) -> Iterable[SessionEvent | Stderr | ClientBound]: ...
 
-    def check(self, prompt: str, spec: Spec, *, resume: bool = False) -> None:
+    def check(self, spec: Spec) -> None:
         return None

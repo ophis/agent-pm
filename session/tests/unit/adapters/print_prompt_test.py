@@ -17,7 +17,6 @@ class Factory(Case):
         first, second = adapter.in_process(), adapter.in_process()
         self.assertIsInstance(first, PrintPromptInProcess)
         self.assertIsNot(first, second)
-        self.assertIs(first.adapter, adapter)
 
     def test_no_keys_no_runtime_note_and_the_base_defaults(self):
         adapter = PrintPromptAdapter({})

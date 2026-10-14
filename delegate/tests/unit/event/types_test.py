@@ -1,0 +1,20 @@
+"""delegate/event/types.py: OutcomeStatus and STATUSES, its members in order."""
+
+from agent_pm import delegate
+from agent_pm.delegate.event.types import STATUSES, OutcomeStatus
+
+from delegate.tests.case import Case
+
+
+class Statuses(Case):
+    def test_outcome_status_is_a_str_enum_of_the_three_statuses(self):
+        self.assertEqual(list(OutcomeStatus), ["done", "needs_input", "failed"])
+        self.assertEqual(STATUSES, tuple(OutcomeStatus))
+        self.assertEqual(STATUSES, ("done", "needs_input", "failed"))
+
+    def test_delegate_exports_both(self):
+        for name in ("OutcomeStatus", "STATUSES"):
+            with self.subTest(name=name):
+                self.assertIn(name, delegate.__all__)
+        self.assertIs(delegate.OutcomeStatus, OutcomeStatus)
+        self.assertIs(delegate.STATUSES, STATUSES)

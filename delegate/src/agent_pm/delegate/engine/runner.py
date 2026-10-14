@@ -37,13 +37,13 @@ from agent_pm.session import (
     Handle,
     IdleTimeout,
     LimitHit,
+    Mode,
     Reply,
     Stderr,
     TurnEnd,
-    holds,
     note,
 )
-from agent_pm.utils import printable, save
+from agent_pm.utils import holds, printable, save
 
 IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
@@ -147,7 +147,7 @@ class Tui(Headless):
         return GiveUp(f"no event for {seconds / 3600:g} h")
 
 
-POLICIES = {"headless": Headless, "tui": Tui, "in_process": Headless}
+POLICIES = {Mode.HEADLESS: Headless, Mode.TUI: Tui, Mode.IN_PROCESS: Headless}
 
 
 def say(text: str) -> None:
@@ -197,7 +197,7 @@ def _resets(at: float | None) -> str:
 
 class _Attempts:
     def __init__(self, p: Plan, on_event: Callable[[Event], None]):
-        self.plan, self.on_event, self.policy = p, on_event, POLICIES[p.spec.mode](self.note)
+        self.plan, self.on_event, self.policy = p, on_event, POLICIES[Mode(p.spec.mode)](self.note)
         self.workdir = p.spec.workdir
         self.seen: set[str] = set()
         self.refused = False  # the Driver refused the start: nothing to close

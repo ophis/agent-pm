@@ -5,9 +5,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from agent_pm.session.engine.types import EFFORTS, ConfigError
-
-TIERS = ("1", "2", "3", "4")
+from agent_pm.session.engine.types import ConfigError, Effort, Tier
 
 
 def _names(value, keys) -> bool:
@@ -26,11 +24,11 @@ def _environment(value) -> bool:
 
 
 CHECKS = (
-    ("tiers", lambda v: _names(v, TIERS), 'a table from tier "1"–"4" to a model name'),
+    ("tiers", lambda v: _names(v, tuple(Tier)), 'a table from tier "1"–"4" to a model name'),
     (
         "efforts",
-        lambda v: _names(v, EFFORTS),
-        f"a table from effort ({', '.join(EFFORTS)}) to a printable value",
+        lambda v: _names(v, tuple(Effort)),
+        f"a table from effort ({', '.join(Effort)}) to a printable value",
     ),
     ("env", _environment, "a table of environment names to strings without NUL"),
 )

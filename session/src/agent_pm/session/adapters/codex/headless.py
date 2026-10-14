@@ -14,10 +14,10 @@ from agent_pm.session.adapters.codex.common.types import SessionState
 from agent_pm.session.adapters.common import split_flags
 from agent_pm.session.engine.types import (
     Activity,
+    ClientBound,
     Launch,
     LimitHit,
     Reply,
-    SessionBound,
     Spec,
     Stderr,
     TurnEnd,
@@ -31,7 +31,8 @@ class CodexHeadless(Headless):
         self.last_reply = ""
         self.limit_sent = False
 
-    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+    def launch(self, spec: Spec):
+        resume = spec.resume
         self.state = self.common.prepare(spec, resume=resume)
         self.limit_sent = False
         snapshot = self.state.snapshot
@@ -39,7 +40,7 @@ class CodexHeadless(Headless):
         if resume:
             argv.extend(self.common.selector(self.state.native_id, resume=True))
         _, literal = split_flags(snapshot.flags)
-        argv.extend((*literal, prompt) if literal else ("--", prompt))
+        argv.extend((*literal, spec.prompt) if literal else ("--", spec.prompt))
         return Launch(
             tuple(argv),
             env=self.common.environment(snapshot),
@@ -71,7 +72,7 @@ class CodexHeadless(Headless):
                 yield Stderr("codex: thread.started before launch")
                 return
             self.state = self.common.bind(self.state.workdir, self.state.sid, found)
-            yield SessionBound(found)
+            yield ClientBound(found)
         elif kind == "item.completed":
             item = record.get("item")
             if (

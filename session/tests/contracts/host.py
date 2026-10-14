@@ -1,23 +1,27 @@
 """HostContract, FR-47's Host contract: a subclass also inherits Case and defines make_host() ->
 Host. Each case runs short Python programs written against the Host ABC only, polling files under
-self.home for events and output.
+self.home for events and output; the cannot-display case runs an in_process session on the Host.
 """
 
 import contextlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 import uuid
 from unittest import mock
 
-from agent_pm.session import Displayable, DriverError, Host
+from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
+from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.types import Key, Paste
 from agent_pm.utils import Record
 
+from session.tests import fake_adapter
 from session.tests.case import PY, REPO, child_env
+from session.tests.modules import adapter_loader
 
 OTHER_DISPLAY = "elsewhere:1.2"
 DEADLINE = 10
@@ -30,6 +34,7 @@ PUT = (
     "    os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
 )
 EXIT_7 = "import sys; sys.exit(7)"
+KILLED = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
 SLEEP = "import time; time.sleep(30)"
 READ_LINE = PUT + "put(sys.stdin.readline())"
 DUMP_ENV = PUT + "put(json.dumps(dict(os.environ)))"
@@ -37,6 +42,15 @@ SPAWN = (
     PUT + "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
     "put(f'{os.getpid()} {child.pid}')\n"
     "time.sleep(30)"
+)
+LEAVE = (
+    PUT + "ready = sys.argv[1] + '.ready'\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import signal, sys, time; "
+    'signal.signal(signal.SIGHUP, signal.SIG_IGN); open(sys.argv[1], "w").close(); '
+    "time.sleep(30)', ready])\n"
+    "while not os.path.exists(ready):\n"
+    "    time.sleep(0.01)\n"
+    "put(f'{os.getpid()} {child.pid}')\n"
 )
 CHILD = """import json, sys
 from agent_pm.session import Host
@@ -69,10 +83,6 @@ def gone(pid: int) -> bool:
 
 
 class HostContract:
-    """TASK-365 (356-4) adds FR-47's cannot-display case (Session.displayable, NotDisplayable) with
-    HostedSession.
-    """
-
     def make_host(self) -> Host:
         raise NotImplementedError
 
@@ -124,6 +134,12 @@ class HostContract:
         self.event(events, name, "exited 7")
         self.assertTrue(process.wait_exit(DEADLINE))
         self.assertFalse(process.alive())
+
+    def test_detach_writes_exited_minus_the_signal_when_a_signal_ends_its_program(self):
+        name, events = self.fresh(), self.file("events")
+        process = self.start("detach", name, KILLED, events=events)
+        self.event(events, name, f"exited -{int(signal.SIGKILL)}")
+        self.assertTrue(process.wait_exit(DEADLINE))
 
     def test_a_terminal_writes_dead_when_its_program_exits(self):
         name, events = self.fresh(), self.file("events")
@@ -182,6 +198,36 @@ class HostContract:
         self.poll(lambda: gone(own) and gone(child), f"end of {own} and {child}")
         self.assertFalse(process.alive())
 
+    def test_a_child_its_ended_program_left_is_waited_for_until_kill_or_close_ends_it(self):
+        for end in ("kill", "close"):
+            with self.subTest(end=end):
+                self.left_child_ended_by(end)
+
+    def left_child_ended_by(self, end: str) -> None:
+        name, pids = self.fresh(), self.file("pids")
+        process = self.start("detach", name, LEAVE, pids)
+        self.addCleanup(process.kill)
+        own, child = map(int, self.poll(lambda: read(pids), f"pids in {pids}").split())
+        self.poll(lambda: gone(own), f"end of {own}")
+        self.assertFalse(process.wait_exit(0.3))
+        self.assertFalse(gone(child))
+        getattr(process, end)()
+        self.poll(lambda: gone(child), f"end of {child}")
+        self.poll(lambda: process.wait_exit(0), f"{name}'s exit")
+
+    def test_a_handle_never_acts_on_a_later_session_of_its_name(self):
+        name = self.fresh()
+        old = self.start("detach", name, SLEEP, display=OTHER_DISPLAY)
+        old.close()
+        self.poll(lambda: old.wait_exit(0), f"{name}'s exit")
+        new = self.start("detach", name, SLEEP, record=self.a_record(name))
+        self.assertEqual((old.alive(), old.record(), old.display()), (False, None, None))
+        old.kill()
+        old.close()
+        self.assertTrue(new.alive())
+        self.assertEqual((new.record(), new.display()), (self.a_record(name), None))
+        self.assertEqual(self.host.attach(name).record(), self.a_record(name))
+
     def test_close_twice_is_fine_and_forgets_the_session(self):
         name = self.fresh()
         process = self.start("terminal", name, SLEEP)
@@ -238,3 +284,34 @@ class HostContract:
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
+
+    def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
+        if isinstance(self.host, Displayable):
+            self.skipTest("a Displayable Host's display cases: TASK-368 (356-8)")
+        scenario, kind = self.file("scenario"), type(self.host)
+        with open(scenario, "w", encoding="utf-8") as f:
+            json.dump([{"out": {"type": "message", "text": "hi"}}], f)
+        fake = "agent_pm.session.adapters.fake:InProcessFakeAdapter"
+        configured = HostedSession.configured(
+            adapters={
+                "fake": {"implementation": fake, "scenario": scenario, "log": self.file("log")}
+            },
+            hosts=Host.parse_hosts(
+                {
+                    self.host.name: {"implementation": f"{kind.__module__}:{kind.__qualname__}"},
+                    "default": self.host.name,
+                }
+            ),
+            class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+            host_factory=lambda *_: self.host,
+        )
+        session = configured.start(
+            Spec(workdir=self.file("work"), runtime="fake", mode=Mode.IN_PROCESS, prompt="hi")
+        )
+        self.addCleanup(session.stop)
+        self.assertIs(configured.host(), self.host)
+        self.assertFalse(session.displayable)
+        for call in ("show", "attach_command", "screen"):
+            with self.subTest(call=call), self.assertRaises(NotDisplayable) as caught:
+                getattr(session, call)()
+            self.assertEqual(str(caught.exception), f"host {self.host.name} cannot display")

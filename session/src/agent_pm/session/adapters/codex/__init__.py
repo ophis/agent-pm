@@ -52,5 +52,5 @@ class CodexAdapter(Adapter):
     def session_status(self, sid, cwd):
         return self.common.session_status(sid, cwd)
 
-    def writable_dirs(self, spec: Spec, *, resume: bool = False):
-        return self.common.writable_dirs(spec, resume=resume)
+    def writable_dirs(self, spec: Spec):
+        return self.common.writable_dirs(spec, resume=spec.resume)

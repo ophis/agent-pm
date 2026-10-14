@@ -117,24 +117,26 @@ forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator"
 name = "Modes do not import the session API"
 type = "forbidden"
 source_modules = ["agent_pm.session.modes"]
-forbidden_modules = ["agent_pm.session.engine.api"]
+forbidden_modules = ["agent_pm.session.engine.base", "agent_pm.session.engine.hosted", "agent_pm.session.engine.forwarding"]
 
 [[tool.importlinter.contracts]]
 name = "Session units follow the main import rules"
 type = "units"
 container = "agent_pm.session"
-units = ["agent_pm.session.engine.api", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.modes", "agent_pm.session.adapters", "agent_pm.session.hosts", "agent_pm.session.hosts.base"]
+units = ["agent_pm.session.engine.base", "agent_pm.session.engine.hosted", "agent_pm.session.engine.forwarding", "agent_pm.session.engine.types", "agent_pm.session.engine.records", "agent_pm.session.modes", "agent_pm.session.adapters", "agent_pm.session.hosts", "agent_pm.session.hosts.base", "agent_pm.session.extension"]
 dependencies = [
-    "agent_pm.session.engine.api -> agent_pm.session.adapters agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.session.engine.records agent_pm.utils",
+    "agent_pm.session.engine.base -> agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+    "agent_pm.session.engine.hosted -> agent_pm.session.engine.base agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.adapters agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.utils",
+    "agent_pm.session.engine.forwarding -> agent_pm.session.engine.hosted agent_pm.session.engine.base agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.adapters agent_pm.session.modes agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.utils",
     "agent_pm.session.modes -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.adapters -> agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.adapters.registry -> agent_pm.session.hosts agent_pm.session.hosts.base",
-    "agent_pm.session.engine.base -> agent_pm.session.adapters agent_pm.session.hosts agent_pm.session.hosts.base",
     "agent_pm.session.engine.types -> agent_pm.utils",
-    "agent_pm.session.engine.records -> agent_pm.utils",
-    "agent_pm.session.hosts -> agent_pm.utils",
+    "agent_pm.session.engine.records -> agent_pm.session.engine.types agent_pm.utils",
+    "agent_pm.session.hosts -> agent_pm.session.hosts.base agent_pm.session.engine.types agent_pm.utils",
     "agent_pm.session.hosts.base -> agent_pm.session.engine.types agent_pm.utils",
-    "outside -> agent_pm.session.engine.api agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+    "agent_pm.session.extension -> agent_pm.session.adapters agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
+    "outside -> agent_pm.session.engine.forwarding agent_pm.session.engine.base agent_pm.session.engine.records agent_pm.session.engine.types agent_pm.session.hosts.base agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]
@@ -145,7 +147,7 @@ units = ["agent_pm.delegate", "agent_pm.delegate.composer", "agent_pm.delegate.e
 unimported_units = ["agent_pm.delegate.team.tools"]
 dependencies = [
     "agent_pm.delegate -> agent_pm.delegate.composer agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
-    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
     "agent_pm.delegate.event -> agent_pm.delegate.engine.config agent_pm.utils",
     "agent_pm.delegate.engine.config -> agent_pm.utils",
     "agent_pm.delegate.team.tools -> agent_pm.delegate.engine.config agent_pm.utils",

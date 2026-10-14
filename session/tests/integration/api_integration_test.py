@@ -1,4 +1,4 @@
-"""session.engine.api over fake runtimes: events, idle timeouts, exits, stop, process groups,
+"""HostedSession, through the Driver wrapper, over fake runtimes: events, idle timeouts, exits, stop, process groups,
 inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
 """
 
@@ -18,7 +18,8 @@ import types
 import unittest
 from unittest import mock
 
-from agent_pm.session.engine import api, records
+from agent_pm.session import Session
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -28,7 +29,6 @@ from agent_pm.session.engine.types import (
     Launch,
     LimitHit,
     Reply,
-    SessionBound,
     Spec,
     Stderr,
     TurnEnd,
@@ -56,10 +56,10 @@ class LaunchingAdapter(fake_adapter.FakeAdapter):
 
 
 class LaunchingRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+    def launch(self, spec: Spec):
         config = self.adapter.config
         return dataclasses.replace(
-            super().launch(prompt, spec, resume=resume),
+            super().launch(spec),
             env=config.get("env", {}),
             unset=tuple(config.get("unset", ())),
             cwd=config.get("cwd", ""),
@@ -80,7 +80,7 @@ class ScriptAdapter(fake_adapter.FakeAdapter):
 
 
 class ScriptRun(fake_adapter.FakeHeadless):
-    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+    def launch(self, spec: Spec):
         return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
 
 
@@ -137,7 +137,7 @@ class Base(Case):
         """
         tables = {
             name: {
-                "implementation": f"adapters.{name}:{name.capitalize()}Adapter",
+                "implementation": f"agent_pm.session.adapters.{name}:{name.capitalize()}Adapter",
                 "scenario": self.scenario,
                 "log": self.log,
             }
@@ -146,7 +146,7 @@ class Base(Case):
         tables["launching"].update(extra)
         self.configure_session(tables)
 
-    def start(self, runtime="fake", spec=None, **kwargs) -> api.Handle:
+    def start(self, runtime="fake", spec=None, **kwargs) -> Session:
         handle = self.driver.start(
             runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
@@ -185,7 +185,7 @@ class Base(Case):
             os.unlink(self.log)
 
     def written(self) -> list[dict]:
-        return records.read(records.path(self.workdir))
+        return RunLog(self.workdir).read()
 
 
 class AcceptanceTest(Base):
@@ -204,15 +204,15 @@ class AcceptanceTest(Base):
         )
         handle = self.start()
         self.assertIsNone(handle.reply)
-        self.assertEqual(handle.info().native_id, "")
         seen = []
-        found = self.drain(
-            handle, lambda event: seen.append((event, handle.reply, handle.info().native_id))
-        )
+
+        def bindings() -> int:
+            return [e["kind"] for e in self.written()].count("client_session")
+
+        found = self.drain(handle, lambda event: seen.append((event, handle.reply, bindings())))
         self.assertEqual(
             [e for e in found if not isinstance(e, Stderr)],
             [
-                SessionBound("native-1"),
                 Activity("Read"),
                 Reply("one"),
                 Reply(marker),
@@ -224,11 +224,10 @@ class AcceptanceTest(Base):
         )
         self.assertEqual(found.count(Stderr("warning: slow")), 1)
         self.assertEqual(found[-1], Exited(0))
-        for event, reply, native in seen:
+        for event, reply, bound in seen:
             if isinstance(event, Reply):
-                self.assertEqual((reply, native), (event.text, "native-1"))
+                self.assertEqual((reply, bound), (event.text, 1))
         self.assertEqual(handle.reply, "done")
-        self.assertEqual(handle.info().native_id, "native-1")
 
         written = self.written()
         for entry in written:
@@ -336,12 +335,12 @@ class ExitTest(Base):
 
 
 class ProcessGroupTest(Base):
-    def script(self, code: str, **kwargs) -> api.Handle:
+    def script(self, code: str, **kwargs) -> Session:
         """A started session of runtime `script` running `code`."""
         self.configure_session(
             {
                 "script": {
-                    "implementation": "adapters.script:ScriptAdapter",
+                    "implementation": "agent_pm.session.adapters.script:ScriptAdapter",
                     "script": textwrap.dedent(code),
                 }
             }
@@ -400,16 +399,15 @@ class FailureTest(Base):
     def test_a_failed_client_session_record_stops_the_process_and_propagates(self):
         self.steps(out("session", id="native-1"), {"sleep": 60})
         handle = self.start()
-        os.replace(self.redirected(), records.path(self.workdir))
+        os.replace(self.redirected(), RunLog(self.workdir).path)
         with self.assertRaises(OSError):
             self.drain(handle)
         self.assertFalse(running(self.logged()[0]["pid"]))
-        self.assertEqual(handle.info().native_id, "")
 
     def test_a_failed_stderr_record_loses_the_line_not_the_run(self):
         self.steps({"err": "lost"})
         handle = self.start()
-        os.replace(self.redirected(), records.path(self.workdir))
+        os.replace(self.redirected(), RunLog(self.workdir).path)
         with mock.patch("sys.stderr", io.StringIO()) as printed:
             self.assertEqual(self.drain(handle), [Stderr("lost"), Exited(0)])
         self.assertIn("records: ", printed.getvalue())

@@ -10,6 +10,7 @@ from unittest import mock
 from agent_pm.delegate.composer import ConfigError
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.teams import (
+    TeamKind,
     catalog,
     charter,
     check_all,
@@ -695,3 +696,8 @@ class TeamDirChecks(Fake):
             f"team_dirs: {link} ({elsewhere}/verse.md) is writable by group or others: "
             "chmod go-w it",
         )
+
+
+class Kinds(Case):
+    def test_team_kind_is_a_str_enum_in_the_team_dir_order(self):
+        self.assertEqual(list(TeamKind), ["roles", "tasks", "templates"])

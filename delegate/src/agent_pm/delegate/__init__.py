@@ -22,7 +22,7 @@ from agent_pm.delegate.engine.types import (
     Spec,
 )
 from agent_pm.delegate.event import DelegateEvent
-from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome
+from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
 
 __all__ = [
     "ConfigError",
@@ -45,6 +45,7 @@ __all__ = [
     "Event",
     "IDLE_TIMEOUT",
     "STATUSES",
+    "OutcomeStatus",
     "Delegate",
     "RunConfig",
     "DelegateEvent",

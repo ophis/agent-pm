@@ -1,4 +1,4 @@
-"""utils/files.py: read_regular, append_line and save (main's save cases)."""
+"""utils/files.py: read_regular, append_line, holds and save (main's save cases)."""
 
 import errno
 import json
@@ -11,7 +11,7 @@ import unittest.mock
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils import ConfinedFileError, ConfinedReason, files, read_confined
+from agent_pm.utils import ConfinedFileError, ConfinedReason, files, holds, read_confined
 
 from utils.tests.case import Case
 
@@ -234,6 +234,30 @@ class AppendLine(Base):
         self.assertEqual((stat.S_IMODE(os.stat(self.path).st_mode), self.content()), (0o600, b""))
 
 
+class Holds(Base):
+    def test_is_exported(self):
+        self.assertIs(holds, files.holds)
+
+    def test_only_a_regular_file_holding_exactly_the_text(self):
+        self.assertFalse(files.holds(self.path, "x"))
+        with open(self.path, "w") as f:
+            f.write("héllo")
+        self.assertTrue(files.holds(self.path, "héllo"))
+        self.assertTrue(files.holds(Path(self.path), "héllo"))
+        for text in ("héll", "héllo!", "", "other"):
+            self.assertFalse(files.holds(self.path, text), text)
+
+    def test_a_symlink_or_fifo_is_no_without_blocking(self):
+        target = os.path.join(self.dir, "target")
+        with open(target, "w") as f:
+            f.write("x")
+        os.symlink(target, self.path)
+        self.assertFalse(files.holds(self.path, "x"))
+        os.remove(self.path)
+        os.mkfifo(self.path)
+        self.assertFalse(self.promptly(lambda: files.holds(self.path, "")))
+
+
 class FileLock(Base):
     def test_lock_is_private_regular_and_non_inheritable(self):
         descriptors = []
@@ -373,6 +397,11 @@ class ConfinedRead(Case):
             read_confined(str(path or self.path), str(self.root), limit=8)
         self.assertIs(error.exception.reason, reason)
         return error.exception
+
+    def test_reasons_are_a_str_enum_of_their_values(self):
+        values = ["regular", "single_link", "suffix", "outside", "replaced", "too_large"]
+        self.assertEqual([r.value for r in ConfinedReason], values)
+        self.assertEqual(list(ConfinedReason), values)
 
     def test_exact_limit_and_empty_file(self):
         self.assertEqual(read_confined(str(self.path), str(self.root), limit=8), b"complete")

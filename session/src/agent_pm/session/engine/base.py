@@ -1,14 +1,19 @@
-"""Session, the ABC of an agent session on a Host."""
+"""Session, the ABC of an agent session on a Host. Its class methods on Session itself are
+HostedSession's (loaded when called); a subclass's are its own.
+"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
+from typing import Any
 
 from agent_pm.session.engine.types import (
-    ConfigError,
-    Event,
+    Hosts,
     IdleTimeout,
+    Liveness,
+    Mode,
+    SessionEvent,
     SessionInfo,
     SessionRow,
     SessionStatus,
@@ -16,16 +21,10 @@ from agent_pm.session.engine.types import (
     Stderr,
     Usage,
 )
-from agent_pm.session.hosts import tables
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.hosts.types import Hosts
-from agent_pm.utils import Display, Record
+from agent_pm.utils import Display, Record, load_class
 
-
-def _later(method: str) -> NotImplementedError:
-    return NotImplementedError(
-        f"Session.{method}: the session layer's own implementation comes with HostedSession (TASK-365)"
-    )
+HOSTED = "agent_pm.session.engine.hosted:HostedSession"
 
 
 class Session(ABC):
@@ -33,17 +32,17 @@ class Session(ABC):
 
     sid: str
     runtime: str
-    mode: str
+    mode: Mode
     name: str | None
 
     @abstractmethod
-    def events(self) -> Iterator[Event | Stderr | IdleTimeout]: ...
+    def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]: ...
 
     @abstractmethod
     def send(self, text: str) -> None: ...
 
     @abstractmethod
-    def state(self) -> str: ...
+    def state(self) -> Liveness: ...
 
     @abstractmethod
     def stop(self) -> None: ...
@@ -69,7 +68,7 @@ class Session(ABC):
     def displayable(self) -> bool: ...
 
     @abstractmethod
-    def show(self, display: Display = None) -> str | None: ...
+    def show(self, *, display: Display = None) -> str | None: ...
 
     @abstractmethod
     def attach_command(self) -> str: ...
@@ -77,56 +76,53 @@ class Session(ABC):
     @abstractmethod
     def screen(self, lines: int | None = None) -> str: ...
 
-    @staticmethod
-    def parse_hosts(table) -> Hosts:
-        """An already-read [hosts] table as Hosts(default, tables); else ConfigError."""
-        try:
-            return tables.parse(table)
-        except ValueError as error:
-            raise ConfigError(str(error)) from None
+    @classmethod
+    def _hosted(cls, method: str) -> Callable[..., Any]:
+        if cls is not Session:
+            raise NotImplementedError(f"{cls.__name__}.{method}: not implemented")
+        return getattr(load_class(HOSTED, Session), method)
+
+    @classmethod
+    def configure(cls, *, adapters: Mapping, hosts: Hosts) -> None:
+        cls._hosted("configure")(adapters=adapters, hosts=hosts)
 
     @classmethod
     def start(
         cls,
-        runtime: str,
-        mode: str,
-        prompt: str,
         spec: Spec,
         *,
-        resume: str | None = None,
-        events: str | None = None,
-        idle_timeout: float | None = None,
         display: Display = None,
         host: str | None = None,
+        idle_timeout: float | None = None,
     ) -> Session:
-        raise _later("start")
+        return cls._hosted("start")(spec, display=display, host=host, idle_timeout=idle_timeout)
 
     @classmethod
     def attach(
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> Session:
-        raise _later("attach")
+        return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
 
     @classmethod
     def list(cls, match: str | None = None, *, display: Display = None) -> list[SessionRow]:
-        raise _later("list")
+        return cls._hosted("list")(match, display=display)
 
     @classmethod
     def usage(cls, runtime: str) -> Usage | None:
-        raise _later("usage")
+        return cls._hosted("usage")(runtime)
 
     @classmethod
-    def layout(cls, display: Display = None) -> str | None:
-        raise _later("layout")
+    def layout(cls, *, display: Display = None) -> str | None:
+        return cls._hosted("layout")(display=display)
 
     @classmethod
-    def writable_dirs(cls, runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
-        raise _later("writable_dirs")
+    def writable_dirs(cls, spec: Spec) -> tuple[str, ...]:
+        return cls._hosted("writable_dirs")(spec)
 
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
-        raise _later("display")
+        return cls._hosted("display")(value, host=host)
 
     @classmethod
     def host(cls, name: str | None = None) -> Host:
-        raise _later("host")
+        return cls._hosted("host")(name)

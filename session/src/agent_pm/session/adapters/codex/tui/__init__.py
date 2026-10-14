@@ -27,7 +27,7 @@ from agent_pm.session.adapters.codex.common import (
 )
 from agent_pm.session.adapters.codex.common.types import HookPlan, LaunchPlan, Snapshot
 from agent_pm.session.adapters.common import split_flags
-from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
+from agent_pm.session.engine.types import ConfigError, HookKind, Launch, LimitHit, Spec
 from agent_pm.utils import import_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
@@ -84,7 +84,7 @@ def protect(state, dependencies, environment=None, added=()):
 
 
 class CodexTui(Tui):
-    hooks = {label: kind for label, _, kind in HOOKS}
+    hooks = MappingProxyType({label: HookKind(kind) for label, _, kind in HOOKS})
     dialogs = (
         "Trust this folder?",
         "Config, hooks, and exec policies from untrusted folders stay disabled.",
@@ -101,10 +101,9 @@ class CodexTui(Tui):
         self.native = ""
         self.store = ""
 
-    def launch(
-        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
-    ):
+    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
+        prompt, resume = spec.prompt, spec.resume
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
         saved_flags = snapshot.flags
@@ -169,6 +168,17 @@ class CodexTui(Tui):
             "adapter_state": {"store": self.store},
         }
 
+    def restore(self, spec, state):
+        """The launching CodexTui's store, recovery state and native id, from the store it named."""
+        store = state.get("store")
+        try:
+            sessions = SessionStore(store if isinstance(store, str) else None)
+            self.store = sessions.root
+            self.state = sessions.load(spec.workdir, spec.sid)
+        except (RecoveryError, OSError, ValueError) as exc:
+            raise ConfigError(str(exc)) from exc
+        self.native = "" if self.state is None else self.state.native_id or ""
+
     def session_id(self, payload):
         if self.native and payload.get("session_id") != self.native:
             return ""
@@ -184,7 +194,7 @@ class CodexTui(Tui):
             self.last_reply = message if isinstance(message, str) else ""
         return native
 
-    def hook_events(self, label, payload, bound=""):
+    def hook_events(self, label, payload):
         if label not in self.hooks or not isinstance(payload, dict):
             return []
         if payload.get("hook_event_name", label) != label:
@@ -192,7 +202,7 @@ class CodexTui(Tui):
         payload = {**payload, "hook_event_name": label}
         if not self.session_id(payload):
             return []
-        return super().hook_events(label, payload, bound)
+        return super().hook_events(label, payload)
 
     def reply(self, payload):
         if payload.get("hook_event_name") != "Interrupt":

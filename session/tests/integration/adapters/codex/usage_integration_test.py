@@ -59,7 +59,7 @@ class UsageIntegrationTest(Case):
         self.configure_session(
             {
                 "codex": {
-                    "implementation": "adapters.codex:CodexAdapter",
+                    "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
                     "env": {"FAKE_LOG": str(self.log), "FAKE_CASE": case, **env},
                 }
             }

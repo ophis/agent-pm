@@ -1,4 +1,4 @@
-"""session.engine.api with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
+"""HostedSession, through the Driver wrapper, with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
 table given to Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py
 (on PATH as `claude`) through Driver.start, Driver.usage and Driver.session_status; one case runs
 the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are
@@ -19,7 +19,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session.engine import api, records
+from agent_pm.session import Session, session_record
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -28,7 +29,6 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     LimitHit,
     Reply,
-    SessionBound,
     SessionStatus,
     Spec,
     Stderr,
@@ -46,7 +46,7 @@ SETTLE = 0.5  # seconds a caller gets to wait in events() again after printing a
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 RESETS = 1760000000
 TABLE = {
-    "implementation": "adapters.claude:ClaudeAdapter",
+    "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
     "tiers": {"4": "haiku"},
     "efforts": {"low": "low"},
 }
@@ -66,7 +66,6 @@ PROBE = [
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.session.engine import api
 from agent_pm.session import Driver, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
 driver = Driver(adapters={"claude": json.loads(sys.argv[1])}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
@@ -121,7 +120,7 @@ class Base(Case):
         with open(self.file, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **fields}, f)
 
-    def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> api.Handle:
+    def start(self, prompt="hello", spec=None, sid=None, **kwargs) -> Session:
         spec = spec or Spec(workdir=self.workdir, sid=sid)
         handle = self.driver.start("claude", "headless", prompt, spec, **kwargs)
         self.addCleanup(handle.stop)
@@ -155,10 +154,7 @@ class Base(Case):
             return [json.loads(line) for line in f]
 
     def written(self) -> list[dict]:
-        return [
-            {k: v for k, v in e.items() if k != "ts"}
-            for e in records.read(records.path(self.workdir))
-        ]
+        return [{k: v for k, v in e.items() if k != "ts"} for e in RunLog(self.workdir).read()]
 
     def resume_command(self, sid: str) -> str:
         return f"cd {shlex.quote(self.workdir)} && claude --resume {sid}"
@@ -175,7 +171,6 @@ class RunTest(Base):
         self.assertEqual(
             self.drain(handle),
             [
-                SessionBound(sid),
                 Reply("one"),
                 Activity("Read"),
                 Reply("two"),
@@ -185,7 +180,6 @@ class RunTest(Base):
             ],
         )
         self.assertEqual(handle.reply, "three")
-        self.assertEqual(handle.info().native_id, sid)
         (entry,) = self.logged()
         self.assertEqual(entry["cwd"], self.workdir)
         self.assertEqual(
@@ -207,7 +201,8 @@ class RunTest(Base):
             self.written(), [session, {"kind": "client_session", "sid": sid, "client_id": sid}]
         )
         self.assertEqual(
-            {k: v for k, v in api.session_record(self.workdir, sid).items() if k != "ts"}, session
+            session_record(self.workdir, sid),
+            {k: v for k, v in session.items() if k != "kind"},
         )
 
     def test_resume_continues_the_transcript(self):
@@ -219,7 +214,7 @@ class RunTest(Base):
         self.assertEqual(again.sid, first.sid)
         self.assertEqual(
             self.drain(again),
-            [SessionBound(first.sid), Reply("second"), TurnEnd("second", 0), Exited(0)],
+            [Reply("second"), TurnEnd("second", 0), Exited(0)],
         )
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", first.sid])
         self.assertNotIn("--session-id", self.logged()[1]["argv"])
@@ -249,11 +244,10 @@ class RunTest(Base):
         resume = (
             f"cd {shlex.quote(proj)} && claude --resume {sid} --add-dir {shlex.quote(self.workdir)}"
         )
-        recorded = api.session_record(self.workdir, sid)
+        recorded = session_record(self.workdir, sid)
         self.assertEqual(
-            {k: v for k, v in recorded.items() if k != "ts"},
+            recorded,
             {
-                "kind": "session",
                 "sid": sid,
                 "cwd": proj,
                 "project": False,
@@ -286,21 +280,17 @@ class RunTest(Base):
             if isinstance(event, Reply):
                 os.kill(self.logged()[0]["pid"], signal.SIGKILL)
 
-        self.assertEqual(
-            self.drain(first, on), [SessionBound(sid), Reply("first"), Exited(-signal.SIGKILL)]
-        )
+        self.assertEqual(self.drain(first, on), [Reply("first"), Exited(-signal.SIGKILL)])
         self.assertEqual(self.driver.session_status("claude", sid, self.workdir).resumable, "yes")
         self.scenario(steps=["second"])
         again = self.start("more", resume=sid)
-        self.assertEqual(
-            self.drain(again), [SessionBound(sid), Reply("second"), TurnEnd("second", 0), Exited(0)]
-        )
+        self.assertEqual(self.drain(again), [Reply("second"), TurnEnd("second", 0), Exited(0)])
         self.assertEqual(self.logged()[1]["argv"][:3], ["-p", "--resume", sid])
 
     def test_a_caller_sid_names_the_session(self):
         handle = self.start(sid=SID)
         self.assertEqual(handle.sid, SID)
-        self.assertEqual(self.drain(handle), [SessionBound(SID), TurnEnd("", 0), Exited(0)])
+        self.assertEqual(self.drain(handle), [TurnEnd("", 0), Exited(0)])
         self.assertEqual(self.logged()[0]["argv"][:3], ["-p", "--session-id", SID])
         self.assertEqual(os.path.basename(handle.info().transcript), f"{SID}.jsonl")
         self.assertTrue(os.path.isfile(handle.info().transcript))
@@ -319,7 +309,6 @@ class RunTest(Base):
                 self.assertEqual(
                     self.drain(handle),
                     [
-                        SessionBound(handle.sid),
                         Reply("working"),
                         want,
                         Reply(fake_claude.LIMIT),
@@ -333,7 +322,7 @@ class RunTest(Base):
         handle = self.start()
         self.assertEqual(
             self.drain(handle),
-            [SessionBound(handle.sid), Reply("partial"), TurnEnd("", 0), Exited(3)],
+            [Reply("partial"), TurnEnd("", 0), Exited(3)],
         )
 
     def test_resuming_a_session_without_a_transcript_exits_1_and_its_stderr_is_recorded(self):
@@ -356,7 +345,7 @@ class RunTest(Base):
         found = self.drain(handle, on)
         self.assertEqual(
             [e for e in found if not isinstance(e, IdleTimeout)],
-            [SessionBound(handle.sid), Reply("working"), Exited(-signal.SIGKILL)],
+            [Reply("working"), Exited(-signal.SIGKILL)],
         )
         self.assertEqual(found[-2], IdleTimeout(IDLE))
 
@@ -399,7 +388,7 @@ class InterruptTest(Base):
         self.until(
             caller, lambda: "KeyboardInterrupt" in self.printed(), "caught the KeyboardInterrupt"
         )
-        self.assertEqual(self.printed(), ["SessionBound", "Reply", "KeyboardInterrupt"])
+        self.assertEqual(self.printed(), ["Reply", "KeyboardInterrupt"])
         self.assertFalse(running(entry["pid"]))
 
 

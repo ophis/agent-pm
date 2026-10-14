@@ -6,14 +6,20 @@ from agent_pm import session
 from agent_pm.session import (
     Access,
     Activity,
+    ActivityState,
     Blocked,
     Driver,
+    Effort,
     Exited,
-    Handle,
+    Hosts,
     IdleTimeout,
     LimitHit,
+    Liveness,
+    Mode,
     Reply,
-    SessionBound,
+    Resumable,
+    RunLog,
+    SessionInfo,
     SessionRow,
     SessionStatus,
     SessionStatusLog,
@@ -40,13 +46,16 @@ NAMES = (
     "ConfigError",
     "Spec",
     "Access",
+    "RunLog",
+    "SessionInfo",
+    "SessionEvent",
+    "Hosts",
 )
 
-EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, SessionBound, Stderr, TurnEnd}
+EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd}
 
 ALLOWED_CONCRETE = {
     Driver,
-    Handle,
     SessionStatusLog,
     Usage,
     Window,
@@ -54,6 +63,14 @@ ALLOWED_CONCRETE = {
     Access,
     SessionRow,
     SessionStatus,
+    Mode,
+    Liveness,
+    Effort,
+    Resumable,
+    ActivityState,
+    RunLog,
+    SessionInfo,
+    Hosts,
     *EVENTS,
 }
 
@@ -70,6 +87,11 @@ class Exports(Case):
             if hasattr(types, name):
                 with self.subTest(name=name):
                     self.assertIs(getattr(session, name), getattr(types, name))
+
+    def test_no_native_binding_crosses_the_session_boundary(self):
+        for name in ("SessionBound", "ClientBound"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, session.__all__)
 
     def test_the_only_concrete_classes_are_the_helpers_and_exceptions(self):
         concrete = {

@@ -21,6 +21,7 @@ import sys
 import traceback
 from contextlib import suppress
 from datetime import datetime
+from enum import StrEnum
 
 
 class HookError(Exception):
@@ -37,9 +38,12 @@ CUT = 4096
 
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
-RUNTIME = re.compile(r"[a-z][a-z0-9_]*")
 
-WORDS = ("done", "blocked", "working")
+class Word(StrEnum):
+    DONE = "done"
+    BLOCKED = "blocked"
+    WORKING = "working"
+
 
 STATE = "session.json"
 
@@ -54,18 +58,13 @@ def _abs(value) -> bool:
     return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
 
 
-SESSION_STATE = {
+SESSION_STATE = {  # what this hook or an adapter_hook reads
     "words": lambda v: (
-        isinstance(v, dict) and all(LABEL.fullmatch(k) and w in WORDS for k, w in v.items())
+        isinstance(v, dict) and all(LABEL.fullmatch(k) and w in tuple(Word) for k, w in v.items())
     ),
     "events": lambda v: v is None or _abs(v),
     "sid": lambda v: isinstance(v, str) and v != "" and v.isprintable() and "/" not in v,
-    "runtime": lambda v: isinstance(v, str) and RUNTIME.fullmatch(v) is not None,
     "workdir": _abs,
-    "cwd": lambda v: v == "" or _abs(v),
-    "transcript": lambda v: v == "" or _abs(v),
-    "project": lambda v: isinstance(v, bool),
-    "resume": lambda v: isinstance(v, str),
     "tmux_path": _abs,
 }
 
@@ -85,7 +84,7 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
         if adapter.on_hook(label, payload, state) is False:
             return
     word = state["words"].get(label)
-    if word != "done":
+    if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
@@ -140,9 +139,9 @@ def read_payload(stream) -> dict:
     return payload
 
 
-def read_state(path: str) -> dict:
+def read_state(path: str, *, error: type[Exception] = HookError) -> dict:
     """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
-    SESSION_STATE; else HookError.
+    SESSION_STATE; else `error`.
     """
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -150,31 +149,31 @@ def read_state(path: str) -> dict:
             if not stat.S_ISREG(
                 os.fstat(fd).st_mode
             ):  # first: fdopen raises on a directory, leaving fd open
-                raise HookError(f"{path}: not a regular file")
+                raise error(f"{path}: not a regular file")
             with os.fdopen(fd, "rb", closefd=False) as f:
                 data = f.read(STATE_MAX + 1)
         finally:
             os.close(fd)
     except OSError as e:
-        raise HookError(f"{path}: {e.strerror}") from None
+        raise error(f"{path}: {e.strerror}") from None
     if len(data) > STATE_MAX:
-        raise HookError(f"{path}: over {STATE_MAX} bytes")
+        raise error(f"{path}: over {STATE_MAX} bytes")
     try:
         state = json.loads(data)
     except (ValueError, RecursionError):
         state = None
     if not isinstance(state, dict):
-        raise HookError(f"{path}: not a JSON object")
+        raise error(f"{path}: not a JSON object")
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
-            raise HookError(f"{path}: bad {field}")
+            raise error(f"{path}: bad {field}")
     if "adapter_hook" in state and (
         not isinstance(state["adapter_hook"], str)
         or not all(part.isidentifier() for part in state["adapter_hook"].split("."))
     ):
-        raise HookError(f"{path}: bad adapter_hook")
+        raise error(f"{path}: bad adapter_hook")
     if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
-        raise HookError(f"{path}: bad adapter_state")
+        raise error(f"{path}: bad adapter_state")
     return state
 
 

@@ -1,4 +1,4 @@
-"""session.engine.api's tui mode with runtime claude end to end on a private tmux server, as
+"""HostedSession's tui mode, through the Driver wrapper, with runtime claude end to end on a private tmux server, as
 tui_integration_test sets it up: the real ClaudeAdapter runs
 session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its
 hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit
@@ -17,8 +17,9 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
+from agent_pm.session import Session
 from agent_pm.session.adapters.claude.tui import ClaudeTui
-from agent_pm.session.engine import api
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -26,7 +27,6 @@ from agent_pm.session.engine.types import (
     Exited,
     IdleTimeout,
     LimitHit,
-    SessionBound,
     Spec,
     TurnEnd,
 )
@@ -50,20 +50,19 @@ MANAGER, SID, IDLE, WAIT, Stream = (
     tui_live.Stream,
 )
 TABLE = {
-    "implementation": "adapters.claude:ClaudeAdapter",
+    "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
 }
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
 LIMIT = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
 RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
-# Another process: attaches by name, sends text, prints [sid, state, reply, native id, its first
-# TurnEnd, reply].
+# Another process: attaches by name, sends text, prints [sid, state, reply, its first TurnEnd,
+# reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
-from agent_pm.session.engine import api
 from agent_pm.session import Driver, TurnEnd
 driver = Driver(adapters={"claude": json.loads(table)}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
 handle = driver.attach(name)
-before = [handle.sid, handle.state(), handle.reply, handle.info().native_id]
+before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if isinstance(e, TurnEnd))
 print(json.dumps([*before, repr(event), handle.reply]))
@@ -91,7 +90,7 @@ class Live(tui_live.Live):
 
     def start(
         self, name: str, prompt: str = "hello", *, scenario: dict, sid=None, **kwargs
-    ) -> api.Handle:
+    ) -> Session:
         """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file
         self.events.
         """
@@ -108,7 +107,7 @@ class Live(tui_live.Live):
         self.addCleanup(handle.stop)
         return handle
 
-    def stream(self, handle: api.Handle) -> Stream:
+    def stream(self, handle: Session) -> Stream:
         """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a
         later test's server.
         """
@@ -127,9 +126,9 @@ class Live(tui_live.Live):
     def panes(self) -> int:
         return len(self.server.panes(f"={MANAGER}:"))
 
-    def closed(self, handle: api.Handle) -> None:
+    def closed(self, handle: Session) -> None:
         self.assertEqual((handle.state(), self.driver.sessions(handle.name)), ("absent", []))
-        self.assertFalse(os.path.lexists(tui.session_dir(handle.name)))
+        self.assertFalse(os.path.lexists(tui._Store(handle.name).dir))
 
 
 class TurnsTest(Live):
@@ -143,14 +142,14 @@ class TurnsTest(Live):
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next(idle=False) for _ in range(3)],
-            [SessionBound(SID), Activity(""), TurnEnd("Hi from w1.", 2)],
+            [stream.next(idle=False) for _ in range(2)],
+            [Activity(""), TurnEnd("Hi from w1.", 2)],
         )
         self.assertEqual(stream.next(), IdleTimeout(IDLE))
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
-        hook = tui.hook_argv(tui.session_dir("w1"), PACKAGE_ROOTS)
+        hook = tui._Store("w1").hook_argv(PACKAGE_ROOTS)
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
             {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},
@@ -185,8 +184,8 @@ class BlockedTest(Live):
         handle = self.start("w1", scenario={"steps": steps}, idle_timeout=IDLE)
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next(idle=False) for _ in range(3)],
-            [SessionBound(handle.sid), Activity(""), Blocked("Edit")],
+            [stream.next(idle=False) for _ in range(2)],
+            [Activity(""), Blocked("Edit")],
         )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
@@ -205,8 +204,8 @@ class BlockedTest(Live):
         )
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next() for _ in range(3)],
-            [SessionBound(handle.sid), Activity(""), Blocked("Quick safety check")],
+            [stream.next() for _ in range(2)],
+            [Activity(""), Blocked("Quick safety check")],
         )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
@@ -222,8 +221,8 @@ class LimitTest(Live):
         )
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next() for _ in range(3)],
-            [SessionBound(handle.sid), Activity(""), LimitHit(RESETS)],
+            [stream.next() for _ in range(2)],
+            [Activity(""), LimitHit(RESETS)],
         )
         stream.quiet(1.0)
         self.assertEqual(
@@ -242,8 +241,8 @@ class DeadTest(Live):
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next() for _ in range(3)],
-            [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)],
+            [stream.next() for _ in range(2)],
+            [Activity(""), TurnEnd("Hi.", 0)],
         )
         self.lines("w1 done")  # the Stop hook ended: the pane's death would hang it up
         os.kill(self.calls()[0]["pid"], signal.SIGTERM)
@@ -278,16 +277,12 @@ class ResumeTest(Live):
     def test_a_resume_continues_the_session_and_its_transcript(self):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first)
-        self.assertEqual(
-            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)]
-        )
+        self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
         self.driver.close("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         again = self.start("w1", "again", scenario={"steps": ["Two."]}, resume=SID)
         stream = self.stream(again)
-        self.assertEqual(
-            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("Two.", 0)]
-        )
+        self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Two.", 0)])
         argv = self.calls()[1]["argv"]
         self.assertEqual((argv[argv.index("--resume") + 1], "--session-id" in argv), (SID, False))
         self.assertEqual(again.info().transcript, first.info().transcript)
@@ -298,9 +293,7 @@ class AttachTest(Live):
     def test_another_process_attaches_by_name_reads_the_reply_and_sends(self):
         handle = self.start("w1", scenario={"steps": ["One."], "turns": [["Two."]]}, sid=SID)
         stream = self.stream(handle)
-        self.assertEqual(
-            [stream.next() for _ in range(3)], [SessionBound(SID), Activity(""), TurnEnd("One.", 0)]
-        )
+        self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
         res = subprocess.run(
             [*PY, "-c", ATTACH, json.dumps(TABLE), "w1", "more"],
             env=child_env(),
@@ -311,11 +304,13 @@ class AttachTest(Live):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(
-            json.loads(res.stdout), [SID, "live", "One.", SID, repr(TurnEnd("Two.", 0)), "Two."]
+            json.loads(res.stdout), [SID, "live", "One.", repr(TurnEnd("Two.", 0)), "Two."]
         )
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Two.", 0)])
         self.assertEqual(handle.reply, "Two.")
         self.lines("w1 done", "w1 done")
+        log = RunLog(self.workdir).read()
+        self.assertEqual([e["client_id"] for e in log if e["kind"] == "client_session"], [SID])
 
 
 class ShowTest(Live):
@@ -354,8 +349,8 @@ class ShowTest(Live):
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         stream = self.stream(handle)
         self.assertEqual(
-            [stream.next() for _ in range(3)],
-            [SessionBound(handle.sid), Activity(""), TurnEnd("Hi.", 0)],
+            [stream.next() for _ in range(2)],
+            [Activity(""), TurnEnd("Hi.", 0)],
         )
         for where, env, why in (
             ("outside tmux", {}, "not in tmux"),
@@ -368,7 +363,7 @@ class ShowTest(Live):
             with (
                 self.subTest(where),
                 mock.patch.dict(os.environ, env),
-                self.assertLogs("driver", "WARNING") as logs,
+                self.assertLogs("session", "WARNING") as logs,
             ):
                 self.assertEqual(self.driver.show("w1"), tmux_host.attach_command("w1"))
             self.assertIn(why, logs.output[0])

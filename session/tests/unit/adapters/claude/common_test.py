@@ -62,13 +62,11 @@ class ModelEffortTest(Base):
 
 class ReadRulesTest(Base):
     def modes(self, *, resume=False, config=None, **access):
-        spec = Spec(workdir=self.work, sid=SID, access=Access(**access))
+        spec = Spec(workdir=self.work, sid=SID, access=Access(**access), prompt="hi", resume=resume)
         adapter = ClaudeAdapter({} if config is None else config)
         return (
-            lambda: adapter.headless().launch("hi", spec, resume=resume),
-            lambda: adapter.tui().launch(
-                "hi", spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume
-            ),
+            lambda: adapter.headless().launch(spec),
+            lambda: adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
         )
 
     def both(self, *, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -122,7 +120,9 @@ class ReadRulesTest(Base):
         self.driver_dependencies = {
             "host": mock.Mock(tmux_path=mock.Mock(return_value="/protected/tmux"))
         }
-        self.configure_session({"claude": {"implementation": "adapters.claude:ClaudeAdapter"}})
+        self.configure_session(
+            {"claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"}}
+        )
         for read in bad:
             for mode in ("headless", "tui"):
                 with self.subTest(read=read, mode=mode):
@@ -181,11 +181,9 @@ class EnvTest(Base):
                 ClaudeAdapter(config)
                 .tui()
                 .launch(
-                    "hi",
-                    Spec(workdir=self.work, sid=SID, access=access),
+                    Spec(workdir=self.work, sid=SID, access=access, prompt="hi"),
                     HOOK,
                     source_roots=PACKAGE_ROOTS,
-                    resume=False,
                 ),
                 {},
             ),

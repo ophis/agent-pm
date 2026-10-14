@@ -1,7 +1,7 @@
-"""session.engine.api.detach on a private tmux server (session/tests/live_tmux.py), os.environ that
+"""Driver.detach on a private tmux server (session/tests/live_tmux.py), os.environ that
 server's env: a child that reports its blocked signals, unblocks them and runs until told to end;
-its session live then absent, its @opener, a taken name, a cwd it cannot enter, a script whose
-interpreter is missing, an env execve refuses.
+its session live then absent, its @opener and @display, a taken name, a cwd it cannot enter, a
+script whose interpreter is missing, an env execve refuses.
 """
 
 import errno
@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.engine import api
+from agent_pm.session import SIGNALS
 from agent_pm.session.engine.types import ConfigError, DriverError
 from agent_pm.session.hosts.tmux import tmux_host
 
@@ -62,10 +62,12 @@ class DetachTest(Case):
         self.assertIsNone(self.detach("d1", opener=MANAGER))
         self.assertEqual([r.name for r in self.driver.sessions("d1")], ["d1"])
         tmux_host.detach("d0", self.argv("d0"), cwd=self.dir, env=self.server.env())
-        signals = {int(s) for s in api.SIGNALS}
+        signals = {int(s) for s in SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
-        self.assertEqual(self.server.option("d1", "@opener"), MANAGER)
+        self.assertEqual(
+            [self.server.option("d1", key) for key in ("@opener", "@display")], [MANAGER, MANAGER]
+        )
         with self.assertRaises(DriverError) as caught:
             self.driver.attach("d1")
         self.assertTrue(str(caught.exception).startswith("no tui session d1: "), caught.exception)

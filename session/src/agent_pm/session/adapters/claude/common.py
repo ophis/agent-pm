@@ -12,7 +12,9 @@ from agent_pm.session.adapters import common
 from agent_pm.session.adapters.common import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
+    Effort,
     Launch,
+    Resumable,
     SessionStatus,
     Spec,
     Usage,
@@ -149,11 +151,11 @@ class ClaudeCommon:
             raise ConfigError(f"no model for tier {tier} in {TABLE}.tiers")
         return model
 
-    def effort(self, effort: str | None) -> str | None:
+    def effort(self, effort: Effort | None) -> str | None:
         if effort is None:
             return None
         if (value := self.efforts.get(effort)) is None:
-            raise ConfigError(f"no effort for {effort!r} in {TABLE}.efforts")
+            raise ConfigError(f"no effort for {str(effort)!r} in {TABLE}.efforts")
         return value
 
     def env(self) -> dict[str, str]:
@@ -276,16 +278,16 @@ class ClaudeCommon:
         try:
             self.uuid(sid)
         except ConfigError:
-            return SessionStatus("no", None, "")
+            return SessionStatus(Resumable.NO, None, "")
         path = self.transcript(cwd, sid)
         try:
             mode = os.lstat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
-            resumable = "no"
+            resumable = Resumable.NO
         except OSError:
-            resumable = "unknown"
+            resumable = Resumable.UNKNOWN
         else:
-            resumable = "yes" if stat.S_ISREG(mode) else "unknown"
+            resumable = Resumable.YES if stat.S_ISREG(mode) else Resumable.UNKNOWN
         paths = [path]
         for top, _, files in os.walk(path[: -len(".jsonl")]):
             paths += (os.path.join(top, name) for name in files)

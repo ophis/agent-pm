@@ -1,31 +1,39 @@
-"""The session layer: the Driver (engine/api.py, modes/) runs agent sessions through each runtime's
-Adapter (adapters/), behind the ABCs Session and Host; `__all__` is its public API.
+"""The session layer: Session (engine/base.py), whose one concrete class is HostedSession
+(engine/hosted.py, modes/), runs agent sessions through each runtime's Adapter (adapters/) on a Host
+(hosts/); `__all__` is its API for Session users. Driver, Handle, close, sessions, note and
+session_record are deprecated forwarding wrappers (engine/forwarding.py).
 """
 
-from agent_pm.session.engine.api import (
-    MODES,
-    SIGNALS,
+from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.forwarding import (
     Driver,
     Handle,
     close,
-    holds,
     note,
     session_record,
     sessions,
 )
-from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
+    ActivityState,
     Blocked,
     ConfigError,
     DriverError,
+    Effort,
     Exited,
+    Hosts,
     IdleTimeout,
     LimitHit,
+    Liveness,
+    Mode,
+    NotDisplayable,
     Reply,
-    SessionBound,
+    Resumable,
+    SessionEvent,
+    SessionInfo,
     SessionRow,
     SessionStatus,
     Spec,
@@ -34,14 +42,18 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import Displayable, Host, HostProcess, NotDisplayable, Terminal
+from agent_pm.session.hosts.base import (
+    SIGNALS,
+    Displayable,
+    Host,
+    HostProcess,
+    Terminal,
+)
 
 __all__ = [
     "Driver",
     "Handle",
-    "MODES",
     "SIGNALS",
-    "holds",
     "note",
     "session_record",
     "sessions",
@@ -49,6 +61,15 @@ __all__ = [
     "Session",
     "Spec",
     "Access",
+    "Mode",
+    "Liveness",
+    "Effort",
+    "Resumable",
+    "ActivityState",
+    "RunLog",
+    "SessionInfo",
+    "SessionEvent",
+    "Hosts",
     "Host",
     "HostProcess",
     "Terminal",
@@ -65,7 +86,6 @@ __all__ = [
     "IdleTimeout",
     "LimitHit",
     "Reply",
-    "SessionBound",
     "Stderr",
     "TurnEnd",
     "DriverError",

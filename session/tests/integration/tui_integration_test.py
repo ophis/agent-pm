@@ -1,4 +1,4 @@
-"""session.engine.api's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
+"""HostedSession's tui mode, through the Driver wrapper, end to end on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
 attach from another process, stop, a runtime's own exit, close, sessions while tmux's state is
@@ -16,14 +16,14 @@ import unittest
 from collections.abc import Iterator
 from unittest import mock
 
-from agent_pm.session.engine import api, records
+from agent_pm.session import Session
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     DriverError,
     Exited,
     IdleTimeout,
-    SessionBound,
     Spec,
     TurnEnd,
 )
@@ -41,7 +41,6 @@ fake, config, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from agent_pm.session.engine import api
 from agent_pm.session import IdleTimeout, Driver
 from agent_pm.utils import load_class
 def adapter_class(path, base):
@@ -89,14 +88,17 @@ class TuiTest(Live):
         self.assertEqual(len(self.server.panes(f"={MANAGER}:")), 1)
         self.assertEqual(self.server.option("w1", "@sid"), SID)
         self.assertEqual(
-            [(r["kind"], r["sid"]) for r in records.read(records.path(self.workdir))],
+            [(r["kind"], r["sid"]) for r in RunLog(self.workdir).read()],
             [("session", SID)],
         )
-        self.assertEqual(tui.read_state("w1")["sid"], SID)
+        self.assertEqual(tui.TuiMode.snapshot("w1")["sid"], SID)
         stream = Stream(self, handle)
         self.assertEqual(
-            [stream.next() for _ in range(4)],
-            [SessionBound("n1"), Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)],
+            [stream.next() for _ in range(3)], [Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)]
+        )
+        self.assertEqual(
+            [(r["kind"], r.get("client_id")) for r in RunLog(self.workdir).read()],
+            [("session", None), ("client_session", "n1")],
         )
         self.lines("w1 done")
         self.assertEqual(self.server.option("w1", "@state"), "done")
@@ -123,7 +125,7 @@ class TuiTest(Live):
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.driver.sessions("w1"), [])
-        self.assertFalse(os.path.lexists(tui.session_dir("w1")))
+        self.assertFalse(os.path.lexists(tui._Store("w1").dir))
 
     def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})
@@ -136,7 +138,7 @@ class TuiTest(Live):
         )
         self.driver.close("w2")
         self.assertEqual((handle.state(), self.driver.sessions("w2")), ("absent", []))
-        self.assertFalse(os.path.lexists(tui.session_dir("w2")))
+        self.assertFalse(os.path.lexists(tui._Store("w2").dir))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
         if os.getuid() == 0:
@@ -163,7 +165,7 @@ class SameNameTest(Live):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def old(self, name: str) -> tuple[api.Handle, Iterator]:
+    def old(self, name: str) -> tuple[Session, Iterator]:
         """Session `name`'s Handle and its events() past its turn's end."""
         handle = self.start(
             name, {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True}
@@ -173,7 +175,7 @@ class SameNameTest(Live):
         self.lines(f"{name} done")
         return handle, events
 
-    def renewed(self, name: str, old: api.Handle, events: Iterator) -> None:
+    def renewed(self, name: str, old: Session, events: Iterator) -> None:
         """`name` started again showing DIALOG, with an events file of its own: old's events end,
         never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked line.
         """
@@ -238,10 +240,10 @@ class SameNameTest(Live):
         threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
         self.addCleanup(handle.stop)
-        self.assertEqual(tui.read_state("w6")["sid"], handle.sid)
+        self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.state(), os.listdir(tui.session_dir("w6"))), ("live", ["session.json"])
+            (handle.state(), os.listdir(tui._Store("w6").dir)), ("live", ["session.json"])
         )
 
     def test_a_restart_after_a_close_from_another_process(self):
@@ -270,7 +272,7 @@ class SameNameTest(Live):
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
-        self.assertEqual((new.state(), tui.read_state("w7")["sid"]), ("live", new.sid))
+        self.assertEqual((new.state(), tui.TuiMode.snapshot("w7")["sid"]), ("live", new.sid))
 
 
 if __name__ == "__main__":

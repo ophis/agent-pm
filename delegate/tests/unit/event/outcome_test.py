@@ -18,6 +18,7 @@ from agent_pm.delegate.event.outcome import (
     STATUSES,
     InvalidOutcome,
     Outcome,
+    OutcomeStatus,
     read,
     validate,
 )
@@ -102,6 +103,18 @@ class Validate(Base):
         ):
             with self.subTest(msg=msg, data=data):
                 self.fails(data, msg)
+
+    def test_the_status_is_one_of_the_outcome_statuses(self):
+        for status in STATUSES:
+            data = {**DONE, "status": status, "questions": ["q?"]}
+            with self.subTest(status=status):
+                self.assertIs(self.check(data).status, OutcomeStatus(status))
+        for bad in ("maybe", "DONE", None, ["done"]):
+            with self.subTest(bad=bad):
+                self.fails(
+                    {**DONE, "status": bad},
+                    f"status {bad!r} is not one of done, needs_input, failed",
+                )
 
     def test_questions(self):
         ask = {**DONE, "status": "needs_input"}

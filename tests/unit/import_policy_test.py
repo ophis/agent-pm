@@ -19,18 +19,30 @@ class Units(Case):
 
     def test_main_session_edges_are_kept(self):
         pairs = (
-            ("engine.api", "adapters.codex"),
-            ("engine.api", "modes.tui"),
-            ("engine.api", "hosts.tmux.tmux_host"),
-            ("engine.api", "engine.records"),
+            ("engine.hosted", "adapters.codex"),
+            ("engine.hosted", "modes.tui"),
+            ("engine.hosted", "hosts.tmux.tmux_host"),
+            ("engine.hosted", "engine.records"),
+            ("engine.hosted", "engine.base"),
+            ("engine.forwarding", "engine.hosted"),
+            ("engine.forwarding", "hosts.tmux.tmux_host"),
+            ("engine.forwarding", "engine.base"),
+            ("__init__", "engine.forwarding"),
+            ("engine.records", "engine.types"),
+            ("__init__", "engine.records"),
             ("modes.tui", "hosts.tmux.tmux_host"),
             ("modes.headless", "adapters.base"),
+            ("modes.base", "adapters.registry"),
             ("adapters.codex", "engine.types"),
-            ("adapters.registry", "hosts.tables"),
-            ("engine.base", "adapters.registry"),
-            ("engine.base", "hosts.tables"),
+            ("adapters.registry", "hosts.base"),
+            ("engine.base", "hosts.base"),
             ("hosts.base", "engine.types"),
+            ("hosts.tmux.host", "hosts.base"),
+            ("hosts.tmux.host", "engine.types"),
             ("__init__", "engine.base"),
+            ("extension", "adapters.base"),
+            ("extension", "hosts.base"),
+            ("extension", "engine.types"),
         )
         for source, target in pairs:
             with self.subTest(source=source, target=target):
@@ -38,12 +50,28 @@ class Units(Case):
                     self.rejected("agent_pm.session." + source, "agent_pm.session." + target)
                 )
 
-    def test_lower_units_cannot_reach_api_or_hosts(self):
+    def test_lower_units_cannot_reach_the_session_class_wrappers_or_hosts(self):
         for source, target in (
-            ("adapters.codex", "hosts.tables"),
+            ("adapters.codex", "hosts.tmux.tmux_host"),
+            ("hosts.base", "hosts.tmux.tmux_host"),
+            ("hosts.tmux.host", "adapters.registry"),
             ("adapters.base", "modes.tui"),
-            ("modes.tui", "engine.api"),
+            ("modes.tui", "engine.hosted"),
+            ("modes.tui", "engine.forwarding"),
+            ("modes.tui", "engine.base"),
+            ("modes.tui", "engine.records"),
+            ("engine.hosted", "engine.forwarding"),
+            ("engine.base", "engine.hosted"),
+            ("engine.base", "adapters.registry"),
+            ("__init__", "engine.hosted"),
+            ("__init__", "hosts.tmux.tmux_host"),
             ("engine.types", "adapters.base"),
+            ("__init__", "extension"),
+            ("adapters.base", "extension"),
+            ("engine.hosted", "extension"),
+            ("extension", "modes.base"),
+            ("extension", "engine.hosted"),
+            ("extension", "hosts.tmux.host"),
         ):
             with self.subTest(source=source, target=target):
                 self.assertTrue(

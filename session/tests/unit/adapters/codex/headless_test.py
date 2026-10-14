@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.types import (
     Activity,
+    ClientBound,
     ConfigError,
     LimitHit,
     Reply,
-    SessionBound,
     Stderr,
     TurnEnd,
 )
@@ -26,13 +26,13 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "context")
 class HeadlessTest(Base):
     def run_instance(self):
         run = self.adapter.headless()
-        run.launch("hello", self.spec, resume=False)
+        run.launch(dataclasses.replace(self.spec, prompt="hello"))
         return run
 
     def test_native_binding_precedes_event(self):
         run = self.run_instance()
         (event,) = run.parse({"type": "thread.started", "thread_id": NATIVE})
-        self.assertEqual(event, SessionBound(NATIVE))
+        self.assertEqual(event, ClientBound(NATIVE))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
 
     def test_bind_failure_never_emits_session_bound(self):
@@ -121,8 +121,17 @@ class HeadlessTest(Base):
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        run.launch("again", self.spec, resume=True)
+        run.launch(dataclasses.replace(self.spec, prompt="again", resume=True))
         self.assertEqual(list(run.parse(record)), [Stderr(message), LimitHit()])
+
+    def test_a_resume_spec_resumes_its_native_session_with_its_prompt(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        spec = dataclasses.replace(self.spec, prompt="again", resume=True)
+        argv = self.adapter.headless().launch(spec).argv
+        start = argv.index("resume")
+        self.assertEqual((argv[start + 1], argv[-2:]), (NATIVE, ("--", "again")))
 
     def test_source_quota_error_emits_limit(self):
         run = self.adapter.headless()
@@ -185,7 +194,9 @@ class HeadlessTest(Base):
 
 class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
-        return list(adapter.headless().launch("hi", spec, resume=resume).argv)
+        return list(
+            adapter.headless().launch(dataclasses.replace(spec, prompt="hi", resume=resume)).argv
+        )
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):
         mode = "headless"
@@ -250,14 +261,14 @@ class PolicyReplay(Base):
             str(self.extra),
         )
         spec = dataclasses.replace(self.spec, flags=flags, env={"K": "saved"})
-        first = self.adapter.headless().launch("one", spec, resume=False)
+        first = self.adapter.headless().launch(dataclasses.replace(spec, prompt="one"))
         state = self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
-        resumed = adapter.headless().launch("two", changed, resume=True)
+        resumed = adapter.headless().launch(dataclasses.replace(changed, prompt="two", resume=True))
         self.assertEqual(state.snapshot.flags, tuple(flags))
         self.assertEqual(first.env["K"], "saved")
         self.assertEqual(resumed.env["K"], "saved")
@@ -270,6 +281,6 @@ class SuppliedPolicy(Base):
         flags = CODEX
         adapter = self.adapter
         spec = dataclasses.replace(self.spec, flags=flags)
-        launch = adapter.headless().launch("hi", spec, resume=False)
+        launch = adapter.headless().launch(dataclasses.replace(spec, prompt="hi"))
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)

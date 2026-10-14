@@ -8,13 +8,13 @@ import threading
 import time
 from unittest import mock
 
-from agent_pm.session import Driver
-from agent_pm.session.engine import api
+from agent_pm.session import Driver, Session
 from agent_pm.session.engine.types import (
     Exited,
     IdleTimeout,
     Spec,
 )
+from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import Case, settings
@@ -31,11 +31,27 @@ WAIT = 20  # upper bound on any wait, in seconds
 
 DIALOG = "Pick one: 1. this 2. that"
 
+TMUX = "/opt/tmux/bin/tmux"
+
+
+def fake_host() -> mock.Mock:
+    host = mock.create_autospec(tmux_host)
+    for name in ("PaneStatus", "PAUSE", "TuiError"):
+        setattr(host, name, getattr(tmux_host, name))
+    host.attach_command.side_effect = tmux_host.attach_command
+    host.events_file.side_effect = tmux_host.events_file
+    host.tmux_path.return_value = TMUX
+    host.status.return_value = None
+    host.read.return_value = ""
+    host.option.return_value = None
+    host.pane.return_value = "%1"
+    return host
+
 
 class Stream:
     """A Handle's events drained by a daemon; its scoped exception hook carries failures."""
 
-    def __init__(self, case, handle: api.Handle):
+    def __init__(self, case, handle: Session):
         self.queue = queue.Queue()
         self.thread = threading.Thread(target=self._drain, args=(handle,), daemon=True)
         case.enterContext(capture_errors(self.thread, self.queue.put))
@@ -97,19 +113,24 @@ class Live(Case):
         self.config = settings(
             {
                 "fake": {
-                    "implementation": "adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "tui": True,
                     "scenario": os.path.join(self.dir, "scenario.json"),
                     "log": os.path.join(self.dir, "runtime.log"),
                 }
             }
         )
-        self.driver = Driver(
+        self.driver = self.driven()
+
+    def driven(self, **dependencies) -> Driver:
+        """A Driver of self.config loading the fake runtime, with `dependencies`."""
+        return Driver(
             **self.config,
             class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+            **dependencies,
         )
 
-    def start(self, name: str, *steps, sid=None, **kwargs) -> api.Handle:
+    def start(self, name: str, *steps, sid=None, **kwargs) -> Session:
         """Tui session `name` of the fake runtime running `steps`, its events file self.events
         unless given.
         """

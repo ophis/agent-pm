@@ -6,11 +6,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, get_args
+
+from agent_pm.session import Effort
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
-EFFORTS = get_args(Effort)
 
 
 class ConfigError(Exception):
@@ -31,15 +30,18 @@ class RunConfig:
     templates: list[str] = field(default_factory=list)
     gate: str = ""
     language: str = ""
-    show: str = ""  # "": a pane; "none": nothing; else a command
     cwd: str = ""
     role_title: str = ""
 
     def __post_init__(self):
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
-        if self.effort not in EFFORTS:
-            raise ConfigError(f"effort must be one of {', '.join(EFFORTS)}, got {self.effort!r}")
+        try:
+            object.__setattr__(self, "effort", Effort(self.effort))
+        except ValueError:
+            raise ConfigError(
+                f"effort must be one of {', '.join(Effort)}, got {self.effort!r}"
+            ) from None
         if (
             not isinstance(self.runtime, str)
             or not self.runtime.strip()
@@ -54,8 +56,6 @@ class RunConfig:
             raise ConfigError("gate must be one line of shell command without backticks")
         if not isinstance(self.language, str) or "\n" in self.language:
             raise ConfigError("language must be one line of text")
-        if not isinstance(self.show, str) or "\n" in self.show:
-            raise ConfigError("show must be one line of shell command")
         if self.cwd and (
             not isinstance(self.cwd, str)
             or not self.cwd.isprintable()

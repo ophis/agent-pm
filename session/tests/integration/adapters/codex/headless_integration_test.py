@@ -14,7 +14,7 @@ from unittest import mock
 from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import SessionStore
-from agent_pm.session.engine import records
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -22,7 +22,6 @@ from agent_pm.session.engine.types import (
     Exited,
     LimitHit,
     Reply,
-    SessionBound,
     Spec,
     Stderr,
     TurnEnd,
@@ -91,7 +90,9 @@ class HeadlessSessions(Case):
         cfg = self.adapter.config | {
             "env": {"FAKE_LOG": str(self.log), "FAKE_SCENARIO": str(self.scenario)}
         }
-        self.config = settings({"codex": {"implementation": "adapters.codex:CodexAdapter", **cfg}})
+        self.config = settings(
+            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter", **cfg}}
+        )
         self.enterContext(
             mock.patch.dict(
                 os.environ,
@@ -137,7 +138,7 @@ class HeadlessSessions(Case):
         )
 
     def written(self):
-        return records.read(records.path(str(self.work)))
+        return RunLog(str(self.work)).read()
 
     def record(self):
         return next(Path(SessionStore().root).glob("*.json"))
@@ -181,7 +182,9 @@ class HeadlessSessions(Case):
             },
         )
         run = adapter.headless()
-        launch = run.launch(prompt, dataclasses.replace(self.spec, sid=self.sid), resume=resume)
+        launch = run.launch(
+            dataclasses.replace(self.spec, sid=self.sid, prompt=prompt, resume=resume)
+        )
         env = {key: value for key, value in os.environ.items() if key not in launch.unset}
         result = subprocess.run(
             launch.argv,
@@ -207,16 +210,9 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
             "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
         )
 
-        def bound(event):
-            if isinstance(event, SessionBound):
-                self.assertEqual(
-                    self.common.load(str(self.work), self.sid).native_id, event.native_id
-                )
-
         self.assertEqual(
-            self.drain(handle, bound),
+            self.drain(handle),
             [
-                SessionBound(NATIVE),
                 Reply("one\n\nnext line\n"),
                 Reply("two"),
                 Reply("three"),
@@ -225,7 +221,6 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
             ],
         )
         self.assertEqual(handle.sid, self.sid)
-        self.assertEqual(handle.info().native_id, NATIVE)
         self.assertEqual(handle.reply, "three")
         (entry,) = self.logged()
         self.assertEqual(
@@ -257,7 +252,7 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
         )
         self.assertEqual(
             self.drain(handle),
-            [SessionBound(NATIVE), *(Reply(text) for text in texts), TurnEnd(texts[-1]), Exited(0)],
+            [*(Reply(text) for text in texts), TurnEnd(texts[-1]), Exited(0)],
         )
         self.assertEqual(handle.reply, texts[-1])
         self.assertEqual(
@@ -295,9 +290,7 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
         handle = self.driver.start(
             "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
         )
-        self.assertEqual(
-            self.drain(handle), [SessionBound(NATIVE), Reply(text), TurnEnd(text), Exited(7)]
-        )
+        self.assertEqual(self.drain(handle), [Reply(text), TurnEnd(text), Exited(7)])
         self.assertEqual(handle.reply, text)
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
 
@@ -309,7 +302,7 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
                     "codex", "headless", "hello", dataclasses.replace(self.spec, sid=self.sid)
                 )
             ),
-            [SessionBound(NATIVE), Reply("Thinking."), Exited(7)],
+            [Reply("Thinking."), Exited(7)],
         )
 
     def test_activity_and_usage_limit_pass_through_driver(self):
@@ -328,7 +321,6 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
                 )
             ),
             [
-                SessionBound(NATIVE),
                 Activity("item.started"),
                 Stderr(error),
                 LimitHit(None),
@@ -348,7 +340,6 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
             (
                 handle.sid,
                 info.sid,
-                info.native_id,
                 info.cwd,
                 info.project,
                 info.transcript,
@@ -357,7 +348,6 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
             (
                 "caller-owned",
                 "caller-owned",
-                NATIVE,
                 str(self.cwd),
                 True,
                 str(fake_codex.session_path(NATIVE)),
@@ -365,9 +355,7 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
             ),
         )
         self.assertIn(NATIVE, info.resume)
-        self.assertEqual(
-            records.session_record(str(self.work), handle.sid)["transcript"], info.transcript
-        )
+        self.assertEqual(RunLog(str(self.work)).session(handle.sid).transcript, info.transcript)
         status = self.driver.session_status("codex", handle.sid, str(self.cwd))
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)
@@ -582,7 +570,11 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         self.assertTrue(handle.info().project)
         self.assertEqual(handle.info().transcript, str(fake_codex.session_path(NATIVE)))
         self.assertIn(NATIVE, handle.info().resume)
-        self.assertEqual(self.drain(handle)[0], SessionBound(NATIVE))
+        self.drain(handle)
+        self.assertEqual(
+            [entry["client_id"] for entry in self.written() if entry["kind"] == "client_session"],
+            [NATIVE, NATIVE],
+        )
         first, second = self.logged()
         self.assertEqual(second["snapshot"]["snapshot"], first["snapshot"]["snapshot"])
         self.assertEqual(second["snapshot"]["native_id"], NATIVE)
@@ -658,7 +650,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         found = self.drain(
             handle, lambda event: handle.stop() if isinstance(event, Reply) else None
         )
-        self.assertEqual(found[:-1], [SessionBound(NATIVE), Reply(before)])
+        self.assertEqual(found[:-1], [Reply(before)])
         self.assertIsInstance(found[-1], Exited)
         self.assertLess(found[-1].returncode, 0)
         self.assertEqual(handle.state(), "absent")
@@ -673,9 +665,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
             dataclasses.replace(self.spec, sid=self.sid),
             resume=self.sid,
         )
-        self.assertEqual(
-            self.drain(resumed), [SessionBound(NATIVE), Reply(after), TurnEnd(after), Exited(0)]
-        )
+        self.assertEqual(self.drain(resumed), [Reply(after), TurnEnd(after), Exited(0)])
         self.assertEqual(self.logged()[-1]["resume_id"], NATIVE)
         self.assertEqual(
             [entry["client_id"] for entry in self.written() if entry["kind"] == "client_session"],
@@ -698,7 +688,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
                         resume=self.sid if resume else None,
                     )
                 )
-                self.assertEqual(found[1:], [Reply(said), TurnEnd(said), Exited(0)])
+                self.assertEqual(found, [Reply(said), TurnEnd(said), Exited(0)])
 
     def test_different_native_id_on_resume_is_not_published_or_saved(self):
         self.drain(
@@ -717,7 +707,6 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         with self.assertRaisesRegex(ConfigError, "already bound to a different native ID"):
             self.drain(handle)
         self.assertEqual(handle.state(), "absent")
-        self.assertEqual(handle.info().native_id, "")
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
         self.assertEqual(
             [entry["client_id"] for entry in self.written() if entry["kind"] == "client_session"],
