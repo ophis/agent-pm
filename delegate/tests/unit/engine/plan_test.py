@@ -16,6 +16,7 @@ from agent_pm.delegate import ConfigError, composer, configure, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, note
@@ -513,4 +514,50 @@ class InstructionPlans(InstructionCase):
                     )
                     for p in others:
                         self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
+                    agent = AgentDriver(configure().session_cls)
+                    for runtime, mode in RUNTIMES:
+                        run, spec = self.given(role, runtime=runtime, mode=mode)
+                        got = plan(run, spec, driver=agent)
+                        self.assertEqual(
+                            (got.run.output, got.prompt), (first.run.output, first.prompt)
+                        )
+                        self.assertEqual(
+                            (got.session.flags, dict(got.session.env)),
+                            Policy.SHIPPED[runtime or run.runtime],
+                        )
         self.assertEqual(composer.resolve("researcher").output["type"], "github")
+
+    def test_agent_plans_apply_runtime_policy_and_check_its_writable_dirs(self):
+        team = os.path.join(self.tmp, "team")
+        write_team(team)
+        local = os.path.join(self.agent_pm, "config.local.toml")
+        for runtime in ("claude", "codex"):
+            flags, env = ["--add-dir", team], {"POLICY": runtime}
+            policy = (
+                f"[policy.{runtime}]\nflags = {json.dumps(flags)}\n"
+                f'env = {{ POLICY = "{runtime}" }}\n'
+            )
+            with self.subTest(runtime=runtime):
+                with open(local, "w", encoding="utf-8") as stream:
+                    stream.write(policy)
+                run, spec = self.given("researcher", runtime=runtime)
+                agent = AgentDriver(configure().session_cls)
+                got, instruction = (
+                    plan(run, spec, driver=agent),
+                    plan(run, spec, driver=self.driver),
+                )
+                self.assertEqual((got.session.flags, dict(got.session.env)), (tuple(flags), env))
+                self.assertEqual(
+                    (instruction.session.flags, dict(instruction.session.env)), ((), {})
+                )
+                self.assertEqual(got.prompt, instruction.prompt)
+                with open(local, "w", encoding="utf-8") as stream:
+                    stream.write(f"team_dirs = {json.dumps([team])}\n{policy}")
+                self.assertEqual(plan(run, spec, driver=self.driver).prompt, instruction.prompt)
+                with self.assertRaises(ConfigError) as caught:
+                    plan(run, spec, driver=agent)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"team_dirs: {team} overlaps a dir {runtime} can write {team}: the agent "
+                    "run can write there",
+                )
