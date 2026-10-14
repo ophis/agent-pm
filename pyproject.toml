@@ -87,7 +87,23 @@ ignore_imports = [
     "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",
     "agent_pm.linear_orchestrator.engine.router -> agent_pm.session",
     "agent_pm.linear_orchestrator.engine.run -> agent_pm.session",
-    "agent_pm.linear_orchestrator.linear.sessions -> agent_pm.session",
+    "agent_pm.linear_orchestrator.engine.run_comments -> agent_pm.session",
+]
+
+[[tool.importlinter.contracts]]
+name = "Linear transport, operations and reporting have one direction"
+type = "units"
+container = "agent_pm.linear_orchestrator"
+units = ["agent_pm.linear_orchestrator.engine", "agent_pm.linear_orchestrator.engine.client", "agent_pm.linear_orchestrator.engine.log", "agent_pm.linear_orchestrator.engine.ops", "agent_pm.linear_orchestrator.engine.issues", "agent_pm.linear_orchestrator.engine.run_comments", "agent_pm.linear_orchestrator.engine.types"]
+dependencies = [
+    "agent_pm.linear_orchestrator.engine -> agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.session agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.client -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.log -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.ops -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.issues -> agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.run_comments -> agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.types agent_pm.session agent_pm.utils",
+    "agent_pm.linear_orchestrator.engine.types -> agent_pm.utils",
+    "outside -> agent_pm.linear_orchestrator.engine agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]

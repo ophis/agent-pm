@@ -72,11 +72,18 @@ TOP = {"__init__.py", "cli.py", "engine"}
 SUBPACKAGES = {
     SESSION: {"adapters", "hosts", "modes"},
     "delegate": {"composer", "event", "team"},
-    "linear-orchestrator": {"linear"},
 }
 
 
-ENTRY_MODULES = {SESSION: {"extension.py"}}  # public modules besides __init__.py
+ENTRY_MODULES = {
+    SESSION: {"extension.py"},
+    ORCH_PROJECT: {"config.toml"},
+}  # public modules besides __init__.py
+
+
+ISSUE_TYPES = frozenset(
+    f"{ORCH_PKG}.engine.issues.{name}" for name in ("Issue", "Handoff", "Note", "Link", "Linked")
+)
 
 
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
@@ -135,8 +142,6 @@ PACKAGE_CLIMB_ALLOWED = {
     (f"{SESSION_SRC}adapters/codex/tui/__init__.py", "import_roots()"): "TASK-393",
     ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
     ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
-    (f"{ORCH_PROJECT}/{ORCH_SRC}engine/config.py", "ROOT"): "TASK-372",
-    (f"{ORCH_PROJECT}/{ORCH_SRC}engine/config.py", "import_roots()"): "TASK-372",
     ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
 }
 
@@ -149,7 +154,7 @@ ORCH_SESSION_IMPORTS = {
     f"{ORCH_PKG}.engine.prune": {"ConfigError", "DriverError"},
     f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},
     f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},
-    f"{ORCH_PKG}.linear.sessions": {"ConfigError", "DriverError"},
+    f"{ORCH_PKG}.engine.run_comments": {"ConfigError", "DriverError"},
 }
 
 
@@ -165,7 +170,7 @@ NOQA_ALLOWED = {
         "InProcessMode._pump",
     ): "Forward failures to the caller thread.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}linear/sessions.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run_comments.py",
         "BLE001",
         "_bounded.run",
     ): "Forward failures to the caller thread.",
@@ -195,17 +200,17 @@ NOQA_ALLOWED = {
         "inner",
     ): "Finish reporting a failed run.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "progress",
     ): "A sink failure must not stop the run.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "finish",
     ): "Report the session after failed steps.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}linear/writeback.py",
+        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "limit",
     ): "Report the session after a failed limit.",
@@ -214,16 +219,6 @@ NOQA_ALLOWED = {
         "BLE001",
         "__main__",
     ): "the hook must never fail the client runtime",
-    (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
-        "duplicate-code",
-        "outer",
-    ): "Build writeback.context directly in both callers; no shared builder by design.",
-    (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
-        "duplicate-code",
-        "inner",
-    ): "Build writeback.context directly in both callers; no shared builder by design.",
 }
 
 
@@ -246,10 +241,9 @@ OPTION_TUPLES_ALLOWED = {
         f"delegate/src/{PKG}/delegate/event/outcome.py",
         "SAVES_DELIVERABLE",
     ): "the destinations whose deliverable comes back, a subset",
-    (f"{ORCH_FILES}linear/linear.py", "ONCE"): "the log fields keying a once-only line",
+    (f"{ORCH_FILES}engine/log.py", "ONCE"): "the log fields keying a once-only line",
     (f"{ORCH_FILES}engine/config.py", "CLONES"): "checkout dir names in a workdir",
     (f"{ORCH_FILES}engine/prune.py", "ARCHIVE_ROLES"): "roles whose finished issues are archived",
-    (f"{ORCH_FILES}engine/router.py", "SHARED"): "the arguments router passes on to run",
 }
 
 
@@ -296,7 +290,7 @@ TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
 
 
-ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.linear.linear.use_logs")
+ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.engine.log.use_logs")
 
 
 LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
@@ -305,10 +299,10 @@ LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
 HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 
 
-HANDOFF_HOME = f"{ORCH_SRC}linear/issues.py"
+HANDOFF_HOME = f"{ORCH_SRC}engine/issues.py"
 
 
-COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/config.toml")
+COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/{ORCH_SRC}config.toml")
 
 
 COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
@@ -1200,6 +1194,23 @@ def _stdlib_imports(repo, paths):
     return sorted(found)
 
 
+def orchestrator_entry(repo: str) -> list[str]:
+    found = []
+    root = os.path.join(repo, ORCH_PROJECT, ORCH_SRC)
+    if not os.path.isfile(os.path.join(root, "cli.py")):
+        found.append(f"{ORCH_PROJECT}/{ORCH_SRC}cli.py: missing entry")
+    for rel, text in _files(root, ".py"):
+        if rel == "cli.py":
+            continue
+        for node in ast.walk(ast.parse(text, rel)):
+            if isinstance(node, ast.Compare) and any(
+                isinstance(value, ast.Constant) and value.value == "__main__"
+                for value in (node.left, *node.comparators)
+            ):
+                found.append(f"{ORCH_PROJECT}/{ORCH_SRC}{rel}:{node.lineno}: entry outside cli.py")
+    return sorted(found)
+
+
 def package_top(repo: str) -> list[str]:
     found = set()
     for project in (p for p in PROJECTS if p != "utils"):
@@ -1614,6 +1625,14 @@ def _type_methods(project, rel, node, kind, bound):
             _dotted(d.func if isinstance(d, ast.Call) else d, bound) for d in method.decorator_list
         }
         if (
+            project == ORCH_PROJECT
+            and rel == ORCH_SRC.removeprefix("src/") + "engine/types.py"
+            and node.name == "Spec"
+            and method.name in {"to_argv", "from_argv"}
+            and kind == "dataclass"
+        ):
+            continue
+        if (
             method.name.startswith("__")
             and method.name.endswith("__")
             or decorators & {"property", "abc.abstractmethod"}
@@ -1685,6 +1704,7 @@ def _type_uses(project, rel, module, tree, data):
             if key in data
             and (source := key.rpartition(".")[0]) != module
             and not source.endswith(".types")
+            and key not in ISSUE_TYPES
             and not (data[key] and module.startswith(source + "."))
         }
     )
