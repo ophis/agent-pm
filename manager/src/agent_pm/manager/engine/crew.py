@@ -21,6 +21,7 @@ RECOVERY_MARGIN = 5
 RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
+DESCENDANTS = (*HERE, "--descendants")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
 
 
@@ -68,15 +69,18 @@ class Crew:
             raise RuntimeError(f"{shlex.join(argv)}: {reason}")
         return result.stdout
 
+    def _listing(self, argv: tuple[str, ...]) -> list[Record] | None:
+        try:
+            return [Record.parse(line) for line in self._execute(argv).splitlines()]
+        except ValueError as error:
+            print(f"crew: {shlex.join(argv)}: invalid Record: {error}", file=sys.stderr)
+        except RuntimeError as error:
+            print(f"crew: {error}", file=sys.stderr)
+        return None
+
     def _here(self) -> list[Record] | None:
         if self._listed is None:
-            try:
-                raw = self._execute(HERE)
-                self._listed = [Record.parse(line) for line in raw.splitlines()]
-            except ValueError as error:
-                print(f"crew: {shlex.join(HERE)}: invalid Record: {error}", file=sys.stderr)
-            except RuntimeError as error:
-                print(f"crew: {error}", file=sys.stderr)
+            self._listed = self._listing(HERE)
         return self._listed
 
     def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
@@ -330,7 +334,7 @@ class Crew:
         self.roster.check_lease()
         entries = self.roster.entries()
         records = [entry.record for entry in entries.values() if entry.record is not None]
-        here = self._here()
+        here = self._listing(DESCENDANTS)
         records.extend(here or ())
         names = sorted(set(entries) | {record.name for record in records})
         if not dry_run:

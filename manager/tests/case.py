@@ -23,6 +23,7 @@ SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-S")
+HERE = ("agent-pm-session", "ls", "--here", "--records")
 
 
 class Case(unittest.TestCase):
@@ -86,7 +87,7 @@ class Case(unittest.TestCase):
         real_run = subprocess.run
 
         def run(argv, **options):
-            if tuple(argv) == ("agent-pm-session", "ls", "--here", "--records"):
+            if tuple(argv) in (HERE, (*HERE, "--descendants")):
                 return subprocess.CompletedProcess(
                     argv, 0, "".join(record.to_line() + "\n" for record in records), ""
                 )
