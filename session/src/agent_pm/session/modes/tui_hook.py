@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fcntl
 import importlib
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -80,7 +81,7 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
     state = read_state(os.path.join(folder, STATE))
     sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
     if "adapter_hook" in state:
-        adapter = load_adapter(state["adapter_hook"])
+        adapter = load_adapter(state["adapter_hook"], roots)
         if adapter.on_hook(label, payload, state) is False:
             return
     word = state["words"].get(label)
@@ -177,16 +178,26 @@ def read_state(path: str) -> dict:
     return state
 
 
-def load_adapter(name: str):
-    spec = importlib.util.find_spec(name)
-    if spec is None or spec.origin is None:
-        raise HookError(f"adapter hook {name}: cannot find Python module")
-    try:
-        info = os.lstat(spec.origin)
-    except OSError as error:
-        raise HookError(f"adapter hook {name}: {error.strerror}") from error
-    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-        raise HookError(f"adapter hook {name}: not a regular file owned by you or root")
+def load_adapter(name: str, roots: list[str]):
+    paths = sys.path
+    parts = name.split(".")
+    for index in range(len(parts)):
+        # A segment lookup needs no loaded parent, including for namespace packages.
+        spec = importlib.machinery.PathFinder.find_spec(parts[index], paths)
+        if spec is None or (spec.origin is None and index == len(parts) - 1):
+            raise HookError(f"adapter hook {name}: cannot find Python module")
+        if spec.origin is not None:
+            if not any(
+                os.path.commonpath((root, spec.origin)) == os.path.normpath(root) for root in roots
+            ):
+                raise HookError(f"adapter hook {name}: module outside source roots")
+            try:
+                info = os.lstat(spec.origin)
+            except OSError as error:
+                raise HookError(f"adapter hook {name}: {error.strerror}") from error
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise HookError(f"adapter hook {name}: not a regular file owned by you")
+        paths = list(spec.submodule_search_locations or ())
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
         raise HookError(f"adapter hook {name}: missing on_hook callback")

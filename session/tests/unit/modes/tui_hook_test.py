@@ -611,6 +611,97 @@ class RecordsTest(HookBase):
 
 
 class SecurityTest(HookBase):
+    def callback_package(self):
+        folder = os.path.join(self.root, "callback_package", "nested")
+        os.makedirs(folder)
+        imported = os.path.join(self.root, "imported")
+        files = [
+            os.path.join(self.root, "callback_package", "__init__.py"),
+            os.path.join(folder, "__init__.py"),
+            os.path.join(folder, "callback.py"),
+        ]
+        for path in files:
+            with open(path, "w") as file:
+                file.write(f"with open({imported!r}, 'a') as marker: marker.write('imported\\n')\n")
+                file.write(
+                    "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                )
+        self.state.update(adapter_hook="callback_package.nested.callback", words={})
+        write_state(self.dir, self.state)
+        return files, imported
+
+    def test_callback_symlinks_are_rejected_before_any_package_code(self):
+        files, imported = self.callback_package()
+        for path in files:
+            with self.subTest(path=path):
+                target = path + ".target"
+                os.rename(path, target)
+                os.symlink(target, path)
+                try:
+                    self.assertError(self.hook("stop"), "not a regular file owned by you")
+                    self.assertFalse(os.path.exists(imported))
+                    self.assertNothingWritten()
+                finally:
+                    os.unlink(path)
+                    os.rename(target, path)
+
+    def test_foreign_callback_files_are_rejected_before_any_package_code(self):
+        files, imported = self.callback_package()
+        original = os.lstat
+        for rejected in files:
+
+            def foreign_owner(path, rejected=rejected):
+                info = original(path)
+                return types.SimpleNamespace(
+                    st_mode=info.st_mode,
+                    st_uid=os.getuid() + 1 if path == rejected else info.st_uid,
+                )
+
+            with (
+                self.subTest(path=rejected),
+                unittest.mock.patch.object(sys, "path", [self.root, *sys.path]),
+                unittest.mock.patch("os.lstat", foreign_owner),
+                self.assertRaisesRegex(tui_hook.HookError, "not a regular file owned by you"),
+            ):
+                tui_hook.load_adapter(self.state["adapter_hook"], [self.root])
+            self.assertFalse(os.path.exists(imported))
+            self.assertNotIn("callback_package", sys.modules)
+            self.assertNothingWritten()
+
+    def test_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
+        _, imported = self.callback_package()
+        self.assertEqual(self.hook("stop"), "")
+        self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
+        with open(imported) as file:
+            self.assertEqual(file.read(), "imported\n" * 3)
+
+    def test_nested_namespace_callback_imports_from_supplied_roots(self):
+        sources = [os.path.join(self.root, name) for name in ("left", "right")]
+        for source in sources:
+            os.makedirs(os.path.join(source, "namespace", "nested"))
+        callback = os.path.join(sources[1], "namespace", "nested", "callback.py")
+        with open(callback, "w") as file:
+            file.write(
+                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+            )
+        self.state.update(adapter_hook="namespace.nested.callback", words={})
+        write_state(self.dir, self.state)
+        self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(sources), "stop"]), "")
+        self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
+
+    def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
+        _, imported = self.callback_package()
+        source = os.path.join(self.root, "source")
+        os.makedirs(os.path.join(source, "callback_package"))
+        with (
+            unittest.mock.patch.object(sys, "path", [source, self.root, *sys.path]),
+            self.assertRaisesRegex(tui_hook.HookError, "module outside source roots"),
+        ):
+            tui_hook.load_adapter(self.state["adapter_hook"], [source])
+        self.assertFalse(os.path.exists(imported))
+        self.assertNotIn("callback_package", sys.modules)
+        self.assertNothingWritten()
+
     def test_bad_arguments_write_nothing(self):
         for args in (
             [],
