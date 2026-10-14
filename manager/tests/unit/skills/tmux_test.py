@@ -5,14 +5,16 @@ answers dialogs with keys and recovers one entry at a time, through no retired p
 
 import os
 import re
+import tomllib
 
-from manager.tests.case import Case
+from manager.tests.case import REPO, Case
 from manager.tests.skills.tmux import (
     BIN,
     SKILLS,
     body,
     examples,
     flags,
+    paths,
     rules,
     section,
     sections,
@@ -64,6 +66,28 @@ class Commands(Case):
         for word in (*RETIRED, *REPAIRS):
             self.assertNotIn(word, body("tmux"))
         self.assertNotIn("--split", body("tmux"))
+
+
+class Names(Case):
+    def test_the_files_it_names_exist_and_ctmux_runs(self):
+        named = paths("tmux")
+        self.assertIn(os.path.join(SKILLS, "tmux", "scripts", "ctmux"), named)
+        for path in named:
+            self.assertTrue(os.path.isfile(path), path)
+        self.assertTrue(os.access(os.path.join(SKILLS, "tmux", "scripts", "ctmux"), os.X_OK))
+
+    def test_the_grid_keys_it_names_are_the_tmux_hosts(self):
+        [config] = [p for p in paths("tmux") if p.endswith("config.toml")]
+        with open(config, "rb") as f:
+            tmux = tomllib.load(f)["hosts"]["tmux"]
+        for key in ("workers_per_column", "grid_retile"):
+            self.assertIn(key, tmux)
+            self.assertIn(f"`{key}`", body("tmux"))
+
+    def test_the_skills_it_names_are_this_plugins(self):
+        for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("tmux") + body("manage")):
+            homes = [os.path.join(REPO, d, "skills", skill) for d in ("manager", "delegate")]
+            self.assertTrue(any(os.path.isfile(os.path.join(h, "SKILL.md")) for h in homes), skill)
 
 
 class Flows(Case):

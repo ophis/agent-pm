@@ -1,9 +1,8 @@
-"""manager/skills/{tmux,manage}/SKILL.md as a commander reads them: sections, `/agent-pm:tmux`
-references, pre-approved rules and the layer command examples in backticks.
-"""
+"""manager/skills/{tmux,manage}/SKILL.md as a commander reads them."""
 
 import os
 import re
+import shlex
 
 from manager.tests.case import REPO
 
@@ -13,6 +12,11 @@ COMMAND = re.compile(r"`(agent-pm-[a-z]+\b[^`]*)`")
 FLAG = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
 REFERENCE = re.compile(r"`/agent-pm:tmux` › ([A-Z][a-z]+)")
 RULES = re.compile(r"^  - Bash\((.+)\)$", re.M)
+SKILL_DIR = "${CLAUDE_SKILL_DIR}"
+PATH = re.compile(
+    r"`((?:\$\{CLAUDE_SKILL_DIR\}/)?[\w.-]+(?:/[\w.-]+)*\.(?:md|toml|py)|\$\{CLAUDE_SKILL_DIR\}/[\w./-]+)`"
+)
+README = re.compile(r"`README\.md`((?: › [A-Z][\w ]*[a-z])+)")
 
 
 def text(skill: str) -> str:
@@ -67,3 +71,40 @@ def subcommand(command: list[str]) -> str | None:
 
 def flags(command: list[str]) -> list[str]:
     return FLAG.findall(" ".join(command[1:]))
+
+
+def paths(skill: str) -> list[str]:
+    """Each file the skill names: ${CLAUDE_SKILL_DIR}/… in its directory, else the plugin root's."""
+    own = os.path.join(SKILLS, skill)
+    return [
+        os.path.normpath(os.path.join(own, p.removeprefix(SKILL_DIR + "/")))
+        if p.startswith(SKILL_DIR)
+        else os.path.join(REPO, p)
+        for p in PATH.findall(body(skill))
+    ]
+
+
+def readme_sections(skill: str) -> list[list[str]]:
+    """Each `README.md` › A › B the skill cites, as [A, B]."""
+    return [chain.split(" › ")[1:] for chain in README.findall(body(skill))]
+
+
+def example(skill: str, prefix: str, *having: str) -> str:
+    """skill's one backticked command starting with prefix and holding each of having."""
+    spans = COMMAND.findall(body(skill))
+    [found] = sorted({s for s in spans if s.startswith(prefix) and all(h in s for h in having)})
+    return found
+
+
+def fill(command: str, *keep: str, **values: str) -> list[str]:
+    """command's argv: a `[...]` dropped unless its first word is in keep, `<a b>` values["a_b"]."""
+
+    def option(match: re.Match) -> str:
+        return match[1] if match[1].split()[0] in keep else ""
+
+    def raw(text: str) -> str:
+        return re.sub(r"<([^<>]+)>", lambda m: values[m[1].replace(" ", "_")], text)
+
+    command = re.sub(r"\[([^][]+)\]", option, command.replace("…", ""))
+    command = re.sub(r"'([^']*)'", lambda m: shlex.quote(raw(m[1])), command)
+    return shlex.split(re.sub(r"<([^<>]+)>", lambda m: shlex.quote(raw(m[0])), command))

@@ -4,10 +4,19 @@ Codex issues, decision markers and the one commit exception agree.
 """
 
 import os
+import re
 
-from manager.tests.case import Case
+from manager.tests.case import REPO, Case
 from manager.tests.skills.manage import rule
-from manager.tests.skills.tmux import BIN, body, examples, references, sections
+from manager.tests.skills.tmux import (
+    BIN,
+    body,
+    examples,
+    paths,
+    readme_sections,
+    references,
+    sections,
+)
 
 RETIRED = (
     "crew.py",
@@ -56,3 +65,17 @@ class Manage(Case):
         self.assertNotIn("<the user's name>", body("manage"))
         self.assertRegex(rule("Clear small"), r"commit only, no push")
         self.assertIn(".gitignore", rule("Commit or push only when asked"))
+
+    def test_the_files_and_readme_sections_it_names_exist(self):
+        self.assertTrue(paths("manage"))
+        for path in paths("manage"):
+            self.assertTrue(os.path.isfile(path), path)
+        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
+            readme = f.read()
+        cited = readme_sections("manage")
+        self.assertIn(["Using the board", "Finish"], cited)
+        for top, *inner in cited:
+            part = re.search(rf"^## {re.escape(top)}\n(.*?)(?=^## |\Z)", readme, re.M | re.S)
+            self.assertIsNotNone(part, top)
+            for name in inner:
+                self.assertRegex(part[1], rf"(?m)^#+ {re.escape(name)}$|\*\*{re.escape(name)}:\*\*")
