@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import Event
 from unittest import mock
 
-from agent_pm.manager.engine.crew import BIN, HERE, RECOVERY_AGE, RECOVERY_MARGIN, TIMEOUT, Crew
+from agent_pm.manager.engine.crew import HERE, RECOVERY_AGE, RECOVERY_MARGIN, TIMEOUT, Crew
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
@@ -68,7 +68,7 @@ class CrewTest(Case):
         self.assertEqual(entry.record.display, "opaque value")
         self.assertEqual((entry.state, entry.note), (State.LIVE, "investigate"))
 
-    def test_start_process_observes_starting_entry_unlocked_events_and_current_bin(self):
+    def test_start_process_observes_starting_entry_unlocked_events_and_caller_path(self):
         record = self.fake_record("worker")
         code = "\n".join(
             (
@@ -80,7 +80,7 @@ class CrewTest(Case):
                 "fd=os.open(path+'/roster.lock',os.O_RDWR)",
                 "fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)",
                 "assert os.environ['AGENT_PM_EVENTS']==path+'/events'",
-                f"assert os.environ['PATH'].split(os.pathsep)[0]=={BIN!r}",
+                f"assert os.environ['PATH']=={os.environ['PATH']!r}",
                 "print('starter diagnostics')",
                 "assert os.environ['AGENT_PM_SID']==entry['sid']",
                 f"record=json.loads({record.to_line()!r})",

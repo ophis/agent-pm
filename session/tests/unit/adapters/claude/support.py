@@ -172,10 +172,48 @@ def usage(*lines) -> Usage | None:
     return ClaudeCommon.parse_usage("".join(f"{x}\n" for x in lines))
 
 
+PROBE_REPLY = {"type": "assistant", "message": {"content": [text("OK")]}, "session_id": SID}
+PROBE_RESULT = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": "OK",
+    "session_id": SID,
+}
+
+
+def probe_init(source) -> dict:
+    return {**INIT, "cwd": "/probe", "apiKeySource": source, "claude_code_version": "2.1.299"}
+
+
+def stdout(*records) -> str:
+    return "".join(f"{json.dumps(record)}\n" for record in records)
+
+
+# Handwritten Claude 2.1.299 probe stdout: no recordings exist (TASK-421).
+API_KEY_PROBE = stdout(probe_init("ANTHROPIC_API_KEY"), PROBE_REPLY, PROBE_RESULT)
+SUBSCRIPTION_PROBE = stdout(
+    probe_init("none"),
+    PROBE_REPLY,
+    {
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed",
+            "unifiedWindows": {
+                "five_hour": {"utilization": 0.25, "resetsAt": 1760000000},
+                "seven_day": {"utilization": 0.4, "resetsAt": 1760500000},
+            },
+        },
+    },
+    PROBE_RESULT,
+)
+
+
 HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
 
 HOOKS = {
     "Stop": HookKind.TURN_END,
+    "StopFailure": HookKind.TURN_FAILED,
     "PermissionRequest": HookKind.BLOCKED,
     "Notification": HookKind.BLOCKED,
     "PostToolUse": HookKind.ACTIVITY,
@@ -212,6 +250,7 @@ def entry(label) -> dict:
 
 TUI_HOOKS = {
     "Stop": [entry("Stop")],
+    "StopFailure": [entry("StopFailure")],
     "PermissionRequest": [entry("PermissionRequest")],
     "Notification": [{"matcher": MATCHER, **entry("Notification")}],
     "PostToolUse": [entry("PostToolUse")],

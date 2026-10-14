@@ -12,6 +12,7 @@ import logging
 import os
 import shlex
 import stat
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -22,6 +23,7 @@ from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex.common import RESUME, SessionStore
 from agent_pm.session.engine import hosted
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted import POLL, HostedSession
@@ -48,6 +50,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -289,7 +292,9 @@ class HistoricalRecordTest(Case):
             encoding="utf-8",
         )
         os.utime(outside, (9000, 9000))
-        command = f"cd {shlex.quote(str(self.cwd))} && CODEX_HOME={shlex.quote(str(home))} codex resume {SID}"
+        roots = json.dumps(list(PACKAGE_ROOTS))
+        argv = [sys.executable, "-I", RESUME, roots, SessionStore().root, str(self.work), SID, SID]
+        command = f"cd {shlex.quote(str(self.cwd))} && {shlex.join(argv)}"
         self.forged("codex", outside, expected=SessionStatus("unknown", None, command))
 
 
@@ -901,6 +906,31 @@ class EventsOverAModeTest(Case):
                 IdleTimeout(1),
                 Exited(0),
             ],
+        )
+
+    def test_a_reply_keeps_a_session_blocked(self):
+        session = self.session(
+            (0, [Blocked("ask")], False),
+            (0.5, [Reply("r")], False),
+            (3, [Activity()], False),
+            (4.5, [], True),
+            idle_timeout=1,
+        )
+        self.assertEqual(
+            self.events(session),
+            [Blocked("ask"), Reply("r"), Activity(), IdleTimeout(1), Exited(0)],
+        )
+
+    def test_a_failed_turn_ends_a_block(self):
+        session = self.session(
+            (0, [Blocked("ask")], False),
+            (0.5, [TurnFailed("overloaded")], False),
+            (2, [], True),
+            idle_timeout=1,
+        )
+        self.assertEqual(
+            self.events(session),
+            [Blocked("ask"), TurnFailed("overloaded"), IdleTimeout(1), Exited(0)],
         )
 
     def test_an_exception_from_the_mode_stops_it_then_propagates(self):

@@ -30,7 +30,6 @@ NAME = f"claude-{SID[:8]}"
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 WAIT = 60  # seconds: a run
 START = mark("start", "echoing")
-TURN_1 = ["session", "input", "client_session", "progress"]
 
 
 def stop(text: str, pending: int = 0) -> dict:
@@ -43,12 +42,15 @@ def stop(text: str, pending: int = 0) -> dict:
 
 
 class Ahead:
-    """The session's clock: monotonic() `by` s ahead of the real clock."""
+    """The session's clock: monotonic() `by` s ahead of the real clock, `by` growing `step` s per
+    call.
+    """
 
     def __init__(self):
-        self.by = 0.0
+        self.by = self.step = 0.0
 
     def monotonic(self) -> float:
+        self.by += self.step
         return time.monotonic() + self.by
 
 
@@ -134,6 +136,14 @@ class TuiRun(tui_live.Live):
     def kinds(self) -> list[str]:
         return [e["kind"] for e in self.records()]
 
+    def turn_1_then(self, *rest: str) -> None:
+        """run.jsonl's kinds: turn 1's, its client binding and its progress in either order (the
+        transcript and the hooks are read apart), then `rest`.
+        """
+        kinds = self.kinds()
+        self.assertEqual(sorted(kinds[2:4]), ["client_session", "progress"], kinds)
+        self.assertEqual([*kinds[:2], *kinds[4:]], ["session", "input", *rest])
+
     def last(self, kind: str) -> dict:
         return [e for e in self.records() if e["kind"] == kind][-1]
 
@@ -161,7 +171,7 @@ class TurnEnds(TuiRun):
         )
         self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
         self.assertEqual(self.users(), [NUDGE])
-        self.assertEqual(self.kinds(), [*TURN_1, "nudge", "result", "end"])
+        self.turn_1_then("nudge", "result", "end")
         with open(self.out) as f:
             self.assertEqual(f.read(), DONE["deliverable"])
         self.left_open()
@@ -176,7 +186,7 @@ class TurnEnds(TuiRun):
         self.assertEqual(result, GAVE_UP)
         self.assertIn(f"delegate: no outcome after {STOP_LIMIT} turn ends; {LEFT_OPEN}", self.err)
         self.assertEqual(self.users(), [NUDGE])
-        self.assertEqual(self.kinds(), [*TURN_1, "nudge", "give_up", "result", "end"])
+        self.turn_1_then("nudge", "give_up", "result", "end")
         self.assertEqual(self.last("give_up")["reason"], f"no outcome after {STOP_LIMIT} turn ends")
         self.left_open()
 
@@ -202,13 +212,13 @@ class Idle(TuiRun):
         self.driver = Driver.from_config(read_project("session"), clock=clock.monotonic)
 
         def later(event):
-            if isinstance(event, Progress):  # read at turn 1's end, the last event
-                clock.by += 7200 + 1
+            if isinstance(event, Progress):  # from here each clock read is past the idle timeout
+                clock.step = 7200 + 1
 
         result = self.go(later, steps=[START], background=1)
         self.assertEqual(result, GAVE_UP)
         self.assertIn(f"delegate: no event for 2 h; {LEFT_OPEN}", self.err)
-        self.assertEqual(self.kinds(), [*TURN_1, "idle", "give_up", "result", "end"])
+        self.turn_1_then("idle", "give_up", "result", "end")
         self.assertEqual(
             (self.last("idle")["seconds"], self.last("give_up")["reason"]),
             (7200, "no event for 2 h"),
@@ -223,7 +233,7 @@ class Fix(TuiRun):
         self.assertEqual((result.returncode, result.outcome.status), (0, "done"), self.err)
         self.assertIn(f"delegate: invalid outcome: {UNSAVED_ERROR}; resuming once\n", self.err)
         self.assertEqual(self.users(), [FIX.format(error=UNSAVED_ERROR)])
-        self.assertEqual(self.kinds(), [*TURN_1, "invalid", "result", "end"])
+        self.turn_1_then("invalid", "result", "end")
         self.left_open()
 
 

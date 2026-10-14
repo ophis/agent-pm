@@ -189,6 +189,46 @@ class TuiTest(Live):
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
 
 
+class SplitTest(Live):
+    def test_a_split_and_refocused_session_keeps_its_client_pane(self):
+        self.start(
+            "w5",
+            {"read": True},
+            {"hook": "stop", "payload": {"last_message": "r1"}},
+            {"read": True},
+            sid=SID,
+        )
+        client = self.active("w5")
+        added = self.server.tmux(
+            "split-window", "-P", "-F", "#{pane_id}", "-t", "=w5:", *live_tmux.IDLE
+        )
+        self.assertEqual(added.returncode, 0, added.stderr)
+        other = added.stdout.strip()
+        self.assertEqual(self.active("w5"), other)
+
+        attached = self.driver.attach("w5")
+        attached.send("ping")
+        self.lines("w5 done")
+        self.assertNotIn("ping", self.server.tmux("capture-pane", "-p", "-t", other).stdout)
+        host = self.driver.session_cls.host()
+        status = host.attach("w5")
+        self.assertEqual(
+            (status.identity.split(" ")[2], status.alive(), status.activity()),
+            (client, True, "done"),
+        )
+
+        attached.stop()
+        panes = self.server.tmux("list-panes", "-s", "-t", "=w5:", "-F", "#{pane_id}")
+        self.assertEqual(panes.returncode, 0, panes.stderr)
+        self.assertEqual(panes.stdout.split(), [other])
+        self.assertFalse(os.path.lexists(tui._Store("w5", host=host).dir))
+
+    def active(self, session: str) -> str:
+        found = self.server.tmux("display-message", "-p", "-t", f"={session}:", "#{pane_id}")
+        self.assertEqual(found.returncode, 0, found.stderr)
+        return found.stdout.strip()
+
+
 class SameNameTest(Live):
     def setUp(self):
         super().setUp()
