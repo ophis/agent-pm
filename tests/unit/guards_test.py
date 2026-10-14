@@ -622,6 +622,11 @@ class ImportHygiene(Sample):
 
 
 class StandaloneImports(Sample):
+    def test_tui_hook_bootstraps_package_imports(self):
+        path = f"{guards.SESSION_SRC}modes/tui_hook.py"
+        self.assertNotIn(path, guards.STANDALONE)
+        self.assertEqual(guards.IMPORT_BOOTSTRAPS[path], "_bootstrap")
+
     def found(self, source):
         files = dict.fromkeys(guards.STANDALONE, source)
         return guards.standalone_imports(self.tree(files))
@@ -892,6 +897,21 @@ class SharedTypes(Sample):
 
     def test_a_package_re_export_is_clean(self):
         self.assertEqual(self.found("a.py", "__init__.py"), [])
+
+    def test_package_data_types_stay_with_their_own_consumers(self):
+        root = self.tree(
+            {
+                f"{self.UTILS}/owner/__init__.py": self.DATA,
+                f"{self.UTILS}/owner/start.py": "from agent_pm.utils.owner import A\n",
+                f"{self.UTILS}/outside.py": "from agent_pm.utils.owner import A\n",
+            }
+        )
+        self.assertEqual(
+            guards.shared_types(root),
+            [
+                f"{self.UTILS}/outside.py:1: agent_pm.utils.owner.A: a shared data type belongs in a types.py"
+            ],
+        )
 
     def test_namedtuple_enum_and_typeddict_are_counted(self):
         for source in (

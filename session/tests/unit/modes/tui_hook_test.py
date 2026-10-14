@@ -142,14 +142,18 @@ class Standalone(Case):
         with open(HOOK) as f:
             self.source = f.read()
 
-    def test_imports_only_the_stdlib(self):
-        names = set()
+    def test_imports_only_the_stdlib_before_bootstrapping_shared_types(self):
+        names, shared = set(), []
         for node in ast.walk(ast.parse(self.source)):
             if isinstance(node, ast.Import):
                 names |= {a.name.split(".")[0] for a in node.names}
             elif isinstance(node, ast.ImportFrom):
-                names.add("." * node.level + (node.module or "").split(".")[0])
+                if node.module == "agent_pm.session.engine.types":
+                    shared.append([alias.name for alias in node.names])
+                else:
+                    names.add("." * node.level + (node.module or "").split(".")[0])
         self.assertLessEqual(names, set(sys.stdlib_module_names))
+        self.assertEqual(shared, [["HookError", "Word"], ["HookError", "Word"]])
 
     def test_no_runtime_name(self):
         self.assertEqual(RUNTIME.findall(self.source), [])
@@ -165,21 +169,34 @@ class WordTest(Case):
                 self.assertFalse(check(bad))
 
 
-class PrivateCopies(Case):
-    """The hook runs by path and cannot import the package: it keeps its own copies of
-    engine/types' HookError and Word, which normal code takes from engine/types.
-    """
+class SharedTypes(Case):
+    """The bootstrapped hook uses engine/types' HookError and Word."""
 
-    def test_the_hooks_copies_equal_engine_types(self):
+    def test_the_hook_uses_engine_types(self):
         self.assertEqual(
             [(w.name, w.value) for w in tui_hook.Word],
             [(w.name, w.value) for w in engine_types.Word],
         )
         hook, shared = tui_hook.HookError, engine_types.HookError
-        self.assertIsNot(hook, shared)
+        self.assertIs(hook, shared)
+        self.assertIs(tui_hook.Word, engine_types.Word)
         self.assertEqual(
             (hook.__name__, hook.__bases__, hook.__doc__),
             (shared.__name__, shared.__bases__, shared.__doc__),
+        )
+
+    def test_each_shared_hook_type_has_one_definition(self):
+        package = os.path.join(SRC["session"], "agent_pm", "session")
+        definitions = {"Word": [], "HookError": []}
+        for top, _, names in os.walk(package):
+            for name in sorted(n for n in names if n.endswith(".py")):
+                path = os.path.join(top, name)
+                for node in ast.walk(ast.parse(self.source(path))):
+                    if isinstance(node, ast.ClassDef) and node.name in definitions:
+                        definitions[node.name].append(path)
+        self.assertEqual(
+            definitions,
+            dict.fromkeys(definitions, [engine_types.__file__]),
         )
 
     def test_read_state_raises_the_error_it_is_given(self):
@@ -192,7 +209,7 @@ class PrivateCopies(Case):
                 tui_hook.read_state(path)
 
     def test_no_normal_session_module_takes_a_type_from_the_hook(self):
-        classes = {n.name for n in ast.parse(self.source(HOOK)).body if isinstance(n, ast.ClassDef)}
+        classes = {"HookError", "Word"}
         package = os.path.join(SRC["session"], "agent_pm", "session")
         found = []
         for top, _, names in os.walk(package):

@@ -7,12 +7,13 @@ import shlex
 import shutil
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
+    VALUED,
     CodexCommon,
     RecoveryError,
     SessionStore,
@@ -21,14 +22,14 @@ from agent_pm.session.adapters.codex.common import (
     inside,
     launch_options,
     native_id,
-    passed,
-    refuse,
     reset_at,
 )
-from agent_pm.session.adapters.codex.common.types import HookPlan, LaunchPlan, Snapshot
-from agent_pm.session.adapters.common import split_flags
+from agent_pm.session.adapters.codex.common.types import Snapshot
+from agent_pm.session.adapters.common import scan, split_flags
 from agent_pm.session.engine.types import ConfigError, HookKind, Launch, LimitHit, Spec
 from agent_pm.utils import import_roots
+
+PASSED = ("-c", "--enable", "--disable")
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,6 +57,24 @@ FIELDS = frozenset(
         "import_roots",
     }
 )
+
+
+@dataclass(frozen=True)
+class HookPlan:
+    argv: tuple[str, ...]
+    import_roots: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LaunchPlan:
+    executable: str
+    selection: tuple[str, ...]
+    prompt: str
+    hook: HookPlan
+    workdir: str
+    sid: str
+    store: str
+    protect: tuple[str, ...]
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -107,10 +126,8 @@ class CodexTui(Tui):
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
         saved_flags = snapshot.flags
-        refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.UNSET
         effective_env = common.environment(snapshot, interactive=True, ambient=True)
         store = self.store = common.store.root
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
@@ -118,8 +135,7 @@ class CodexTui(Tui):
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         hooks = HookPlan(tuple(hook), source_roots)
-        roots = hooks.import_roots
-        protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
+        protected_roots = tuple(dict.fromkeys([*import_roots(), *source_roots]))
         dependencies = [
             *protected_roots,
             sys.prefix,
@@ -135,8 +151,6 @@ class CodexTui(Tui):
             protect(self.state, dependencies, effective_env, added)
         except RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
-        if not resume:
-            self.state = common.save(self.state)
         plan = LaunchPlan(
             exe,
             self.common.selector(self.native, resume=resume),
@@ -147,20 +161,27 @@ class CodexTui(Tui):
             store,
             (*protected_roots, *spec.protect),
         )
-        return Launch(
+        try:
+            encoded = encode(plan)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        launch = Launch(
             (
                 os.path.realpath(sys.executable),
                 "-I",
                 os.path.join(DIRECTORY, "start.py"),
-                encode(plan),
+                encoded,
             ),
             env=env,
-            unset=unset,
+            unset=common.UNSET,
             cwd=snapshot.cwd,
             project=snapshot.project,
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
+        if not resume:
+            self.state = common.save(self.state)
+        return launch
 
     def hook_state(self) -> dict:
         return {
@@ -265,11 +286,18 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
+    roots = _strs(data["import_roots"], absolute=True)
+    if (
+        not roots
+        or len(set(roots)) != len(roots)
+        or not all(path.isprintable() and os.path.isdir(path) for path in roots)
+    ):
+        raise ValueError("Codex tui launch: invalid import roots")
     return LaunchPlan(
         executable,
         selection,
         prompt,
-        HookPlan(hook, tuple(data["import_roots"])),
+        HookPlan(hook, roots),
         workdir,
         data["sid"],
         store,
@@ -279,9 +307,14 @@ def decode(data: object) -> LaunchPlan:
 
 def encode(plan: LaunchPlan) -> str:
     data = asdict(plan)
-    data["hook"] = plan.hook.argv
-    data["import_roots"] = plan.hook.import_roots
-    return json.dumps(data, ensure_ascii=False)
+    data["selection"] = list(plan.selection)
+    data["hook"] = list(plan.hook.argv)
+    data["import_roots"] = list(plan.hook.import_roots)
+    data["protect"] = list(plan.protect)
+    decode(data)
+    encoded = json.dumps(data, ensure_ascii=False)
+    encoded.encode("utf-8")
+    return encoded
 
 
 def commands(plan: HookPlan) -> Mapping[str, str]:
@@ -300,6 +333,15 @@ def hook_flags(plan: HookPlan) -> tuple[str, ...]:
             ),
         )
     )
+
+
+def passed(flags) -> list[str]:
+    return [
+        word
+        for flag in scan(flags, VALUED)
+        if flag.word in PASSED and flag.value is not None
+        for word in (flag.word, flag.value)
+    ]
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:

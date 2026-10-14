@@ -2,8 +2,8 @@
 session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
 "payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
 session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
-The entry script uses only the stdlib; adapter callbacks import packages after the supplied roots
-are set. Never stdout, always exits 0. Failures append a full traceback to hook.log
+The entry script bootstraps package imports from the supplied roots before loading shared types
+and adapter callbacks. Never stdout, always exits 0. Failures append a full traceback to hook.log
 when writable and report one stderr line.
 """
 
@@ -21,12 +21,6 @@ import sys
 import traceback
 from contextlib import suppress
 from datetime import datetime
-from enum import StrEnum
-
-
-class HookError(Exception):
-    """One stderr line; the hook stops."""
-
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
 
@@ -37,12 +31,6 @@ BLOCK = 1 << 16
 CUT = 4096
 
 LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
-
-
-class Word(StrEnum):
-    DONE = "done"
-    BLOCKED = "blocked"
-    WORKING = "working"
 
 
 STATE = "session.json"
@@ -58,6 +46,45 @@ def _abs(value) -> bool:
     return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
 
 
+def _source_roots(encoded: str) -> list[str]:
+    # This runs before package imports, when only the standard library is available.
+    try:
+        roots = json.loads(encoded)
+    except (ValueError, RecursionError):
+        raise ValueError(
+            "invalid source roots: expected a nonempty JSON array of directories"
+        ) from None
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or any(not _abs(path) or not os.path.isdir(path) for path in roots)
+        or len(set(roots)) != len(roots)
+    ):
+        raise ValueError("invalid source roots: expected distinct absolute directories")
+    return roots
+
+
+def _bootstrap(argv: list[str]) -> tuple[str, list[str], str]:
+    if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
+        raise ValueError(
+            "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
+        )
+    folder, encoded_roots, label = argv
+    roots = _source_roots(encoded_roots)
+    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
+    return folder, roots, label
+
+
+def say(text: str) -> None:
+    """One stderr line; none when stderr is closed (print would fall back to stdout)."""
+    if sys.stderr is not None:
+        print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
+
+
+if __name__ != "__main__":
+    from agent_pm.session.engine.types import HookError, Word
+
+
 SESSION_STATE = {  # what this hook or an adapter_hook reads
     "words": lambda v: (
         isinstance(v, dict) and all(LABEL.fullmatch(k) and w in tuple(Word) for k, w in v.items())
@@ -71,14 +98,11 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
-    if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
-        raise HookError(
-            "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
-        )
-    folder, encoded_roots, label = argv
-    roots = _source_roots(encoded_roots)
+    try:
+        folder, roots, label = _bootstrap(argv)
+    except ValueError as error:
+        raise HookError(str(error)) from None
     state = read_state(os.path.join(folder, STATE))
-    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
     if "adapter_hook" in state:
         adapter = load_adapter(state["adapter_hook"], roots)
         if adapter.on_hook(label, payload, state) is False:
@@ -95,23 +119,6 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
             tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
             raise HookError(str(e)) from None
-
-
-def _source_roots(encoded: str) -> list[str]:
-    try:
-        roots = json.loads(encoded)
-    except (ValueError, RecursionError):
-        raise HookError(
-            "invalid source roots: expected a nonempty JSON array of directories"
-        ) from None
-    if (
-        not isinstance(roots, list)
-        or not roots
-        or any(not _abs(path) or not os.path.isdir(path) for path in roots)
-        or len(set(roots)) != len(roots)
-    ):
-        raise HookError("invalid source roots: expected distinct absolute directories")
-    return roots
 
 
 def read_payload(stream) -> dict:
@@ -139,10 +146,11 @@ def read_payload(stream) -> dict:
     return payload
 
 
-def read_state(path: str, *, error: type[Exception] = HookError) -> dict:
+def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
     """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
     SESSION_STATE; else `error`.
     """
+    error = HookError if error is None else error
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
@@ -194,8 +202,8 @@ def load_adapter(name: str, roots: list[str]):
                 info = os.lstat(spec.origin)
             except OSError as error:
                 raise HookError(f"adapter hook {name}: {error.strerror}") from error
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                raise HookError(f"adapter hook {name}: not a regular file owned by you")
+            if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+                raise HookError(f"adapter hook {name}: not a regular file owned by you or root")
         paths = list(spec.submodule_search_locations or ())
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
@@ -258,14 +266,13 @@ def load_tmux_host():
     return module
 
 
-def say(text: str) -> None:
-    """One stderr line; none when stderr is closed (print would fall back to stdout)."""
-    if sys.stderr is not None:
-        print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
-
-
 if __name__ == "__main__":
+    types_loaded = False
     try:
+        _bootstrap(sys.argv[1:])
+        from agent_pm.session.engine.types import HookError, Word
+
+        types_loaded = True
         main(sys.argv[1:], sys.stdin.buffer)
     except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
         if len(sys.argv) > 1 and _abs(sys.argv[1]):
@@ -279,5 +286,12 @@ if __name__ == "__main__":
                 ) as file,
             ):
                 file.write(traceback.format_exc())
-        say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")
+        say(
+            str(e)
+            if not types_loaded
+            and isinstance(e, ValueError)
+            or types_loaded
+            and isinstance(e, HookError)
+            else f"{type(e).__name__}: {e}"
+        )
     sys.exit(0)

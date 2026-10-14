@@ -109,7 +109,7 @@ OBJECT_EXPORTS_ALLOWED = {
 
 IMPORT_BOOTSTRAPS = {
     f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
-    f"{SESSION_SRC}modes/tui_hook.py": "main",
+    f"{SESSION_SRC}modes/tui_hook.py": "_bootstrap",
 }
 
 
@@ -117,7 +117,6 @@ STANDALONE = frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
         "hosts/tmux/tmux_host.py",
-        "modes/tui_hook.py",
         "adapters/codex/common/app_server.py",
     )
 )
@@ -1235,8 +1234,8 @@ def shared_types(repo: str) -> list[str]:
             if f"{project}/src/{rel}" not in STANDALONE
         }
         data = {
-            f"{module}.{node.name}"
-            for module, (_, tree) in trees.items()
+            f"{module}.{node.name}": rel.endswith("__init__.py")
+            for module, (rel, tree) in trees.items()
             for bound in (_bindings(tree),)
             for node in tree.body
             if isinstance(node, ast.ClassDef) and _data_type(node, bound)
@@ -1447,6 +1446,7 @@ def _type_uses(project, rel, module, tree, data):
             if key in data
             and (source := key.rpartition(".")[0]) != module
             and not source.endswith(".types")
+            and not (data[key] and module.startswith(source + "."))
         }
     )
 

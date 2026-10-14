@@ -25,6 +25,28 @@ from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
 class CommonTest(Base):
+    def test_prepare_resolves_each_access_dir_once(self):
+        linked = self.root / "extra-link"
+        linked.symlink_to(self.extra, target_is_directory=True)
+        spec = replace(self.spec, access=replace(self.spec.access, dirs=(str(linked),)))
+        with mock.patch("os.path.realpath", wraps=os.path.realpath) as realpath:
+            state = self.common.prepare(spec, persist=False)
+        self.assertEqual(state.snapshot.dirs, (str(self.extra),))
+        self.assertIn(str(self.extra), state.writable_roots)
+        self.assertEqual(realpath.call_args_list.count(mock.call(str(linked))), 1)
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_prepare_still_validates_project_and_commands_before_saving(self):
+        for fields, message in (
+            ({"project": 1}, "snapshot project"),
+            ({"commands": ("",)}, "snapshot commands"),
+            ({"commands": ("git\nstatus",)}, "snapshot commands"),
+        ):
+            spec = replace(self.spec, access=replace(self.spec.access, **fields))
+            with self.subTest(fields=fields), self.assertRaisesRegex(ConfigError, message):
+                self.common.prepare(spec)
+            self.assertFalse((self.home / ".agent-pm").exists())
+
     def test_the_env_attributes(self):
         self.assertEqual(self.adapter.session_env, "CODEX_THREAD_ID")
         self.assertEqual(
@@ -126,12 +148,12 @@ class CommonTest(Base):
             q = shlex.quote
             self.assertTrue(
                 command.startswith(
-                    f"cd {q(str(self.cwd))} && CODEX_HOME={q(str(self.codex_home))} "
-                    "PYTHONPATH='/a b;c' K=v codex resume "
+                    f"cd {q(str(self.cwd))} && PYTHONPATH='/a b;c' K=v "
+                    f"CODEX_HOME={q(str(self.codex_home))} codex resume "
                 ),
                 command,
             )
-            self.assertEqual(shlex.split(command)[4], "PYTHONPATH=/a b;c")
+            self.assertEqual(shlex.split(command)[3], "PYTHONPATH=/a b;c")
 
     def test_both_modes_resume_with_saved_project_and_transcript(self):
         for saved in (False, True):
@@ -196,7 +218,7 @@ class CommonTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         info = SessionInfo(self.spec.sid, str(self.cwd), project=False, transcript="", resume="")
         resume = self.adapter.session_metadata(info).resume
-        self.assertEqual(shlex.split(resume)[4], "PYTHONPATH=/a b;c")
+        self.assertEqual(shlex.split(resume)[3], "PYTHONPATH=/a b;c")
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
@@ -279,6 +301,8 @@ class CommonTest(Base):
                 self.edit_record(**fields)
                 with self.assertRaises(ConfigError):
                     self.common.load(str(self.work), self.spec.sid)
+                with self.assertRaises(ConfigError):
+                    self.common.lookup(self.spec.sid, str(self.cwd))
 
     def test_store_outside_explicit_and_implicit_writable_roots(self):
         for grant in (self.home, self.home / ".agent-pm", self.root):
