@@ -47,6 +47,7 @@ Add verbatim, placeholders filled in:
 ```
 Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.
 Commits merged from `origin/<base>` are not this build's work.
+Every local check, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites locally: CI runs them on the PR.
 Skip S7; keep the commits. After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
 ```
 
