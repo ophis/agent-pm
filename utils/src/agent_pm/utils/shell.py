@@ -1,4 +1,6 @@
-"""Subprocess runs with a timeout, their stderr shown with URL userinfo masked."""
+"""Subprocess runs with a timeout, their stderr shown with URL userinfo masked; process-group
+kills (kill_group), timed output probes (probe) and shell resume commands.
+"""
 
 import contextlib
 import os

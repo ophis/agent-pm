@@ -55,10 +55,10 @@ from agent_pm.utils import (
     load_class,
     module_roots,
     printable_abs,
+    probe,
     sid_error,
     thaw,
 )
-from agent_pm.utils import probe as run_probe
 
 
 def _request(spec: Spec, idle_timeout: float | None) -> tuple[str, Mode]:
@@ -193,7 +193,7 @@ class HostedSession(Session):
         adapters: Mapping,
         hosts: Hosts,
         class_loader=load_class,
-        probe=run_probe,
+        probe=probe,
         clock: Callable[[], float] = time.monotonic,
         host_factory: HostFactory | None = None,
     ) -> None:

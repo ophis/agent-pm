@@ -29,7 +29,13 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import ROOTS, SRC
-from session.tests.codex_tui import INTERPRETER_ROOTS, PROTECTED_ROOTS, PlanCase
+from session.tests.codex_tui import (
+    INTERPRETER_PATHS,
+    INTERPRETER_ROOTS,
+    PROTECTED_ROOTS,
+    PlanCase,
+    interpreter,
+)
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_tui
 
@@ -43,6 +49,10 @@ HOOK = (
 
 
 class TuiTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(interpreter())
+
     def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
@@ -93,6 +103,23 @@ class TuiTest(Base):
                     self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
                 self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_a_virtual_environment_inside_the_cwd_is_rejected_before_commit(self):
+        venv = self.cwd / ".venv" / "lib" / "python3.11" / "site-packages"
+        venv.mkdir(parents=True)
+        layout = {**INTERPRETER_PATHS, "purelib": str(venv), "platlib": str(venv)}
+        spec = dataclasses.replace(self.spec, sid="venv")
+        with (
+            interpreter(layout, (str(venv),)),
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaises(ConfigError) as raised,
+        ):
+            self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
+        self.assertEqual(
+            str(raised.exception),
+            f"Codex tui writable root {self.cwd} could rewrite hook dependency {venv}",
+        )
+        self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_resume_rejects_saved_library_grants_without_rewriting_recovery(self):
         library = INTERPRETER_ROOTS[0]

@@ -32,8 +32,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import SIGNALS, Displayable, Host
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
-from agent_pm.utils import load_class, printable_abs
-from agent_pm.utils import probe as run_probe
+from agent_pm.utils import load_class, printable_abs, probe
 
 Handle = Session
 
@@ -82,7 +81,7 @@ class Driver:
         hosts: Hosts | Mapping,
         default_host: str | None = None,
         host=None,
-        probe=run_probe,
+        probe=probe,
         clock: Callable[[], float] | None = None,
         class_loader=load_class,
         harness_host: str | None = None,
@@ -126,7 +125,7 @@ class Driver:
         *,
         hosts: Hosts | None = None,
         host=None,
-        probe=run_probe,
+        probe=probe,
         clock: Callable[[], float] | None = None,
         class_loader=load_class,
         harness_host: str | None = None,
