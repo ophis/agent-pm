@@ -43,6 +43,7 @@ from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record
 
 from delegate.tests.case import REPO, SRC, child_env
+from delegate.tests.fakes import callback_recorder
 from delegate.tests.fakes.harness_session import (
     FailingSession,
     HarnessSession,
@@ -1100,7 +1101,8 @@ class Corrupt(HarnessCase):
 
 class Attempts(HarnessCase):
     def test_resume_counts_an_attempt_and_its_run_stamps_it(self):
-        callback = ["record"]
+        log = os.path.join(self.home, "callback.log")
+        callback = [sys.executable, "-P", "-S", callback_recorder.__file__, log]
         record = self.make(callback=callback).detach()
         self.assertEqual(self.metadata()["attempt"], 1)
         self.stop(record)
@@ -1109,14 +1111,10 @@ class Attempts(HarnessCase):
         self.assertEqual(self.metadata()["attempt"], 2)
         view.resume()
         self.assertEqual(self.metadata()["attempt"], 2)
-        with mock.patch(
-            "subprocess.run", return_value=subprocess.CompletedProcess(callback, 0)
-        ) as run:
-            HarnessDelegate.attach(self.work).run()
-        stamps = {
-            (event.sid, event.attempt)
-            for event in (DelegateEvent.parse(c.kwargs["input"]) for c in run.call_args_list)
-        }
+        HarnessDelegate.attach(self.work).run()
+        with open(log, encoding="utf-8") as file:
+            lines = [json.loads(entry)["line"] for entry in file]
+        stamps = {(event.sid, event.attempt) for event in map(DelegateEvent.parse, lines)}
         self.assertEqual(stamps, {(SID, 2)})
 
 
