@@ -1694,6 +1694,12 @@ class Events(RunCase):
     def said(self):
         return [f"{e['src']} {show(e)}" for e in logged()]
 
+    @staticmethod
+    def finished(rc=0, *, outcome=None, error="", limit=None, attempt=1):
+        return delegate_event(
+            "finished", attempt, returncode=rc, outcome=outcome, error=error, limit=limit
+        )
+
 
 class ForClaim(RunCase):
     def test_writes_as_the_claims_key_not_the_configured_one(self):
@@ -1883,11 +1889,6 @@ def session_body(line):
 
 
 class FinishedEvents(Events):
-    def finished(self, rc=0, *, outcome=None, error="", limit=None, attempt=1):
-        return delegate_event(
-            "finished", attempt, returncode=rc, outcome=outcome, error=error, limit=limit
-        )
-
     def test_an_outcome_is_written_back_then_the_session_ends(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         n = len(self.linear.calls)
@@ -1986,3 +1987,112 @@ class FinishedEvents(Events):
                 self.deliver(self.finished(outcome=data))
         self.assertEqual(self.linear.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+
+class LimitEvents(Events):
+    def setUp(self):
+        super().setUp()
+        # POSIX TZ: CST-8 is UTC+8
+        tz = mock.patch.dict(os.environ, {"TZ": "CST-8"})
+        tz.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(tz.stop)
+        time.tzset()
+        self.now = iter(
+            (STARTED, RESTARTED, "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00")
+        )
+
+    def limited(self, attempt=1, resets_at=T):
+        return self.finished(-9, limit={"resets_at": resets_at}, attempt=attempt)
+
+    def rows(self):
+        return [
+            {k: v for k, v in row.items() if k != "ts"}
+            for row in map(json.loads, open(self.cfg.runs_log, encoding="utf-8"))
+            if row["kind"] == "limit"
+        ]
+
+    def row(self, resets_at="2026-10-11T18:00:00+08:00"):
+        return {
+            "kind": "limit",
+            "issue": RUN_ISSUE,
+            "sid": RUN_SID,
+            "client": "fake",
+            "resets_at": resets_at,
+            "delegate_kind": "fake",
+        }
+
+    def test_a_limit_comments_moves_and_records_its_row_then_ends_the_session(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        harness, states = self.cfg.harness_key, self.cfg.states
+        ended = session_body(f"limit · #2 · {STARTED} → {RESTARTED} · exit -9")
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, "limit"),
+                        "i": UUID,
+                        "b": "Usage limit, resets at 2026-10-11T18:00:00+08:00.",
+                    },
+                ),
+                (CLAIM_KEY, "reread", {"i": UUID}),
+                (CLAIM_KEY, "state", {"i": UUID, "s": states["in_review"]}),
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+
+    def test_an_unknown_reset_time_says_so(self):
+        self.assertTrue(self.deliver(self.limited(resets_at=None)))
+        body = self.linear.comments[ops.client_id(RUN_SID, "limit")]["body"]
+        self.assertEqual(body, "Usage limit, reset time unknown.")
+        self.assertEqual(self.rows(), [self.row(None)])
+
+    def test_the_same_limit_twice_moves_once_and_records_one_row(self):
+        self.assertTrue(self.deliver(self.limited()))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.rows(), [self.row()])
+
+    def test_a_later_attempts_limit_moves_again_without_a_second_comment(self):
+        self.assertTrue(self.deliver(self.limited()))
+        self.linear.state = self.cfg.states["in_progress"]
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited(attempt=2)))
+        self.assertEqual(
+            [op for service, op, _ in self.linear.calls[n:] if service == CLAIM_KEY],
+            ["reread", "state"],
+        )
+        self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
+        self.assertEqual(self.rows(), [self.row(), self.row()])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["limit", "limit-move:1", "limit-row:1", "limit-move:2", "limit-row:2"],
+        )
+
+    def test_a_failed_row_still_ends_the_session_and_a_replay_records_it(self):
+        os.chmod(self.cfg.runs_log, 0o400)
+        self.addCleanup(os.chmod, self.cfg.runs_log, 0o600)
+        self.assertFalse(self.deliver(self.limited()))
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1"])
+        self.assertIn("ended_at", self.ledger()[RUN_SID]["attempts"]["1"])
+        self.assertTrue(
+            any(
+                line.startswith(f"writeback step-error {RUN_ISSUE} sid={RUN_SID} step=limit-row:1 ")
+                for line in self.said()
+            )
+        )
+        os.chmod(self.cfg.runs_log, 0o600)
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(self.rows(), [self.row()])

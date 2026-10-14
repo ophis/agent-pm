@@ -439,6 +439,42 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
     return error is None
 
 
+def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
+    """A usage limit: its comment once per sid; this attempt's guarded move to In Review and its
+    runs.jsonl row, each once.
+    """
+    at = local_time(resets_at)
+    move = f"limit-move:{attempt}"
+    moved = move in _done(ctx) or (
+        _post(
+            ctx,
+            "limit",
+            say(LIMIT, f"resets at {at}." if at else "reset time unknown.")
+            + subscribe(ctx.gql, ctx.issue_id, ctx.humans),
+        )
+        is None
+        and _step(
+            ctx,
+            move,
+            lambda: _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress"),
+        )
+        is None
+    )
+    noted = _step(
+        ctx,
+        f"limit-row:{attempt}",
+        lambda: runs.note_limit(
+            runs_log,
+            issue=ctx.ident,
+            sid=ctx.sid,
+            client=claim.client,
+            resets_at=at,
+            delegate_kind=claim.delegate_kind,
+        ),
+    )
+    return moved and noted is None
+
+
 def _outcome(data) -> Outcome:
     """A Finished event's outcome fields as an Outcome; raises ValueError."""
     names = {f.name for f in fields(Outcome)}
@@ -484,9 +520,11 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
         return session()
     if event.kind == "progress":
         return progress(ctx, Progress(event.name or "", event.text or ""))
-    # Finished: the outcome (once ledgered, never again), then the session's end
+    # Finished: the outcome (once ledgered, never again), the limit, then the session's end
     ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
-    if outcome is None:
+    if event.limit is not None:
+        ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
+    elif outcome is None:
         log("writeback", "no-outcome", ctx.ident, sid=ctx.sid, error=event.error or "no result")
     return session(end=(event.returncode, outcome, event.limit is not None)) and ok
 

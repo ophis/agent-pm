@@ -145,5 +145,47 @@ class Finished(Writeback):
         self.assertEqual(self.ledger(ID), {SID: []})
 
 
+class Limit(Writeback):
+    def limit_rows(self):
+        return [r for r in self.runs() if r["kind"] == "limit"]
+
+    def test_a_limit_moves_once_per_attempt_with_one_comment_per_sid(self):
+        self.claim()
+        limit = {"returncode": -9, "outcome": None, "error": "", "limit": {"resets_at": None}}
+        self.ok("begun")
+        for _ in range(2):
+            self.ok("finished", **limit)
+        researcher = ACCOUNTS["researcher"]
+        [session] = [b for _, b in self.comments(ID) if b.startswith(f"Run {SID}")]
+        self.assertRegex(session, rf"\ARun {SID} · limit · #2 · \S+ → \S+ · exit -9\Z")
+        self.assertEqual(self.history(ID), [("in_progress", "in_review", researcher)])
+        row = {
+            "kind": "limit",
+            "issue": ID,
+            "sid": SID,
+            "client": "claude",
+            "resets_at": None,
+            "delegate_kind": "harness",
+        }
+        self.assertEqual(self.limit_rows(), [row])
+
+        self.fake.move(ID, "in_progress", actor=self.ids[HARNESS_EMAIL])
+        self.ok("begun", attempt=2)
+        self.ok("finished", attempt=2, **limit)
+        self.assertEqual(
+            self.history(ID),
+            [
+                ("in_progress", "in_review", researcher),
+                ("in_review", "in_progress", HARNESS_EMAIL),
+                ("in_progress", "in_review", researcher),
+            ],
+        )
+        self.assertEqual(
+            self.stored(),
+            [(HARNESS_EMAIL, SESSION), (researcher, ops.client_id(SID, "limit"))],
+        )
+        self.assertEqual(self.limit_rows(), [row, row])
+
+
 if __name__ == "__main__":
     unittest.main()
