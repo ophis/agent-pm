@@ -576,6 +576,30 @@ class DelegateObjectExports(Sample):
             with self.subTest(package=package):
                 self.assertEqual(self.exports(package, source, ["TIMEOUT", "PATH", "CHOICES"]), [])
 
+    def test_literals_constant_names_and_their_arithmetic_pass_but_typed_callables_fail(self):
+        source = (
+            "import os\n"
+            "NAME = 'x'\n"
+            "LABEL: str = 'label'\n"
+            "TIMEOUT = 2 * 60 * 60\n"
+            "TOTAL = TIMEOUT * 2\n"
+            "COPY = NAME\n"
+            "SEPARATORS = (os.sep, '/')\n"
+        )
+        names = ["NAME", "LABEL", "TIMEOUT", "TOTAL", "COPY", "SEPARATORS"]
+        for package in self.LEGACY:
+            rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
+            with self.subTest(package=package):
+                self.assertEqual(self.exports(package, source, names), [])
+                for bad in (
+                    "BAD: str = lambda: 'value'\n",
+                    "def helper(): pass\nBAD: str = helper\n",
+                ):
+                    self.assertEqual(
+                        self.exports(package, bad, ["BAD"]),
+                        [f"{rel}: __all__ exports function BAD (FR-44)"],
+                    )
+
 
 class DelegateSessionForwarding(Sample):
     BASE = "delegate/src/agent_pm/delegate/"
