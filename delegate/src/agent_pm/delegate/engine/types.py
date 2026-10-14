@@ -40,6 +40,7 @@ class Spec:
     repo: str | None = None
     cwd: str | None = None
     team: Team | None = None
+    protect: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

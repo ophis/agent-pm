@@ -30,6 +30,7 @@ from delegate.tests.unit.composer.teams import POET, VERSE
 from delegate.tests.unit.engine.plans import SID, Base
 from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
 from session.tests.fakes.host import FakeHost
+from utils.tests.case import local_section
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
@@ -53,6 +54,13 @@ def write_team(top, files=TEAM_FILES):
 
 
 class ReplyTags(Base):
+    def test_protect_is_passed_to_the_session_spec_unchanged(self):
+        protected = (self.tmp, os.path.join(self.tmp, "missing"))
+        got, _ = self.planned(protect=protected)
+        self.assertIs(got.spec.protect, protected)
+        self.assertIs(got.session.protect, protected)
+        self.assertEqual(self.planned()[0].session.protect, ())
+
     def test_the_spec_carries_the_delegates_reply_protocol(self):
         got, _ = self.planned()
         self.assertEqual(got.session.reply_tags, (PROGRESS, OUTCOME))
@@ -592,7 +600,7 @@ class PrintPromptPlans(PrintPromptCase):
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
             with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-                f.write(local)
+                f.write(local_section(local, "delegate"))
             for role in ROLES:
                 with self.subTest(github=bool(local), role=role):
                     first, *others = (

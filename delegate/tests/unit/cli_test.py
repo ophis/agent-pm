@@ -29,6 +29,7 @@ from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, limit, no_child, said, turn
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
 KEYS = {
@@ -122,7 +123,7 @@ class Base(Case):
 
     def local(self, text):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(text)
+            f.write(local_section(text, "delegate"))
 
     def cli(self, *argv, stdin=""):
         """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""
@@ -854,13 +855,19 @@ class Configures(Base):
     def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
         self.application = None
         for text, want in (
-            ('[delegates]\nharness_host = "nope"\n', "[delegates] harness_host: want one of tmux"),
-            ("[delegates]\nkind = 1\n", "[delegates] kind: the delegate takes only harness_host"),
+            (
+                '[delegates]\nharness_host = "nope"\n',
+                "delegate: delegate config: [delegates] harness_host: want one of tmux",
+            ),
+            (
+                "[delegates]\nkind = 1\n",
+                "delegate: delegate config: [delegates] kind: the delegate takes only harness_host",
+            ),
         ):
             with self.subTest(text):
                 self.local(text)
                 code, out, err = self.runs()
-                self.assertEqual((code, out, err), (2, "", f"delegate: delegate config: {want}\n"))
+                self.assertEqual((code, out, err), (2, "", f"{want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_list_works_without_a_runtime(self):

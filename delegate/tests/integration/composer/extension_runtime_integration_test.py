@@ -13,7 +13,7 @@ from delegate.tests.integration.composer import child
 
 BANNER = "Extension handover."
 LOCAL = (
-    'runtime = "extension"\n\n[adapters.extension]\nimplementation = "extension_runtime:ExtensionAdapter"\n'
+    '[delegate]\nruntime = "extension"\n\n[session.adapters.extension]\nimplementation = "extension_runtime:ExtensionAdapter"\n'
     f'tier = 4\nbanner = "{BANNER}"\n'
 )
 

@@ -57,7 +57,7 @@ class InProcessMode(RunningMode):
             raise cls._unsupported(spec)
         cls._no_tui_keys(spec, display)
         cls._selected(spec, adapter)
-        spec = cls._noted(cls._no_tui_fields(spec), adapter)
+        spec = cls._noted(spec, adapter)
         if spec.sid is None:
             raise ConfigError("sid: missing")
         run.check(spec)

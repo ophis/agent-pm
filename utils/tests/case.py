@@ -3,6 +3,7 @@ Case, every utils test's base; this tree's import roots (REPO, SRC, ROOTS) for i
 """
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ROOTS = import_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
+
+
+def local_section(text: str, section: str) -> str:
+    """Place a layer's TOML fixture fragment under its local section."""
+    header = re.search(r"(?m)^\[", text)
+    top = text[: header.start()] if header else text
+    prefix = (
+        f"[{section}]\n"
+        if any(line.strip() and not line.lstrip().startswith("#") for line in top.splitlines())
+        else ""
+    )
+    return prefix + re.sub(r"(?m)^(\[\[?)", rf"\1{section}.", text)
 
 
 class Case(unittest.TestCase):

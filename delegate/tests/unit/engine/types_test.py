@@ -22,6 +22,7 @@ SPEC = {
     "repo": None,
     "cwd": None,
     "team": None,
+    "protect": (),
 }
 
 

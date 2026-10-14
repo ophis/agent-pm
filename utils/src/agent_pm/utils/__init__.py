@@ -1,7 +1,15 @@
 """Public utility modules and functions shared by the layers."""
 
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, ConfigFileError, freeze, read_project, thaw, unset
+from agent_pm.utils.config_file import (
+    LOCAL,
+    ConfigFileError,
+    freeze,
+    read_project,
+    read_resources,
+    thaw,
+    unset,
+)
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.files import (
     ConfinedFileError,
@@ -16,14 +24,17 @@ from agent_pm.utils.files import (
 )
 from agent_pm.utils.git import (
     GUARD,
+    LOCAL_ENV_VARS,
     NAME,
     OWNER,
+    Checkouts,
     GitError,
     Invalid,
     Repo,
     check_slug,
     checkout,
     common_dir,
+    find_checkouts,
     origin,
     resolve,
 )
@@ -33,6 +44,8 @@ from agent_pm.utils.paths import (
     STATE,
     import_roots,
     module_roots,
+    overlaps,
+    package_dirs,
     printable_abs,
     real_dirs,
     temp_dirs,
@@ -46,6 +59,7 @@ from agent_pm.utils.text import printable, sid_error
 
 __all__ = [
     "CLASS_PATH",
+    "Checkouts",
     "ConfigFileError",
     "ConfinedFileError",
     "ConfinedReason",
@@ -54,6 +68,7 @@ __all__ = [
     "GitError",
     "Invalid",
     "LOCAL",
+    "LOCAL_ENV_VARS",
     "LONG",
     "NAME",
     "OWNER",
@@ -72,6 +87,7 @@ __all__ = [
     "err_text",
     "fenced",
     "file_lock",
+    "find_checkouts",
     "freeze",
     "holds",
     "run_git",
@@ -82,10 +98,13 @@ __all__ = [
     "number",
     "module_roots",
     "origin",
+    "overlaps",
+    "package_dirs",
     "printable",
     "printable_abs",
     "read_confined",
     "read_project",
+    "read_resources",
     "read_regular",
     "real_dirs",
     "redact",

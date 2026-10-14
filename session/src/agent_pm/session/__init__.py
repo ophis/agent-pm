@@ -5,6 +5,7 @@ session_record are deprecated forwarding wrappers (engine/forwarding.py).
 """
 
 from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.forwarding import (
     Driver,
     Handle,
@@ -51,6 +52,7 @@ from agent_pm.session.hosts.base import (
 )
 
 __all__ = [
+    "read_config",
     "Driver",
     "Handle",
     "SIGNALS",

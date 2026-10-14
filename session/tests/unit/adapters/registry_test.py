@@ -277,7 +277,7 @@ class SettingsTest(Base):
 
     def test_the_session_config_with_the_local_file_on_top(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write("[hosts.tmux]\nstatus_line = true\n")
+            f.write("[session.hosts.tmux]\nstatus_line = true\n")
         found = registry.settings(read_project("session"))
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
         self.assertEqual(found["hosts"].default, "tmux")

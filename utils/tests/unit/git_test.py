@@ -8,7 +8,7 @@ import unittest.mock
 
 import agent_pm.utils.git
 from agent_pm.utils import git as repos
-from agent_pm.utils.git import common_dir
+from agent_pm.utils.git import LOCAL_ENV_VARS, Checkouts, common_dir, find_checkouts
 
 from utils.tests.case import Case
 
@@ -280,3 +280,122 @@ class Checkout(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckoutSearch(Case):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.inner = os.path.join(self.root, "inner")
+        os.mkdir(self.inner)
+        self.calls = []
+
+    def runner(self, argv, timeout, env):
+        self.calls.append((argv, timeout, env))
+        current = argv[argv.index("-C") + 1]
+        if current in (self.root, self.inner):
+            return ok(f"true\n{current}\n")
+        return subprocess.CompletedProcess(
+            argv, 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        )
+
+    def test_collects_inner_then_outer_and_uses_the_existing_ancestor(self):
+        result = find_checkouts(
+            os.path.join(self.inner, "missing", "child"), runner=self.runner, timeout=7
+        )
+        self.assertEqual(result, Checkouts((self.inner, self.root)))
+        self.assertEqual(
+            self.calls[0][0][-4:],
+            [self.inner, "rev-parse", "--is-inside-work-tree", "--show-toplevel"],
+        )
+        self.assertTrue(all(timeout == 7 for _, timeout, _ in self.calls))
+        self.assertTrue(all(argv[1:5] == list(repos.GUARD) for argv, _, _ in self.calls))
+
+    def test_repository_selection_variables_are_removed_without_changing_the_parent(self):
+        supplied = dict.fromkeys(LOCAL_ENV_VARS, "poison") | {"GIT_EDITOR": "keep"}
+        with unittest.mock.patch.dict(os.environ, supplied):
+            self.assertIsNone(find_checkouts(self.inner, runner=self.runner, timeout=7).error)
+            for _, _, env in self.calls:
+                self.assertFalse(LOCAL_ENV_VARS & env.keys())
+                self.assertEqual((env["GIT_EDITOR"], env["LC_ALL"]), ("keep", "C"))
+            self.assertEqual({key: os.environ[key] for key in supplied}, supplied)
+
+    def test_no_checkout_is_distinct_from_failure_and_partial_success_is_preserved(self):
+        absent = subprocess.CompletedProcess(
+            [], 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        )
+        self.assertEqual(
+            find_checkouts(self.inner, runner=lambda *_args: absent, timeout=7), Checkouts(())
+        )
+        for message in (
+            "permission denied",
+            "fatal: detected dubious ownership in repository",
+            "fatal: invalid gitfile format",
+            "fatal: unknown failure",
+        ):
+
+            def failed(argv, timeout, env, message=message):
+                if argv[argv.index("-C") + 1] == self.inner:
+                    return self.runner(argv, timeout, env)
+                return subprocess.CompletedProcess(argv, 128, "", message)
+
+            with self.subTest(message=message):
+                result = find_checkouts(self.inner, runner=failed, timeout=7)
+                self.assertEqual(result.roots, (self.inner,))
+                self.assertIn(message, result.error)
+
+    def test_timeouts_and_operating_system_errors_are_failures(self):
+        for error in (subprocess.TimeoutExpired(["git"], 7), PermissionError("denied")):
+
+            def failed(_argv, _timeout, _env, error=error):
+                raise error
+
+            with self.subTest(error=error):
+                result = find_checkouts(self.inner, runner=failed, timeout=7)
+                self.assertEqual(result.roots, ())
+                self.assertIn(str(error), result.error)
+
+    def test_corrupt_metadata_cannot_be_classified_as_no_checkout(self):
+        os.mkdir(os.path.join(self.inner, ".git"))
+        absent = subprocess.CompletedProcess(
+            [], 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        )
+        result = find_checkouts(self.inner, runner=lambda *_args: absent, timeout=7)
+        self.assertEqual(result.roots, ())
+        self.assertIn("not a git repository", result.error)
+
+    def test_bad_git_output_is_an_error(self):
+        for output in ("", "true\nrelative\n", "false\n"):
+            with self.subTest(output=output):
+                result = find_checkouts(
+                    self.inner, runner=lambda *_args, output=output: ok(output), timeout=7
+                )
+                self.assertIn("invalid git rev-parse output", result.error)
+
+    def test_case_aliases_accept_metadata_and_deduplicate_by_filesystem_identity(self):
+        os.mkdir(os.path.join(self.inner, ".git"))
+        os.mkdir(os.path.join(self.inner, "child"))
+        variant = os.path.join(self.root, "INNER")
+        native_stat, native_lstat = os.stat, os.lstat
+
+        def case_stat(path, *args, **kwargs):
+            return native_stat(str(path).replace(variant, self.inner, 1), *args, **kwargs)
+
+        def case_lstat(path, *args, **kwargs):
+            return native_lstat(str(path).replace(variant, self.inner, 1), *args, **kwargs)
+
+        def runner(argv, _timeout, _env):
+            current = argv[argv.index("-C") + 1]
+            if current == os.path.join(variant, "child"):
+                return ok(f"true\n{variant}\n")
+            if current == variant:
+                return ok(f"true\n{self.inner}\n")
+            return self.runner(argv, _timeout, _env)
+
+        with (
+            unittest.mock.patch("os.stat", side_effect=case_stat),
+            unittest.mock.patch("os.lstat", side_effect=case_lstat),
+        ):
+            result = find_checkouts(os.path.join(variant, "child"), runner=runner, timeout=7)
+        self.assertEqual(result, Checkouts((variant, self.root)))

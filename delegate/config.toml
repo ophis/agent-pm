@@ -1,7 +1,7 @@
-# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, the one local file over every
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, whose per-layer sections overlay each
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below, a key you set only locally with its empty default; a `# local:` line shows a value
-# to copy there, uncommented. A table cannot drop a key this file sets, so a local [output] keeps this file's other
+# to copy there, uncommented. A table cannot drop a key this file sets, so a local [delegate.output] keeps this file's other
 # keys in that table.
 #
 # Each layer reads only its own keys (paths from the repo root): the Composer (delegate/src/agent_pm/delegate/composer/)
@@ -55,6 +55,7 @@ cwd = ""
 users = []
 trusted_dirs = []
 team_dirs = []
+# local: [delegate]
 # local: language = "Chinese"
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
@@ -102,9 +103,9 @@ host = ""
 templates = ["research-report"]
 read = ["{{team}}"]
 commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *"]
-# local: [roles.researcher]
+# local: [delegate.roles.researcher]
 # local: cwd = "~/src/<name>"
-# local: [roles.researcher.output]
+# local: [delegate.roles.researcher.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
 # local: branch = "main"
@@ -114,7 +115,7 @@ commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *"
 [roles.pm]
 templates = ["prd"]
 commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *"]
-# local: [roles.pm.output]
+# local: [delegate.roles.pm.output]
 # local: type = "github"
 # local: repo = "<owner>/<name>"
 # local: branch = "main"

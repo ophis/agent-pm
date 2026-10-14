@@ -86,7 +86,7 @@ class ComposerTeamDirs(child.Case):
         super().setUp()
         self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
-        self.local(f"team_dirs = {json.dumps([self.team])}\n")
+        self.local(f"[delegate]\nteam_dirs = {json.dumps([self.team])}\n")
 
     def composed(self, **req) -> dict:
         got = self.compose("writer", "note", **req)
@@ -133,14 +133,14 @@ class ComposerTeamDirs(child.Case):
                 self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
     def test_a_read_dir_holding_the_team_dir_composes_unadded(self):
-        self.local(f"[roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
+        self.local(f"[delegate.roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
         got = self.composed()
         self.assertEqual(
             (got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks, self.team])
         )
 
     def test_a_write_dir_holding_the_team_dir_is_refused(self):
-        self.local(f"[roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
+        self.local(f"[delegate.roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
         got = self.compose("writer", "note")
         self.assertEqual(
             got,
@@ -171,7 +171,7 @@ class TeamDirs(Integration):
         self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
         with open(os.path.join(self.env["HOME"], ".agent-pm", "config.local.toml"), "w") as f:
-            f.write(f"team_dirs = {json.dumps([self.team])}\n")
+            f.write(f"[delegate]\nteam_dirs = {json.dumps([self.team])}\n")
 
     def test_a_dry_run(self):
         res = self.drive([], "--task", "note", "--dry-run")
@@ -219,11 +219,11 @@ class CodexTeamDirs(CodexIntegration):
         os.makedirs(os.path.join(self.home, ".agent-pm"), exist_ok=True)
         self.toml = os.path.join(self.home, ".agent-pm", "config.local.toml")
         with open(self.toml, "w") as f:
-            f.write(f"team_dirs = {json.dumps([self.team])}\n")
+            f.write(f"[delegate]\nteam_dirs = {json.dumps([self.team])}\n")
 
     def role(self, key: str) -> None:
         with open(self.toml, "a") as f:
-            f.write(f"[roles.writer]\n{key} = {json.dumps([self.team])}\n")
+            f.write(f"[delegate.roles.writer]\n{key} = {json.dumps([self.team])}\n")
 
     def test_a_codex_run_and_its_resume_read_its_tasks_dir_unadded(self):
         for extra, resume_id in (((), None), (("--resume",), NATIVE)):

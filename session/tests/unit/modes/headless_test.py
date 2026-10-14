@@ -144,13 +144,21 @@ class Start(Base):
                 prepared = self.start(adapter, access=Access(commands=commands), prompt="hi")
                 self.assertEqual((prepared.spec.prompt, StubRun.specs[-1].prompt), (prompt, prompt))
 
+    def test_protect_reaches_the_adapter_without_enforcement(self):
+        protected = (self.dir, os.path.join(self.dir, "missing"))
+        with self.faked() as calls:
+            prepared = self.start(protect=protected)
+        self.assertIs(prepared.spec.protect, protected)
+        self.assertIs(StubRun.specs[-1].protect, protected)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(self.recorded), 1)
+
     def test_refused_before_its_session_line_or_a_process(self):
         for adapter, fields, error, message in (
             (NoHeadless(), {}, ConfigError, "runtime 'stub' does not support headless mode"),
             (StubAdapter(), {"name": "w1"}, ConfigError, "name: tui mode only"),
             (StubAdapter(), {"events": "/e"}, ConfigError, "events: tui mode only"),
             (StubAdapter(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
-            (StubAdapter(), {"protect": ("/p",)}, ConfigError, "protect: tui mode only"),
             (
                 StubAdapter(),
                 {"flags": ("--verbose", "--resume", SID)},

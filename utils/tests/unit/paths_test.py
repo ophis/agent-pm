@@ -13,6 +13,8 @@ from unittest import mock
 from agent_pm.utils.paths import (
     import_roots,
     module_roots,
+    overlaps,
+    package_dirs,
     printable_abs,
     real_dirs,
     temp_dirs,
@@ -166,3 +168,120 @@ class ModuleRootsTest(Case):
         package.__file__ = None
         with self.assertRaisesRegex(ValueError, "package has no source file"):
             module_roots(package)
+
+
+class PackageDirectories(Case):
+    def test_installed_packages_protect_only_their_own_directories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            site = os.path.realpath(temporary)
+            session = ModuleType("agent_pm.session")
+            session.__file__ = os.path.join(site, "agent_pm", "session", "__init__.py")
+            utils = ModuleType("agent_pm.utils")
+            utils.__file__ = os.path.join(site, "agent_pm", "utils", "__init__.py")
+            self.assertEqual(
+                package_dirs(session, utils, session),
+                (
+                    os.path.join(site, "agent_pm", "session"),
+                    os.path.join(site, "agent_pm", "utils"),
+                ),
+            )
+            self.assertEqual(module_roots(session, utils), (site,))
+
+    def test_namespace_packages_without_a_file_are_rejected(self):
+        package = ModuleType("namespace")
+        package.__file__ = None
+        with self.assertRaisesRegex(ValueError, "package has no source file"):
+            package_dirs(package)
+
+
+class Overlaps(Case):
+    def test_native_missing_suffixes_respect_filesystem_case_behavior(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            insensitive = (root / "PARENT").exists()
+            self.assertEqual(overlaps(str(parent / "new"), str(parent / "NEW")), insensitive)
+            self.assertEqual(
+                overlaps(str(parent / "new"), str(parent / "NEW" / "child")), insensitive
+            )
+            self.assertEqual(
+                overlaps(str(parent / "NEW" / "child"), str(parent / "new")), insensitive
+            )
+            self.assertFalse(overlaps(str(parent / "new"), str(parent / "other")))
+
+    def test_missing_suffix_case_matches_the_ancestors_filesystem(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            for sensitive in (0, 1):
+                with (
+                    self.subTest(sensitive=sensitive),
+                    mock.patch("sys.platform", "darwin"),
+                    mock.patch("os.pathconf", return_value=sensitive) as pathconf,
+                ):
+                    for a, b, expected in (
+                        (parent / "new", parent / "NEW", sensitive == 0),
+                        (parent / "new", parent / "NEW" / "Child", sensitive == 0),
+                        (parent / "NEW" / "Child", parent / "new", sensitive == 0),
+                        (parent / "new" / "child", parent / "NEW" / "CHILD", sensitive == 0),
+                        (parent / "new", parent / "other", False),
+                    ):
+                        with self.subTest(a=a, b=b):
+                            self.assertEqual(overlaps(str(a), str(b)), expected)
+                    self.assertTrue(pathconf.call_args_list)
+                    self.assertTrue(
+                        all(call.args == (str(parent), 11) for call in pathconf.call_args_list)
+                    )
+
+    def test_stat_permission_errors_propagate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            error = PermissionError("inaccessible ancestor")
+            with (
+                mock.patch("os.stat", side_effect=error),
+                self.assertRaisesRegex(PermissionError, "^inaccessible ancestor$") as caught,
+            ):
+                overlaps(os.path.join(temporary, "missing"), temporary)
+            self.assertIs(caught.exception, error)
+
+    def test_case_aliases_use_filesystem_identity_even_with_missing_suffixes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            variant = root / "PARENT"
+            native_stat = os.stat
+
+            def case_stat(path, *args, **kwargs):
+                return native_stat(str(path).replace(str(variant), str(parent), 1), *args, **kwargs)
+
+            with mock.patch("os.stat", side_effect=case_stat):
+                for a, b, expected in (
+                    (parent, variant, True),
+                    (parent, variant / "missing" / "child", True),
+                    (variant / "missing" / "child", parent, True),
+                    (parent / "missing", variant / "missing" / "child", True),
+                    (parent / "missing", variant / "other", False),
+                    (parent, root / "parent-other", False),
+                ):
+                    with self.subTest(a=a, b=b):
+                        self.assertEqual(overlaps(str(a), str(b)), expected)
+
+    def test_equality_both_directions_siblings_and_missing_suffixes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(parent)
+            for a, b, expected in (
+                (parent, parent, True),
+                (parent, parent / "new" / "child", True),
+                (parent / "new" / "child", parent, True),
+                (parent, root / "parent-other", False),
+                (alias / "new", parent / "new" / "child", True),
+                (parent / "new-a", parent / "new-b", False),
+            ):
+                with self.subTest(a=a, b=b):
+                    self.assertEqual(overlaps(str(a), str(b)), expected)

@@ -32,6 +32,7 @@ from agent_pm.utils import read_project
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, STEPS, VERSE, WRITER
+from utils.tests.case import local_section
 
 CONFIG = """\
 tier = 2
@@ -86,7 +87,7 @@ class Fake(Case):
 
     def local(self, text):
         with open(self.local_file, "w") as f:
-            f.write(text)
+            f.write(local_section(text, "delegate"))
 
     def cfg(self):
         return read_project("delegate", path=self.config, local=self.local_file)

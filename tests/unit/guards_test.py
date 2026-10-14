@@ -19,6 +19,136 @@ UNLISTED = "not __init__.py, cli.py, engine/, a listed subpackage or a listed en
 PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
 
 
+class PackageClimbs(Sample):
+    def violations(self, text, sub="engine/sample.py"):
+        rel = f"delegate/{PKG}/delegate/{sub}"
+        root = self.tree({rel: text})
+        return [v for v in guards.package_climbs(root) if v.startswith(f"{rel}:")]
+
+    def test_rejects_every_way_to_climb_past_the_package(self):
+        for expr in (
+            "os.path.join(os.path.dirname(__file__), *[os.pardir] * 2)",
+            "os.path.dirname(os.path.dirname(os.path.dirname(__file__)))",
+            "Path(__file__).parents[2]",
+            "Path(__file__).parents[-1]",
+            "Path(__file__).parents[index]",
+            "Path(__file__).parents[1:3]",
+            "Path(__file__).parent.parent.parent",
+            "Path(__file__).resolve().parent / '..' / '..'",
+        ):
+            with self.subTest(expr=expr):
+                self.assertTrue(
+                    self.violations(f"import os\nfrom pathlib import Path\nROOT = {expr}\n")
+                )
+
+    def test_tracks_aliases_and_separate_assignments(self):
+        self.assertTrue(
+            self.violations(
+                "from pathlib import Path as P\nf = P(__file__)\np = f.parent.parent\nx = p.parent\n"
+            )
+        )
+        self.assertTrue(
+            self.violations(
+                "import os as o\np = o.path.dirname(__file__)\nx = o.path.join(p, '..', '..')\n"
+            )
+        )
+
+    def test_project_name_segments_inside_the_package_pass(self):
+        for text in (
+            "from pathlib import Path\np = Path(__file__).parent / 'session' / 'config.toml'\n",
+            "from pathlib import Path\np = Path(__file__).parent.parent / 'session' / 'config.toml'\n",
+            "import os\nx = os.path.join(os.path.dirname(__file__), 'linear-orchestrator/config.toml')\n",
+            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'linear-orchestrator/config.toml')\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.violations(text), [])
+
+    def test_rejects_sibling_paths_and_listing_a_root_outside_the_package(self):
+        for text in (
+            "from pathlib import Path\np = Path(__file__).parent.parent.parent / 'session' / 'config.toml'\n",
+            "import os\nx = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'linear-orchestrator/config.toml')\n",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self.violations(text))
+        self.assertTrue(
+            self.violations(
+                "import os\nfrom agent_pm.utils.paths import ROOT\nx = os.listdir(ROOT)\n"
+            )
+        )
+
+    def test_package_resources_and_repository_tools_pass(self):
+        self.assertEqual(
+            self.violations(
+                "import os\nTEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'team')\n",
+                "composer/base.py",
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.violations(
+                "import os\nHOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hosts/tmux/tmux_host.py')\n",
+                "modes/tui_hook.py",
+            ),
+            [],
+        )
+        root = self.tree(
+            {"delegate/tests/test.py": "from pathlib import Path\nx = Path(__file__).parents[9]\n"}
+        )
+        self.assertFalse(any("test.py" in v for v in guards.package_climbs(root)))
+
+    def test_repository_helpers_cannot_escape_by_import_or_attribute(self):
+        for text in (
+            "from agent_pm.utils import ROOT\n",
+            "from agent_pm.utils.paths import import_roots\n",
+            "from agent_pm.utils import ROOT\nfrom os.path import join\nx = join(ROOT, 'bin')\n",
+            "from agent_pm.utils.paths import ROOT as root\nfrom pathlib import Path\nx = Path(root) / 'bin'\n",
+            "from agent_pm import utils\nx = utils.ROOT\n",
+            "import agent_pm.utils.paths as paths\nx = paths.import_roots\n",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self.violations(text))
+
+    def test_unrelated_bases_may_have_project_names(self):
+        self.assertEqual(
+            self.violations(
+                "import os\nfrom pathlib import Path\nx = os.path.join('/data', 'session')\ny = Path('/work') / 'delegate'\n"
+            ),
+            [],
+        )
+
+    def test_exemption_inventory_allows_only_ticket_removals(self):
+        expected = {
+            ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
+            ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
+            ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
+            (
+                "session/src/agent_pm/session/adapters/codex/tui/__init__.py",
+                "import_roots()",
+            ): "TASK-393",
+            ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
+            ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
+            (
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
+                "ROOT",
+            ): "TASK-372",
+            (
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
+                "import_roots()",
+            ): "TASK-372",
+            ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
+        }
+        self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
+        for key, owner in guards.PACKAGE_CLIMB_ALLOWED.items():
+            self.assertEqual(owner, expected[key])
+
+    def test_every_exemption_must_still_have_an_escape(self):
+        root = self.tree({})
+        found = guards.package_climbs(root)
+        self.assertEqual(len(found), 9)
+        for (rel, name), ticket in guards.PACKAGE_CLIMB_ALLOWED.items():
+            self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
+
+
 class RealTree(Case):
     def test_each_guard_is_clean(self):
         for name, found in checks(REPO):
@@ -119,6 +249,20 @@ class EveryTest(Sample):
 
 
 class SessionNames(Sample):
+    def test_configuration_forwarding_exemption_names_its_owner(self):
+        self.assertEqual(
+            guards.SESSION_NAMES_ALLOWED,
+            {
+                (guards.SESSION_SRC + "engine/config.py", "read_project"): "TASK-392",
+            },
+        )
+
+    def test_layer_owned_config_entry_can_forward_to_utils(self):
+        root = self.tree(
+            {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
+        )
+        self.assertEqual(guards.session_names(root), [])
+
     def test_config_readers_protocol_and_team_names_are_rejected(self):
         root = self.tree(
             {
@@ -1492,6 +1636,23 @@ class ExplicitKeys(Sample):
         )
         self.assertEqual(guards.explicit_keys(root), [])
 
+    def test_sectioned_examples_keep_dynamic_empty_tables_and_reject_missing_keys(self):
+        root = self.tree(
+            {
+                f"{guards.ORCH_PROJECT}/config.toml": (
+                    '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
+                    '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
+                    "# local: [linear_orchestrator]\n# local: typo = 1\n# local: [session]\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.explicit_keys(root),
+            [
+                f"{guards.ORCH_PROJECT}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
+            ],
+        )
+
     def test_a_commented_only_key_is_refused(self):
         root = self.tree(
             {
@@ -1982,6 +2143,7 @@ class ObjectExports(Sample):
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
     WRAPPERS = ("close", "note", "session_record", "sessions")
+    ENTRY_FUNCTIONS = (*WRAPPERS, "read_config")
     BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
@@ -1995,13 +2157,15 @@ class ObjectExports(Sample):
     def init(self, source="", names=()):
         """A session __init__ exporting the allowlisted wrappers (forwarding.py's), then `names`."""
         imported = f"from agent_pm.session.engine.forwarding import {', '.join(self.WRAPPERS)}\n"
-        return f"{imported}{source}__all__ = {[*self.WRAPPERS, *names]!r}\n"
+        imported += "from agent_pm.session.engine.config import read_config\n"
+        return f"{imported}{source}__all__ = {[*self.ENTRY_FUNCTIONS, *names]!r}\n"
 
     def found(self, files=None):
         tree = {
             self.SESSION + "engine/forwarding.py": "".join(
                 f"def {name}(): pass\n" for name in self.WRAPPERS
             ),
+            self.SESSION + "engine/config.py": "def read_config(): pass\n",
             self.SESSION + "modes/__init__.py": "",
             self.INIT: self.init(),
             self.EXTENSION: "__all__ = []\n",
@@ -2015,7 +2179,8 @@ class ObjectExports(Sample):
     def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
-            set(guards.OBJECT_EXPORTS_ALLOWED), {("agent_pm.session", n) for n in self.WRAPPERS}
+            set(guards.OBJECT_EXPORTS_ALLOWED),
+            {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS},
         )
         for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():
             with self.subTest(key=key):
@@ -2090,7 +2255,7 @@ class ObjectExports(Sample):
         init = 'class close: pass\n__all__ = ["close"]\n'
         self.assertEqual(
             self.found({self.INIT: init}),
-            [f"agent_pm.session: {name}: {stale}" for name in self.WRAPPERS],
+            sorted(f"agent_pm.session: {name}: {stale}" for name in self.ENTRY_FUNCTIONS),
         )
 
 

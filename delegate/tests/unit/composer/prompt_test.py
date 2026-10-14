@@ -52,6 +52,7 @@ from delegate.tests.unit.composer.shipped import (
     words,
 )
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, RUN_CONFIG, VERSE, WRITER
+from utils.tests.case import local_section
 
 TEXTS = {
     "guide.md": (
@@ -94,7 +95,7 @@ class Fake(Case):
 
     def local(self, text):
         with open(self.local_file, "w") as f:
-            f.write(text)
+            f.write(local_section(text, "delegate"))
 
     def run_of(self, role="writer", task=None, overlays=(), found=None):
         return resolve(

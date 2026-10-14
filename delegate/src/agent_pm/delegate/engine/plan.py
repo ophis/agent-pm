@@ -16,7 +16,7 @@ from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Driver, Host, Mode, session_record
+from agent_pm.session import Access, Driver, Host, Mode, read_config, session_record
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, read_project, under
@@ -27,7 +27,7 @@ def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> Driver:
     read) once it names one of those hosts.
     """
     with _config("session"):
-        table = read_project("session", local=local)
+        table = read_config(local=local)
         hosts = Host.parse_hosts(table.get("hosts"))
     with _config("delegate"):
         harness = config.harness_host(
@@ -148,6 +148,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
         flags=flags,
         env=env,
         reply_tags=(PROGRESS, OUTCOME),
+        protect=spec.protect,
     )
     _check_team_dirs(
         team,

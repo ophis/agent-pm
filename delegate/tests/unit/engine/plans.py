@@ -11,6 +11,7 @@ from agent_pm.delegate import ConfigError, Spec, composer, plan
 from delegate.tests.case import Case, committed
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -37,7 +38,11 @@ class Base(Case):
         """
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
-            f.write(text)
+            f.write(
+                local_section(text, "delegate")
+                .replace("[delegate.hosts", "[session.hosts")
+                .replace("[delegate.adapters", "[session.adapters")
+            )
         fake = {"implementation": "agent_pm.session.adapters.fake:FakeAdapter"}
         self.configure_session(committed(local) | {"fake": fake})
 

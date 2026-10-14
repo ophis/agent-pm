@@ -5,6 +5,7 @@ projects' import roots.
 import contextlib
 import os
 import subprocess
+import sys
 import tempfile
 from types import ModuleType
 
@@ -24,6 +25,52 @@ def module_roots(*packages: ModuleType) -> tuple[str, ...]:
             root = os.path.dirname(root)
         roots.append(root)
     return tuple(dict.fromkeys(roots))
+
+
+def package_dirs(*packages: ModuleType) -> tuple[str, ...]:
+    """Each package's own resource directory, independent of its shared import root."""
+    found = []
+    for package in packages:
+        path = package.__file__
+        if path is None:
+            raise ValueError(f"{package.__name__}: package has no source file")
+        found.append(os.path.realpath(os.path.dirname(path)))
+    return tuple(dict.fromkeys(found))
+
+
+def overlaps(a: str, b: str) -> bool:
+    """Real paths overlap when equal or either contains the other, including missing suffixes.
+
+    PermissionError from stat propagates so inaccessible paths fail closed.
+    """
+    paths = tuple(os.path.realpath(os.path.expanduser(p)) for p in (a, b))
+    identities = tuple(_path_identity(p) for p in paths)
+    for path, other in zip(paths, reversed(identities), strict=True):
+        while True:
+            if _path_identity(path) == other:
+                return True
+            parent = os.path.dirname(path)
+            if parent == path:
+                break
+            path = parent
+    return False
+
+
+def _path_identity(path: str) -> tuple[int, int, tuple[str, ...]]:
+    missing = []
+    while True:
+        try:
+            info = os.stat(path)
+            # Darwin's _PC_CASE_SENSITIVE is absent from Python's pathconf_names.
+            if missing and sys.platform == "darwin" and os.pathconf(path, 11) == 0:
+                missing = [part.casefold() for part in missing]
+            return info.st_dev, info.st_ino, tuple(reversed(missing))
+        except (FileNotFoundError, NotADirectoryError):
+            missing.append(os.path.basename(path))
+            parent = os.path.dirname(path)
+            if parent == path:
+                raise
+            path = parent
 
 
 def real_dirs(paths, label: str) -> frozenset[str]:
