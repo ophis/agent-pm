@@ -770,11 +770,17 @@ class WritableDirsTest(Base):
             str(target), adapter.writable_dirs(dataclasses.replace(self.spec, resume=True))
         )
 
-    def test_fresh_query_translates_path_errors_without_persistence(self):
-        with self.assertRaisesRegex(ConfigError, "absolute path"):
-            spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
+    def test_resume_query_translates_unsafe_recovery_without_writing_store(self):
+        spec = dataclasses.replace(self.spec, resume=True)
+        self.prepare()
+        path = self.record()
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        with self.assertRaisesRegex(ConfigError, "unsafe"):
             self.adapter.writable_dirs(spec)
-        self.assertFalse((self.home / ".agent-pm").exists())
+        self.assertTrue(stat.S_ISFIFO(path.lstat().st_mode))
+        self.assertEqual(list(path.parent.iterdir()), [path])
+        self.assertFalse((self.work / "run.jsonl").exists())
 
 
 class SessionStatusTest(Base):
