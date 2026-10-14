@@ -664,7 +664,8 @@ def process(target: str, *, proc=subprocess.run) -> str | None:
             return None
         raise TuiError(f"tmux: {error(res)}")
     found = res.stdout.strip()
-    if " " not in found:  # tmux (3.7) exits 0 printing only #{pid} for a missing target
+    if " " not in found or re.fullmatch(r"[0-9]+  %[0-9]+ [0-9]+", found):
+        # A pane can outlive its session while tmux formats its remaining identity fields.
         return None
     if not PROCESS_ID.fullmatch(found):
         raise TuiError(f"bad tmux process {found!r:.80}")

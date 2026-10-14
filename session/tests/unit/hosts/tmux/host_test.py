@@ -568,3 +568,27 @@ class CloseTest(Base):
         self.assertEqual(clock[0], 10)
         self.assertFalse(self.control.ended)
         self.assertEqual(self.connection.sendall.call_args_list[0], mock.call(b"signal 15\n"))
+
+
+class ReturncodeTest(Base):
+    def test_the_captured_exit_status_survives_pane_removal_immediately_afterward(self):
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        self.tmux.process.side_effect = [PROCESS, TuiError("bad tmux process '4242  %7 4343'")]
+        self.tmux.status.return_value = 7
+        self.assertEqual(process.returncode(), 7)
+
+    def test_absence_unknown_and_running_status_are_distinct(self):
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        for identity, status, expected in (
+            (None, tmux_host.PaneStatus.RUNNING, -signal.SIGHUP),
+            (PROCESS, None, -signal.SIGHUP),
+            (PROCESS, tmux_host.PaneStatus.UNKNOWN, None),
+            (PROCESS, tmux_host.PaneStatus.RUNNING, None),
+            (PROCESS, 0, 0),
+        ):
+            with self.subTest(identity=identity, status=status):
+                self.tmux.process.return_value = identity
+                self.tmux.status.return_value = status
+                self.assertEqual(process.returncode(), expected)
+        self.tmux.process.side_effect = TuiError("tmux unavailable")
+        self.assertIsNone(process.returncode())

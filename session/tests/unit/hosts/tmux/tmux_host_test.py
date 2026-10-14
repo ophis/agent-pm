@@ -630,6 +630,7 @@ class ProcessIdentityTest(Case):
             ("%7", (0, "4242 $3 %7 4343\n"), "4242 $3 %7 4343"),
             ("s", (0, " \n"), None),
             ("%7", (0, "4242   \n"), None),
+            ("%7", (0, "4242  %7 4343\n"), None),
             ("s", (1, "", "can't find session: =s\n"), None),
             ("%7", (1, "", "can't find pane: %7\n"), None),
             ("s", (1, "", "no server running on /tmp/tmux-501/default\n"), None),
@@ -646,6 +647,8 @@ class ProcessIdentityTest(Case):
         for printed, error in (
             ((1, "", "boom\n"), "^tmux: boom$"),
             ((0, "4242 $3 %7\n"), "^bad tmux process "),
+            ((0, "4242  %7 bad\n"), "^bad tmux process "),
+            ((0, "bad  %7 4343\n"), "^bad tmux process "),
         ):
             with self.subTest(printed=printed):
                 fake = Tmux(results={"display-message": printed})

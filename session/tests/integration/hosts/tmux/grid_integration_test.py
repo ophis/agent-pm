@@ -32,10 +32,6 @@ STEADY = 1  # seconds a check that nothing re-tiles holds
 
 BREAKER_TIMEOUT = 30
 
-RETILE_WAIT = 0.5
-
-PACE = 0.02
-
 
 class Live(Case):
     def setUp(self):
@@ -532,15 +528,17 @@ class SettleTest(Live):
     def hand_layout(self, tiles: str) -> tuple[str, str]:
         # even-vertical: even-horizontal of these three panes already is their grid
         self.tmux("select-layout", "-t", self.window, "even-vertical")
-        end = time.monotonic() + RETILE_WAIT
         state = f"#{{{tmux_model.GRID_MANAGER}}}\t#{{{tmux_model.GRID_BUSY}}}\t#{{{tmux_model.GRID_TILES}}}"
-        while True:
+
+        def changed():
             manager, busy, now = self.tmux("display-message", "-p", "-t", self.window, state).split(
                 "\t"
             )
-            if not manager or now != tiles and not busy or time.monotonic() > end:
-                return manager, now
-            time.sleep(PACE)
+            return (manager, now) if not manager or now != tiles and not busy else None
+
+        return live_tmux.wait(
+            changed, BREAKER_TIMEOUT, what="the installed retile hook updates the grid"
+        )
 
     def test_grid_up_settles(self):
         self.grid_up()
@@ -596,27 +594,19 @@ class SettleTest(Live):
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.settled()
 
-    def test_breaker_stops_a_loop(self):
+    def test_fiftieth_retile_keeps_grid_and_fifty_first_hook_trips_breaker(self):
         self.grid_up()
         self.settled()
-        start, seen, most = time.monotonic(), 0, 0
-        tiles = self.window_option(MANAGER, tmux_model.GRID_TILES)
-        while True:
-            manager, now = self.hand_layout(tiles)
-            if not manager:
-                break
-            seen, most, tiles = seen + (now != tiles), max(most, len(now.split())), now
-            elapsed = time.monotonic() - start
-            self.assertLess(
-                elapsed,
-                BREAKER_TIMEOUT,
-                (
-                    f"still a grid after {elapsed:.0f} s: {seen} re-tiles seen, {seen / elapsed:.1f}/s; it "
-                    f"trips past {tmux_model.TILE_LIMIT} in {tmux_model.TILE_WINDOW} s"
-                ),
-            )
-        # the trip follows TILE_LIMIT re-tiles; the loop's last look may miss the last one
-        self.assertGreaterEqual(most, tmux_model.TILE_LIMIT - 1)
+        now = int(time.monotonic() * 1000)
+        tiles = " ".join([str(now)] * (tmux_model.TILE_LIMIT - 1))
+        self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_TILES, tiles)
+        start = time.monotonic()
+        manager, tiles = self.hand_layout(tiles)
+        self.assertEqual(manager, self.manager)
+        self.assertEqual(len(tiles.split()), tmux_model.TILE_LIMIT)
+        manager, _ = self.hand_layout(tiles)
+        self.assertFalse(manager)
+        self.assertLess(time.monotonic() - start, BREAKER_TIMEOUT)
         options = (
             tmux_model.GRID_MANAGER,
             tmux_model.GRID_PER_COLUMN,

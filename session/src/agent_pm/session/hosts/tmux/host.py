@@ -91,11 +91,14 @@ class TmuxProcess(HostProcess):
         return Liveness.ABSENT if value is None else Liveness.LIVE
 
     def returncode(self) -> int | None:
-        if self.state() == Liveness.UNKNOWN:
+        try:
+            if not self._own():
+                return -signal.SIGHUP
+        except DriverError:
             return None
-        if not self._own():
-            return -signal.SIGHUP
         value = self.tmux.status(self._pane)
+        if value is None:
+            return -signal.SIGHUP
         return value if isinstance(value, int) else None
 
     def activity(self) -> Word | None:
