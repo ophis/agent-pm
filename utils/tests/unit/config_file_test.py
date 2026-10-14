@@ -219,6 +219,17 @@ class Projects(Case):
         self.assertNotIn("hosts", found)
         self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
 
+    def test_own_still_rejects_an_unknown_field_in_a_supplied_local_section(self):
+        self.local('[delegate.roles.pm]\nunknown_field = "typo"\n')
+        for name in ("delegate", "linear-orchestrator"):
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(
+                    ConfigFileError, r"unknown key 'unknown_field' in \[delegate.roles.pm\]"
+                ),
+            ):
+                self.read(name, own=True)
+
     def test_a_local_top_level_key_no_project_has_is_refused_at_run_time(self):
         self.local("[session]\nbogus = 1\n")
         for name in ("session", "delegate", "manager"):
@@ -232,11 +243,12 @@ class Projects(Case):
                 self.read(name)
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
-        self.local("[session.hosts.other]\nstatus_line = true\n[session.adapters]\nx = 1\n")
-        with self.assertRaisesRegex(ValueError, r"unknown key 'x' in \[session.adapters\]"):
+        self.write("session", SESSION + 'implementation = "default.module:Host"\n')
+        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
+        with self.assertRaisesRegex(ValueError, r"unknown key 'adapters' in \[session\]"):
             self.read("session")
-        self.local("[session.hosts.other]\nstatus_line = true\n")
-        self.assertEqual(self.read("session")["hosts"]["other"], {"status_line": True})
+        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n')
+        self.assertEqual(self.read("session")["hosts"]["other"], {"implementation": "a.b:C"})
 
     def test_no_local_file_and_no_config_file_are_empty(self):
         os.remove(os.path.join(self.root, "manager", "config.toml"))
