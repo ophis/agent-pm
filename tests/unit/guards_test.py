@@ -193,17 +193,47 @@ class EveryTest(Sample):
 class EventObjectExports(Sample):
     EVENT = "delegate/src/agent_pm/delegate/event/"
 
+    def exports(self, root):
+        return [entry for entry in guards.object_exports(root) if entry.startswith(self.EVENT)]
+
+    def test_seven_callable_or_mutated_export_bypasses_fail(self):
+        for sample in (
+            "import functools\ndef f(): pass\naction = functools.partial(f)\n__all__ = ['action']\n",
+            "action = staticmethod(lambda: None)\n__all__ = ['action']\n",
+            "def f(): pass\naction = f if True else f\n__all__ = ['action']\n",
+            "import os\naction = getattr(os, 'getcwd')\n__all__ = ['action']\n",
+            "def f(): pass\n__all__ = []\n__all__ += ['f']\n",
+            "def f(): pass\n__all__ = []\n__all__.append('f')\n",
+            "def f(): pass\n__all__ = []\nif True:\n    __all__ = ['f']\n",
+        ):
+            with self.subTest(sample=sample):
+                self.assertTrue(self.exports(self.tree({self.EVENT + "__init__.py": sample})))
+
+    def test_indexed_export_mutations_are_rejected(self):
+        for mutation in (
+            "__all__[0] = 'f'",
+            "__all__[:] = ['f']",
+            "__all__[0] += 'f'",
+            "del __all__[0]",
+        ):
+            with self.subTest(mutation=mutation):
+                source = "def f(): pass\nCONSTANT = 1\n__all__ = ['CONSTANT']\n" + mutation
+                root = self.tree({self.EVENT + "__init__.py": source})
+                self.assertEqual(
+                    self.exports(root), [self.EVENT + "__init__.py: no literal __all__"]
+                )
+
     def test_package_must_define_all(self):
         root = self.tree({self.EVENT + "__init__.py": "class Event: pass\n"})
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py: want one __all__ assignment"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: no literal __all__"],
         )
 
     def test_missing_package_is_rejected(self):
         self.assertEqual(
-            guards._event_exports(self.tree({})),
-            [self.EVENT + "__init__.py: want one __all__ assignment"],
+            self.exports(self.tree({})),
+            [self.EVENT + "__init__.py: no literal __all__"],
         )
 
     def test_all_must_name_literal_exports(self):
@@ -211,8 +241,8 @@ class EventObjectExports(Sample):
             with self.subTest(sample=sample):
                 root = self.tree({self.EVENT + "__init__.py": sample})
                 self.assertEqual(
-                    guards._event_exports(root),
-                    [self.EVENT + "__init__.py:1: __all__ must be a literal list of names"],
+                    self.exports(root),
+                    [self.EVENT + "__init__.py: no literal __all__"],
                 )
 
     def test_direct_functions_and_lambdas_are_rejected(self):
@@ -228,11 +258,8 @@ class EventObjectExports(Sample):
                     {self.EVENT + "__init__.py": definition + "__all__ = ['action']\n"}
                 )
                 self.assertEqual(
-                    guards._event_exports(root),
-                    [
-                        self.EVENT
-                        + f"__init__.py:{len(definition.splitlines()) + 1}: exported function action"
-                    ],
+                    self.exports(root),
+                    [self.EVENT + "__init__.py: __all__ exports function action (FR-44)"],
                 )
 
     def test_import_and_assignment_aliases_cannot_hide_reexported_functions(self):
@@ -247,8 +274,8 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:3: exported function renamed"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function renamed (FR-44)"],
         )
 
     def test_module_attribute_aliases_cannot_hide_functions(self):
@@ -262,8 +289,8 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:3: exported function public"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function public (FR-44)"],
         )
 
     def test_exported_class_methods_are_rejected(self):
@@ -276,8 +303,8 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:5: exported function public"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function public (FR-44)"],
         )
 
     def test_classes_exceptions_constants_and_unexported_functions_are_allowed(self):
@@ -293,7 +320,7 @@ class EventObjectExports(Sample):
                 ),
             }
         )
-        self.assertEqual(guards._event_exports(root), [])
+        self.assertEqual(self.exports(root), [])
 
     def test_standard_library_functions_and_uppercase_aliases_are_rejected(self):
         for source in ("json.loads", "os.getcwd", "builtins.len"):
@@ -305,17 +332,17 @@ class EventObjectExports(Sample):
                         + "__init__.py": f"from {module} import {name} as ACTION\n__all__ = ['ACTION']\n"
                     }
                 )
-                found = guards._event_exports(root)
+                found = self.exports(root)
                 self.assertEqual(len(found), 1)
-                self.assertIn("__init__.py:2:", found[0])
+                self.assertIn("__init__.py:", found[0])
                 self.assertIn("ACTION", found[0])
 
     def test_builtin_aliases_and_bare_builtin_functions_are_rejected(self):
         for sample in ("ACTION = len\n__all__ = ['ACTION']\n", "__all__ = ['len']\n"):
             with self.subTest(sample=sample):
-                found = guards._event_exports(self.tree({self.EVENT + "__init__.py": sample}))
+                found = self.exports(self.tree({self.EVENT + "__init__.py": sample}))
                 self.assertEqual(len(found), 1)
-                self.assertIn("exported function", found[0])
+                self.assertIn("exports function", found[0])
 
     def test_standard_library_and_builtin_classes_and_constants_are_allowed(self):
         root = self.tree(
@@ -327,11 +354,11 @@ class EventObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards._event_exports(root), [])
+        self.assertEqual(self.exports(root), [])
 
     def test_constants_shadowing_builtin_names_are_allowed(self):
         root = self.tree({self.EVENT + "__init__.py": "id = 'event'\n__all__ = ['id']\n"})
-        self.assertEqual(guards._event_exports(root), [])
+        self.assertEqual(self.exports(root), [])
 
     def test_local_alias_keeps_a_class_after_its_original_name_is_redefined(self):
         root = self.tree(
@@ -341,7 +368,7 @@ class EventObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards._event_exports(root), [])
+        self.assertEqual(self.exports(root), [])
 
     def test_local_alias_keeps_a_function_after_its_original_name_is_reassigned(self):
         root = self.tree(
@@ -352,8 +379,8 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:4: exported function Alias"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function Alias (FR-44)"],
         )
 
     def test_standard_library_source_is_read_without_importing_it(self):
@@ -362,8 +389,8 @@ class EventObjectExports(Sample):
             {self.EVENT + "__init__.py": "from antigravity import geohash\n__all__ = ['geohash']\n"}
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:2: exported function geohash"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function geohash (FR-44)"],
         )
         self.assertIs(sys.modules.get("antigravity"), before)
 
@@ -375,8 +402,8 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards._event_exports(root),
-            [self.EVENT + "__init__.py:2: unresolved export ACTION: unknown_package.ACTION"],
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function ACTION (FR-44)"],
         )
 
     def test_other_packages_remain_outside_this_ticket(self):
@@ -394,7 +421,7 @@ class EventObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards._event_exports(self.tree(files)), [])
+        self.assertEqual(self.exports(self.tree(files)), [])
 
 
 class SessionNames(Sample):
