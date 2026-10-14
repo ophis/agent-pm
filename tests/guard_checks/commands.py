@@ -3,11 +3,12 @@
 import ast
 import os
 import re
+import tomllib
 
 from tests.guard_checks.common import _bindings, _dotted, _files, _strings, _tree_files
 from tests.guard_data import COMMAND_DOCS, COMMAND_FILES, COMMAND_SRC
 from tests.guard_data.session import SESSION_COMMAND, SESSION_SRC
-from tests.guards import PKG
+from tests.guards import PKG, PROJECTS
 
 COMMAND = "agent-pm-"
 
@@ -19,8 +20,17 @@ PYTHON = re.compile(r"\bpython(?:3(?:\.\d+)?)?\b(?:[ \t]+[^\s`'\"]+){0,3}")
 
 
 PYTHON_OK = re.compile(
-    f"\\S+[ \\t]+-P[ \\t]+(?:-m[ \\t]+{PKG}\\.\\w|(?:<team>|\\{{\\{{team\\}}\\}})/tools/\\w+\\.py(?=[ \\t]|\\Z))"
+    f"\\S+[ \\t]+-P[ \\t]+(?:-m[ \\t]+{PKG}\\.\\w|(?:<(?:role )?team>|\\{{\\{{(?:role_)?team\\}}\\}})/tools/\\w+\\.py(?=[ \\t]|\\Z))"
 )
+
+
+BIN = "bin"
+
+
+BIN_MODULE = re.compile(r"\bpython3 -P -m ([\w.]+)")
+
+
+ALLOWED_BASH = re.compile(r"^[ \t]+- Bash\((.+)\)$", re.M)
 
 
 def manager_commands(repo: str) -> list[str]:
@@ -82,3 +92,53 @@ def python_commands(repo: str) -> list[str]:
                 if not PYTHON_OK.match(m[0])
             )
     return sorted(found)
+
+
+def bin_commands(repo: str) -> list[str]:
+    """Each bin/ command runs exactly one module of its own; each command a skill pre-approves, and
+    each config command or gate naming an agent-pm- command, is a bin/ command.
+    """
+    top = os.path.join(repo, BIN)
+    names = sorted(os.listdir(top)) if os.path.isdir(top) else []
+    found, owners = [], {}
+    for name in names:
+        with open(os.path.join(top, name), encoding="utf-8") as script:
+            modules = BIN_MODULE.findall(script.read())
+        if len(modules) != 1:
+            found.append(f"{BIN}/{name}: runs {len(modules)} modules, not 1")
+        elif not any(
+            os.path.isfile(os.path.join(repo, p, "src", *modules[0].split(".")) + ".py")
+            for p in PROJECTS
+        ):
+            found.append(f"{BIN}/{name}: no module {modules[0]}")
+        elif modules[0] in owners:
+            found.append(f"{BIN}/{name}: runs {modules[0]}, as {BIN}/{owners[modules[0]]} does")
+        else:
+            owners[modules[0]] = name
+    for rel, text in _tree_files(repo, (".md",)):
+        if rel.endswith("/SKILL.md") and rel.startswith(COMMAND_DOCS) and text.startswith("---\n"):
+            front = text.split("\n---", 1)[0]
+            found += [
+                f'{rel}: pre-approves "{rule}", not a {BIN}/ command'
+                for rule in ALLOWED_BASH.findall(front)
+                if rule.split()[0] not in names
+            ]
+    for rel in COMMAND_FILES:
+        if os.path.isfile(path := os.path.join(repo, rel)):
+            with open(path, "rb") as config:
+                found += [
+                    f'{rel}: runs "{command}", not a {BIN}/ command'
+                    for command in _commands(tomllib.load(config))
+                    if command.startswith(COMMAND) and command.split()[0] not in names
+                ]
+    return sorted(found)
+
+
+def _commands(table):
+    for key, value in table.items():
+        if isinstance(value, dict):
+            yield from _commands(value)
+        elif key == "gate" and isinstance(value, str):
+            yield value
+        elif key == "commands" and isinstance(value, list):
+            yield from (v for v in value if isinstance(v, str))
