@@ -3,8 +3,9 @@
   "version": "0.4.0",
   "description": "Guidelines for your commander session (the manage skill), and agent-pm's core roles and tasks, researcher, pm and engineer, run in this conversation (the act-as skill).",
   "author": {
-    "name": "Frank Wang"
+    "name": "Yinze Wang"
   },
+  "license": "MIT",
   "skills": [
     "./delegate/skills/",
     "./manager/skills/"
