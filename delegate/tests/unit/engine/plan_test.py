@@ -81,6 +81,21 @@ class Configures(Base):
                 self.assertEqual(driver.registry.settings.default_host, "tmux")
 
     def test_configures_driver_detaches_on_the_harness_host_not_the_default(self):
+        shipped = os.path.join(REPO, "session", "config.toml")
+        schema = os.path.join(self.tmp, "session.toml")
+        with open(shipped) as stream:
+            default = stream.read()
+        with open(schema, "w") as stream:
+            stream.write(default + '\n[hosts.spare]\nroot = ""\n')
+        opened = open
+        self.enterContext(
+            mock.patch(
+                "builtins.open",
+                side_effect=lambda path, *args, **kwargs: opened(
+                    schema if path == shipped else path, *args, **kwargs
+                ),
+            )
+        )
         fake = 'implementation = "session.tests.fakes.host:FakeHost"\n'
         self.local(
             f'[hosts]\ndefault = "spare"\n[hosts.spare]\n{fake}root = "~/spare"\n'
