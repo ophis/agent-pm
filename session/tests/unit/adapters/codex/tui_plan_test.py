@@ -14,6 +14,7 @@ from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.codex.types import HookPlan, LaunchPlan, Snapshot
 
 from session.tests.case import SRC, Case
+from session.tests.source_roots import source_roots_cases
 
 
 class PlanTest(Case):
@@ -100,6 +101,18 @@ class PlanTest(Case):
         self.assertEqual(tui_plan.encode(decoded), encoded)
         with self.assertRaises(dataclasses.FrozenInstanceError):
             decoded.prompt = "changed"
+
+    def test_wire_import_roots_follow_shared_bootstrap_rules(self):
+        data = json.loads(tui_plan.encode(self.plan))
+        valid, invalid = source_roots_cases(self.home)
+        for name, roots in valid.items():
+            with self.subTest(name=name):
+                decoded = tui_plan.decode(data | {"import_roots": roots})
+                self.assertEqual(decoded.hook.import_roots, tuple(roots))
+                self.assertEqual(json.loads(tui_plan.encode(decoded))["import_roots"], roots)
+        for name, roots in invalid.items():
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                tui_plan.decode(data | {"import_roots": roots})
 
     def test_wire_rejects_competing_command_and_directory_authorities(self):
         data = json.loads(tui_plan.encode(self.plan))
