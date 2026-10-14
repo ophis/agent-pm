@@ -27,12 +27,11 @@ class AttachmentBase(Base):
 
 
 class AttachListTest(AttachmentBase):
-    def test_a_tui_session_without_a_controller_keeps_pane_based_handling(self):
-        self.kind, self.controlled = None, False
-        process = self.host.attach("tui")
-        self.assertTrue(process.alive())
-        process.close()
-        self.tmux.kill.assert_called_once_with("%7")
+    def test_a_terminal_without_a_controller_is_refused(self):
+        self.kind, self.controlled = "terminal", False
+        with self.assertRaisesRegex(DriverError, "tmux session tui: missing @control"):
+            self.host.attach("tui")
+        self.tmux.kill.assert_not_called()
         self.socket.assert_not_called()
 
     def test_attach_during_controller_teardown_returns_an_ended_handle(self):

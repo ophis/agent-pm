@@ -10,7 +10,7 @@ import os
 import sys
 import unittest
 
-from agent_pm.session import Exited, Mode, Reply, Spec, TurnEnd
+from agent_pm.session import Exited, Launch, Mode, Reply, Spec, TurnEnd
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.extension import ConfigError, DriverError, Host, Record
 
@@ -63,9 +63,7 @@ class OutsideTest(Case):
         record = Record(1, "job", "j1", ("j1",), None, None, ("ctl",), ("ctl", "j1"), "d", None)
         process = host.detach(
             "j1",
-            (sys.executable, "-c", "import time; time.sleep(60)"),
-            self.home,
-            {},
+            Launch((sys.executable, "-c", "import time; time.sleep(60)"), cwd=self.home),
             display="d",
             record=record,
         )

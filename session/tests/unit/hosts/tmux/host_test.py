@@ -8,20 +8,20 @@ import logging
 import os
 import re
 import signal
-import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Displayable, DriverError, Host
+from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
+from agent_pm.session.engine.types import Paste
 from agent_pm.session.hosts.base import SIGNALS
-from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
+from agent_pm.session.hosts.tmux import TmuxHost, tmux_host, types
 from agent_pm.session.hosts.tmux.host import TmuxProcess
 from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
-from session.tests.tmux_host_support import LINE, PROCESS, Base, fake_tmux
+from session.tests.tmux_host_support import LINE, PROCESS, Base
 
-TuiError = tmux_host.TuiError
+TuiError = types.TuiError
 NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
 FOLDS = (
     (("mgr", None, None), "mgr"),
@@ -44,10 +44,6 @@ class ClassTest(Case):
         self.assertEqual(
             (host.name, host.settings, host.tmux), ("tmux", {"status_line": True}, tmux_host)
         )
-
-    def test_terminal_comes_with_task_368(self):
-        with self.assertRaisesRegex(NotImplementedError, "^TmuxHost.terminal comes with TASK-368$"):
-            TmuxHost("tmux", tmux=fake_tmux()).terminal("t1", ["x"], "/", {})
 
 
 class FoldTest(Case):
@@ -123,16 +119,6 @@ class DisplayTest(Base):
 
 
 class DetachTest(Base):
-    def setUp(self):
-        super().setUp()
-        allocate = tempfile.mkdtemp
-
-        def private(**kw):
-            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
-            return allocate(prefix=kw["prefix"], dir=self.dir)
-
-        self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
-
     def test_tmux_failure_removes_the_launch_without_killing_an_existing_name(self):
         paths = []
 
@@ -224,17 +210,16 @@ class DetachTest(Base):
         self.tmux.kill.assert_called_once_with("%7")
 
     def detach(self, **kw):
-        return self.host.detach("d1", ["tool", "a b"], self.dir, {"PATH": "/bin"}, **kw)
+        return self.host.detach(
+            "d1", Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin"}), **kw
+        )
 
-    def test_forwards_with_the_signals_blocked_the_opener_part_and_the_record_line(self):
+    def test_forwards_the_launch_the_opener_part_and_the_record_line(self):
         events = os.path.join(self.dir, "events")
         process = self.detach(display="mgr/below", events=events, record=LINE)
         self.tmux.detach.assert_called_once_with(
             "d1",
-            self.control.command(),
-            cwd=self.dir,
-            env={"PATH": "/bin"},
-            block=SIGNALS,
+            Launch(tuple(self.control.command()), cwd=self.dir, env={"PATH": "/bin"}),
             opener="mgr",
             display="mgr/below",
             events=events,
@@ -245,10 +230,9 @@ class DetachTest(Base):
         self.assertEqual(
             json.loads(Path(self.control.path, "launch.json").read_text()),
             {
-                "argv": ["tool", "a b"],
+                "argv": [self.tool, "a b"],
                 "cwd": self.dir,
                 "env": {"PATH": "/bin"},
-                "inherit_env": [*tmux_host.TERMINAL_KEYS, "PWD"],
             },
         )
         self.tmux.status.assert_called_with("%7")
@@ -283,6 +267,38 @@ class DetachTest(Base):
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
 
+class TerminalTest(Base):
+    def test_terminal_launch_has_a_controller_identity_and_keeps_its_metadata(self):
+        events = os.path.join(self.dir, "events")
+        launch = Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin", "TERM": "exact"})
+        terminal = self.host.terminal("t1", launch, events=events, display="mgr/below", record=LINE)
+        self.assertIsInstance(terminal, Terminal)
+        self.assertEqual(terminal.identity, PROCESS)
+        self.tmux.start.assert_called_once_with(
+            "t1",
+            Launch(tuple(self.control.command()), cwd=self.dir, env=launch.env),
+            events=events,
+            status_line=False,
+            tags={
+                "@kind": "terminal",
+                "@control": self.control.path,
+                "@display": "mgr/below",
+                "@opener": "mgr",
+                "@record": LINE.to_line(),
+            },
+        )
+        terminal.send(Paste("a b"))
+        self.tmux.paste.assert_called_once_with("%7", "a b")
+        self.assertEqual(
+            json.loads(Path(self.control.path, "launch.json").read_text())["env"], dict(launch.env)
+        )
+
+    def test_terminal_with_no_controller_is_refused_when_attaching(self):
+        self.kind, self.controlled = "terminal", False
+        with self.assertRaisesRegex(DriverError, "missing @control"):
+            self.host.attach("t1")
+
+
 class DisplayableTest(Base):
     def test_show_opens_a_pane_per_the_unfolded_display_and_the_grid_settings(self):
         self.tmux.open_pane.return_value = None
@@ -305,7 +321,7 @@ class DisplayableTest(Base):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(DriverError, "^no tmux session w1$"):
             self.host.show("w1")
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.tmux.status.return_value = types.PaneStatus.RUNNING
         with self.assertRaisesRegex(ConfigError, r"^display 'elsewhere:1\.2': not <opener>"):
             self.host.show("w1", display="elsewhere:1.2")
         self.tmux.open_pane.side_effect = TuiError(

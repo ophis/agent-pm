@@ -277,7 +277,10 @@ OPTION_TUPLES_ALLOWED = {
     (f"{SESSION_SRC}adapters/registry.py", "TUI_KEYS"): "the [hosts.tmux] keys tui() reads",
     (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
     (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
-    (TMUX_HOST, "GRID_HOOKS"): "tmux hook names the grid sets and unsets together",
+    (
+        f"{SESSION_SRC}hosts/tmux/grid.py",
+        "GRID_HOOKS",
+    ): "tmux hook names the grid sets and unsets together",
     (
         f"delegate/src/{PKG}/delegate/event/outcome.py",
         "SAVES_DELIVERABLE",
