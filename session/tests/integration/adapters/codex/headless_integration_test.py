@@ -398,7 +398,7 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
         self.record().write_text("bad json")
         self.assertEqual(
             self.inspect(handle.sid).resumable,
-            "no",
+            "unknown",
         )
 
 

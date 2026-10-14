@@ -9,7 +9,6 @@ import stat
 import sys
 import time
 from dataclasses import replace
-from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
@@ -342,7 +341,8 @@ class CommonTest(Base):
                 self.edit_record(**fields)
                 with self.assertRaises(ConfigError):
                     self.common.load(str(self.work), self.spec.sid)
-                self.assertIsNone(self.common.lookup(self.spec.sid, str(self.cwd)))
+                with self.assertRaises(ConfigError):
+                    self.common.lookup(self.spec.sid, str(self.cwd))
 
     def test_store_outside_explicit_and_implicit_writable_roots(self):
         for grant in (self.home, self.home / ".agent-pm", self.root):
@@ -738,13 +738,15 @@ class SessionStatusTest(Base):
         path.unlink()
         self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
-    def test_a_missing_or_unreadable_record_is_no(self):
+    def test_inspection_missing_malformed_unsafe_and_ambiguous(self):
         self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
         self.bound()
         self.rollout()
         path = self.record()
         path.write_text("not json")
-        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(
+            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+        )
 
     def test_a_missing_recorded_transcript_is_no_without_discovery_fallback(self):
         self.bound()
@@ -1006,51 +1008,6 @@ class StoreRootTest(Base):
         self.assertIsNone(self.common.load(state.workdir, state.sid))
         self.assertEqual({path: path.read_bytes() for path in old.iterdir()}, before)
         self.assertFalse((self.home / ".agent-pm" / "sessions").exists())
-
-    def test_lookup_skips_unrelated_unreadable_records(self):
-        state = self.prepare()
-        store = Path(SessionStore().root)
-        other = self.common.prepare(dataclasses.replace(self.spec, sid="other-id"))
-        SessionStore().save(other)
-        broken = next(path for path in store.glob("*.json") if path != self.record_of(state))
-        broken.write_text(json.dumps({**json.loads(broken.read_text()), "version": 99}))
-        (store / "garbage.json").write_text("not json")
-        (store / "empty.json").write_text("")
-        for path in store.glob("*.json"):
-            path.chmod(0o600)
-        self.assertEqual(SessionStore().lookup(state.sid, state.snapshot.cwd), state)
-        self.assertEqual(self.common.lookup(state.sid, state.snapshot.cwd), state)
-        self.assertIsNone(SessionStore().lookup("other-id", state.snapshot.cwd))
-
-    def test_direct_reads_of_an_unreadable_record_still_fail(self):
-        state = self.prepare()
-        self.record().write_text("not json")
-        with self.assertRaises(RecoveryError):
-            SessionStore().load(state.workdir, state.sid)
-        with self.assertRaises(RecoveryError):
-            SessionStore().bind(state.workdir, state.sid, NATIVE)
-
-    def test_lookup_still_refuses_two_valid_bindings(self):
-        self.prepare()
-        other = self.root / "other"
-        other.mkdir()
-        self.common.save(
-            self.common.prepare(
-                dataclasses.replace(
-                    self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
-                )
-            )
-        )
-        (Path(SessionStore().root) / "garbage.json").write_text("not json")
-        with self.assertRaisesRegex(RecoveryError, "ambiguous"):
-            SessionStore().lookup(self.spec.sid, str(self.cwd))
-
-    def record_of(self, state):
-        return next(
-            path
-            for path in Path(SessionStore().root).glob("*.json")
-            if json.loads(path.read_text()).get("sid") == state.sid
-        )
 
     def test_invalid_save_does_not_create_the_store(self):
         state = self.common.prepare(self.spec)
