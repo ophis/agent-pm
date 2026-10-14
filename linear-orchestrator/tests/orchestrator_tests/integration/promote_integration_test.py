@@ -242,6 +242,7 @@ class Prune(Tick, TmuxFlow):
             sid=sid,
             role="engineer",
             client="claude",
+            delegate_kind="harness",
         )
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local) as stream:

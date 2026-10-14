@@ -217,6 +217,7 @@ class FakeLinear:
         self.todo_error = False
         self.unreadable = set()
         self.refuse = set()
+        self.ids = {}  # an issue's uuid → its identifier, for write-back's calls
         self.group = {
             "isGroup": True,
             "children": {"nodes": [{"id": i} for i in (LIGHT, DEEP, ORPHAN_LABEL)]},
@@ -254,10 +255,13 @@ class FakeLinear:
         return None
 
     def _issue_read(self, query, v):
+        if "attachments" in query:
+            return {"issue": {"attachments": {"nodes": []}}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if query == ops.Q_ISSUE_STATE:
-            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
+            issue = self.issues[self.ids.get(v["i"], v["i"])]
+            return {"issue": {"state": {"id": STATES[issue["state"]]}}}
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
                 raise LinearError(f"linear api error: {[{'message': 'Entity not found'}]}")
@@ -276,7 +280,7 @@ class FakeLinear:
 
     def _mutate(self, query, v):
         self.mutations.append((query, v))
-        issue = self.issues[v["i"]]
+        issue = self.issues[self.ids.get(v["i"], v["i"])]
         if "issueSubscribe" in query:
             issue.setdefault("subscribers", []).append(v["e"])
         elif "commentCreate" in query:
@@ -367,6 +371,7 @@ class Base(run_fixtures.Base):
                 "sid": self.sid(sid),
                 "role": role,
                 "client": client or CLIENTS.get(role, "a"),
+                "delegate_kind": "harness",
             }
         )
 
@@ -392,6 +397,7 @@ class Base(run_fixtures.Base):
                     "sid": self.sid("limited"),
                     "client": client,
                     "resets_at": resets_at,
+                    "delegate_kind": "harness",
                 }
             )
         )
@@ -597,9 +603,17 @@ class OuterBase(TickBase):
 
     def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, client="a"):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it."""
-        if mode == "resume" and not os.path.exists(self.runs):
+        if mode == "resume" and sid not in {e.sid for e in runs.parse_log(self.runs)}:
             role = config.role_for(self.cfg().roles, assignee) or "engineer"
-            runs.note(self.runs, "start", issue=ident, sid=sid, role=role, client=client)
+            runs.note(
+                self.runs,
+                "start",
+                issue=ident,
+                sid=sid,
+                role=role,
+                client=client,
+                delegate_kind="harness",
+            )
         a = Spec(
             uuid=UUID,
             issue=ident,
