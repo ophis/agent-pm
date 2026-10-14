@@ -63,6 +63,7 @@ class SkillFlows(LiveCrew):
 
     def test_a_role_runs_dry_run_check_prints_its_plan_and_starts_nothing(self):
         work = self.workdir("r")
+        self.ok(self.written("tmux", "agent-pm-crew attach"))
         out = self.ok(
             self.written(
                 "tmux",
@@ -110,8 +111,8 @@ class SkillFlows(LiveCrew):
             )
         )
         self.assertEqual(answered.sid, record.sid)
-        self.assertTrue(has_pair(logged(self.log("r"))[-1]["argv"], "--resume", record.sid))
         self.wait_event(harness, "exited", count=2)
+        self.assertTrue(has_pair(logged(self.log("r"))[-1]["argv"], "--resume", record.sid))
         status = json.loads(self.ok(self.crew("status", "r")).stdout)
         self.assertEqual(status["outcome"], "done")
 
@@ -131,5 +132,5 @@ class SkillFlows(LiveCrew):
             )
         )
         self.assertEqual((record.kind, record.name, record.detail), ("worker", "c1", "codex"))
-        (begun,) = logged(log)
+        [begun] = [start for start in logged(log) if start.get("mode") == "tui"]
         self.assertEqual(os.path.realpath(begun["cwd"]), os.path.realpath(self.cwd))
