@@ -158,7 +158,7 @@ class TuiTest(Base):
         self.spec = dataclasses.replace(self.spec, access=Access())
         _, resumed, _ = self.launch(resume=True, adapter=adapter)
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
-        self.assertEqual(shlex.split(resumed.resume)[4], "PYTHONPATH=/a b;c")
+        self.assertEqual(shlex.split(resumed.resume)[3], "PYTHONPATH=/a b;c")
 
     def test_resume_failure_happens_before_command(self):
         with (

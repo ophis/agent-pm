@@ -29,11 +29,7 @@ from agent_pm.session.adapters.codex.common.types import (
     SessionState,
     Snapshot,
 )
-from agent_pm.session.adapters.common import (
-    check_config,
-    scan,
-    split_flags,
-)
+from agent_pm.session.adapters.common import check_config, scan, split_flags
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
@@ -46,18 +42,23 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.utils import number, resume_command
 
-
-class RecoveryError(Exception):
-    pass
-
-
-def private_file(info: os.stat_result) -> bool:
-    return (
-        stat.S_ISREG(info.st_mode)
-        and info.st_uid == os.getuid()
-        and stat.S_IMODE(info.st_mode) == 0o600
-    )
-
+TABLE = "[adapters.codex]"
+LIMIT_PREFIXES = (
+    "You've hit your usage limit.",
+    "You've hit your usage limit for ",
+    "Quota exceeded. Check your plan and billing details.",
+    "Your workspace is out of credits.",
+    "You hit your spend cap set in your workspace.",
+    "You hit your spend cap set by the owner of your workspace.",
+)
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+RESET = re.compile(
+    r"(?:Try|try) again at (?:(?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2})"
+    r"(?P<suffix>st|nd|rd|th), (?P<year>\d{4}) )?"
+    r"(?P<hour>[1-9]|1[0-2]):(?P<minute>[0-5]\d) (?P<period>AM|PM)\.$"
+)
+RESERVED = ("-C", "-p", "--dangerously-bypass-hook-trust")
+RESERVED_KEYS = ("hooks",)
 
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -72,6 +73,24 @@ VALUED = {
     "--disable": "--disable",
     "--add-dir": "--add-dir",
 }
+
+_SESSION_VERSION = 1
+
+_SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
+
+_MAX_SESSION_BYTES = 64 * 1024
+
+
+class RecoveryError(Exception):
+    pass
+
+
+def private_file(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o600
+    )
 
 
 def added_dirs(argv, cwd: str) -> list[str]:
@@ -88,7 +107,7 @@ def absolute_path(path: object, label: str) -> str:
     return os.path.realpath(path)
 
 
-def validate_snapshot(value: object) -> Snapshot:
+def _snapshot(value: object) -> Snapshot:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
     if set(value) != {
@@ -112,13 +131,11 @@ def validate_snapshot(value: object) -> Snapshot:
     flags = value["flags"]
     if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
         raise RecoveryError("invalid Codex recovery snapshot flags")
-    paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     if type(value["project"]) is not bool:
         raise RecoveryError("invalid Codex recovery snapshot project")
     for key in ("dirs", "commands"):
         if not isinstance(value[key], list):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
-    dirs = [absolute_path(item, "dir") for item in value["dirs"]]
     commands = value["commands"]
     if any(not isinstance(item, str) or not item or not item.isprintable() for item in commands):
         raise RecoveryError("invalid Codex recovery snapshot commands")
@@ -127,19 +144,27 @@ def validate_snapshot(value: object) -> Snapshot:
             not isinstance(value[key], str) or not value[key] or not value[key].isprintable()
         ):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
-    if any(paths[key] != value[key] for key in paths) or dirs != value["dirs"]:
-        raise RecoveryError("invalid Codex recovery snapshot path")
     return Snapshot(
-        paths["cwd"],
+        value["cwd"],
         value["project"],
-        tuple(dirs),
+        tuple(value["dirs"]),
         tuple(commands),
         value["model"],
         value["effort"],
-        paths["codex_home"],
+        value["codex_home"],
         tuple(flags),
         env,
     )
+
+
+def validate_snapshot(value: object) -> Snapshot:
+    snapshot = _snapshot(value)
+    cwd = absolute_path(snapshot.cwd, "cwd")
+    home = absolute_path(snapshot.codex_home, "codex_home")
+    dirs = tuple(absolute_path(item, "dir") for item in snapshot.dirs)
+    if cwd != snapshot.cwd or home != snapshot.codex_home or dirs != snapshot.dirs:
+        raise RecoveryError("invalid Codex recovery snapshot path")
+    return snapshot
 
 
 def snapshot_data(snapshot: Snapshot) -> dict:
@@ -256,13 +281,6 @@ def native_id(value) -> bool:
         return isinstance(value, str) and str(uuid.UUID(value)) == value
     except (ValueError, TypeError, AttributeError):
         return False
-
-
-_SESSION_VERSION = 1
-
-_SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
-
-_MAX_SESSION_BYTES = 64 * 1024
 
 
 def session_identity(workdir: object, sid: object) -> tuple[str, str]:
@@ -409,9 +427,7 @@ class _StoreOperation:
                     f"invalid Codex recovery writable grants: no recorded root covers {path}"
                 )
 
-    def read(
-        self, path: str, workdir: str | None = None, sid: str | None = None
-    ) -> SessionState | None:
+    def _read(self, path: str) -> dict | None:
         _check_ancestors(path)
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
@@ -420,12 +436,11 @@ class _StoreOperation:
         except OSError as exc:
             raise RecoveryError(f"cannot read recovery state {path}: {exc}") from exc
         data = _state_data(fd, path)
-        if workdir is None:
-            if not isinstance(data, dict):
-                raise RecoveryError("malformed recovery state")
-            workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
-        if sid is None:
-            raise RecoveryError("invalid recovery state identity")
+        if not isinstance(data, dict):
+            raise RecoveryError("malformed recovery state")
+        return data
+
+    def _validated_state(self, path: str, data: dict, workdir: str, sid: str) -> SessionState:
         state = _state(data, workdir, sid)
         if path != self._path(workdir, sid):
             raise RecoveryError("invalid recovery state identity")
@@ -434,7 +449,16 @@ class _StoreOperation:
         return state
 
     def load(self, workdir: str, sid: str) -> SessionState | None:
-        return self.read(self._path(workdir, sid), workdir, sid)
+        path = self._path(workdir, sid)
+        data = self._read(path)
+        return None if data is None else self._validated_state(path, data, workdir, sid)
+
+    def read(self, path: str) -> SessionState | None:
+        data = self._read(path)
+        if data is None:
+            return None
+        workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
+        return self._validated_state(path, data, workdir, sid)
 
     @contextmanager
     def locked(self, timeout: float | None = None):
@@ -558,8 +582,7 @@ class SessionStore:
     def load(self, workdir: str, sid: object) -> SessionState | None:
         operation = _StoreOperation(self.root)
         workdir, sid = session_identity(workdir, sid)
-        directory = operation.directory(create=False)
-        if directory is None:
+        if operation.directory(create=False) is None:
             return None
         return operation.load(workdir, sid)
 
@@ -574,8 +597,7 @@ class SessionStore:
         workdir, sid = session_identity(workdir, sid)
         if not native_id(identifier):
             raise RecoveryError("invalid Codex recovery native ID")
-        directory = operation.directory(create=False)
-        if directory is None:
+        if operation.directory(create=False) is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
         with operation.locked(timeout):
             existing = operation.load(workdir, sid)
@@ -607,25 +629,6 @@ class SessionStore:
         if len(matches) > 1:
             raise RecoveryError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")
         return matches[0] if matches else None
-
-
-TABLE = "[adapters.codex]"
-LIMIT_PREFIXES = (
-    "You've hit your usage limit.",
-    "You've hit your usage limit for ",
-    "Quota exceeded. Check your plan and billing details.",
-    "Your workspace is out of credits.",
-    "You hit your spend cap set in your workspace.",
-    "You hit your spend cap set by the owner of your workspace.",
-)
-MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-RESET = re.compile(
-    r"(?:Try|try) again at (?:(?P<month>[A-Z][a-z]{2}) (?P<day>\d{1,2})"
-    r"(?P<suffix>st|nd|rd|th), (?P<year>\d{4}) )?"
-    r"(?P<hour>[1-9]|1[0-2]):(?P<minute>[0-5]\d) (?P<period>AM|PM)\.$"
-)
-RESERVED = ("-C", "-p", "--dangerously-bypass-hook-trust")
-RESERVED_KEYS = ("hooks",)
 
 
 def reset_at(message, environment):
@@ -850,11 +853,11 @@ class CodexCommon:
         cwd, home, *_ = roots
         if not spec.access.project:
             _guard_untrusted_project(workdir, cwd, home)
-        snapshot = validate_snapshot(
+        snapshot = _snapshot(
             {
                 "cwd": cwd,
                 "project": spec.access.project,
-                "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
+                "dirs": roots[2 : 2 + len(spec.access.dirs)],
                 "commands": list(spec.access.commands),
                 "model": self._mapped("tiers", spec.tier),
                 "effort": self._mapped("efforts", spec.effort and spec.effort.value),
@@ -947,10 +950,7 @@ class CodexCommon:
             *selection[-1:],
             *literal,
         ]
-        env = {
-            "CODEX_HOME": snapshot.codex_home,
-            **self.environment(snapshot, interactive=True),
-        }
+        env = self.environment(snapshot, interactive=True)
         return resume_command(snapshot.cwd, env, argv)
 
     @_recover

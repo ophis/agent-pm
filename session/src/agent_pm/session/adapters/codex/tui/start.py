@@ -60,7 +60,7 @@ def _bootstrap(argv):
 if __name__ == "__main__":
     try:
         launch_data = _bootstrap(sys.argv[1:])
-    except StartError as exc:
+    except (StartError, UnicodeEncodeError) as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -179,7 +179,7 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
 def trusted(result, cwd: str, commands: Mapping[str, str]) -> str:
     hooks = _listed_hooks(result, cwd)
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
-    trusted = []
+    trusted_hooks = []
     for event, name, _ in HOOKS:
         command = commands[event]
         rows = [h for h in ours if h.get("eventName") == name]
@@ -202,9 +202,9 @@ def trusted(result, cwd: str, commands: Mapping[str, str]) -> str:
         )
         if why:
             raise StartError(f"codex hooks/list: the session-flags {name} hook {why}")
-        trusted.append(h)
+        trusted_hooks.append(h)
     for h in ours:
-        if not any(h is t for t in trusted):
+        if not any(h is t for t in trusted_hooks):
             raise StartError(f"codex hooks/list: a session-flags hook not ours: {h.get('key')}")
     for h in hooks:
         if (
@@ -223,7 +223,7 @@ def trusted(result, cwd: str, commands: Mapping[str, str]) -> str:
         + ",".join(
             f"{json.dumps(h['key'], ensure_ascii=False)}="
             f"{{trusted_hash={json.dumps(h['currentHash'])}}}"
-            for h in trusted
+            for h in trusted_hooks
         )
         + "}"
     )

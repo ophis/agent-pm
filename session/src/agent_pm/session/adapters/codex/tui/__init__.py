@@ -22,7 +22,6 @@ from agent_pm.session.adapters.codex.common import (
     inside,
     launch_options,
     native_id,
-    refuse,
     reset_at,
 )
 from agent_pm.session.adapters.codex.common.types import Snapshot
@@ -127,10 +126,8 @@ class CodexTui(Tui):
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
         saved_flags = snapshot.flags
-        refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        unset = common.UNSET
         effective_env = common.environment(snapshot, interactive=True, ambient=True)
         store = self.store = common.store.root
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
@@ -138,8 +135,7 @@ class CodexTui(Tui):
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         hooks = HookPlan(tuple(hook), source_roots)
-        roots = hooks.import_roots
-        protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
+        protected_roots = tuple(dict.fromkeys([*import_roots(), *source_roots]))
         dependencies = [
             *protected_roots,
             sys.prefix,
@@ -175,7 +171,7 @@ class CodexTui(Tui):
                 encode(plan),
             ),
             env=env,
-            unset=unset,
+            unset=common.UNSET,
             cwd=snapshot.cwd,
             project=snapshot.project,
             transcript=common.transcript(self.state) if resume else "",
