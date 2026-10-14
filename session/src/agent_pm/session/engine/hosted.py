@@ -9,6 +9,7 @@ import builtins
 import os
 import re
 import stat
+import sys
 import time
 import uuid
 from collections import deque
@@ -52,6 +53,7 @@ from agent_pm.utils import (
     Display,
     Record,
     load_class,
+    module_roots,
     printable_abs,
     sid_error,
     thaw,
@@ -132,6 +134,23 @@ def _probe_dir() -> str | None:
         return path if stat.S_ISDIR(os.lstat(path).st_mode) else None
     except OSError:
         return None
+
+
+def _host_class(setup: _Setup, name: str) -> tuple[type[Host], dict]:
+    """[hosts.<name>]'s class and its other settings."""
+    settings = thaw(setup.hosts.tables[name])
+    path = settings.pop("implementation", None)
+    try:
+        return setup.class_loader(path, Host), settings
+    except ValueError as e:
+        raise ConfigError(f"[hosts.{name}].implementation: {e}") from None
+
+
+def _class_root(kind: type, table: str) -> str:
+    module = sys.modules.get(kind.__module__)
+    if module is None or getattr(module, "__file__", None) is None:
+        raise ConfigError(f"{table}.implementation: {kind.__module__} has no source file")
+    return module_roots(module)[0]
 
 
 class HostedSession(Session):
@@ -395,14 +414,19 @@ class HostedSession(Session):
             raise ConfigError(f"unknown host {name}")
         found = setup.built.get(name)
         if found is None:
-            settings = thaw(setup.hosts.tables[name])
-            path = settings.pop("implementation", None)
-            try:
-                kind = setup.class_loader(path, Host)
-            except ValueError as e:
-                raise ConfigError(f"[hosts.{name}].implementation: {e}") from None
+            kind, settings = _host_class(setup, name)
             found = setup.built.setdefault(name, setup.host_factory(kind, name, settings))
         return found
+
+    @classmethod
+    def class_roots(cls, runtime: str) -> tuple[str, ...]:
+        """Loads each class without building it; an unloadable one is a ConfigError."""
+        setup = cls._config()
+        loaded: list[tuple[str, type]] = [
+            (f"[adapters.{runtime}]", setup.registry.adapter_class(runtime))
+        ]
+        loaded += [(f"[hosts.{name}]", _host_class(setup, name)[0]) for name in setup.hosts.tables]
+        return tuple(dict.fromkeys(_class_root(kind, table) for table, kind in loaded))
 
     @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:

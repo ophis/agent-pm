@@ -59,6 +59,7 @@ class SessionClassMethods(Case):
             ),
             (Session.attach, [("name", either), ("host", key), ("idle_timeout", key)]),
             (Session.writable_dirs, [("spec", either)]),
+            (Session.class_roots, [("runtime", either)]),
             (Session.inspect, [("spec", either)]),
             (Session.layout, [("display", key)]),
             (Session.show, [("self", either), ("display", key)]),
@@ -107,6 +108,7 @@ class SessionClassMethods(Case):
             "writable_dirs": ((spec,), {}),
             "display": ((), {}),
             "host": ((), {}),
+            "class_roots": (("fake",), {}),
         }
         for name, (args, kwargs) in calls.items():
             with self.subTest(name=name), self.assertRaises(NotImplementedError) as caught:
