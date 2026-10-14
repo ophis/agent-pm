@@ -1,6 +1,5 @@
 """One run's plan: its cwd, session Spec, sid and prompt, every check first, writing nothing. The
-caller supplies its Driver (configure builds one from config). A refusal is ConfigError, a Driver
-one keeping its message.
+caller supplies its Driver. A refusal is ConfigError, a Driver one keeping its message.
 """
 
 import contextlib
@@ -8,43 +7,17 @@ import functools
 import os
 import sys
 import uuid
-from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import DELIVERABLE, Composer, RunConfig, RunParams, Team
-from agent_pm.delegate.engine import config
-from agent_pm.delegate.engine.drivers import AgentDriver, Driver
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Host, Mode, RunLog, read_config
+from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import LOCAL, under
-
-
-def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDriver:
-    """The session's Driver from its config, [hosts] parsed once, keeping harness_host (`cfg`, else
-    read) once it names one of those hosts.
-    """
-    with _config("session"):
-        table = read_config(local=local)
-        hosts = Host.parse_hosts(table.get("hosts"))
-    with _config("delegate"):
-        harness = config.harness_host(
-            config.read_config(local=local) if cfg is None else cfg, hosts.tables
-        )
-    with _config("session"):
-        return SessionDriver.from_config(table, hosts=hosts, harness_host=harness)
-
-
-@contextlib.contextmanager
-def _config(name: str) -> Iterator[None]:
-    try:
-        yield
-    except (OSError, ValueError, SessionConfigError) as e:
-        raise ConfigError(f"{name} config: {e}") from None
+from agent_pm.utils import under
 
 
 def _own(f):
@@ -94,12 +67,10 @@ def plan(
     run: RunConfig,
     spec: Spec,
     *,
-    driver: Driver | SessionDriver,
+    driver: Driver,
     composition: Composer | None = None,
 ) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
-    if isinstance(driver, SessionDriver):
-        driver = AgentDriver(driver.session_cls)
     if not driver.session_based and spec.resume:
         raise ConfigError("instruction has no session to resume")
     if spec.mode not in tuple(Mode):

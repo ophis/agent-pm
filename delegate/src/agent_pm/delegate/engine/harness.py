@@ -2,7 +2,6 @@
 Driver.detach blocks SIGNALS through exec; main unblocks them after installing its handlers.
 """
 
-import argparse
 import hashlib
 import hmac
 import json
@@ -11,6 +10,7 @@ import re
 import signal
 import stat
 import sys
+from types import SimpleNamespace
 
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.application import Application
@@ -44,11 +44,11 @@ INVOCATION_KEYS = frozenset(
 
 
 def main(argv: list[str], *, application=None) -> int:
-    parser = argparse.ArgumentParser(prog="delegate harness")
-    parser.add_argument("workdir")
-    args = parser.parse_args(argv)
+    if len(argv) != 1:
+        print("usage: delegate harness WORKDIR", file=sys.stderr)
+        return 2
     try:
-        invocation = _invocation(args.workdir)
+        invocation = _invocation(argv[0])
     except (OSError, ValueError) as error:
         print(f"delegate: harness state: {error}", file=sys.stderr)
         return 2
@@ -69,7 +69,7 @@ def main(argv: list[str], *, application=None) -> int:
         detach.outcome(invocation.events, invocation.harness, status)
 
 
-def _invocation(workdir: str) -> argparse.Namespace:
+def _invocation(workdir: str) -> SimpleNamespace:
     basename = os.environ.pop("AGENT_PM_HARNESS_STATE", "")
     digest = os.environ.pop("AGENT_PM_HARNESS_DIGEST", "")
     matched = STATE_NAME.fullmatch(basename)
@@ -91,7 +91,7 @@ def _invocation(workdir: str) -> argparse.Namespace:
     given = json.loads(payload.decode("utf-8"))
     _validate(given, workdir, matched[1])
     os.unlink(path)
-    return argparse.Namespace(**given)
+    return SimpleNamespace(**given)
 
 
 def _validate(given, workdir: str, sid_hash: str) -> None:

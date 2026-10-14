@@ -2,10 +2,12 @@
 session from the Driver, read from its replies' progress marks and outcome block.
 """
 
+import contextlib
 import os
+from collections.abc import Iterator, Mapping
 
+from agent_pm.delegate.composer import Composer, RunConfig, trusted_dirs
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
-from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
 from agent_pm.delegate.config import (
@@ -13,10 +15,10 @@ from agent_pm.delegate.config import (
     harness_host,
     read_config,
 )
+from agent_pm.delegate.engine import plan as planning
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import module_roots, package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
-from agent_pm.delegate.engine.plan import configure, plan
 from agent_pm.delegate.engine.runner import execute
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -33,14 +35,55 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Driver as SessionDriver
+from agent_pm.session import Host
+from agent_pm.session import read_config as read_session_config
+from agent_pm.utils import LOCAL
 
 PYTHONPATH: str = os.pathsep.join(module_roots())
 
 
+def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDriver:
+    """The session's Driver from its config, [hosts] parsed once, keeping harness_host (`cfg`, else
+    read) once it names one of those hosts.
+    """
+    with _config("session"):
+        table = read_session_config(local=local)
+        hosts = Host.parse_hosts(table.get("hosts"))
+    with _config("delegate"):
+        harness = harness_host(read_config(local=local) if cfg is None else cfg, hosts.tables)
+    with _config("session"):
+        return SessionDriver.from_config(table, hosts=hosts, harness_host=harness)
+
+
+@contextlib.contextmanager
+def _config(name: str) -> Iterator[None]:
+    try:
+        yield
+    except (OSError, ValueError, SessionConfigError) as e:
+        raise ConfigError(f"{name} config: {e}") from None
+
+
+def _owned(driver: Driver | SessionDriver) -> Driver:
+    return AgentDriver(driver.session_cls) if isinstance(driver, SessionDriver) else driver
+
+
+def plan(
+    run: RunConfig,
+    spec: Spec,
+    *,
+    driver: Driver | SessionDriver,
+    composition: Composer | None = None,
+) -> Plan:
+    return planning.plan(run, spec, driver=_owned(driver), composition=composition)
+
+
 def run(run: RunConfig, spec: Spec, *, on_event=None, driver: Driver | SessionDriver) -> Result:
-    owner_driver = AgentDriver(driver.session_cls) if isinstance(driver, SessionDriver) else driver
-    return execute(plan(run, spec, driver=owner_driver), driver=owner_driver, on_event=on_event)
+    owner_driver = _owned(driver)
+    return execute(
+        planning.plan(run, spec, driver=owner_driver), driver=owner_driver, on_event=on_event
+    )
 
 
 __all__ = [

@@ -185,11 +185,7 @@ DELEGATE_SESSION_FORWARDING_ALLOWED = {
     (
         "delegate/src/agent_pm/delegate/__init__.py",
         "agent_pm.session.Driver",
-    ): "FR-13 public run() forwarding compatibility; 356-14 (FR-27) deletes",
-    (
-        "delegate/src/agent_pm/delegate/engine/plan.py",
-        "agent_pm.session.Driver",
-    ): "Legacy configure() compatibility; TASK-370 converts its callers",
+    ): "FR-13 public plan()/run() forwarding and configure() for the orchestrator's engine/config.py; 356-14 (FR-27) deletes",
 }
 
 
@@ -687,6 +683,20 @@ def delegate_session_forwarding(repo: str) -> list[str]:
         for rel, name in DELEGATE_SESSION_FORWARDING_ALLOWED.keys() - seen
     )
     return sorted(found)
+
+
+def delegate_engine_argparse(repo: str) -> list[str]:
+    """Commands parse their arguments in cli.py; engine modules take typed values."""
+    base = "delegate/src/agent_pm/delegate/engine/"
+    return sorted(
+        f"{base}{rel}:{node.lineno}: engine imports argparse (AC34)"
+        for rel, text in _files(os.path.join(repo, base), ".py")
+        for node in ast.walk(ast.parse(text, rel))
+        if isinstance(node, ast.Import)
+        and any(alias.name.split(".")[0] == "argparse" for alias in node.names)
+        or isinstance(node, ast.ImportFrom)
+        and (node.module or "").split(".")[0] == "argparse"
+    )
 
 
 def delegate_package_names(repo: str) -> list[str]:

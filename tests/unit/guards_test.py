@@ -664,22 +664,35 @@ class DelegateSessionForwarding(Sample):
         self.assertEqual(self.references(sample), [])
 
     def test_compatibility_exception_is_exact_and_expires(self):
-        key = self.BASE + "engine/plan.py", "agent_pm.session.Driver"
         public = self.BASE + "__init__.py", "agent_pm.session.Driver"
-        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {key, public})
+        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {public})
+        self.assertIn("configure()", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
+        self.assertIn("356-14", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
         sample = (
             "from agent_pm.session import Driver as SessionDriver\nSessionDriver.from_config({})\n"
         )
-        self.assertEqual(self.references(sample, "engine/plan.py"), [])
-        self.assertTrue(self.references(sample, "cli.py"))
+        self.assertEqual(self.references(sample, "__init__.py"), [])
+        for rel in ("engine/plan.py", "cli.py"):
+            with self.subTest(rel=rel):
+                self.assertTrue(self.references(sample, rel))
         found = guards.delegate_session_forwarding(self.tree({}))
         self.assertEqual(
-            found,
-            sorted(
-                f"{rel}: {name}: allowlisted but no forwarding reference (FR-34)"
-                for rel, name in (key, public)
-            ),
+            found, [f"{public[0]}: {public[1]}: allowlisted but no forwarding reference (FR-34)"]
         )
+
+
+class DelegateEngineArgparse(Sample):
+    def test_engine_modules_import_no_argparse(self):
+        base = "delegate/src/agent_pm/delegate/"
+        for sample in ("import argparse\n", "from argparse import Namespace\n"):
+            with self.subTest(sample=sample):
+                root = self.tree({base + "engine/runner.py": sample})
+                self.assertEqual(
+                    guards.delegate_engine_argparse(root),
+                    [f"{base}engine/runner.py:1: engine imports argparse (AC34)"],
+                )
+        root = self.tree({base + "cli.py": "import argparse\n", base + "engine/a.py": "x = 1\n"})
+        self.assertEqual(guards.delegate_engine_argparse(root), [])
 
 
 class DelegatePackageNames(Sample):

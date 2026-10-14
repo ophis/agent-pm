@@ -261,6 +261,15 @@ class Harness(Base):
         self.assertIn("delegate: harness state:", err.getvalue())
         self.assertEqual((self.calls, self.written()), ([], ""))
 
+    def test_anything_but_one_workdir_argument_exits_2_with_its_usage(self):
+        for argv in ([], [self.work, self.work]):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(argv=argv), redirect_stdout(out), redirect_stderr(err):
+                code = harness.main(argv, application=self.application)
+            self.assertEqual((code, out.getvalue()), (2, ""))
+            self.assertEqual(err.getvalue(), "usage: delegate harness WORKDIR\n")
+        self.assertEqual((self.calls, self.written()), ([], ""))
+
     def assert_refused(self, environment):
         with self.ran() as run:
             code, out, err = self.execute(environment)
