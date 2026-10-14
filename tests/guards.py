@@ -1677,11 +1677,25 @@ def package_climbs(repo: str) -> list[str]:
             depth = len(sub.split("/"))
             tree = ast.parse(text, rel)
             bound = _bindings(tree)
-            paths = {
-                name: depth + 1
-                for name, target in bound.items()
-                if target in ("agent_pm.utils.ROOT", "agent_pm.utils.paths.ROOT")
-            }
+            paths = dict.fromkeys(("agent_pm.utils.ROOT", "agent_pm.utils.paths.ROOT"), depth + 1)
+            paths.update({name: depth + 1 for name, target in bound.items() if target in paths})
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module in (
+                    "agent_pm.utils",
+                    "agent_pm.utils.paths",
+                ):
+                    if node.module.startswith(f"agent_pm.{package}."):
+                        continue
+                    for alias in node.names:
+                        name = "import_roots()" if alias.name == "import_roots" else alias.name
+                        used = any(
+                            isinstance(use, ast.Name)
+                            and isinstance(use.ctx, ast.Load)
+                            and use.id == (alias.asname or alias.name)
+                            for use in ast.walk(tree)
+                        )
+                        if alias.name in ("ROOT", "import_roots") and not used:
+                            found.append(f"{rel}:{node.lineno}: {name}: path escapes its package")
             for name, line in _package_paths(tree, bound, paths, depth, project):
                 key = rel, name
                 if key in PACKAGE_CLIMB_ALLOWED:
@@ -1721,10 +1735,14 @@ def _package_paths(node, bound, paths, depth, project, *, scope=""):
                 if climb > depth and _adds_climb(value, bound):
                     yield scope or target.id, node.lineno
         scope = scope or next((t.id for t in targets if isinstance(t, ast.Name)), "")
-    if isinstance(node, ast.Call):
-        name = _dotted(node.func, bound)
+    name = _dotted(node, bound)
+    if isinstance(node, ast.Name | ast.Attribute) and isinstance(node.ctx, ast.Load):
+        if name in ("agent_pm.utils.ROOT", "agent_pm.utils.paths.ROOT"):
+            yield scope or "ROOT", node.lineno
         if name in ("agent_pm.utils.import_roots", "agent_pm.utils.paths.import_roots"):
             yield "import_roots()", node.lineno
+    if isinstance(node, ast.Call):
+        name = _dotted(node.func, bound)
         if name == "os.listdir" and node.args:
             climb = _package_climb(node.args[0], bound, paths)
             if climb is not None and climb > depth:
@@ -1736,27 +1754,37 @@ def _package_paths(node, bound, paths, depth, project, *, scope=""):
             if isinstance(node, ast.Call)
             else isinstance(node.op, ast.Div)
         )
-        if is_join and any(
-            isinstance(part, ast.Constant)
-            and isinstance(part.value, str)
-            and set(part.value.split("/")) & (PROJECTS.keys() - {project})
-            for part in parts
+        base = (
+            node.args[0]
+            if isinstance(node, ast.Call) and node.args
+            else node.left
+            if isinstance(node, ast.BinOp)
+            else None
+        )
+        if (
+            is_join
+            and _package_climb(base, bound, paths) is not None
+            and any(
+                isinstance(part, ast.Constant)
+                and isinstance(part.value, str)
+                and set(part.value.split("/")) & (PROJECTS.keys() - {project})
+                for part in parts
+            )
         ):
             yield scope, node.lineno
     if _adds_climb(node, bound):
         climb = _package_climb(node, bound, paths)
         if climb is not None and climb > depth:
             yield scope, node.lineno
-    # Negative parents indices select from the filesystem root, rather than the package.
     if (
         isinstance(node, ast.Subscript)
         and isinstance(node.value, ast.Attribute)
         and node.value.attr == "parents"
-        and isinstance(node.slice, ast.UnaryOp)
-        and isinstance(node.slice.op, ast.USub)
-        and isinstance(node.slice.operand, ast.Constant)
-        and isinstance(node.slice.operand.value, int)
-        and node.slice.operand.value > 0
+        and not (
+            isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, int)
+            and node.slice.value >= 0
+        )
         and _package_climb(node.value.value, bound, paths) is not None
     ):
         yield scope, node.lineno
@@ -1784,6 +1812,8 @@ def _adds_climb(node, bound):
 
 
 def _package_climb(node, bound, paths):
+    if (name := _dotted(node, bound)) in ("agent_pm.utils.ROOT", "agent_pm.utils.paths.ROOT"):
+        return paths.get(name)
     if isinstance(node, ast.Name):
         return 0 if node.id == "__file__" else paths.get(node.id)
     if isinstance(node, ast.Attribute) and node.attr == "parent":

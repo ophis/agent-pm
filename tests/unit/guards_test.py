@@ -31,6 +31,8 @@ class PackageClimbs(Sample):
             "os.path.dirname(os.path.dirname(os.path.dirname(__file__)))",
             "Path(__file__).parents[2]",
             "Path(__file__).parents[-1]",
+            "Path(__file__).parents[index]",
+            "Path(__file__).parents[1:3]",
             "Path(__file__).parent.parent.parent",
             "Path(__file__).resolve().parent / '..' / '..'",
         ):
@@ -54,12 +56,12 @@ class PackageClimbs(Sample):
     def test_rejects_sibling_paths_and_listing_a_root_outside_the_package(self):
         self.assertTrue(
             self.violations(
-                "from pathlib import Path\np = Path('/repo') / 'session' / 'config.toml'\n"
+                "from pathlib import Path\np = Path(__file__).parent / 'session' / 'config.toml'\n"
             )
         )
         self.assertTrue(
             self.violations(
-                "import os\nx = os.path.join('/repo', 'linear-orchestrator/config.toml')\n"
+                "import os\nx = os.path.join(os.path.dirname(__file__), 'linear-orchestrator/config.toml')\n"
             )
         )
         self.assertTrue(
@@ -87,6 +89,51 @@ class PackageClimbs(Sample):
             {"delegate/tests/test.py": "from pathlib import Path\nx = Path(__file__).parents[9]\n"}
         )
         self.assertFalse(any("test.py" in v for v in guards.package_climbs(root)))
+
+    def test_repository_helpers_cannot_escape_by_import_or_attribute(self):
+        for text in (
+            "from agent_pm.utils import ROOT\n",
+            "from agent_pm.utils.paths import import_roots\n",
+            "from agent_pm.utils import ROOT\nfrom os.path import join\nx = join(ROOT, 'bin')\n",
+            "from agent_pm.utils.paths import ROOT as root\nfrom pathlib import Path\nx = Path(root) / 'bin'\n",
+            "from agent_pm import utils\nx = utils.ROOT\n",
+            "import agent_pm.utils.paths as paths\nx = paths.import_roots\n",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(self.violations(text))
+
+    def test_unrelated_bases_may_have_project_names(self):
+        self.assertEqual(
+            self.violations(
+                "import os\nfrom pathlib import Path\nx = os.path.join('/data', 'session')\ny = Path('/work') / 'delegate'\n"
+            ),
+            [],
+        )
+
+    def test_exemption_inventory_allows_only_ticket_removals(self):
+        expected = {
+            ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
+            ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
+            ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
+            (
+                "session/src/agent_pm/session/adapters/codex/tui/__init__.py",
+                "import_roots()",
+            ): "TASK-393",
+            ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
+            ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
+            (
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
+                "ROOT",
+            ): "TASK-372",
+            (
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
+                "import_roots()",
+            ): "TASK-372",
+            ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
+        }
+        self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
+        for key, owner in guards.PACKAGE_CLIMB_ALLOWED.items():
+            self.assertEqual(owner, expected[key])
 
     def test_every_exemption_must_still_have_an_escape(self):
         root = self.tree({})
