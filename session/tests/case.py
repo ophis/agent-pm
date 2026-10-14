@@ -17,8 +17,13 @@ from agent_pm.session.hosts.tmux import TmuxHost
 from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = project_roots(REPO)
-SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
+BUNDLE = os.environ.get("AGENT_PM_SESSION_BUNDLE")
+ROOTS = (BUNDLE,) if BUNDLE else project_roots(REPO)
+SRC = (
+    dict.fromkeys(("session", "utils"), BUNDLE)
+    if BUNDLE
+    else {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
+)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PLUGIN_BIN = os.path.join(REPO, "bin")
 PY = (sys.executable, "-P", "-S")

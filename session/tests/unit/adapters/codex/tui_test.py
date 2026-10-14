@@ -225,7 +225,7 @@ class TuiTest(Base):
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
         _, launch, data = self.launch(adapter=adapter)
         self.assertEqual(data["pythonpath"], "/a b;c")
-        self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(PACKAGE_ROOTS))
+        self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(dict.fromkeys(PACKAGE_ROOTS)))
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
