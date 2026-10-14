@@ -957,19 +957,24 @@ class CodexCommon:
         snapshot = limits.get("codex") if isinstance(limits, dict) else None
         return _usage(snapshot if isinstance(snapshot, dict) else result.get("rateLimits"))
 
-    def resume_command(self, state: SessionState) -> str:
+    def resume_launch(self, state: SessionState) -> Launch:
         snapshot = state.snapshot
+        if state.native_id is None:
+            raise ConfigError(f"missing Codex native ID for run ID {state.sid!r}")
         selection = self.selector(state.native_id, resume=True)
         _, literal = split_flags(snapshot.flags)
-        argv = [
+        argv = (
             "codex",
             *selection[:-1],
             *launch_flags(snapshot, interactive=True),
             *selection[-1:],
             *literal,
-        ]
-        env = self.environment(snapshot, interactive=True)
-        return resume_command(snapshot.cwd, env, argv)
+        )
+        return Launch(argv, env=self.environment(snapshot, interactive=True), cwd=snapshot.cwd)
+
+    def resume_command(self, state: SessionState) -> str:
+        launch = self.resume_launch(state)
+        return resume_command(launch.cwd, launch.env, launch.argv)
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
