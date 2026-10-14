@@ -6,6 +6,7 @@ from agent_pm.session.engine.types import Launch, Prepared, Reply, Spec, Stderr
 from agent_pm.session.modes.headless import HeadlessMode
 
 from session.tests.case import Case
+from session.tests.fakes.terminal import MemoryHost
 
 SID = "s1"
 NOTHING = (sys.executable, "-I", "-c", "")
@@ -60,6 +61,7 @@ class HeadlessCase(Case):
             adapter or StubAdapter(),
             registry=self.driver.registry,
             record=self.recorded.append,
+            host=MemoryHost(),
             display=display,
         )
         return self.mode.prepared

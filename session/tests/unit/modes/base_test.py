@@ -80,13 +80,7 @@ class RunningModeTest(Case):
             with self.subTest(mode=mode.__name__, name=name):
                 self.assertTrue(issubclass(mode, RunningMode))
                 self.assertFalse(inspect.isabstract(mode))
-                expected = params(getattr(RunningMode, name))
-                if mode is tui.TuiMode and name == "start":
-                    expected = [
-                        (key, kind, inspect.Parameter.empty if key == "host" else default)
-                        for key, kind, default in expected
-                    ]
-                self.assertEqual(params(getattr(mode, name)), expected)
+                self.assertEqual(params(getattr(mode, name)), params(getattr(RunningMode, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
     def test_start_is_the_class_entry_and_no_session_is_built_without_its_prepared(self):
