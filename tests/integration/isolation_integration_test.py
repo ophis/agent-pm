@@ -12,7 +12,7 @@ from pathlib import Path
 
 from session.tests import live_tmux
 from tests.case import REPO, Case
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, owned_directory
 
 SCRIPT = """import json, os, subprocess, sys
 from pathlib import Path
@@ -307,6 +307,7 @@ print(json.dumps({"code": code, "state": state.read_text()}))
         marker = root / "server-pids"
         (package / "server_test.py").write_text(
             "import json, os, subprocess, unittest\nfrom pathlib import Path\n"
+            "from utils.tests.sandbox import clean_env\n"
             "class Server(unittest.TestCase):\n"
             "    def test_private(self):\n"
             "        pids = {}\n"
@@ -314,9 +315,13 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             "            command = ['tmux'] + ([] if label == 'default' else ['-L', label])\n"
             "            subprocess.run([*command, '-f', os.devnull, 'new-session', '-d', 'sleep 300'], check=True)\n"
             "            pids[label] = subprocess.check_output([*command, 'display-message', '-p', '#{pid}'], text=True).strip()\n"
+            "        env = clean_env()\n"
+            "        subprocess.run(['tmux', '-f', os.devnull, 'new-session', '-d', 'sleep 300'], env=env, check=True)\n"
+            "        pids['clean_env'] = subprocess.check_output(['tmux', 'display-message', '-p', '#{pid}'], env=env, text=True).strip()\n"
             f"        Path({str(marker)!r}).write_text(json.dumps(pids))\n"
         )
         env = clean_env(None, REPO, str(Path(REPO, ".github")))
+        env["TMPDIR"] = owned_directory(self, os.path.realpath("/tmp"), prefix="supervisor-")
         env.pop("RUN_TESTS_STATE", None)
         proc = subprocess.run(
             [
@@ -335,7 +340,7 @@ print(json.dumps({"code": code, "state": state.read_text()}))
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         pids = json.loads(marker.read_text())
-        self.assertEqual(set(pids), {"default", "named", "other"})
+        self.assertEqual(set(pids), {"default", "named", "other", "clean_env"})
         for pid in pids.values():
             deadline = time.monotonic() + 3
             while True:
