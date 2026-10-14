@@ -46,6 +46,7 @@ TYPES = {
             "Liveness",
             "Reply",
             "TurnEnd",
+            "TurnFailed",
             "TuiSettings",
             "Word",
             "Stderr",

@@ -27,6 +27,7 @@ from agent_pm.session import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -54,7 +55,7 @@ NAMES = (
     "Launch",
 )
 
-EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd}
+EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
 
 ALLOWED_CONCRETE = {
     Driver,
