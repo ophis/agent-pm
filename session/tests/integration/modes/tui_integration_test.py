@@ -27,11 +27,11 @@ class CloseTest(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root, host = os.path.join(self.agent_pm, "tui"), ScreenHost()
-        tui.TuiMode.start(
+        tui.TuiRuntime.start(
             Spec(
                 workdir=tmp.name,
                 name=NAME,
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 events=os.path.join(self.home, "events"),
             ),
@@ -55,7 +55,7 @@ class CloseTest(Case):
             return remove(path, *args, **kwargs)
 
         with mock.patch.object(os, "rmdir", remove_after_hook):
-            tui.TuiMode.close(NAME, host=host)
+            tui.TuiRuntime.close(NAME, host=host)
         self.assertEqual(len(hooks), 1)
         self.assertIn(b"session.json", hooks[0].stderr)
         self.assertFalse(os.path.lexists(os.path.join(root, NAME)))
@@ -90,11 +90,11 @@ class PollCostTest(Live):
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:
             json.dump([{"read": True}], f)
-        mode = tui.TuiMode.start(
+        mode = tui.TuiRuntime.start(
             Spec(
                 workdir=self.workdir,
                 name=NAME,
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 prompt="hello",
                 events=self.events,
@@ -104,7 +104,7 @@ class PollCostTest(Live):
             record=lambda _info: None,
             host=host,
         )
-        self.addCleanup(tui.TuiMode.close, NAME, host=host)
+        self.addCleanup(tui.TuiRuntime.close, NAME, host=host)
         while mode.poll(0)[0]:
             pass
         commands.clear()

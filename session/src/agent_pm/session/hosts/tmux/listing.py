@@ -14,7 +14,7 @@ from agent_pm.session.hosts.tmux.transport import (
 )
 from agent_pm.session.hosts.tmux.types import TuiError
 
-LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}"
+LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}"
 
 
 SHOWN = "#{client_activity}\t#{client_tty}\t#{session_name}"
@@ -55,14 +55,14 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
             return None
         hosts = {tty: session for dead, tty, session in panes if dead != "1"}
     out = []
-    for name, dead, sid, runtime, state, pane, parent, display in rows:
+    for name, dead, sid, client, state, pane, parent, display in rows:
         tty = recent.get(name)
         host = "" if tty is None else hosts.get(tty, "")
         out.append(
             {
                 "name": name,
                 "sid": _printable(sid),
-                "runtime": _printable(runtime),
+                "client": _printable(client),
                 "state": _printable(state),
                 "pane": pane if PANE.fullmatch(pane) or ITERM_ID.fullmatch(pane) else None,
                 "opener": parent if OPENER.fullmatch(parent) else None,

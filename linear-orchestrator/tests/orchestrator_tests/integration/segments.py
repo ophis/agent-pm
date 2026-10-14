@@ -43,9 +43,9 @@ RUN_STEPS = {
     "none": "run: no outcome",
 }
 
-RUNTIME = "claude"
+CLIENT = "claude"
 
-RUN_KEYS = ("kind", "issue", "sid", "role", "runtime")
+RUN_KEYS = ("kind", "issue", "sid", "role", "client")
 
 SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit) · ")
 
@@ -423,18 +423,18 @@ class Segment(TmuxFlow):
             line, call, events = self.launch(ident, role, script, resumed=False)
             sid = line["sid"]
             self.assertEqual(
-                (line["kind"], line["issue"], line["role"], line["runtime"]),
-                ("start", ident, role, RUNTIME),
+                (line["kind"], line["issue"], line["role"], line["client"]),
+                ("start", ident, role, CLIENT),
             )
             self.assertNotIn(sid, self.sids())
             self.assertEqual(option(call, "--session-id"), sid)
             mine = [e for e in events if e.get("issue") == ident]
             self.assertEqual([e for e in mine if e["kind"] == "transient"], [])
             self.assertEqual(
-                [(e["role"], e.get("task"), e["runtime"]) for e in mine if e["kind"] == "claim"],
-                [(role, task, RUNTIME)],
+                [(e["role"], e.get("task"), e["client"]) for e in mine if e["kind"] == "claim"],
+                [(role, task, CLIENT)],
             )
-            self.expect_runs(("start", ident, sid, role, RUNTIME))
+            self.expect_runs(("start", ident, sid, role, CLIENT))
             self.expect(
                 ident,
                 state="in_progress",
@@ -447,11 +447,9 @@ class Segment(TmuxFlow):
     def resume(self, ident, role, sid, script):
         with self.step("router: resume"):
             line, call, _ = self.launch(ident, role, script, resumed=True)
-            self.assertEqual(
-                tuple(line[k] for k in RUN_KEYS), ("resume", ident, sid, role, RUNTIME)
-            )
+            self.assertEqual(tuple(line[k] for k in RUN_KEYS), ("resume", ident, sid, role, CLIENT))
             self.assertEqual((option(call, "--resume"), option(call, "--session-id")), (sid, None))
-            self.expect_runs(("resume", ident, sid, role, RUNTIME))
+            self.expect_runs(("resume", ident, sid, role, CLIENT))
             self.expect_session(ident, sid, "running")
         return sid
 

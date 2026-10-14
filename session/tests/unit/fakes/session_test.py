@@ -16,7 +16,7 @@ from session.tests.fakes.session import FakeSession
 class Scripted(Case):
     def spec(self, **fields) -> Spec:
         return Spec(
-            workdir=self.home, runtime="fake", mode=Mode.HEADLESS, prompt="the prompt", **fields
+            workdir=self.home, client="fake", mode=Mode.HEADLESS, prompt="the prompt", **fields
         )
 
     def start(self, cls, name=None, display=None, idle_timeout=None, **fields):
@@ -56,16 +56,16 @@ class Scripted(Case):
         cls = FakeSession.scripted()
         session = self.start(cls, sid="abc12345-6789", resume=True, display="d", idle_timeout=2)
         self.assertEqual((session.sid, session.name), ("abc12345-6789", "fake-abc12345"))
-        self.assertEqual((session.runtime, session.mode), ("fake", Mode.HEADLESS))
+        self.assertEqual((session.client, session.mode), ("fake", Mode.HEADLESS))
         self.assertEqual(cls.started[0]["spec"].prompt, "the prompt")
         self.assertEqual((cls.started[0]["display"], cls.started[0]["idle_timeout"]), ("d", 2))
         self.assertEqual(session.info().cwd, self.home)
         session.send("more")
         self.assertEqual(session.sent, ["more"])
 
-    def test_a_spec_without_runtime_or_mode_is_refused(self):
-        for field in ("runtime", "mode"):
-            spec = Spec(workdir=self.home, **{"runtime": "fake", "mode": Mode.TUI, field: None})
+    def test_a_spec_without_client_or_mode_is_refused(self):
+        for field in ("client", "mode"):
+            spec = Spec(workdir=self.home, **{"client": "fake", "mode": Mode.TUI, field: None})
             with self.subTest(field=field), self.assertRaises(ConfigError) as caught:
                 FakeSession.scripted().start(spec)
             self.assertEqual(str(caught.exception), f"spec.{field}: required to start")

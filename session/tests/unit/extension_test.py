@@ -10,7 +10,7 @@ from agent_pm.session import extension
 from agent_pm.session.adapters import base as adapters_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
-from agent_pm.session.modes.base import RunningMode
+from agent_pm.session.modes.base import Runtime
 
 from session.tests.case import Case
 
@@ -120,7 +120,7 @@ class ExtensionTest(Case):
                 with self.subTest(name=name):
                     self.assertIn(name, ABCS)
                     self.assertTrue(inspect.isabstract(value) or value is extension.Adapter)
-        self.assertNotIn(RunningMode, {getattr(extension, n) for n in extension.__all__})
+        self.assertNotIn(Runtime, {getattr(extension, n) for n in extension.__all__})
 
     def test_session_users_keep_their_own_surface(self):
         for name in (

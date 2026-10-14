@@ -1,9 +1,9 @@
-"""The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`;
+"""The Adapter interface: a client factory from [adapters.<name>] minus `implementation`;
 headless(), tui() and in_process() each give a fresh mode object, None if unsupported. Each mode
 reads what to run from the Spec alone. commit() persists a validated launch before starting;
 failed starts keep diagnostics. Headless launch(spec) (it may keep state for events) and Tui
 launch(spec, hook) build a Launch whose env and resume carry Access.env and Spec.env (the Adapter is
-their only owner), and turn the runtime's output into SessionEvents, Stderr and ClientBound
+their only owner), and turn the client's output into SessionEvents, Stderr and ClientBound
 (JsonHeadless: parse(record) per JSON line). InProcess check(spec) refuses with ConfigError;
 run(spec) runs the session on a thread of the caller's process, stopped at its next yield, changing
 no global state (cwd, environ, signals): it applies spec.access.cwd, not its env. Starts no process.
@@ -45,7 +45,7 @@ class Adapter:
     valued_flags: tuple[str, ...] = ()
     selection_uuid: bool = False
     keys: frozenset[str] = frozenset()
-    runtime_note: str = ""
+    client_note: str = ""
     session_env: ClassVar[str] = ""
     identity_env: ClassVar[tuple[str, ...]] = ()
     child_defaults: ClassVar[Mapping[str, str]] = MappingProxyType({})
@@ -144,7 +144,7 @@ class Tui(ABC):
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
-    def observe(self) -> list[SessionEvent]:  # its runtime's own record, since the last call
+    def observe(self) -> list[SessionEvent]:  # its client's own record, since the last call
         return []
 
     def replay(self, records: Iterable[tuple[str, dict]]) -> list[SessionEvent | ClientBound]:
@@ -161,7 +161,7 @@ class Tui(ABC):
         return " ".join(dialog.split()) in " ".join(screen.split())
 
     def limit(self, screen: str) -> LimitHit | None:
-        """The runtime's usage-limit message on the visible terminal `screen`; None: none shown."""
+        """The client's usage-limit message on the visible terminal `screen`; None: none shown."""
         return None
 
     def submit(self, text: str) -> tuple[Paste | Key, ...]:

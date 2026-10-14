@@ -749,7 +749,7 @@ for _ in range(2):
         and a codex adapter_hook workdir and sid.
         """
         unread = {
-            "runtime": ("Fake", None),
+            "client": ("Fake", None),
             "cwd": ("", "rel", None),
             "transcript": ("rel", None),
             "project": ("true", None),

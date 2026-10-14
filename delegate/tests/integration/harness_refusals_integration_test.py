@@ -43,7 +43,7 @@ class MissingTmuxSession(HarnessSession):
 
 class Refusals(HarnessCase):
     def construct(self, *, session_cls=HarnessSession, **placement):
-        spec = Spec("input", self.work, task="echo", cwd=self.work, runtime="fake")
+        spec = Spec("input", self.work, task="echo", cwd=self.work, client="fake")
         return HarnessDelegate("dummy-tester", spec, session_cls=session_cls, **placement)
 
     def test_host_display_and_harness_configuration_refusals_are_delegate_errors(self):
@@ -57,7 +57,7 @@ class Refusals(HarnessCase):
             self.make()
         self.assertFalse(os.path.exists(self.work))
 
-    def test_runtime_preflight_driver_failure_is_a_constructor_refusal_without_metadata(self):
+    def test_client_preflight_driver_failure_is_a_constructor_refusal_without_metadata(self):
         with self.assertRaisesRegex(ConfigError, "tmux not found"):
             self.construct(session_cls=MissingTmuxSession)
         self.assertFalse(os.path.exists(self.work))

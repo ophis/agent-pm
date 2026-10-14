@@ -15,7 +15,7 @@ Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. A `ctmux <
 | Command | Use |
 |---|---|
 | `agent-pm-crew hold --manager NAME -- <manager argv>` | Start the commander under a lifetime lease. Keep the wrapper running until the manager command exits. The user's forced takeover fences a hung holder's authority while its command may keep running; see `hold --help`. |
-| `agent-pm-crew run NAME -- <argv>` | Launch the chosen command and record its returned Record. Configure its layer's options; runtime policy: `README.md` › Runtime policy. |
+| `agent-pm-crew run NAME -- <argv>` | Launch the chosen command and record its returned Record. Configure its layer's options; client policy: `README.md` › Client policy. |
 | `agent-pm-crew attach` | Reconcile entries, read events and show available work. It checks the holder lease. |
 | `agent-pm-crew resume NAME` | Recover one `gone` entry through its recorded resume command. |
 | `agent-pm-crew release` | Hand over: stop listening and release authority. The successor starts a new holder, then attaches. |
@@ -56,7 +56,7 @@ Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. A `ctmux <
 - Once a worker's work is done and nothing in its main view awaits the user's review or answer (including an open PR the user hasn't reviewed), the user's standing permission authorizes stopping its Crew entry (Crew commands). Close a session through Crew or tmux, never an iTerm2 pane through AppleScript.
 - Close a role run on an issue as soon as the issue reaches In Review, even with a PR or report awaiting the user, unless the user said to keep it; resume it when the user asks.
 - Close your own live-test sessions right after the test.
-- An issue for Codex: write its role's prompt with the issue's input as the router renders it (`agent-pm-delegate prompt`), then start it as a Codex worker in the issue's work dir (`agent-pm-session start --runtime codex`). When the user asks, run it without sandbox or approvals (`--sandbox danger-full-access --ask-for-approval never`): you may not approve its prompts. It writes nothing back: move the issue and relay its PR yourself.
+- An issue for Codex: write its role's prompt with the issue's input as the router renders it (`agent-pm-delegate prompt`), then start it as a Codex worker in the issue's work dir (`agent-pm-session start --client codex`). When the user asks, run it without sandbox or approvals (`--sandbox danger-full-access --ask-for-approval never`): you may not approve its prompts. It writes nothing back: move the issue and relay its PR yourself.
 - Once a worker's or ad-hoc role run's work is completely done (PR merged or abandoned), clean its work dir: `git worktree remove` its worktrees, then clean the remaining `src/` and temp files per Safety; keep the logs (`run.jsonl`, transcripts). Board runs' work dirs are pruned (`README.md` › Using the board › Finish).
 - Pull the default branch only while `tmux ls` shows no driver session: legacy `agent-pm-<role>-<ID>` or `<role>-<ID>-<sid8>-drive`; a scheduled router may have started one.
 

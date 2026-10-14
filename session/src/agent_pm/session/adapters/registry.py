@@ -46,7 +46,7 @@ class Registry:
 
     def _table(self, name: str) -> Mapping:
         if not isinstance(name, str) or not NAME.match(name):
-            raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
+            raise ConfigError(f"unsafe client name {name!r}: want a lowercase identifier")
         table = self.settings.adapters.get(name)
         if table is None:
             raise ConfigError(f"no [adapters.{name}] table in the configured adapters")

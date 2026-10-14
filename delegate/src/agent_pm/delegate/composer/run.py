@@ -1,5 +1,5 @@
 """A role's run config (resolve: the core config, then the caller's overlays), one run's params and
-its runtime-neutral access intent (access), whose env is the session env its commands and gate need.
+its client-neutral access intent (access), whose env is the session env its commands and gate need.
 An overlay can widen read, write, commands and gate, so a caller passes only operator-controlled
 config as one.
 """
@@ -30,7 +30,7 @@ RUN_KEYS = frozenset(
     {
         "tier",
         "effort",
-        "runtime",
+        "client",
         "read",
         "write",
         "commands",
@@ -163,6 +163,9 @@ def access(
 
 
 def _check(cfg: Mapping) -> None:
+    for key in cfg:
+        if hint := utils.renamed_key(key):
+            raise ConfigError(f"unknown key {key!r}{hint}")
     _check_output(cfg, "output", str)
     for r, table in cfg.get("roles", {}).items():
         _check_role(table, r, "", str)
@@ -206,7 +209,7 @@ def _check_output(table: Mapping, where: str, shown: Callable[[str], str]) -> No
 
 def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed, key=str):
-        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}{utils.renamed_key(extra[0])}")
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:

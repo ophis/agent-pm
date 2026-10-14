@@ -172,7 +172,7 @@ class PruneScenario(Case):
             issue=ident,
             sid=sid,
             role=role,
-            runtime="fake",
+            client="fake",
         )
 
     def close(self, workdir):

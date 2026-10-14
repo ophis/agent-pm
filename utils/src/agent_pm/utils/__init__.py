@@ -7,6 +7,7 @@ from agent_pm.utils.config_file import (
     freeze,
     read_project,
     read_resources,
+    renamed_key,
     thaw,
     unset,
 )
@@ -135,6 +136,7 @@ __all__ = [
     "read_resources",
     "real_dirs",
     "redact",
+    "renamed_key",
     "repo_slug",
     "resolve",
     "resume_command",

@@ -34,15 +34,15 @@ class CustomTeam(Base):
 
     def read_unadded(self, role, task, reads, **kw):
         """
-        `role` planned for the fake and the codex runtime: no added dir, `reads` its read dirs.
+        `role` planned for the fake and the codex client: no added dir, `reads` its read dirs.
         """
         home = os.path.join(self.tmp, "codex")
-        for runtime in ("fake", "codex"):
+        for client in ("fake", "codex"):
             with (
-                self.subTest(role=role, runtime=runtime),
+                self.subTest(role=role, client=client),
                 mock.patch.dict(os.environ, {"CODEX_HOME": home}),
             ):
-                got, _ = self.planned(role, task, team=self.found, runtime=runtime, **kw)
+                got, _ = self.planned(role, task, team=self.found, client=client, **kw)
                 self.assertEqual((got.session.access.dirs, got.session.access.reads), ((), reads))
         return got
 
@@ -83,7 +83,7 @@ class CustomTeam(Base):
                 self.local(local)
                 with mock.patch.dict(os.environ, {"CODEX_HOME": home}):
                     self.assertEqual(
-                        self.refused("poet", "verse", team=self.found, runtime="codex"),
+                        self.refused("poet", "verse", team=self.found, client="codex"),
                         f"team_dirs: {self.team} overlaps a dir codex can write {what}: the "
                         "agent run can write there",
                     )

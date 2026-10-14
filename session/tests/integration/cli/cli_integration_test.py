@@ -1,8 +1,8 @@
 """bin/agent-pm-session as installed, run from an unrelated cwd with no PYTHONPATH (Q01): --help's
 subcommands and each configured Host's display help; usage errors exit 2 on stderr alone and start
-nothing; no default runtime (D1); the runtime sees the wrapper's bin dir first on PATH and gets
+nothing; no default client (D1); the client sees the wrapper's bin dir first on PATH and gets
 arguments with spaces verbatim. Its config (Q02): a local overlay is honoured; a bad config or an
-unknown runtime exits 2 with the reason on stderr before anything starts.
+unknown client exits 2 with the reason on stderr before anything starts.
 """
 
 import os
@@ -64,7 +64,7 @@ class SessionCliCase(CliCase):
 
     def start_w1(self):
         return self.session(
-            "start", "w1", "--runtime", "claude", "--cwd", self.cwd, **self.scene("w1")
+            "start", "w1", "--client", "claude", "--cwd", self.cwd, **self.scene("w1")
         )
 
 
@@ -110,7 +110,7 @@ class UsageTest(SessionCliCase):
             ),
             (
                 ("start",),
-                f"{PROG} start: error: the following arguments are required: name, --runtime",
+                f"{PROG} start: error: the following arguments are required: name, --client",
             ),
             (("read",), f"{PROG} read: error: the following arguments are required: name"),
             (
@@ -131,14 +131,14 @@ class UsageTest(SessionCliCase):
                 result = self.session("ls", *argv)
                 self.assert_refused(result, f"{PROG}: ls: --descendants needs --here --records\n")
 
-    def test_start_has_no_default_runtime_d1(self):
+    def test_start_has_no_default_client_d1(self):
         result = self.session("start", "w1", "--cwd", self.cwd, **self.scene("w1"))
         self.assert_usage_error(
-            result, f"{PROG} start: error: the following arguments are required: --runtime"
+            result, f"{PROG} start: error: the following arguments are required: --client"
         )
 
 
-class RuntimeEnvTest(SessionCliCase):
+class ClientEnvTest(SessionCliCase):
     def path_logging_claude(self) -> tuple[str, str]:
         """A bin dir whose `claude` appends its PATH to a log, then runs the fake; (dir, log)."""
         bin_dir = os.path.join(self.root, "path-bin")
@@ -153,7 +153,7 @@ class RuntimeEnvTest(SessionCliCase):
         os.chmod(claude, 0o755)
         return bin_dir, log
 
-    def test_the_runtime_gets_the_wrappers_bin_first_on_path_and_spaced_arguments_verbatim(self):
+    def test_the_client_gets_the_wrappers_bin_first_on_path_and_spaced_arguments_verbatim(self):
         bin_dir, log = self.path_logging_claude()
         caller = os.pathsep.join((bin_dir, self.env()["PATH"]))
         self.assertNotIn(os.path.join(REPO, "bin"), caller.split(os.pathsep))
@@ -202,8 +202,8 @@ class ConfigTest(SessionCliCase):
         self.assertRegex(result.stderr, rf"\A{PROG}: config: \S[^\n]*\(at line 1, column \d+\)\n\Z")
         self.assert_nothing_started()
 
-    def test_an_unknown_runtime_exits_2_before_anything_starts(self):
-        result = self.session("start", "w1", "--runtime", "nope", "--cwd", self.cwd)
+    def test_an_unknown_client_exits_2_before_anything_starts(self):
+        result = self.session("start", "w1", "--client", "nope", "--cwd", self.cwd)
         self.assert_refused(
             result, f"{PROG}: no [adapters.nope] table in the configured adapters\n"
         )

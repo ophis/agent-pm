@@ -1,5 +1,5 @@
-"""modes/base.py: RunningMode, the ABC each Mode's running session implements (a class start
-returning it started, then its session calls), and the start helpers its Modes share: child_env
+"""modes/base.py: Runtime, the ABC each Mode's running session implements (a class start
+returning it started, then its session calls), and the start helpers the Runtimes share: child_env
 and identity_drop.
 """
 
@@ -14,16 +14,16 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.modes.base import RunningMode, child_env, identity_drop
+from agent_pm.session.modes.base import Runtime, child_env, identity_drop
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost
 
 MEMBERS = ["poll", "returncode", "screen", "send", "start", "state", "stop"]
 KINDS = {
-    headless.HeadlessMode: Mode.HEADLESS,
-    in_process.InProcessMode: Mode.IN_PROCESS,
-    tui.TuiMode: Mode.TUI,
+    headless.HeadlessRuntime: Mode.HEADLESS,
+    in_process.InProcessRuntime: Mode.IN_PROCESS,
+    tui.TuiRuntime: Mode.TUI,
 }
 IDENTITIES = {"AGENT_PM_SID", "INNER_SESSION", "INNER_ID", "OTHER_SESSION", "OTHER_ID"}
 
@@ -37,7 +37,7 @@ class NoModeAdapter(Adapter):
 
 
 class InnerAdapter(NoModeAdapter):
-    """A runtime whose sessions set INNER_SESSION in their children."""
+    """A client whose sessions set INNER_SESSION in their children."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -51,7 +51,7 @@ class OtherAdapter(NoModeAdapter):
 
 
 def registry(**adapters) -> Registry:
-    """A Registry of `adapters` (runtime → Adapter class, None: one failing to load)."""
+    """A Registry of `adapters` (client → Adapter class, None: one failing to load)."""
 
     def load(path, _base):
         found = classes[path]
@@ -70,21 +70,21 @@ def registry(**adapters) -> Registry:
     )
 
 
-class RunningModeTest(Case):
+class RuntimeTest(Case):
     def test_its_abstract_members_are_one_start_and_the_six_session_calls(self):
-        self.assertTrue(inspect.isabstract(RunningMode))
-        self.assertEqual(sorted(RunningMode.__abstractmethods__), MEMBERS)
+        self.assertTrue(inspect.isabstract(Runtime))
+        self.assertEqual(sorted(Runtime.__abstractmethods__), MEMBERS)
 
     def test_each_mode_subclasses_it_with_its_parameters_and_its_kind(self):
         for mode, name in itertools.product(KINDS, MEMBERS):
             with self.subTest(mode=mode.__name__, name=name):
-                self.assertTrue(issubclass(mode, RunningMode))
+                self.assertTrue(issubclass(mode, Runtime))
                 self.assertFalse(inspect.isabstract(mode))
-                self.assertEqual(params(getattr(mode, name)), params(getattr(RunningMode, name)))
+                self.assertEqual(params(getattr(mode, name)), params(getattr(Runtime, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
     def test_start_is_the_class_entry_and_no_session_is_built_without_its_prepared(self):
-        for mode in (RunningMode, *KINDS):
+        for mode in (Runtime, *KINDS):
             with self.subTest(mode=mode.__name__):
                 self.assertIsInstance(inspect.getattr_static(mode, "start"), classmethod)
                 self.assertIsInstance(inspect.getattr_static(mode, "prepared"), property)
@@ -94,7 +94,7 @@ class RunningModeTest(Case):
                 mode()
 
     def test_a_failed_start_returns_no_session_and_records_nothing(self):
-        spec = Spec(workdir="/w", runtime="none", sid="s1")
+        spec = Spec(workdir="/w", client="none", sid="s1")
         for mode, kind in KINDS.items():
             recorded = []
             with self.subTest(mode=kind.value), self.assertRaises(ConfigError) as caught:
@@ -106,7 +106,7 @@ class RunningModeTest(Case):
                     host=MemoryHost(),
                 )
             self.assertEqual(
-                str(caught.exception), f"runtime 'none' does not support {kind.value} mode"
+                str(caught.exception), f"client 'none' does not support {kind.value} mode"
             )
             self.assertEqual(recorded, [])
 
@@ -144,12 +144,12 @@ class IdentityDropTest(ChildEnvTest):
         )
         self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID"}))
 
-    def test_a_callers_start_token_never_reaches_a_runtime(self):
+    def test_a_callers_start_token_never_reaches_a_client(self):
         self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
         env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
         self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
 
-    def test_a_child_default_only_inside_its_runtime_and_at_its_value(self):
+    def test_a_child_default_only_inside_its_client_and_at_its_value(self):
         both = registry(inner=InnerAdapter, other=OtherAdapter)
         for environ, defaults in (
             ({"PAGER": "cat", "NO_COLOR": "1", "OTHER_MODE": "on"}, set()),

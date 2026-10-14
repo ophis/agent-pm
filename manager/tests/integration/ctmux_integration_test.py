@@ -186,7 +186,7 @@ class FakeTmux(Case):
         self.assertEqual(process.returncode, 5)
         self.assertEqual(calls[-1][1], process.pid)
 
-    def test_the_script_names_no_runtime(self):
+    def test_the_script_names_no_client(self):
         with open(CTMUX, "rb") as f:
             text = f.read().lower()
         self.assertNotIn(b"claude", text)

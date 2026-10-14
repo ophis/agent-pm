@@ -1,4 +1,4 @@
-"""Shared CLI fixtures for unit and integration coverage over the configured fake runtime."""
+"""Shared CLI fixtures for unit and integration coverage over the configured fake client."""
 
 import io
 import json
@@ -23,7 +23,7 @@ TUI = "dummy-tester-11111111"
 HARNESS = f"{TUI}-drive"
 
 KEYS = {
-    "runtime",
+    "client",
     "mode",
     "sid",
     "resume",
@@ -62,7 +62,7 @@ class RefusingRun(fake_adapter.FakeInProcess):
 
 
 class Base(Case):
-    """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work`
+    """A HOME of the test's own, the fake client registered, the cwd a temp dir, workdir `work`
     (not made), TMUX unset.
     """
 
@@ -120,13 +120,13 @@ class Base(Case):
     def delegate_cls(self) -> type[HarnessDelegate]:
         """HarnessDelegate on this test's driver; its run returns self.ran when set. Its Session
         class is configured apart from the shared one and loads no class by name (the driver holds
-        the fake runtime).
+        the fake client).
         """
         case, driver = self, self.driver
         session_cls = type(
             "CliSession",
             (driver.session_cls,),
-            {"class_roots": classmethod(lambda _cls, _runtime: ())},
+            {"class_roots": classmethod(lambda _cls, _client: ())},
         )
 
         class Driven(HarnessDelegate):
@@ -164,7 +164,7 @@ class Base(Case):
         role="dummy-tester",
         task="echo",
         input="Hello.",
-        runtime="fake",
+        client="fake",
         stdin="",
         out=None,
     ):
@@ -179,7 +179,7 @@ class Base(Case):
             out or self.out,
             "--workdir",
             self.work,
-            *(("--runtime", runtime) if runtime else ()),
+            *(("--client", client) if client else ()),
             *extra,
             stdin=stdin,
         )

@@ -25,7 +25,7 @@ class SessionClass(FakeSession):
         )
 
     @classmethod
-    def class_roots(cls, runtime):
+    def class_roots(cls, client):
         return ()
 
     @classmethod

@@ -260,7 +260,7 @@ class CommonTest(Base):
         self.assertNotIn("/a b;c", resume)
         self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
 
-    def test_omitted_mapping_preserves_runtime_defaults(self):
+    def test_omitted_mapping_preserves_client_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
         launch = committed_headless(self.adapter, dataclasses.replace(spec, prompt="hi"))
         self.assertNotIn("-m", launch.argv)

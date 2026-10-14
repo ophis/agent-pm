@@ -58,7 +58,7 @@ def main(argv=None):
             if gate.blocked(
                 entry.role,
                 view.issue,
-                key=(view.delegate_kind, runs.runtime_of(entries, view.sid)),
+                key=(view.delegate_kind, runs.client_of(entries, view.sid)),
             ):
                 raise RuntimeError("resume blocked by usage gate")
         return view.resume().to_line()

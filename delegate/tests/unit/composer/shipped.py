@@ -16,7 +16,7 @@ TASKS = os.path.join(composer.TEAM, "tasks")
 
 SCHEMA_SHA256 = "748847763f62d05e4412f1627a029ad88e42f004162361561d7556ec3877c366"
 
-RUNTIME = re.compile(r"claude|codex", re.I)
+CLIENT = re.compile(r"claude|codex", re.I)
 
 FIXTURE = """\
 language = "Chinese"

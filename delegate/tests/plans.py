@@ -39,7 +39,7 @@ def write_team(top, files=TEAM_FILES):
 
 class Base(Case):
     """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm)
-    and fresh session settings: the core config's adapters and the fake runtime.
+    and fresh session settings: the core config's adapters and the fake client.
     """
 
     def setUp(self):
@@ -55,7 +55,7 @@ class Base(Case):
 
     def local(self, text):
         """
-        The local config `text`, the session configured with its adapters and the fake runtime.
+        The local config `text`, the session configured with its adapters and the fake client.
         """
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
@@ -71,10 +71,10 @@ class Base(Case):
         self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
     ):
         """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.",
-        runtime "fake", headless, out self.out, workdir self.work, the cwd the workdir, unless `kw`
+        client "fake", headless, out self.out, workdir self.work, the cwd the workdir, unless `kw`
         says otherwise.
         """
-        kw = {"runtime": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
+        kw = {"client": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
         workdir = kw.pop("workdir", self.work)
         kw.setdefault("cwd", workdir)
         run = run or replace(composer.resolve(role, team=team), **(keys or {}))

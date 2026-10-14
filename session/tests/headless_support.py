@@ -3,7 +3,7 @@ import tempfile
 
 from agent_pm.session.adapters.base import Adapter, JsonHeadless
 from agent_pm.session.engine.types import Launch, Prepared, Reply, Spec, Stderr
-from agent_pm.session.modes.headless import HeadlessMode
+from agent_pm.session.modes.headless import HeadlessRuntime
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost
@@ -14,7 +14,7 @@ NOTHING = (sys.executable, "-I", "-c", "")
 
 class StubAdapter(Adapter):
     forbidden_selection = ("--resume",)
-    runtime_note = "STUB NOTE"
+    client_note = "STUB NOTE"
 
     def __init__(self, launched=None, run=None):
         super().__init__({})
@@ -55,8 +55,8 @@ class HeadlessCase(Case):
         StubRun.specs = []
 
     def start(self, adapter=None, display=None, **fields) -> Prepared:
-        spec = Spec(**{"workdir": self.dir, "sid": SID, "runtime": "stub", **fields})
-        self.mode = HeadlessMode.start(
+        spec = Spec(**{"workdir": self.dir, "sid": SID, "client": "stub", **fields})
+        self.mode = HeadlessRuntime.start(
             spec,
             adapter or StubAdapter(),
             registry=self.driver.registry,

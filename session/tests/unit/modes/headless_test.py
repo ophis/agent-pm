@@ -129,7 +129,7 @@ class Start(Base):
         self.assertEqual((kwargs["stdin"], kwargs["process_group"]), (DEVNULL, 0))
         (spec,) = StubRun.specs
         self.assertEqual(prepared, Prepared(spec, info, NOTHING, kwargs["env"]))
-        self.assertEqual((spec.prompt, spec.sid, spec.runtime), ("hi", SID, "stub"))
+        self.assertEqual((spec.prompt, spec.sid, spec.client), ("hi", SID, "stub"))
 
     def test_its_cwd_is_the_launch_cwd_else_the_access_cwd_else_the_workdir(self):
         given, access = (os.path.join(self.dir, d) for d in ("given", "access"))
@@ -146,21 +146,21 @@ class Start(Base):
                     (prepared.info.cwd, calls[0][1]["cwd"], prepared.env["PWD"]), (want,) * 3
                 )
 
-    def test_the_runtime_note_follows_the_prompt_only_with_commands(self):
+    def test_the_client_note_follows_the_prompt_only_with_commands(self):
         quiet = StubAdapter()
-        quiet.runtime_note = ""
+        quiet.client_note = ""
         for adapter, commands, prompt in (
             (StubAdapter(), (), "hi"),
             (StubAdapter(), ("git",), "hi\n\nSTUB NOTE"),
             (quiet, ("git",), "hi"),
         ):
-            with self.subTest(commands=commands, note=adapter.runtime_note), self.faked():
+            with self.subTest(commands=commands, note=adapter.client_note), self.faked():
                 prepared = self.start(adapter, access=Access(commands=commands), prompt="hi")
                 self.assertEqual((prepared.spec.prompt, StubRun.specs[-1].prompt), (prompt, prompt))
 
     def test_refused_before_its_session_line_or_a_process(self):
         for adapter, fields, error, message in (
-            (NoHeadless(), {}, ConfigError, "runtime 'stub' does not support headless mode"),
+            (NoHeadless(), {}, ConfigError, "client 'stub' does not support headless mode"),
             (StubAdapter(), {"name": "w1"}, ConfigError, "name: tui mode only"),
             (StubAdapter(), {"events": "/e"}, ConfigError, "events: tui mode only"),
             (StubAdapter(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
@@ -171,7 +171,7 @@ class Start(Base):
                 "--resume: picks the session; use sid= or resume=",
             ),
             (StubAdapter(), {"sid": None}, ConfigError, "sid: missing"),
-            (StubAdapter(Launch(())), {}, ConfigError, "runtime 'stub' gave no command"),
+            (StubAdapter(Launch(())), {}, ConfigError, "client 'stub' gave no command"),
             (StubAdapter(run=FailingRun), {}, LookupError, "no binding"),
         ):
             with self.subTest(message=message):

@@ -64,7 +64,7 @@ class RecordTest(RecordCase):
                 "version": 1,
                 "name": "w1",
                 "sid": record.sid,
-                "runtime": "claude",
+                "client": "claude",
                 "cwd": self.cwd,
                 "host": "tmux",
                 "flags": ["--model", "m x"],

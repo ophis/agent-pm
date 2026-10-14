@@ -1,5 +1,5 @@
 """The tui hook through `agent-pm-session hook DIR LABEL` (D6, FR-32: the entry TASK-375 points the
-runtimes' hook config at): the journal, mark, event-line, payload and failure cases the by-path
+clients' hook config at): the journal, mark, event-line, payload and failure cases the by-path
 hook runs (tui_hook_support's *Cases), through bin/agent-pm-session; the command's own roots
 replace the roots argument.
 """

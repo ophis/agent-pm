@@ -37,7 +37,7 @@ class PlanCase(Case):
             commands=(),
             model="configured",
             effort=None,
-            codex_home="/runtime/codex",
+            codex_home="/client/codex",
             flags=(
                 "-m",
                 "requested",

@@ -1,7 +1,7 @@
 """HostedSession's tui mode, through the Driver wrapper, end to end on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
-attach from another process, stop, a runtime's own exit, close, sessions while tmux's state is
+attach from another process, stop, a client's own exit, close, sessions while tmux's state is
 unknown, an old Handle once its name is another session's, two starts of one name at once, and a
 start while another process closes the name.
 """
@@ -94,7 +94,7 @@ class TuiTest(Live):
             [(r["kind"], r["sid"]) for r in RunLog(self.workdir).read()],
             [("session", SID)],
         )
-        self.assertEqual(tui.TuiMode.snapshot("w1")["sid"], SID)
+        self.assertEqual(tui.TuiRuntime.snapshot("w1")["sid"], SID)
         stream = Stream(self, handle)
         self.assertEqual(
             [stream.next() for _ in range(3)], [Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)]
@@ -150,7 +150,7 @@ class TuiTest(Live):
                 for target in SPAWNS
             ]
             status = self.driver.session_cls.inspect(
-                Spec(workdir=self.workdir, runtime="fake", sid=SID, access=Access(cwd=self.dir))
+                Spec(workdir=self.workdir, client="fake", sid=SID, access=Access(cwd=self.dir))
             )
         self.assertEqual(
             status, SessionStatus("yes", 1.5, f"{SID} {info.cwd} {info.transcript} {info.resume}")
@@ -158,7 +158,7 @@ class TuiTest(Live):
         for start in starts:
             start.assert_not_called()
 
-    def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
+    def test_a_client_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})
         stream = Stream(self, handle)
         self.assertEqual(stream.next(), TurnEnd("bye", 0))
@@ -312,7 +312,7 @@ class SameNameTest(Live):
         threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
         self.addCleanup(handle.stop)
-        self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
+        self.assertEqual(tui.TuiRuntime.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
             (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)),
@@ -345,7 +345,7 @@ class SameNameTest(Live):
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
-        self.assertEqual((new.state(), tui.TuiMode.snapshot("w7")["sid"]), ("live", new.sid))
+        self.assertEqual((new.state(), tui.TuiRuntime.snapshot("w7")["sid"]), ("live", new.sid))
 
 
 if __name__ == "__main__":

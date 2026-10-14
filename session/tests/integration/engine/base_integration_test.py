@@ -11,12 +11,12 @@ UNCONFIGURED = "session not configured: call Session.configure first"
 CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "host")
 # A child: each class method on Session unconfigured, then after Session.configure; it prints
 # {"unconfigured": {name: message}, "configured": {name: result or [error type, message]},
-# "read_state": tui.TuiMode.snapshot("w1")'s error}.
+# "read_state": tui.TuiRuntime.snapshot("w1")'s error}.
 DISPATCH = """import json, os
 from agent_pm.session import ConfigError, DriverError, Hosts, Mode, Session, Spec
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.modes import tui
-spec = Spec(workdir=os.environ["HOME"], runtime="fake", mode=Mode.HEADLESS, prompt="hi")
+spec = Spec(workdir=os.environ["HOME"], client="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {
     "start": lambda: Session.start(spec),
     "attach": lambda: Session.attach("w1"),
@@ -37,7 +37,7 @@ tmux = {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}
 Session.configure(adapters={}, hosts=Hosts("tmux", {"tmux": tmux}))
 configured = {"configure": HostedSession._setup is not None}
 configured.update({n: outcome(c) for n, c in calls.items()})
-read_state = outcome(lambda: tui.TuiMode.snapshot("w1"))
+read_state = outcome(lambda: tui.TuiRuntime.snapshot("w1"))
 print(json.dumps({"unconfigured": unconfigured, "configured": configured, "read_state": read_state}))
 """
 

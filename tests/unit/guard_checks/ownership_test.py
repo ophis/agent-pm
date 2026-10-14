@@ -74,7 +74,7 @@ class SessionNames(Sample):
 
 
 class OrchestratorText(Sample):
-    def test_runtime_names_and_tool_strings_name_the_file_and_line(self):
+    def test_client_names_and_tool_strings_name_the_file_and_line(self):
         root = self.tree(
             {
                 f"{OPKG}/router.py": 'X = "codex"\n',
@@ -87,13 +87,13 @@ class OrchestratorText(Sample):
         self.assertEqual(
             ownership.orchestrator_text(self.wrap_orchestrator(root)),
             [
-                "config.toml:1: runtime name claude",
+                "config.toml:1: client name claude",
                 'config.toml:2: str constant "tmux"',
                 'config.toml:3: str constant "adapters"',
                 f'{OPKG}/a.py:2: str constant "tmux"',
                 f'{OPKG}/a.py:3: str constant "adapters"',
-                f"{OPKG}/a.py:4: runtime name Claude",
-                f"{OPKG}/router.py:1: runtime name codex",
+                f"{OPKG}/a.py:4: client name Claude",
+                f"{OPKG}/router.py:1: client name codex",
             ],
         )
 
@@ -165,28 +165,28 @@ class Standalone(Sample):
         )
 
 
-class RuntimeNames(Sample):
+class ClientNames(Sample):
     def test_a_name_anywhere_in_a_module_outside_adapters(self):
         root = self.tree({f"session/{PKG}/session/engine/api.py": 'NAME = "Claude"\n# codex\n'})
         self.assertEqual(
-            ownership.runtime_names(root),
+            ownership.client_names(root),
             [
-                f"session/{PKG}/session/engine/api.py:1: runtime name Claude",
-                f"session/{PKG}/session/engine/api.py:2: runtime name codex",
+                f"session/{PKG}/session/engine/api.py:1: client name Claude",
+                f"session/{PKG}/session/engine/api.py:2: client name codex",
             ],
         )
 
-    def test_policy_runtime_tables_are_exempt(self):
+    def test_policy_client_tables_are_exempt(self):
         root = self.tree(
             {
                 "delegate/src/agent_pm/delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"
             }
         )
-        self.assertEqual(ownership.runtime_names(root), [])
+        self.assertEqual(ownership.client_names(root), [])
 
     def test_adapters_subpackage_is_exempt(self):
         root = self.tree({f"session/{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'})
-        self.assertEqual(ownership.runtime_names(root), [])
+        self.assertEqual(ownership.client_names(root), [])
 
     def test_toml_table_header_implementation_line_and_comments_are_exempt(self):
         root = self.tree(
@@ -195,8 +195,8 @@ class RuntimeNames(Sample):
             }
         )
         self.assertEqual(
-            ownership.runtime_names(root),
-            ["delegate/src/agent_pm/delegate/config.toml:4: runtime name codex"],
+            ownership.client_names(root),
+            ["delegate/src/agent_pm/delegate/config.toml:4: client name codex"],
         )
 
     def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
@@ -206,30 +206,30 @@ class RuntimeNames(Sample):
             }
         )
         self.assertEqual(
-            ownership.runtime_names(root),
-            ["delegate/src/agent_pm/delegate/config.toml:1: runtime name codex"],
+            ownership.client_names(root),
+            ["delegate/src/agent_pm/delegate/config.toml:1: client name codex"],
         )
 
-    def test_toml_runtime_line_is_exempt_under_any_table(self):
+    def test_toml_client_line_is_exempt_under_any_table(self):
         root = self.tree(
             {
-                "delegate/src/agent_pm/delegate/config.toml": 'runtime = "codex"\n[roles.x]\nruntime = "codex"\n[roles.y]\nruntime = "codex"  # note\n'
+                "delegate/src/agent_pm/delegate/config.toml": 'client = "codex"\n[roles.x]\nclient = "codex"\n[roles.y]\nclient = "codex"  # note\n'
             }
         )
-        self.assertEqual(ownership.runtime_names(root), [])
+        self.assertEqual(ownership.client_names(root), [])
 
     def test_toml_name_in_a_key_value_elsewhere(self):
         root = self.tree(
             {
                 "delegate/src/agent_pm/delegate/config.toml": (
-                    '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nruntime = ["codex"]\nruntime = "codex\nruntime = "codex" x\n'
+                    '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nclient = ["codex"]\nclient = "codex\nclient = "codex" x\n'
                 )
             }
         )
         self.assertEqual(
-            ownership.runtime_names(root),
+            ownership.client_names(root),
             [
-                f"delegate/src/agent_pm/delegate/config.toml:{n}: runtime name codex"
+                f"delegate/src/agent_pm/delegate/config.toml:{n}: client name codex"
                 for n in (4, 5, 6, 7)
             ],
         )

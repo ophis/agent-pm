@@ -82,7 +82,7 @@ def fields(roles):
 
 CORE_TOML = """tier = 2
 effort = "high"
-runtime = "claude"
+client = "claude"
 idle_timeout = 60
 show = ""
 output = { type = "local" }
@@ -129,7 +129,7 @@ class CatalogDelegate(FakeDelegate):
             task=task or "",
             tier=2,
             effort="high",
-            runtime="catalog",
+            client="catalog",
             output={"type": "github", "repo": "acme/notes", "branch": "trunk", "dir": f"{role}/"},
             idle_timeout=60,
             show="",
@@ -619,7 +619,7 @@ class DelegateRegistry(ConfigFile, Case):
             {name: role.tasks for name, role in cfg.roles.items()},
             {name: tuple(tasks) for name, tasks in CatalogDelegate.ROLES.items()},
         )
-        self.assertEqual({role.run.runtime for role in cfg.roles.values()}, {"catalog"})
+        self.assertEqual({role.run.client for role in cfg.roles.values()}, {"catalog"})
         self.assertIn("harness", cfg.delegates)
 
     def test_registered_trust_prevents_work_dir_loading_project_settings(self):

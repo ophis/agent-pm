@@ -38,9 +38,9 @@ from delegate.tests.unit.composer.prompts import (
     task_text,
 )
 from delegate.tests.unit.composer.shipped import (
+    CLIENT,
     COMMANDS_RULE,
     LANGUAGE_RULE,
-    RUNTIME,
     RealConfig,
     expanded,
     guide,
@@ -424,7 +424,7 @@ class Prompt(Fake):
         body = self.compose()[0].rsplit("\n# Input\n", 1)[0]
         self.assertTrue(body.endswith(f"Keep it local.\n\n{RETURN}"))
 
-    def test_the_return_reports_in_replies_and_names_no_runtime(self):
+    def test_the_return_reports_in_replies_and_names_no_client(self):
         self.assertTrue(RETURN.startswith("## Return\n\n"))
         self.assertEqual(OUTCOME, "agent-pm-outcome")
         for literal in (
@@ -868,7 +868,7 @@ class Acceptance(Case):
                 self.assertEqual(reference_errors(*role_sources(role, task)), [])
 
     def test_each_prompt_returns_in_replies_with_neutral_return_and_parameters(self):
-        self.assertNotRegex(RETURN, RUNTIME)
+        self.assertNotRegex(RETURN, CLIENT)
         for role, task in runs():
             with self.subTest(role=role, task=task):
                 prompt = words(composed(role, task)[0])
@@ -880,7 +880,7 @@ class Acceptance(Case):
                 self.assertIn(f"\n{RETURN}\n# Input\n", prompt)
                 block = re.search(r"^# Parameters\n(.*?)(?=^# )", prompt, re.M | re.S)[1]
                 self.assertTrue(block.startswith(f"\n{RULE}\n\n"))
-                self.assertNotRegex(block, RUNTIME)
+                self.assertNotRegex(block, CLIENT)
 
     def test_no_language_no_language_rule(self):
         with open(CONFIG) as f:

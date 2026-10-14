@@ -239,7 +239,12 @@ class SourceSuppressions(Sample):
     def test_same_file_and_rule_do_not_allow_another_function(self):
         (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         comment = f"# noqa: {code} # {reason}"
-        for other in ("other", "Other._pump", "HeadlessMode.other", "HeadlessMode._pump.nested"):
+        for other in (
+            "other",
+            "Other._pump",
+            "HeadlessRuntime.other",
+            "HeadlessRuntime._pump.nested",
+        ):
             with self.subTest(other):
                 source = self.scoped(scope, [comment]) + self.scoped(other, [comment])
                 line = len(scope.split(".")) + len(other.split(".")) + 2

@@ -18,7 +18,7 @@ SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 class StateFileTest(Case):
     def setUp(self):
         super().setUp()
-        self.state = WorkerState(name="w1", sid=SID, runtime="claude", cwd="/work", host="tmux")
+        self.state = WorkerState(name="w1", sid=SID, client="claude", cwd="/work", host="tmux")
         self.root = os.path.dirname(self.state.workdir())
         self.path = os.path.join(self.state.workdir(), worker.STATE_FILE)
         self.pointer = os.path.join(self.root, worker.BY_NAME, "w1")
@@ -67,7 +67,7 @@ class StateFileTest(Case):
 
     def test_a_workers_directory_that_is_a_symlink_is_refused_before_any_lock(self):
         other = WorkerState(
-            name="w2", sid=SID.replace("0", "1", 1), runtime="claude", cwd="/w", host="tmux"
+            name="w2", sid=SID.replace("0", "1", 1), client="claude", cwd="/w", host="tmux"
         )
         target = os.path.join(self.home, "target")
         os.mkdir(target, 0o700)

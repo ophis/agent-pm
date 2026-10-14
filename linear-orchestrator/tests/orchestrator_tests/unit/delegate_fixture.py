@@ -30,7 +30,7 @@ def provider(api, cfg):
         @classmethod
         def usage(cls, role, *, overlays=()):
             try:
-                return api.usage(cls.resolve(role, overlays=overlays).runtime)
+                return api.usage(cls.resolve(role, overlays=overlays).client)
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
 
@@ -72,7 +72,7 @@ def provider(api, cfg):
         def session_info(self):
             try:
                 return api.session_status(
-                    runs.runtime_of(runs.parse_log(cfg.runs_log), self.entry.sid),
+                    runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid),
                     self.entry.sid,
                     self.workdir,
                     workdir=self.workdir,

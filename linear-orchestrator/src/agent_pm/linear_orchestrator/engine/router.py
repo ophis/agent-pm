@@ -11,7 +11,7 @@ python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--iss
               Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
               outer's code: 0 started or bounced, 1 the start failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
---brake ROLE  Print ROLE's runtime usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
+--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 Bad arguments exit 2.
 
@@ -33,7 +33,6 @@ from traceback import format_exception
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import (
-    client,
     config,
     inputs,
     issues,
@@ -42,17 +41,17 @@ from agent_pm.linear_orchestrator.engine import (
     writeback,
 )
 from agent_pm.linear_orchestrator.engine import log as event_log
-from agent_pm.linear_orchestrator.engine.client import linear_gql
+from agent_pm.linear_orchestrator.engine.client import has_key, linear_gql
 from agent_pm.linear_orchestrator.engine.gate import BRAKE_5H, Gate, exhausted, read_usage, summary
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import linear_error, log
 from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import (
+    client_of,
     delegate_of,
     latest,
     note,
     parse_log,
-    runtime_of,
     trim,
 )
 from agent_pm.linear_orchestrator.engine.types import (
@@ -386,9 +385,9 @@ class Board:
             self.say("pick", ident, queue=len(queue))
             if self.dry:
                 role = self.role(issue)
-                runtime = self.cfg.roles[role].run.runtime
+                client = self.cfg.roles[role].run.client
                 if not self.gated(role, ident):
-                    return issue, None, role, runtime
+                    return issue, None, role, client
             elif taken := self.claim(issue, full):
                 return taken
         if queue:
@@ -430,13 +429,13 @@ class Board:
             self.say("claim-skip", ident, to="in_review", reason="bad task label")
             self.comment_and_move(issue, comment, "in_review", "todo", "claim")
             return None
-        runtime = self.cfg.roles[role].run.runtime
+        client = self.cfg.roles[role].run.client
         if self.gated(role, ident):
             return None
-        self.say("claim", ident, role=role, task=task, runtime=runtime)
+        self.say("claim", ident, role=role, task=task, client=client)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
-        return taken, task, role, runtime
+        return taken, task, role, client
 
 
 def begin(cfg, spec: Spec, *, role, now=datetime.now):
@@ -456,7 +455,7 @@ def begin(cfg, spec: Spec, *, role, now=datetime.now):
         issue=spec.issue,
         sid=spec.sid,
         role=role,
-        runtime=spec.runtime,
+        client=spec.client,
         delegate_kind=delegate_kind,
         now=now,
     )
@@ -484,7 +483,7 @@ def outer(a, cfg, *, gql, run, keychain, driver):
     if a.mode == "resume":
         try:
             st = driver.session_status(
-                a.runtime, a.sid, cfg.run_dir(a.issue), workdir=cfg.run_dir(a.issue)
+                a.client, a.sid, cfg.run_dir(a.issue), workdir=cfg.run_dir(a.issue)
             )
             why = None if st.resumable == "yes" else st.resumable
         except (SessionConfigError, DriverError) as e:
@@ -616,13 +615,13 @@ def choose(board, gate, live_ids, full, counts):
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
             continue
-        runtime = runtime_of(board.entries, sid)
+        client = client_of(board.entries, sid)
         if not gate.blocked(
-            board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), runtime)
+            board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), client)
         ):
             board.plan(("resume", issue, sid), counts)
             return Spec.from_issue(
-                issue, mode="resume", sid=sid, task=None, runtime=runtime
+                issue, mode="resume", sid=sid, task=None, client=client
             ), board.role(issue)
     if not (queue := board.queue(full)):
         return None
@@ -630,10 +629,8 @@ def choose(board, gate, live_ids, full, counts):
     if not (taken := board.take(full=full)):
         board.say("skip", reason="nothing claimed")
         return None
-    issue, task, role, runtime = taken
-    return Spec.from_issue(
-        issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
-    ), role
+    issue, task, role, client = taken
+    return Spec.from_issue(issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client), role
 
 
 def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
@@ -707,15 +704,15 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
                 return stop
             board.plan(("resume", issue, sid))
             spec = Spec.from_issue(
-                issue, mode="resume", sid=sid, task=None, runtime=runtime_of(entries, sid)
+                issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
             role = board.role(issue)
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
-            issue, task, role, runtime = taken
+            issue, task, role, client = taken
             spec = Spec.from_issue(
-                issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
+                issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client
             )
         if dry:
             return 0
@@ -762,7 +759,7 @@ def main(
 ):
     gql = gql or linear_gql
     run = run or config.shell
-    keychain = keychain or client.has_key
+    keychain = keychain or has_key
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)

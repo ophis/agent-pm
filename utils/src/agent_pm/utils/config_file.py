@@ -4,9 +4,10 @@ Tables merge key by key; higher values and whole lists replace lower values. Eac
 section overlays its file before the next layer. Sections use the package's final name, with
 hyphens replaced by underscores. Only supplied layers are read and validated against their own
 and lower files; read_resources also always validates the local [utils] section, which accepts no
-keys without a utils resource. Unknown top-level keys are rejected; nested tables are validated by
-their owners. Flat local keys are rejected. Explicit paths replace files while retaining
-the defaults as their validation schema. Missing optional repository files contribute no keys.
+keys without a utils resource. Unknown top-level keys are rejected, a renamed one naming its new
+name (RENAMED_KEYS); nested tables are validated by their owners. Flat local keys are rejected.
+Explicit paths replace files while retaining the defaults as their validation schema. Missing
+optional repository files contribute no keys.
 """
 
 import copy
@@ -22,10 +23,16 @@ from agent_pm.utils.paths import ROOT, STATE
 LOCAL = f"{STATE}/config.local.toml"
 LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
 UNCONFIGURED = ("utils", "manager")  # no own file
+RENAMED_KEYS = MappingProxyType({"runtime": "client"})
 
 
 class ConfigFileError(ValueError):
     pass
+
+
+def renamed_key(key: str) -> str:
+    """An unknown-key error's hint for a renamed key, else ""."""
+    return f"; renamed to {RENAMED_KEYS[key]!r}" if key in RENAMED_KEYS else ""
 
 
 def merge(base: dict, over: dict) -> dict:
@@ -159,7 +166,9 @@ def _layered(
         checked = {}
         for keys, value in _leaves(overlay, ()):
             if keys[0] not in schema:
-                raise ConfigFileError(f"{local}: unknown key {keys[0]!r} in [{section}]")
+                raise ConfigFileError(
+                    f"{local}: unknown key {keys[0]!r} in [{section}]{renamed_key(keys[0])}"
+                )
             if value == {}:
                 continue
             table = checked

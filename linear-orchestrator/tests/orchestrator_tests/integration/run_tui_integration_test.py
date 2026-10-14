@@ -1,5 +1,5 @@
 """run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server
-(live_tmux) whose manager session a client shows, fake_claude interactive as runtime `claude`: FR-43
+(live_tmux) whose manager session a client shows, fake_claude interactive as client `claude`: FR-43
 leaves unrecorded sessions untouched; the TUI `<role>-<ID>-<sid8>` shows beside the
 --split-from session, or in the --opener's grid; the run writes back and leaves its TUI open.
 """
@@ -56,7 +56,7 @@ class Tui(Flow):
         res = self.script(
             *RUN,
             *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
-            *("--assignee", ACCOUNTS["pm"], "--runtime", "claude", "--mode", "new", "--tui"),
+            *("--assignee", ACCOUNTS["pm"], "--client", "claude", "--mode", "new", "--tui"),
             *argv,
             "--input",
             "Do it.\n",

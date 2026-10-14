@@ -76,10 +76,10 @@ IDS = {DR: "p-dr", PD: "p-pd"}
 ROLE = ACCOUNTS
 
 
-RUNTIMES = {"researcher": "a", "pm": "b", "engineer": "a"}
+CLIENTS = {"researcher": "a", "pm": "b", "engineer": "a"}
 
 
-OVERLAY = '[core]\nruntime = "a"\n\n[core.roles.pm]\nruntime = "b"\n'
+OVERLAY = '[core]\nclient = "a"\n\n[core.roles.pm]\nclient = "b"\n'
 
 
 CONFIG = (
@@ -351,7 +351,7 @@ class Base(run_fixtures.Base):
         self.add(kind="start", ident=ident, sid=sid, minutes_ago=minutes_ago, role=role)
         self.touch(sid, 40)
 
-    def row(self, kind, ident, sid, role="researcher", runtime=None, **ago):
+    def row(self, kind, ident, sid, role="researcher", client=None, **ago):
         return json.dumps(
             {
                 "ts": (NOW - timedelta(**ago)).astimezone(WEST).isoformat(timespec="seconds"),
@@ -359,23 +359,23 @@ class Base(run_fixtures.Base):
                 "issue": ident,
                 "sid": self.sid(sid),
                 "role": role,
-                "runtime": runtime or RUNTIMES.get(role, "a"),
+                "client": client or CLIENTS.get(role, "a"),
             }
         )
 
-    def add(self, *, kind, ident, sid, minutes_ago, role="researcher", runtime=None):
+    def add(self, *, kind, ident, sid, minutes_ago, role="researcher", client=None):
         self.lines.append(
             self.row(
                 kind,
                 ident,
                 sid,
                 role,
-                runtime,
+                client,
                 minutes=minutes_ago,
             )
         )
 
-    def limit(self, runtime, resets_at, ident="TASK-9"):
+    def limit(self, client, resets_at, ident="TASK-9"):
         self.lines.append(
             json.dumps(
                 {
@@ -383,7 +383,7 @@ class Base(run_fixtures.Base):
                     "kind": "limit",
                     "issue": ident,
                     "sid": self.sid("limited"),
-                    "runtime": runtime,
+                    "client": client,
                     "resets_at": resets_at,
                 }
             )
@@ -555,9 +555,9 @@ class TickBase(Base):
     def last_run(self):
         entry = json.loads(self.state.splitlines()[-1])
         self.assertEqual(
-            list(entry), ["ts", "kind", "issue", "sid", "role", "runtime", "delegate_kind"]
+            list(entry), ["ts", "kind", "issue", "sid", "role", "client", "delegate_kind"]
         )
-        return entry["kind"], entry["issue"], entry["sid"], entry["role"], entry["runtime"]
+        return entry["kind"], entry["issue"], entry["sid"], entry["role"], entry["client"]
 
     def launched(self):
         (launch,) = self.start.launches
@@ -580,7 +580,7 @@ class OuterBase(TickBase):
         self.keychain_calls.append(service)
         return service not in self.missing
 
-    def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
+    def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, client="a"):
         a = Spec(
             uuid=UUID,
             input="",
@@ -590,7 +590,7 @@ class OuterBase(TickBase):
             sid=sid,
             task=task,
             mode=mode,
-            runtime=runtime,
+            client=client,
         )
         cfg = self.cfg()
         err = io.StringIO()

@@ -70,9 +70,9 @@ class ConfigFileTest(Case):
 
 
 SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'
-DELEGATE = 'runtime = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
+DELEGATE = 'client = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
 ORCH = 'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = 3\n[core.roles.pm]\ngate = "g"\n'
-MANAGER = 'runtime = "m"\n'
+MANAGER = 'client = "m"\n'
 
 
 class FrozenTables(Case):
@@ -142,7 +142,7 @@ class Projects(Case):
         session = {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
         delegate = {
             **session,
-            "runtime": "a",
+            "client": "a",
             "show": "",
             "team_dirs": [],
             "roles": {"pm": {"tier": 2, "output": {"type": "local"}}},
@@ -158,22 +158,22 @@ class Projects(Case):
         self.assertEqual(self.read("session"), session)
         self.assertEqual(self.read("delegate"), delegate)
         self.assertEqual(self.read("linear-orchestrator"), orch)
-        self.assertEqual(self.read("manager"), {**orch, "runtime": "m"})
+        self.assertEqual(self.read("manager"), {**orch, "client": "m"})
 
     def test_local_goes_over_all_tables_merging_and_lists_replaced_whole(self):
         self.local(
-            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nruntime = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[manager]\nruntime = "b"\n'
+            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nclient = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[manager]\nclient = "b"\n'
         )
         found = self.read("linear-orchestrator")
         self.assertEqual(
-            (found["runtime"], found["team_dirs"], found["team"], found["hosts"]["tmux"]),
+            (found["client"], found["team_dirs"], found["team"], found["hosts"]["tmux"]),
             ("b", ["~/t"], "T", {"status_line": True}),
         )
         self.assertEqual(
             found["roles"]["pm"],
             {"tier": 1, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
         )
-        self.assertEqual(self.read("manager")["runtime"], "b")
+        self.assertEqual(self.read("manager")["client"], "b")
 
     def test_a_project_takes_only_the_local_keys_owned_at_or_below_it(self):
         self.local(
@@ -195,7 +195,7 @@ class Projects(Case):
 
     def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
         self.local(
-            '[delegate]\nruntime = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\nunknown_field = "typo"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nruntime = "b"\n'
+            '[delegate]\nclient = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\nunknown_field = "typo"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nclient = "b"\n'
         )
         self.assertEqual(
             self.read("linear-orchestrator", own=True),
@@ -215,7 +215,7 @@ class Projects(Case):
             {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "unknown_field": "typo"}},
         )
         self.assertNotIn("hosts", found)
-        self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
+        self.assertEqual(self.read("manager", own=True), {"client": "b"})
 
     def test_own_still_rejects_an_unknown_top_level_key_in_a_supplied_local_section(self):
         self.local('[delegate]\nunknown_field = "typo"\n')
@@ -239,6 +239,16 @@ class Projects(Case):
                 ),
             ):
                 self.read(name)
+
+    def test_a_renamed_local_key_is_refused_naming_its_new_key(self):
+        old, hint = "runtime", "; renamed to 'client'"
+        self.local(f'[delegate]\n{old} = "codex"\n')
+        with self.assertRaises(ConfigFileError) as cm:
+            self.read("delegate")
+        self.assertEqual(
+            str(cm.exception),
+            f"~/.agent-pm/config.local.toml: unknown key {old!r} in [delegate]{hint}",
+        )
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
         self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
@@ -292,16 +302,16 @@ class Projects(Case):
     def test_path_stands_in_for_the_projects_own_file(self):
         other = os.path.join(self.root, "other.toml")
         with open(other, "w", encoding="utf-8") as f:
-            f.write('runtime = "z"\nlanguage = "x"\n')
+            f.write('client = "z"\nlanguage = "x"\n')
         self.local('[delegate]\nlanguage = "y"\n')
         found = self.read("delegate", path=other)
-        self.assertEqual((found["runtime"], found["language"], "roles" in found), ("z", "y", False))
+        self.assertEqual((found["client"], found["language"], "roles" in found), ("z", "y", False))
 
     def test_an_explicit_local_file(self):
         local = os.path.join(self.root, "mine.toml")
         with open(local, "w", encoding="utf-8") as f:
-            f.write('[delegate]\nruntime = "q"\n')
-        self.assertEqual(self.read("delegate", local=local)["runtime"], "q")
+            f.write('[delegate]\nclient = "q"\n')
+        self.assertEqual(self.read("delegate", local=local)["client"], "q")
 
     def test_devnull_remains_an_empty_explicit_project_file(self):
         self.assertEqual(self.read("delegate", path=os.devnull), self.read("session"))
@@ -375,12 +385,12 @@ class Resources(Case):
     def test_upper_packaged_values_override_lower_local_values(self):
         self.local('[delegate.roles.pm]\naccount = "not-known-at-this-layer"\n')
         self.assertEqual(read_resources(self.resources)["roles"]["pm"]["account"], "")
-        self.local('[delegate]\nruntime = "lower-local"\n[delegate.roles.pm]\ntier = 1\n')
+        self.local('[delegate]\nclient = "lower-local"\n[delegate.roles.pm]\ntier = 1\n')
         Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(
             ORCH.replace('account = ""', 'tier = 3\naccount = ""')
         )
         self.assertEqual(read_resources(self.resources)["roles"]["pm"]["tier"], 3)
-        self.assertEqual(read_resources(self.resources)["runtime"], "lower-local")
+        self.assertEqual(read_resources(self.resources)["client"], "lower-local")
 
     def test_only_supplied_layers_are_validated(self):
         self.local(
@@ -409,13 +419,13 @@ class Resources(Case):
 
     def test_path_replaces_one_resource_with_defaults_as_schema(self):
         override = Path(self.root, "override.toml")
-        override.write_text('runtime = "override"\nnew_key = "default"\n')
+        override.write_text('client = "override"\nnew_key = "default"\n')
         self.local('[delegate]\nnew_key = "local"\n[delegate.roles.pm]\ntier = 1\n')
         found = read_resources(
             iter(self.resources[:2]), paths={self.resources[1][0]: str(override)}
         )
         self.assertEqual(
-            (found["runtime"], found["new_key"], found["roles"]["pm"]),
+            (found["client"], found["new_key"], found["roles"]["pm"]),
             ("override", "local", {"tier": 1}),
         )
         with self.assertRaises(FileNotFoundError):
@@ -427,8 +437,8 @@ class Resources(Case):
 
     def test_owner_validates_each_raw_resource_once_before_local_overlay(self):
         override = Path(self.root, "override.toml")
-        override.write_text('runtime = "own-file"\n')
-        self.local('[delegate]\nruntime = "local"\n')
+        override.write_text('client = "own-file"\n')
+        self.local('[delegate]\nclient = "local"\n')
         seen = []
 
         def validate(package, source, table):
@@ -439,18 +449,18 @@ class Resources(Case):
             paths={self.resources[1][0]: str(override)},
             validate=validate,
         )
-        self.assertEqual(found["runtime"], "local")
+        self.assertEqual(found["client"], "local")
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0][0], self.resources[0][0])
         self.assertEqual(seen[0][2], tomllib.loads(SESSION))
-        self.assertEqual(seen[1], (self.resources[1][0], str(override), {"runtime": "own-file"}))
+        self.assertEqual(seen[1], (self.resources[1][0], str(override), {"client": "own-file"}))
 
     def test_owner_validation_failure_propagates_without_local_replacing_it(self):
-        self.local('[delegate]\nruntime = "local"\n')
+        self.local('[delegate]\nclient = "local"\n')
         error = ValueError("owner rejected raw configuration")
 
         def validate(package, _source, table):
-            if package == self.resources[1][0] and table["runtime"] == "a":
+            if package == self.resources[1][0] and table["client"] == "a":
                 raise error
 
         with self.assertRaises(ValueError) as caught:
@@ -459,7 +469,7 @@ class Resources(Case):
 
     def test_flat_local_keys_name_the_required_section(self):
         for text, section in (
-            ('runtime = "x"\n', "delegate"),
+            ('client = "x"\n', "delegate"),
             ("[hosts.tmux]\nstatus_line = true\n", "session"),
         ):
             self.local(text)
@@ -494,7 +504,7 @@ class Resources(Case):
                 "unknown_key",
                 "no supplied layer has it; move it under its owning layer's section",
             ),
-            ('runtime = "x"\n', "runtime", "move it under [delegate]"),
+            ('client = "x"\n', "client", "move it under [delegate]"),
             (
                 "[hosts.tmux]\nstatus_line = true\n",
                 "hosts.tmux.status_line",

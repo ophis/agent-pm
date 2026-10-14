@@ -169,7 +169,7 @@ class TuiPolicy(Base):
                 r = self.faked(turn(START, block(DONE)), **kw)
                 args, given = self.started.call_args
                 self.assertEqual(
-                    ((args[0].session.runtime, args[0].session.mode), r.outcome.status),
+                    ((args[0].session.client, args[0].session.mode), r.outcome.status),
                     (("fake", "tui"), "done"),
                 )
                 self.assertEqual(
@@ -451,7 +451,7 @@ class TuiPolicy(Base):
         self.assertRegex(r.error, r"^cannot remove the stale out: ")
         self.assertEqual(self.err.count("delegate: tui: gone\n"), 1)
 
-    def test_a_driver_failure_at_start_is_the_result_and_a_runtime_without_tui_a_config_error(self):
+    def test_a_driver_failure_at_start_is_the_result_and_a_client_without_tui_a_config_error(self):
         os.makedirs(self.work)
         with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
@@ -461,7 +461,7 @@ class TuiPolicy(Base):
             self.go(mode="tui")
         self.assertEqual(
             (str(cm.exception), os.path.lexists(self.work)),
-            ("runtime 'fake' does not support tui mode", False),
+            ("client 'fake' does not support tui mode", False),
         )
 
     def test_the_run_wrapper_makes_a_new_workdir_and_records_a_failed_start_there(self):
@@ -472,7 +472,7 @@ class TuiPolicy(Base):
     def test_the_runner_records_into_an_existing_workdir_only(self):
         accepted = plan(
             composer.resolve("dummy-tester"),
-            Spec("Echo me.", self.work, task="echo", runtime="fake", mode="tui", cwd=self.work),
+            Spec("Echo me.", self.work, task="echo", client="fake", mode="tui", cwd=self.work),
             driver=self.driver,
         )
         with (
@@ -515,8 +515,8 @@ class InstructionRuns(InstructionCase):
                 self.assertEqual(events, [Finished(r)])
                 self.assertFalse(os.path.exists(os.path.join(args[1].workdir, "run.jsonl")))
 
-    def test_an_unconfigured_runtime_does_not_start_a_session(self):
-        args = self.given("dummy-tester", runtime="unconfigured")
+    def test_an_unconfigured_client_does_not_start_a_session(self):
+        args = self.given("dummy-tester", client="unconfigured")
         with no_child():
             result = run(*args, driver=self.driver)
         self.assertEqual(

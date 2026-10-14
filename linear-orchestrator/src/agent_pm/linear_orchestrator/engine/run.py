@@ -54,7 +54,7 @@ def _report_outcome(a, cfg, ctx, result):
                 cfg.runs_log,
                 issue=a.issue,
                 sid=a.sid,
-                runtime=a.runtime,
+                client=a.client,
                 resets_at=writeback.local_time(at),
                 delegate_kind=_kind(a.sid, cfg),
             )
@@ -79,9 +79,9 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     rec = run_comments.base(
         sid=a.sid,
         workdir=rd,
-        runtime=a.runtime,
+        client=a.client,
         started_at=now(),
-        info=functools.partial(driver.session_status, a.runtime, a.sid, rd, workdir=rd),
+        info=functools.partial(driver.session_status, a.client, a.sid, rd, workdir=rd),
     )
     ctx = writeback.for_run(cfg, role, gql, a)
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
@@ -127,7 +127,7 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
             rd,
             task=a.task,
             mode="tui" if a.tui else "headless",
-            runtime=a.runtime,
+            client=a.client,
             sid=a.sid,
             resume=a.mode == "resume",
             name=name,
@@ -171,8 +171,8 @@ def main(argv, *, gql=client.linear_gql, run=delegate.run, driver=None, now=time
         return _usage("--split, --split-from, --opener and --events need --tui")
     if not config.UUID_RE.fullmatch(a.uuid) or a.target is not None and not repo_slug(a.target):
         return _usage(f"bad issue uuid or target: {a.uuid} {a.target}")
-    if not a.runtime or not a.runtime.isprintable():
-        return _usage(f"bad runtime: {a.runtime!r}")
+    if not a.client or not a.client.isprintable():
+        return _usage(f"bad client: {a.client!r}")
     try:
         cfg = config.load()
     except ConfigError as e:

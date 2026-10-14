@@ -43,36 +43,36 @@ class Gate:
 
     def blocked(self, role, ident, *, key=None):
         configured = self.cfg.roles.get(role)
-        current = (self.cfg.delegate_kind, configured and configured.run.runtime)
+        current = (self.cfg.delegate_kind, configured and configured.run.client)
         key = current if key is None else key
-        kind, runtime = key
+        kind, client = key
         if key in self.limits:
             reason, fields = "limit", {"until": self.limits[key].isoformat()}
             if self.dry:
-                self.say("usage", runtime=runtime, **fields, allowed=False)
+                self.say("usage", client=client, **fields, allowed=False)
         elif key != current:
             self.say(
                 "usage-drift",
                 ident,
-                runtime=runtime,
+                client=client,
                 delegate_kind=kind,
-                current_runtime=current[1],
+                current_client=current[1],
                 current_delegate_kind=current[0],
             )
             return False
         else:
             if key not in self.seen:
-                self.seen[key] = self._check(role, runtime)
+                self.seen[key] = self._check(role, client)
             reason, fields = self.seen[key]
         if reason:
-            self.say("usage-skip", ident, once=True, runtime=runtime, reason=reason, **fields)
+            self.say("usage-skip", ident, once=True, client=client, reason=reason, **fields)
         return reason is not None
 
-    def _check(self, role, runtime):
+    def _check(self, role, client):
         usage = read_usage(role, self.cfg)
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}
         if self.dry:
-            self.say("usage", runtime=runtime, **shown, allowed=reason is None)
+            self.say("usage", client=client, **shown, allowed=reason is None)
         return reason, fields

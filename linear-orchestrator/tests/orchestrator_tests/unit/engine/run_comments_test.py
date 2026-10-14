@@ -28,7 +28,7 @@ CID = ops.client_id(SID, "session")
 
 T1, T2, T3 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00", "2026-09-30T12:00:00+08:00"
 
-WORKDIR, RUNTIME = "/w/TASK-12", "claude"
+WORKDIR, CLIENT = "/w/TASK-12", "claude"
 
 CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 
@@ -37,7 +37,7 @@ NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comme
 
 def record(driver, started_at=T1):
     return run_comments.base(
-        sid=SID, workdir=WORKDIR, runtime=RUNTIME, started_at=started_at, info=driver.session_status
+        sid=SID, workdir=WORKDIR, client=CLIENT, started_at=started_at, info=driver.session_status
     )
 
 
@@ -144,7 +144,7 @@ class Record(Case):
             {
                 "sid": SID,
                 "workdir": WORKDIR,
-                "runtime": RUNTIME,
+                "client": CLIENT,
                 "started_at": T1,
                 "seq": 0,
                 "info": self.api.session_status,

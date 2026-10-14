@@ -35,11 +35,11 @@ def is_comment(comment):
     )
 
 
-def base(*, sid, workdir, runtime, started_at, info):
+def base(*, sid, workdir, client, started_at, info):
     return {
         "sid": sid,
         "workdir": workdir,
-        "runtime": runtime,
+        "client": client,
         "started_at": started_at,
         "seq": 0,
         "info": info,

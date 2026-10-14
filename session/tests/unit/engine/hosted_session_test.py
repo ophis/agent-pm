@@ -24,9 +24,9 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import RESUME, SessionStore
-from agent_pm.session.engine import hosted
+from agent_pm.session.engine import hosted_session
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.hosted import POLL, HostedSession
+from agent_pm.session.engine.hosted_session import POLL, HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -136,7 +136,7 @@ class ConfiguredTest(Case):
 
     def test_an_unconfigured_class_refuses_each_class_method(self):
         fresh = type("Fresh", (HostedSession,), {})
-        spec = Spec(workdir=self.home, runtime="fake", mode=Mode.HEADLESS)
+        spec = Spec(workdir=self.home, client="fake", mode=Mode.HEADLESS)
         for name, call in (
             ("list", fresh.list),
             ("list display ''", lambda: fresh.list(display="")),
@@ -184,7 +184,7 @@ class InspectTest(Base):
             resume="saved hint",
         )
         log.note("session", **dataclasses.replace(info, sid="another", cwd=self.home).persisted())
-        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID, access=Access(cwd=self.home))
+        spec = Spec(workdir=self.workdir, client="probe", sid=SID, access=Access(cwd=self.home))
         self.assertEqual(self.inspect(spec), SessionStatus("yes", 1.5, f"probe {SID} {self.dir}"))
         self.assertFalse(os.path.exists(self.log))
 
@@ -206,20 +206,20 @@ class InspectTest(Base):
         log.note("session", **info.persisted())
         log.note("session_metadata", sid=SID, transcript="/saved/transcript", resume="saved resume")
         self.assertEqual(
-            self.inspect(Spec(workdir=self.workdir, runtime="history", sid=SID)),
+            self.inspect(Spec(workdir=self.workdir, client="history", sid=SID)),
             SessionStatus("yes", 1.5, f"{SID} {self.dir} /saved/transcript saved resume"),
         )
 
     def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
-        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID)
+        spec = Spec(workdir=self.workdir, client="probe", sid=SID)
         with self.assertRaisesRegex(NoRecordedSession, "no recorded session"):
             self.inspect(spec)
         self.assertFalse(os.path.exists(self.workdir))
 
-    def test_inspection_requires_runtime_and_sid(self):
+    def test_inspection_requires_client_and_sid(self):
         for spec, message in (
-            (Spec(workdir=self.workdir, sid=SID), "spec.runtime: required to inspect"),
-            (Spec(workdir=self.workdir, runtime="probe"), "spec.sid: required to inspect"),
+            (Spec(workdir=self.workdir, sid=SID), "spec.client: required to inspect"),
+            (Spec(workdir=self.workdir, client="probe"), "spec.sid: required to inspect"),
         ):
             with self.subTest(spec=spec), self.assertRaises(ConfigError) as caught:
                 self.inspect(spec)
@@ -235,12 +235,12 @@ class HistoricalRecordTest(Case):
         self.cwd = self.work / "project ' quoted"
         self.cwd.mkdir(parents=True)
 
-    def forged(self, runtime, transcript, *, expected):
+    def forged(self, client, transcript, *, expected):
         log = RunLog(str(self.work))
         info = SessionInfo(sid=SID, cwd=str(self.cwd), project=True, transcript="", resume="")
         log.note("session", **info.persisted())
         log.note("session_metadata", sid=SID, transcript=str(transcript), resume="rm -rf ~")
-        request = Spec(workdir=str(self.work), runtime=runtime, sid=SID)
+        request = Spec(workdir=str(self.work), client=client, sid=SID)
         self.assertEqual(self.driver.session_cls.inspect(request), expected)
         log.note("session_metadata", sid=SID, transcript="", resume="printf forged-command")
         fresh = self.driver.session_cls.inspect(request)
@@ -374,7 +374,7 @@ class ClassRootsTest(Case):
             adapters=self.ADAPTERS, hosts=parsed(tables, "tmux"), **setup
         )
 
-    def test_the_runtimes_adapter_root_then_each_configured_hosts_deduplicated(self):
+    def test_the_clients_adapter_root_then_each_configured_hosts_deduplicated(self):
         configured = self.configured()
         self.assertNotIn(REPO, SRC.values())
         self.assertEqual(configured.class_roots("claude"), (SRC["session"], REPO))
@@ -401,12 +401,12 @@ class ClassRootsTest(Case):
         )
         self.assertEqual(built, [])
 
-    def test_an_unknown_runtime_or_a_class_it_cannot_load_is_a_config_error(self):
+    def test_an_unknown_client_or_a_class_it_cannot_load_is_a_config_error(self):
         absent = "session.tests.absent_module"
         missing = f"{absent}:Nothing: cannot import {absent}: No module named '{absent}'"
-        for runtime, tables, message in (
+        for client, tables, message in (
             ("absent", None, "no [adapters.absent] table in the configured adapters"),
-            ("Bad", None, "unsafe runtime name 'Bad': want a lowercase identifier"),
+            ("Bad", None, "unsafe client name 'Bad': want a lowercase identifier"),
             ("broken", None, f"[adapters.broken].implementation: {missing}"),
             (
                 "fake",
@@ -420,9 +420,9 @@ class ClassRootsTest(Case):
                 " concrete Host subclass",
             ),
         ):
-            with self.subTest(runtime=runtime, tables=tables):
+            with self.subTest(client=client, tables=tables):
                 with self.assertRaises(ConfigError) as caught:
-                    self.configured(tables).class_roots(runtime)
+                    self.configured(tables).class_roots(client)
                 self.assertEqual(str(caught.exception), message)
 
     def test_a_class_whose_module_has_no_source_file_is_a_config_error(self):
@@ -514,7 +514,7 @@ class SessionTest(Base):
             class_loader=self.driver_dependencies["class_loader"],
         )
         session = configured.start(
-            self.spec(runtime="fake", mode=Mode.IN_PROCESS, prompt="hi"), host="fake"
+            self.spec(client="fake", mode=Mode.IN_PROCESS, prompt="hi"), host="fake"
         )
         self.addCleanup(session.stop)
         self.assertFalse(session.displayable)
@@ -564,7 +564,7 @@ class InProcessTest(Base):
             {"out": {"type": "result", "text": "done"}},
         )
         session = self.session.start(
-            Spec(workdir=self.workdir, runtime="fake", mode=Mode.IN_PROCESS, prompt="hello")
+            Spec(workdir=self.workdir, client="fake", mode=Mode.IN_PROCESS, prompt="hello")
         )
         self.addCleanup(session.stop)
         self.assertEqual(self.drain(session), [Reply("hi"), TurnEnd("done", 0), Exited(0)])
@@ -573,7 +573,7 @@ class InProcessTest(Base):
     def test_flags_and_env_reach_the_in_process_adapter(self):
         LAUNCHED.clear()
         spec = self.spec(flags=("--custom", "v"), env={"CUSTOM": "value"})
-        _, found = self.run_in_process(runtime="checked", spec=spec)
+        _, found = self.run_in_process(client="checked", spec=spec)
         self.assertEqual(found, [Exited(0)])
         self.assertEqual((LAUNCHED[0].flags, dict(LAUNCHED[0].env)), (spec.flags, dict(spec.env)))
 
@@ -588,7 +588,7 @@ class InProcessTest(Base):
                 )
                 self.assertEqual(found, [Exited(0)])
                 self.assertEqual(
-                    (session.sid, session.runtime, session.mode, session.name),
+                    (session.sid, session.client, session.mode, session.name),
                     (SID, "fake", "in_process", None),
                 )
                 info = SessionInfo(SID, given or self.workdir, project, "", "")
@@ -632,7 +632,7 @@ class InProcessTest(Base):
         )
         self.assertEqual(session.reply, "done")
 
-    def test_the_runtime_note_follows_the_prompt_only_with_commands(self):
+    def test_the_client_note_follows_the_prompt_only_with_commands(self):
         for commands, prompt in (((), "hello"), (("git",), "hello\n\nFAKE NOTE")):
             with self.subTest(commands=commands):
                 self.run_in_process(spec=self.spec(access=Access(commands=commands)))
@@ -649,7 +649,7 @@ class InProcessTest(Base):
             with self.subTest(mode=mode):
                 self.refused(
                     ConfigError,
-                    f"runtime 'fake' does not support {mode} mode",
+                    f"client 'fake' does not support {mode} mode",
                     lambda *, mode=mode: self.start(mode=mode),
                 )
 
@@ -660,19 +660,19 @@ class InProcessTest(Base):
                 "codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"},
             }
         )
-        for runtime in ("claude", "codex"):
-            with self.subTest(runtime=runtime):
+        for client in ("claude", "codex"):
+            with self.subTest(client=client):
                 self.refused(
                     ConfigError,
-                    f"runtime {runtime!r} does not support in_process mode",
-                    lambda *, runtime=runtime: self.start(runtime=runtime, mode="in_process"),
+                    f"client {client!r} does not support in_process mode",
+                    lambda *, client=client: self.start(client=client, mode="in_process"),
                 )
 
     def test_mode_is_validated_before_codex_launch_configuration(self):
         self.configure_session(
             {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"}}
         )
-        spec = self.spec(runtime="codex", mode=Mode.IN_PROCESS, flags=("--sandbox", "invalid"))
+        spec = self.spec(client="codex", mode=Mode.IN_PROCESS, flags=("--sandbox", "invalid"))
         for call in (self.session.preflight, self.session.start):
             with (
                 self.subTest(call=call.__name__),
@@ -694,7 +694,7 @@ class InProcessTest(Base):
 
 
 class Clock:
-    """The session's clock and time.monotonic's stand-in: `now` moves only when a StubMode
+    """The session's clock and time.monotonic's stand-in: `now` moves only when a StubRuntime
     waits.
     """
 
@@ -704,8 +704,8 @@ class Clock:
         return self.now
 
 
-class StubMode:
-    """A Mode on a Clock: poll(timeout) gives the next script item (at, events, ended) once the
+class StubRuntime:
+    """A Runtime on a Clock: poll(timeout) gives the next script item (at, events, ended) once the
     clock reaches `at`, else ([], False), moving the clock to `at` or on by timeout, whichever is
     sooner; past LATE s it raises, so a session that never ends fails. returncode() gives `code`;
     every call is logged in `calls`.
@@ -747,7 +747,7 @@ class StubMode:
         self.calls.append(("stop",))
 
 
-class EventsOverAModeTest(Case):
+class EventsOverARuntimeTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -758,7 +758,7 @@ class EventsOverAModeTest(Case):
         )
 
     def session(self, *script, code=0, idle_timeout=None, **kwargs) -> HostedSession:
-        self.mode = StubMode(self.clock, script, code)
+        self.mode = StubRuntime(self.clock, script, code)
         return self.configured(
             "fake",
             Mode.TUI,
@@ -955,7 +955,7 @@ class EventsOverAModeTest(Case):
 
 class UsageTest(Base):
     def probing(self, out="42.5", **launch) -> mock.Mock:
-        """Runtime probe configured, its probe the Launch of `launch` (argv ("probe-cmd", "-x")
+        """Client probe configured, its probe the Launch of `launch` (argv ("probe-cmd", "-x")
         unless given), the Setup's probe a mock giving `out`.
         """
         probe = mock.Mock(return_value=out)
@@ -977,7 +977,10 @@ class UsageTest(Base):
         found, probe = self.usage("42.5")
         self.assertEqual(found, Usage(Window(42.5, None), None))
         probe.assert_called_once_with(
-            ("probe-cmd", "-x"), cwd=self.probe_dir, env=mock.ANY, timeout=hosted.PROBE_TIMEOUT
+            ("probe-cmd", "-x"),
+            cwd=self.probe_dir,
+            env=mock.ANY,
+            timeout=hosted_session.PROBE_TIMEOUT,
         )
 
     def test_a_spawn_error_is_none(self):
@@ -989,7 +992,7 @@ class UsageTest(Base):
     def test_a_timeout_is_none(self):
         found, probe = self.usage(None)
         self.assertIsNone(found)
-        self.assertEqual(probe.call_args.kwargs["timeout"], hosted.PROBE_TIMEOUT)
+        self.assertEqual(probe.call_args.kwargs["timeout"], hosted_session.PROBE_TIMEOUT)
 
     def test_a_reading_without_windows_is_a_usage(self):
         with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
@@ -1079,7 +1082,7 @@ class WritablePathsTest(HostedTuiBase):
                 ),
             ):
                 session = self.start(
-                    runtime="checked" if mode == Mode.IN_PROCESS else "fake",
+                    client="checked" if mode == Mode.IN_PROCESS else "fake",
                     mode=mode,
                     spec=spec,
                     resume=resume,
@@ -1092,11 +1095,11 @@ class WritableDirsTest(Base):
     def dirs(self, **kwargs):
         return mock.patch.object(ProbeAdapter, "writable_dirs", autospec=True, **kwargs)
 
-    def test_the_fake_runtime_claims_none(self):
-        self.assertEqual(self.session.writable_dirs(self.spec(runtime="fake")), ())
+    def test_the_fake_client_claims_none(self):
+        self.assertEqual(self.session.writable_dirs(self.spec(client="fake")), ())
 
     def test_the_adapters_dirs_as_a_tuple_for_the_spec_as_given(self):
-        spec = self.spec(access=Access(dirs=(self.dir,), cwd=self.dir), tier=2, runtime="probe")
+        spec = self.spec(access=Access(dirs=(self.dir,), cwd=self.dir), tier=2, client="probe")
         given = (
             spec,
             dataclasses.replace(spec, sid="r1", resume=True),
@@ -1109,10 +1112,10 @@ class WritableDirsTest(Base):
             [(c.args[1:], c.kwargs) for c in dirs.call_args_list], [((each,), {}) for each in given]
         )
 
-    def test_refuses_a_spec_without_runtime_or_an_unknown_runtime(self):
+    def test_refuses_a_spec_without_client_or_an_unknown_client(self):
         for spec, message in (
-            (self.spec(), "spec.runtime: required"),
-            (self.spec(runtime="nope"), "no [adapters.nope] table in the configured adapters"),
+            (self.spec(), "spec.client: required"),
+            (self.spec(client="nope"), "no [adapters.nope] table in the configured adapters"),
         ):
             with (
                 self.subTest(message=message),
@@ -1128,7 +1131,7 @@ class WritableDirsTest(Base):
             self.dirs(side_effect=PermissionError(13, "denied")),
             self.assertRaises(ConfigError) as caught,
         ):
-            self.session.writable_dirs(self.spec(runtime="probe"))
+            self.session.writable_dirs(self.spec(client="probe"))
         self.assertEqual(str(caught.exception), "probe's writable dirs: [Errno 13] denied")
         self.assertIsInstance(caught.exception.__cause__, PermissionError)
 
@@ -1143,7 +1146,7 @@ class ListTest(HostedTuiBase):
         second.calls.row.return_value = SessionRow(
             "w1",
             "other",
-            "unknown-runtime",
+            "unknown-client",
             ActivityState.WORKING,
             None,
             None,
@@ -1199,12 +1202,12 @@ class ListTest(HostedTuiBase):
     def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
             [f.name for f in dataclasses.fields(SessionRow)],
-            ["name", "sid", "runtime", "state", "display", "shown", "last_lines", "own"],
+            ["name", "sid", "client", "state", "display", "shown", "last_lines", "own"],
         )
         found = SessionRow(
             name="w1",
             sid=None,
-            runtime=None,
+            client=None,
             state="working",
             display=None,
             shown=None,
@@ -1222,7 +1225,7 @@ class TuiStartTest(HostedTuiBase):
         )
         for resumed, word in ((False, "--session-id"), (True, "--resume")):
             with self.subTest(resumed=resumed):
-                self.tui(runtime="claude", name=f"w{resumed}", sid=SID, resume=resumed)
+                self.tui(client="claude", name=f"w{resumed}", sid=SID, resume=resumed)
                 argv = self.host.calls.terminal.call_args.args[1].argv
                 self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
 
@@ -1242,7 +1245,7 @@ class TuiStartTest(HostedTuiBase):
                 )
             self.assertIs(session.info().project, project)
             self.assertIs(RunLog(self.workdir).session(session.sid).project, project)
-            self.assertIs(tui.TuiMode.snapshot(session.name)["project"], project)
+            self.assertIs(tui.TuiRuntime.snapshot(session.name)["project"], project)
 
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
@@ -1252,7 +1255,7 @@ class TuiStartTest(HostedTuiBase):
         session = self.tui(name="w1", sid=SID, events=self.events)
         self.assertEqual(order, [["session"]])
         self.assertEqual(
-            (session.name, session.sid, session.runtime, session.mode), ("w1", SID, "fake", "tui")
+            (session.name, session.sid, session.client, session.mode), ("w1", SID, "fake", "tui")
         )
         self.assertEqual(
             session.info(),
@@ -1269,20 +1272,20 @@ class TuiStartTest(HostedTuiBase):
         self.assertIsNone(call.kwargs["record"])
         self.assertIsNone(session.record())
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
-        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(call.kwargs["metadata"]["client"], "fake")
         self.assertEqual(
-            call.kwargs["metadata"]["generation"], tui.TuiMode.snapshot("w1")["generation"]
+            call.kwargs["metadata"]["generation"], tui.TuiRuntime.snapshot("w1")["generation"]
         )
         self.assertEqual(launch.env["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
             {
                 k: v
-                for k, v in tui.TuiMode.snapshot("w1").items()
-                if k in ("runtime", "sid", "events", "words", "host")
+                for k, v in tui.TuiRuntime.snapshot("w1").items()
+                if k in ("client", "sid", "events", "words", "host")
             },
             {
-                "runtime": "fake",
+                "client": "fake",
                 "sid": SID,
                 "events": self.events,
                 "words": {"stop": "done", "ask": "blocked", "tool": "working"},
@@ -1354,7 +1357,7 @@ class TuiStartTest(HostedTuiBase):
 
     def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)
-        session, other = self.tui(runtime="probe", name="w1"), ScreenHost("other")
+        session, other = self.tui(client="probe", name="w1"), ScreenHost("other")
         terminal = self.host.processes["w1"]
         self.session.configure(
             adapters={},
@@ -1370,13 +1373,13 @@ class TuiStartTest(HostedTuiBase):
         terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
         with self.assertRaisesRegex(ConfigError, r"\[adapters\.probe\]"):
-            self.tui(runtime="probe", name="w2")
+            self.tui(client="probe", name="w2")
         self.assertEqual(other.calls.mock_calls, [])
 
 
 class SessionEnvTest(HostedEnvBase):
     def test_a_tui_session_gets_it(self):
-        self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
+        self.tui(client="env", name="w1", spec=self.spec(access=self.access))
         (call,) = self.host.calls.terminal.call_args_list
         self.assertEqual(call.args[1].env["PYTHONPATH"], PYTHONPATH)
 
@@ -1400,7 +1403,7 @@ class AttachTest(HostedTuiBase):
         session = self.session.attach("w1", idle_timeout=2)
         self.assertIsInstance(session, self.session)
         self.assertEqual(
-            (session.name, session.sid, session.runtime, session.mode, session.reply),
+            (session.name, session.sid, session.client, session.mode, session.reply),
             ("w1", SID, "fake", "tui", "r1"),
         )
         self.assertEqual(
@@ -1566,7 +1569,7 @@ class AttachTest(HostedTuiBase):
                 terminal = self.host.processes["w1"]
                 terminal.calls.session_identity.return_value = (
                     found,
-                    tui.TuiMode.snapshot("w1")["generation"],
+                    tui.TuiRuntime.snapshot("w1")["generation"],
                 )
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
@@ -1583,11 +1586,11 @@ class AttachTest(HostedTuiBase):
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
         self.host.calls.attach.assert_not_called()
 
-    def test_a_runtime_without_tui_or_a_registry_error_is_a_driver_error(self):
+    def test_a_client_without_tui_or_a_registry_error_is_a_driver_error(self):
         self.started()
         self.configure(tui=False)
         for message in (
-            "no tui session w1: runtime 'fake' has no tui mode",
+            "no tui session w1: client 'fake' has no tui mode",
             "no tui session w1: no [adapters.fake] table in the configured adapters",
         ):
             with self.subTest(message=message), self.assertRaises(DriverError) as caught:
@@ -1740,7 +1743,7 @@ class MultipleHostsTest(HostedTuiBase):
                 sessions[host] = self.session.start(
                     Spec(
                         workdir=os.path.join(self.dir, host),
-                        runtime="fake",
+                        client="fake",
                         mode=Mode.TUI,
                         sid=SID,
                         name="shared",
@@ -1760,7 +1763,7 @@ class MultipleHostsTest(HostedTuiBase):
             try:
                 first.start()
                 self.assertTrue(entered.wait(WAIT), "first terminal launch did not begin")
-                original = tui.TuiMode.snapshot("shared")
+                original = tui.TuiRuntime.snapshot("shared")
                 later.start()
                 self.assertTrue(checked.wait(WAIT), "second start did not check the first Host")
             finally:
@@ -1777,15 +1780,15 @@ class MultipleHostsTest(HostedTuiBase):
         self.assertEqual(refusals, {"second": "session shared exists"})
         self.other.calls.terminal.assert_not_called()
         self.assertFalse(os.path.exists(os.path.join(self.dir, "second")))
-        self.assertEqual(tui.TuiMode.snapshot("shared"), original)
+        self.assertEqual(tui.TuiRuntime.snapshot("shared"), original)
         self.assertEqual(self.session.attach("shared").record(), sessions["tmux"].record())
 
 
 class ChecksTest(Base):
-    def test_refuses_a_spec_without_runtime_or_mode(self):
+    def test_refuses_a_spec_without_client_or_mode(self):
         for field, call in (
-            ("runtime", lambda: self.session.start(self.spec(mode=Mode.HEADLESS))),
-            ("mode", lambda: self.session.start(self.spec(runtime="fake"))),
+            ("client", lambda: self.session.start(self.spec(mode=Mode.HEADLESS))),
+            ("mode", lambda: self.session.start(self.spec(client="fake"))),
         ):
             with self.subTest(field=field):
                 self.refused(ConfigError, f"spec.{field}: required to start", call)
@@ -1821,11 +1824,11 @@ class ChecksTest(Base):
         from agent_pm.session.adapters.claude import ClaudeAdapter
         from agent_pm.session.adapters.codex import CodexAdapter
 
-        for runtime, adapter in (("claude", ClaudeAdapter), ("codex", CodexAdapter)):
+        for client, adapter in (("claude", ClaudeAdapter), ("codex", CodexAdapter)):
             self.configure(
                 tables={
-                    runtime: {
-                        "implementation": f"agent_pm.session.adapters.{runtime}:{adapter.__name__}"
+                    client: {
+                        "implementation": f"agent_pm.session.adapters.{client}:{adapter.__name__}"
                     }
                 }
             )
@@ -1834,12 +1837,12 @@ class ChecksTest(Base):
                 *(f"{word}=x" for word in adapter.forbidden_selection if word.startswith("--")),
             )
             for flag in flags:
-                with self.subTest(runtime=runtime, flag=flag):
+                with self.subTest(client=client, flag=flag):
                     self.refused(
                         ConfigError,
                         f"{flag}: picks the session; use sid= or resume=",
-                        lambda *, flag=flag, runtime=runtime: self.start(
-                            runtime=runtime, spec=self.spec(flags=("--verbose", flag, SID))
+                        lambda *, flag=flag, client=client: self.start(
+                            client=client, spec=self.spec(flags=("--verbose", flag, SID))
                         ),
                     )
 
@@ -1891,7 +1894,7 @@ class ChecksTest(Base):
         self.refused(
             ConfigError,
             "no [adapters.nope] table in the configured adapters",
-            lambda: self.start(runtime="nope"),
+            lambda: self.start(client="nope"),
         )
         self.configure(model="m")
         self.refused(
@@ -1913,9 +1916,11 @@ class ChecksTest(Base):
 
 class ModulesTest(Case):
     def test_constants_and_the_modes(self):
-        self.assertEqual(hosted.POLL, 0.5)
-        self.assertEqual((hosted.PROBE_DIR, hosted.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
-        self.assertEqual(sorted(hosted.MODES), sorted(Mode))
+        self.assertEqual(hosted_session.POLL, 0.5)
         self.assertEqual(
-            {mode: cls.kind for mode, cls in hosted.MODES.items()}, {m: m for m in Mode}
+            (hosted_session.PROBE_DIR, hosted_session.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120)
+        )
+        self.assertEqual(sorted(hosted_session.MODES), sorted(Mode))
+        self.assertEqual(
+            {mode: cls.kind for mode, cls in hosted_session.MODES.items()}, {m: m for m in Mode}
         )

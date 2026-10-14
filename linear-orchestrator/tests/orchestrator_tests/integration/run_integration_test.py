@@ -1,4 +1,4 @@
-"""run.py as a subprocess over the Delegate, headless: fake_claude as runtime `claude`, FakeLinear
+"""run.py as a subprocess over the Delegate, headless: fake_claude as client `claude`, FakeLinear
 over HTTP, the local files in the test's HOME. Done runs write back as writeback_test pins them,
 plus the session comment by its session id; a run with no outcome; a usage limit (FR-59) and its
 resume; a resume after a lost ledger write (FR-54).
@@ -84,7 +84,7 @@ class Run(Flow):
         res = self.script(
             *RUN,
             *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
-            *("--assignee", ACCOUNTS[self.role], "--runtime", "claude", "--mode", mode),
+            *("--assignee", ACCOUNTS[self.role], "--client", "claude", "--mode", mode),
             *(("--target", "ophis/agent-pm") if self.role == "engineer" else ()),
             "--input",
             "Do it.\n",
@@ -241,7 +241,7 @@ class Undone(Run):
             "kind": "limit",
             "issue": ID,
             "sid": SID,
-            "runtime": "claude",
+            "client": "claude",
             "resets_at": RESETS,
             "delegate_kind": "harness",
         }

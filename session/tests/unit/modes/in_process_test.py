@@ -23,14 +23,14 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.modes.in_process import InProcessMode
+from agent_pm.session.modes.in_process import InProcessRuntime
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
-SPEC = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", runtime="stub")
+SPEC = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", client="stub")
 RESUME = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", resume=True)
 
 
@@ -40,7 +40,7 @@ class StubAdapter(Adapter):
     """
 
     forbidden_selection = ("--resume",)
-    runtime_note = "STUB NOTE"
+    client_note = "STUB NOTE"
 
     def __init__(self, script, refusal=None):
         super().__init__({})
@@ -85,10 +85,10 @@ class Base(Case):
         self.mode, self.recorded = None, []
 
     def start(self, adapter, spec=SPEC, record=None, display=None) -> Prepared:
-        """self.mode: InProcessMode started on spec with adapter and display, its session line
+        """self.mode: InProcessRuntime started on spec with adapter and display, its session line
         given to record, else kept in self.recorded; its Prepared.
         """
-        self.mode = InProcessMode.start(
+        self.mode = InProcessRuntime.start(
             spec,
             adapter,
             registry=self.driver.registry,
@@ -297,7 +297,7 @@ class Start(Base):
                 spec = Spec(
                     workdir="/w",
                     sid="s",
-                    runtime="stub",
+                    client="stub",
                     prompt="hi",
                     access=Access(cwd=given, project=project, commands=("git",)),
                 )
@@ -327,7 +327,7 @@ class Start(Base):
     def test_refused_before_its_session_line_or_its_run(self):
         refused = StubAdapter(ended, ConfigError("tier 4 is unmapped"))
         for adapter, fields, message in (
-            (NoInProcess(ended), {}, "runtime 'stub' does not support in_process mode"),
+            (NoInProcess(ended), {}, "client 'stub' does not support in_process mode"),
             (StubAdapter(ended), {"name": "w1"}, "name: tui mode only"),
             (StubAdapter(ended), {"events": "/e"}, "events: tui mode only"),
             (
@@ -367,7 +367,7 @@ class Start(Base):
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         script, reached, release, _ = self.held()
-        mode = InProcessMode.start(
+        mode = InProcessRuntime.start(
             SPEC,
             StubAdapter(script),
             registry=self.driver.registry,
@@ -375,7 +375,7 @@ class Start(Base):
             host=MemoryHost(),
         )
         self.addCleanup(mode.stop)
-        self.assertIsInstance(mode, InProcessMode)
+        self.assertIsInstance(mode, InProcessRuntime)
         self.assertEqual(mode.prepared.info, self.recorded[0])
         self.assertTrue(reached.wait(WAIT))
         self.assertEqual((mode.state(), mode.poll(WAIT)), ("live", ([Reply("one")], False)))

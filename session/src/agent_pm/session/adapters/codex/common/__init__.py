@@ -1,4 +1,4 @@
-"""Codex shared runtime behavior, recovery storage and validated snapshots."""
+"""Codex shared client behavior, recovery storage and validated snapshots."""
 
 from __future__ import annotations
 

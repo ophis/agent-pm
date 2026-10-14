@@ -1,6 +1,6 @@
 """The harness's Host and import roots with real processes: the harness on a FakeHost
 (session/tests/fakes/host.py, outside the three src roots), injected or configured, the agent on a
-private tmux server (session/tests/live_tmux.py) running fake_claude; an extension runtime's detached
+private tmux server (session/tests/live_tmux.py) running fake_claude; an extension client's detached
 run, its package only on the caller's PYTHONPATH.
 """
 
@@ -140,25 +140,25 @@ class HarnessHosts(Case):
         )
         self.assertFalse(self.live(HARNESS))
 
-    def test_a_detached_extension_runtime_reaches_its_outcome(self):
+    def test_a_detached_extension_client_reaches_its_outcome(self):
         extensions = os.path.join(self.dir, "extensions")
         shutil.copytree(
             os.path.dirname(fake_adapter.__file__),
-            os.path.join(extensions, "extension_runtime"),
+            os.path.join(extensions, "extension_client"),
             ignore=shutil.ignore_patterns("__pycache__"),
         )
         with open(self.scenario, "w", encoding="utf-8") as file:
             json.dump([said(START, block(DONE))], file)
         self.configure(
             "[session.adapters.extension]\n"
-            'implementation = "extension_runtime:FakeAdapter"\n'
+            'implementation = "extension_client:FakeAdapter"\n'
             f"scenario = {json.dumps(self.scenario)}\n"
             f"log = {json.dumps(os.path.join(self.dir, 'fake.log'))}\n"
         )
         self.detach(
             "--mode",
             "headless",
-            "--runtime",
+            "--client",
             "extension",
             pythonpath=os.pathsep.join((PYTHONPATH, extensions)),
         )

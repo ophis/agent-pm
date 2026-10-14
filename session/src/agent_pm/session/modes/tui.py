@@ -1,5 +1,5 @@
-"""The tui Mode: an Adapter command on a Host terminal; events from its runtime's own record, then
-the hook records appended to its session directory, and from its terminal.
+"""The tui Runtime: an Adapter command on a Host terminal; events from its client's own record,
+then the hook records appended to its session directory, and from its terminal.
 """
 
 import contextlib
@@ -42,7 +42,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.base import RunningMode, identity_drop
+from agent_pm.session.modes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
 
@@ -65,7 +65,7 @@ def checked_name(name) -> str:
 def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]) -> dict:
     spec = prepared.spec
     return {
-        "runtime": spec.runtime,
+        "client": spec.client,
         "workdir": spec.workdir,
         **prepared.info.persisted(),
         "events": spec.events,
@@ -91,9 +91,9 @@ def _bad(state: Mapping) -> str | None:
     generation = state.get("generation")
     if not isinstance(generation, str) or not generation.isprintable() or not generation:
         return "generation"
-    runtime = state.get("runtime")
-    if not isinstance(runtime, str) or not NAME.match(runtime):
-        return "runtime"
+    client = state.get("client")
+    if not isinstance(client, str) or not NAME.match(client):
+        return "client"
     try:
         SessionInfo.from_fields(state, strict=True)
     except ValueError as e:
@@ -301,7 +301,7 @@ class _Start:
         return Launch(self.prepared.argv, env=self.prepared.env, cwd=self.prepared.info.cwd)
 
 
-class TuiMode(RunningMode):
+class TuiRuntime(Runtime):
     """One tui session holding its terminal generation."""
 
     kind = Mode.TUI
@@ -310,7 +310,7 @@ class TuiMode(RunningMode):
     def resolve_name(spec: Spec) -> str:
         if spec.sid is None:
             raise ConfigError("sid: missing")
-        return checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
+        return checked_name(f"{spec.client}-{spec.sid[:8]}" if spec.name is None else spec.name)
 
     def __init__(
         self,
@@ -373,7 +373,7 @@ class TuiMode(RunningMode):
         prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
         metadata = {
             "sid": prepared.info.sid,
-            "runtime": spec.runtime or "session",
+            "client": spec.client or "session",
             "generation": uuid.uuid4().hex,
         }
         state = _state(prepared, run, host, metadata)
@@ -431,7 +431,7 @@ class TuiMode(RunningMode):
     @classmethod
     def attach(cls, name: str, state: Mapping, adapter: Adapter, *, host: Host) -> Self:
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
-        restored replays its runtime's record, then its hook log; events from the next record.
+        restored replays its client's record, then its hook log; events from the next record.
         """
         store = _Store(name, host=host)
         info = SessionInfo.from_fields(state)
@@ -442,9 +442,7 @@ class TuiMode(RunningMode):
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         if run is None:
-            raise DriverError(
-                f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
-            )
+            raise DriverError(f"no tui session {name}: client {state['client']!r} has no tui mode")
         terminal = store.process()
         if terminal is not None and not isinstance(terminal, Terminal):
             raise DriverError(f"session {name} has no terminal")
@@ -452,7 +450,7 @@ class TuiMode(RunningMode):
             raise DriverError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],
-            runtime=state["runtime"],
+            client=state["client"],
             mode=Mode.TUI,
             sid=info.sid,
             name=name,
@@ -481,7 +479,7 @@ class TuiMode(RunningMode):
 
     @property
     def replayed(self) -> tuple[SessionEvent | Stderr | ClientBound, ...]:
-        """Attached: its runtime record's, then its hook log's events so far."""
+        """Attached: its client record's, then its hook log's events so far."""
         return self._replayed
 
     def marked_blocked(self) -> bool:
@@ -521,7 +519,7 @@ class TuiMode(RunningMode):
         self._code = -signal.SIGHUP if self._code is None else self._code
 
     def _read(self) -> list[SessionEvent | Stderr | ClientBound]:
-        """New records' events, the runtime's own first (read last, so a text written before its
+        """New records' events, the client's own first (read last, so a text written before its
         hook record precedes it), checked against the terminal and session.json only once found.
         """
         if self._gone:

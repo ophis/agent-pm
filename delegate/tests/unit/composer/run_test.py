@@ -1,5 +1,5 @@
 """composer/run.py: resolve (ported from the old composer's Resolve, PublicResolution, OldKeys and
-Validate tests, less the client layer and the prompt), the opaque runtime key, run params,
+Validate tests, less the client layer and the prompt), the opaque client key, run params,
 trusted_dirs, bind and the access intent (the old driver's access tests, less the report command).
 """
 
@@ -39,7 +39,7 @@ from delegate.tests.unit.composer.teams import EDITOR, FILES, POET, RUN_CONFIG, 
 from utils.tests.case import local_section
 
 TIER = "tier must be an integer 1–4"
-RUNTIME = "runtime must be a non-empty one-line name, got "
+CLIENT = "client must be a non-empty one-line name, got "
 
 
 class Fake(Case):
@@ -198,7 +198,7 @@ class Access(Fake):
                 "role": "writer",
                 "tier": 2,
                 "effort": "high",
-                "runtime": "a",
+                "client": "a",
                 "output": {"type": "local"},
                 "idle_timeout": 60,
                 "show": "",
@@ -566,7 +566,7 @@ class Validate(Fake):
         )
 
     def test_an_invalid_overlay_value(self):
-        self.assertLessEqual({"language", "runtime"}, RUN_KEYS)
+        self.assertLessEqual({"language", "client"}, RUN_KEYS)
         gate, language = (
             "gate must be one line of shell command without backticks",
             "language must be one line of text",
@@ -584,7 +584,7 @@ class Validate(Fake):
 
     def test_replace_is_checked(self):
         run = self.resolved("editor")
-        for change in ({"effort": "ultra"}, {"gate": "a\nb"}, {"runtime": ""}):
+        for change in ({"effort": "ultra"}, {"gate": "a\nb"}, {"client": ""}):
             with self.subTest(change=change), self.assertRaises(ConfigError):
                 replace(run, **change)
 
@@ -609,7 +609,7 @@ class OwnedKeys(Fake):
             + RUN_CONFIG
             + '\n[adapters.x]\nimplementation = "agent_pm.session.adapters.x:XAdapter"\nmodel = "m"\n'
         )
-        self.assertEqual(self.resolved().runtime, "a")
+        self.assertEqual(self.resolved().client, "a")
 
     def test_owned_tables_and_overlays_stay_strict(self):
         for local, overlay, msg in (
@@ -642,6 +642,29 @@ class OwnedKeys(Fake):
                 self.local(local)
                 self.assertEqual(self.refused(overlays=(overlay,)), msg)
 
+    def test_a_renamed_run_key_is_refused_naming_its_new_name(self):
+        old, hint = "runtime", "; renamed to 'client'"
+        for configured, local, overlay, msg in (
+            (f'{old} = "a"\n' + RUN_CONFIG, "", {}, f"unknown key {old!r}{hint}"),
+            (
+                RUN_CONFIG,
+                f'[roles.writer]\n{old} = "a"\n',
+                {},
+                f"unknown key {old!r} in roles.writer{hint}",
+            ),
+            (RUN_CONFIG, "", {old: "a"}, f"run overlay: unknown key {old!r} in [overlay]{hint}"),
+            (
+                RUN_CONFIG,
+                "",
+                {"roles": {"writer": {old: "a"}}},
+                f"run overlay: unknown key {old!r} in [overlay.roles.writer]{hint}",
+            ),
+        ):
+            with self.subTest(msg=msg):
+                self.configure(configured)
+                self.local(local)
+                self.assertEqual(self.refused(overlays=(overlay,)), msg)
+
     def test_show_resolves_global_then_role_then_overlay_and_is_one_line(self):
         self.assertIn("show", RUN_KEYS)
         self.assertEqual(self.resolved().show, "")
@@ -664,46 +687,46 @@ class OwnedKeys(Fake):
                 )
 
 
-class Runtime(Fake):
+class Client(Fake):
     def setUp(self):
         super().setUp()
         for role in ("pm", "researcher"):
             self.write({f"roles/{role}.md": EDITOR.replace("# Editor", f"# {role}")})
 
     def test_the_configs_value_and_a_role_overlay_per_role(self):
-        overlay = {"roles": {"pm": {"runtime": "x"}}}
+        overlay = {"roles": {"pm": {"client": "x"}}}
         self.assertEqual(
-            [self.resolved(role, overlays=(overlay,)).runtime for role in ("pm", "researcher")],
+            [self.resolved(role, overlays=(overlay,)).client for role in ("pm", "researcher")],
             ["x", "a"],
         )
 
     def test_the_configs_role_table_per_role(self):
-        self.configure(RUN_CONFIG + '\n[roles.pm]\nruntime = "x"\n')
-        self.assertEqual([self.resolved(role).runtime for role in ("pm", "researcher")], ["x", "a"])
+        self.configure(RUN_CONFIG + '\n[roles.pm]\nclient = "x"\n')
+        self.assertEqual([self.resolved(role).client for role in ("pm", "researcher")], ["x", "a"])
 
     def test_an_overlays_global_value_beats_the_configs_role_value(self):
-        self.configure(RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\nruntime = "w"'))
-        self.assertEqual(self.resolved().runtime, "w")
-        self.assertEqual(self.resolved(overlays=({"runtime": "x"},)).runtime, "x")
+        self.configure(RUN_CONFIG.replace('effort = "medium"', 'effort = "medium"\nclient = "w"'))
+        self.assertEqual(self.resolved().client, "w")
+        self.assertEqual(self.resolved(overlays=({"client": "x"},)).client, "x")
 
     def test_missing_or_not_a_one_line_name_after_any_layer(self):
-        unset = RUN_CONFIG.replace('runtime = "a"\n', "")
+        unset = RUN_CONFIG.replace('client = "a"\n', "")
         for config, overlays, got in (
             (unset, (), "''"),
             (RUN_CONFIG.replace('"a"', '""'), (), "''"),
             (RUN_CONFIG.replace('"a"', '"  "'), (), "'  '"),
             (RUN_CONFIG.replace('"a"', '"a\\nb"'), (), "'a\\nb'"),
             (RUN_CONFIG.replace('"a"', "3"), (), "3"),
-            (RUN_CONFIG, ({"runtime": ""},), "''"),
-            (RUN_CONFIG, ({"roles": {"writer": {"runtime": ["x"]}}},), "['x']"),
+            (RUN_CONFIG, ({"client": ""},), "''"),
+            (RUN_CONFIG, ({"roles": {"writer": {"client": ["x"]}}},), "['x']"),
         ):
             with self.subTest(got=got, overlays=overlays):
                 self.configure(config)
-                self.assertEqual(self.refused(overlays=overlays), RUNTIME + got)
-        self.local('runtime = "l"\n')
-        self.assertEqual(self.resolved().runtime, "l")
+                self.assertEqual(self.refused(overlays=overlays), CLIENT + got)
+        self.local('client = "l"\n')
+        self.assertEqual(self.resolved().client, "l")
 
-    def test_resolve_takes_no_runtime_client_or_trust(self):
+    def test_resolve_takes_no_client_or_trust(self):
         self.assertEqual(
             list(inspect.signature(resolve).parameters),
             ["role", "task", "overlays", "label", "team", "config", "local", "cfg"],

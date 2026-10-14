@@ -9,7 +9,7 @@ import os
 import unittest
 
 from agent_pm.session import ConfigError, Host, Mode, Spec, close, sessions
-from agent_pm.session.engine.hosted import UNCONFIGURED, HostedSession
+from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
@@ -74,7 +74,7 @@ class DisplayTest(Live):
             json.dump([{"read": True}], f)
         for name, display in DISPLAYS.items():
             spec = Spec(
-                workdir=self.workdir, name=name, runtime="fake", mode=Mode.TUI, prompt="hello"
+                workdir=self.workdir, name=name, client="fake", mode=Mode.TUI, prompt="hello"
             )
             self.addCleanup(configured.start(spec, display=display).stop)
         host = configured.host()

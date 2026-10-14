@@ -1,4 +1,4 @@
-"""Claude Code runtime options, Access grants, launch metadata, usage and session inspection."""
+"""Claude Code client options, Access grants, launch metadata, usage and session inspection."""
 
 import contextlib
 import json

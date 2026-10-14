@@ -1,4 +1,4 @@
-"""Driver's sessions of the fake runtime and its harness Host's: real child processes."""
+"""Driver's sessions of the fake client and its harness Host's: real child processes."""
 
 import json
 import os
@@ -79,7 +79,7 @@ class WrappersTest(TuiBase):
 
 
 class SpecMappingTest(TuiBase):
-    """Driver.start puts its arguments on the one Spec its Mode and Adapter read (resume=X: sid=X,
+    """Driver.start puts its arguments on the one Spec its Runtime and Adapter read (resume=X: sid=X,
     resume=True); idle_timeout goes beside the Spec.
     """
 
@@ -87,10 +87,10 @@ class SpecMappingTest(TuiBase):
         super().setUp()
         LAUNCHED.clear()
 
-    def test_runtime_mode_prompt_resume_and_events_reach_the_adapters_spec_idle_timeout_not(self):
+    def test_client_mode_prompt_resume_and_events_reach_the_adapters_spec_idle_timeout_not(self):
         session = drive(
             self,
-            runtime="inner",
+            client="inner",
             mode="tui",
             name="w1",
             prompt="hi",
@@ -98,21 +98,21 @@ class SpecMappingTest(TuiBase):
             events=self.events,
             idle_timeout=5,
         )
-        drive(self, runtime="inner", mode="tui", name="w2", sid=SID)
+        drive(self, client="inner", mode="tui", name="w2", sid=SID)
         first, second = LAUNCHED
         self.assertEqual(
-            (first.runtime, first.mode, first.prompt, first.sid, first.resume, first.events),
+            (first.client, first.mode, first.prompt, first.sid, first.resume, first.events),
             ("inner", Mode.TUI, "hi", SID, True, self.events),
         )
         self.assertFalse(hasattr(first, "idle_timeout"))
-        self.assertEqual((session.runtime, session.mode, session.sid), ("inner", "tui", SID))
+        self.assertEqual((session.client, session.mode, session.sid), ("inner", "tui", SID))
         self.assertEqual(
             (second.prompt, second.sid, second.resume, second.events),
             ("hello", SID, False, None),
         )
 
     def test_neither_sid_nor_resume_gives_a_new_sid_and_no_resume(self):
-        drive(self, runtime="inner", mode="tui", name="w1")
+        drive(self, client="inner", mode="tui", name="w1")
         (spec,) = LAUNCHED
         self.assertEqual((uuid.UUID(spec.sid).version, spec.resume), (4, False))
 

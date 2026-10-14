@@ -97,7 +97,7 @@ class FakeDelegate(Delegate):
             task=task or "",
             tier=2,
             effort="high",
-            runtime="fake",
+            client="fake",
             output={"type": "local"},
             idle_timeout=60,
             show="",

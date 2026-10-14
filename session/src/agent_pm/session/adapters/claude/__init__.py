@@ -1,4 +1,4 @@
-"""Claude Code's Adapter, runtime `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the
+"""Claude Code's Adapter, client `claude`: ClaudeHeadless (headless.py), ClaudeTui (tui.py); the
 rest is ClaudeCommon's.
 """
 
@@ -35,7 +35,7 @@ class ClaudeAdapter(Adapter):
         "--teleport",
     )
     keys = frozenset({"flags", "allow", "tiers", "efforts", "env"})
-    runtime_note = ClaudeCommon.NOTE
+    client_note = ClaudeCommon.NOTE
     session_env = "CLAUDECODE"
     identity_env = tuple(key for key in ClaudeCommon.UNSET if key not in LOCAL_ENV_VARS)
 

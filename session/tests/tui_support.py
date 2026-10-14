@@ -129,14 +129,14 @@ class Live(Case):
                     "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "tui": True,
                     "scenario": os.path.join(self.dir, "scenario.json"),
-                    "log": os.path.join(self.dir, "runtime.log"),
+                    "log": os.path.join(self.dir, "client.log"),
                 }
             }
         )
         self.driver = self.driven()
 
     def driven(self, **dependencies) -> Driver:
-        """A Driver of self.config loading the fake runtime, with `dependencies`."""
+        """A Driver of self.config loading the fake client, with `dependencies`."""
         return Driver(
             **self.config,
             class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
@@ -144,7 +144,7 @@ class Live(Case):
         )
 
     def start(self, name: str, *steps, sid=None, **kwargs) -> Session:
-        """Tui session `name` of the fake runtime running `steps`, its events file self.events
+        """Tui session `name` of the fake client running `steps`, its events file self.events
         unless given.
         """
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:

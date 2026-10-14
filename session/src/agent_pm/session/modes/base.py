@@ -1,6 +1,6 @@
-"""A Mode's running session, and what its Modes share to start one. The class's start() fixes a
-Prepared before anything starts, has `record` write the session line, then starts and returns the
-session, so none exists unstarted. stop() is idempotent.
+"""Runtime, a Mode's running session, and what the Runtimes share to start one. The class's
+start() fixes a Prepared before anything starts, has `record` write the session line, then starts
+and returns the session, so none exists unstarted. stop() is idempotent.
 """
 
 import os
@@ -49,11 +49,11 @@ def identity_drop(registry: Registry) -> frozenset[str]:
     return frozenset(drop)
 
 
-class RunningMode(ABC):
+class Runtime(ABC):
     kind: ClassVar[Mode]
 
     def __init__(self, prepared: Prepared) -> None:
-        """Built by start (TuiMode.attach too) from what it started."""
+        """Built by start (TuiRuntime.attach too) from what it started."""
         self._prepared = prepared
 
     @property
@@ -86,12 +86,12 @@ class RunningMode(ABC):
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """The session started; spec.sid set; registry: tui settings and identity_drop; host: the
-        selected execution Host; display: a tui session's, kept as given (other Modes refuse one).
+        selected execution Host; display: a tui session's, kept as given (other Runtimes refuse one).
         """
 
     @abstractmethod
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
-        """Events within `timeout` s and whether they ended; raises the Mode's own failures."""
+        """Events within `timeout` s and whether they ended; raises the Runtime's own failures."""
 
     @abstractmethod
     def returncode(self, timeout: float) -> int | None:
@@ -114,7 +114,7 @@ class RunningMode(ABC):
 
     @classmethod
     def _unsupported(cls, spec: Spec) -> ConfigError:
-        return ConfigError(f"runtime {spec.runtime!r} does not support {cls.kind.value} mode")
+        return ConfigError(f"client {spec.client!r} does not support {cls.kind.value} mode")
 
     @staticmethod
     def _no_tui_keys(spec: Spec, display: Display = None) -> None:
@@ -128,8 +128,8 @@ class RunningMode(ABC):
 
     @staticmethod
     def _noted(spec: Spec, adapter: Adapter) -> Spec:
-        if spec.access.commands and adapter.runtime_note:
-            return replace(spec, prompt=spec.prompt + "\n\n" + adapter.runtime_note)
+        if spec.access.commands and adapter.client_note:
+            return replace(spec, prompt=spec.prompt + "\n\n" + adapter.client_note)
         return spec
 
     @staticmethod
@@ -138,7 +138,7 @@ class RunningMode(ABC):
             raise ConfigError("sid: missing")
         command = launch(spec)
         if not command.argv:
-            raise ConfigError(f"runtime {spec.runtime!r} gave no command")
+            raise ConfigError(f"client {spec.client!r} gave no command")
         cwd = command.cwd or spec.access.cwd or spec.workdir
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)

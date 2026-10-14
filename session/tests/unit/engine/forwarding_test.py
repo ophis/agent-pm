@@ -15,7 +15,7 @@ from unittest import mock
 
 import agent_pm.session as session_pkg
 from agent_pm.session import Driver, Session
-from agent_pm.session.engine import forwarding, hosted
+from agent_pm.session.engine import forwarding, hosted_session
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.forwarding import (
     Handle,
@@ -24,7 +24,7 @@ from agent_pm.session.engine.forwarding import (
     session_record,
     sessions,
 )
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,
@@ -81,7 +81,7 @@ SIGNATURES = {
     ],
     "start": [
         ("self", POSITIONAL, EMPTY),
-        ("runtime", POSITIONAL, EMPTY),
+        ("client", POSITIONAL, EMPTY),
         ("mode", POSITIONAL, EMPTY),
         ("prompt", POSITIONAL, EMPTY),
         ("spec", POSITIONAL, EMPTY),
@@ -102,18 +102,18 @@ SIGNATURES = {
         ("opener", POSITIONAL, None),
         ("command", KEYWORD, None),
     ],
-    "usage": [("self", POSITIONAL, EMPTY), ("runtime", POSITIONAL, EMPTY)],
+    "usage": [("self", POSITIONAL, EMPTY), ("client", POSITIONAL, EMPTY)],
     "session_record": [("workdir", POSITIONAL, EMPTY), ("sid", POSITIONAL, EMPTY)],
     "session_status": [
         ("self", POSITIONAL, EMPTY),
-        ("runtime", POSITIONAL, EMPTY),
+        ("client", POSITIONAL, EMPTY),
         ("sid", POSITIONAL, EMPTY),
         ("cwd", POSITIONAL, EMPTY),
         ("workdir", KEYWORD, EMPTY),
     ],
     "writable_dirs": [
         ("self", POSITIONAL, EMPTY),
-        ("runtime", POSITIONAL, EMPTY),
+        ("client", POSITIONAL, EMPTY),
         ("spec", POSITIONAL, EMPTY),
         ("resume", POSITIONAL, None),
     ],
@@ -156,7 +156,7 @@ class ExportsTest(Case):
                 self.assertIn(name, session_pkg.__all__)
         self.assertIs(session_pkg.SIGNALS, SIGNALS)
         self.assertIs(Handle, Session)
-        for name in ("api", "forwarding", "hosted", "HostedSession", "TmuxHost", "holds"):
+        for name in ("api", "forwarding", "hosted_session", "HostedSession", "TmuxHost", "holds"):
             with self.subTest(name=name):
                 self.assertNotIn(name, session_pkg.__all__)
         self.assertFalse(hasattr(forwarding, "holds"))
@@ -185,7 +185,7 @@ class WrappersTest(TuiBase):
                 (lambda: self.driver.usage("fake"), lambda: self.session.usage("fake")),
                 (
                     lambda: self.driver.writable_dirs("fake", spec),
-                    lambda: self.session.writable_dirs(dataclasses.replace(spec, runtime="fake")),
+                    lambda: self.session.writable_dirs(dataclasses.replace(spec, client="fake")),
                 ),
                 (
                     lambda: self.driver.session_status("probe", SID, d, workdir=d),
@@ -197,10 +197,13 @@ class WrappersTest(TuiBase):
                     lambda: log.session(SID).persisted(),
                 ),
                 (lambda: sessions("("), lambda: HostedSession.list("(")),
-                (lambda: close("a b"), lambda: tui.TuiMode.close("a b", host=self.session.host())),
+                (
+                    lambda: close("a b"),
+                    lambda: tui.TuiRuntime.close("a b", host=self.session.host()),
+                ),
                 (
                     lambda: self.driver.close("a b"),
-                    lambda: tui.TuiMode.close("a b", host=self.session.host()),
+                    lambda: tui.TuiRuntime.close("a b", host=self.session.host()),
                 ),
             )
             for index, (wrapper, target) in enumerate(pairs):
@@ -303,7 +306,7 @@ class WritableDirsTest(Base):
     def dirs(self, **kwargs):
         return mock.patch.object(ProbeAdapter, "writable_dirs", autospec=True, **kwargs)
 
-    def test_the_spec_mapped_with_runtime_and_resume(self):
+    def test_the_spec_mapped_with_client_and_resume(self):
         spec = self.spec(tier=2)
         with self.dirs(return_value=[self.dir]) as dirs:
             self.assertEqual(self.driver.writable_dirs("probe", spec, "r1"), (self.dir,))
@@ -311,12 +314,12 @@ class WritableDirsTest(Base):
         self.assertEqual(
             [(c.args[1:], c.kwargs) for c in dirs.call_args_list],
             [
-                ((dataclasses.replace(spec, runtime="probe", sid="r1", resume=True),), {}),
-                ((dataclasses.replace(spec, runtime="probe"),), {}),
+                ((dataclasses.replace(spec, client="probe", sid="r1", resume=True),), {}),
+                ((dataclasses.replace(spec, client="probe"),), {}),
             ],
         )
 
-    def test_refuses_a_spec_sid_a_bad_resume_or_an_unknown_runtime(self):
+    def test_refuses_a_spec_sid_a_bad_resume_or_an_unknown_client(self):
         set_sid = "spec.sid is set by writable_dirs(): pass resume="
         bad_sid = 'sid must be a non-empty printable string without "/", got '
         unknown = "no [adapters.nope] table in the configured adapters"
@@ -326,13 +329,13 @@ class WritableDirsTest(Base):
             *((None, bad, "probe", bad_sid + repr(bad)) for bad in ("", "a/b", 5)),
             (None, None, "nope", unknown),
         ]
-        for spec_sid, resume, runtime, message in cases:
+        for spec_sid, resume, client, message in cases:
             with (
-                self.subTest(spec_sid=spec_sid, resume=resume, runtime=runtime),
+                self.subTest(spec_sid=spec_sid, resume=resume, client=client),
                 self.dirs() as dirs,
                 self.assertRaises(ConfigError) as caught,
             ):
-                self.driver.writable_dirs(runtime, self.spec(sid=spec_sid), resume)
+                self.driver.writable_dirs(client, self.spec(sid=spec_sid), resume)
             self.assertEqual(str(caught.exception), message)
             dirs.assert_not_called()
 
@@ -419,7 +422,7 @@ class UsageTest(Base):
         self.driver_dependencies = {**self.driver_dependencies, "probe": probe}
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         self.assertEqual(self.driver.usage("probe"), Usage(Window(7.0, None), None))
-        self.assertEqual(probe.call_args.kwargs["timeout"], hosted.PROBE_TIMEOUT)
+        self.assertEqual(probe.call_args.kwargs["timeout"], hosted_session.PROBE_TIMEOUT)
 
 
 class AssignedTest(TuiBase):
@@ -439,10 +442,10 @@ class AssignedTest(TuiBase):
 
     def test_a_clock_assigned_times_only_the_sessions_started_after(self):
         self.steps({"sleep": 0.5})
-        before = drive(self, runtime="checked", mode="in_process", idle_timeout=60)
+        before = drive(self, client="checked", mode="in_process", idle_timeout=60)
         ticks = itertools.count(0, 1000)
         self.driver.clock = lambda: float(next(ticks))
-        after = drive(self, runtime="checked", mode="in_process", idle_timeout=60)
+        after = drive(self, client="checked", mode="in_process", idle_timeout=60)
         self.assertEqual(next(after.events()), IdleTimeout(60))
         self.assertEqual(self.drain(before), [Exited(0)])
 

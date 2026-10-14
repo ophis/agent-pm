@@ -11,7 +11,7 @@ from delegate.tests.case import Case
 SID = "11111111-2222-3333-4444-555555555555"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")
 INPUT = "Compare A and B.\n[agent-pm-progress:round] a mark line in the input"
-RUNTIMES = (("claude", "headless"), ("codex", "headless"), (None, "headless"))
+CLIENTS = (("claude", "headless"), ("codex", "headless"), (None, "headless"))
 GITHUB = """[roles.researcher.output]
 type = "github"
 repo = "o/docs"

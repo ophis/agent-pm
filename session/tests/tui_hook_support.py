@@ -24,7 +24,7 @@ def install(folder: str, text: str) -> str:
 
 def state(root: str, events) -> dict:
     return {
-        "runtime": "fake",
+        "client": "fake",
         "sid": str(uuid.uuid4()),
         "workdir": root,
         "cwd": root,
@@ -268,7 +268,7 @@ class RecordCases:
         self.assertEqual(self.lines(), "")
         self.assertEqual(len(self.records()), 3)
 
-    def test_target_lookup_works_without_runtime_pane_environment(self):
+    def test_target_lookup_works_without_client_pane_environment(self):
         for pane in (None, ""):
             self.assertEqual(self.hook("stop", TMUX_PANE=pane), "")
         self.assertEqual(len(self.records()), 2)

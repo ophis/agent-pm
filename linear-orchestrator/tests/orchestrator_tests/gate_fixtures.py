@@ -8,7 +8,7 @@ from agent_pm.session import Usage, Window
 from delegate.tests.fakes.delegate import FakeDelegate
 
 
-def quota_provider(runtime, percent):
+def quota_provider(client, percent):
     class QuotaDelegate(FakeDelegate):
         ROLES = {"engineer": {"build": "Build"}, "pm": {"design": "Design"}}
         queried = []
@@ -16,7 +16,7 @@ def quota_provider(runtime, percent):
 
         @classmethod
         def resolve(cls, role, task=None, *, overlays=()):
-            return replace(super().resolve(role, task, overlays=overlays), runtime=runtime)
+            return replace(super().resolve(role, task, overlays=overlays), client=client)
 
         @classmethod
         def usage(cls, role, *, overlays=()):
@@ -27,15 +27,15 @@ def quota_provider(runtime, percent):
     return QuotaDelegate
 
 
-def quota_config(provider, kind, *, core=None, runtimes=None):
-    """A Gate's config: each provider role run as config.load resolves it, or with `runtimes`."""
+def quota_config(provider, kind, *, core=None, clients=None):
+    """A Gate's config: each provider role run as config.load resolves it, or with `clients`."""
     overlays = (core or {},)
     roles = {
         role: SimpleNamespace(run=provider.resolve(role, overlays=overlays))
         for role in provider.ROLES
     }
-    for role, runtime in (runtimes or {}).items():
-        roles[role] = SimpleNamespace(run=SimpleNamespace(runtime=runtime))
+    for role, client in (clients or {}).items():
+        roles[role] = SimpleNamespace(run=SimpleNamespace(client=client))
     return SimpleNamespace(
         delegate_kind=kind,
         delegate_cls=provider,

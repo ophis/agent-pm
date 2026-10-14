@@ -402,7 +402,7 @@ class AdapterTest(Base):
             for call in (self.driver.registry.adapter, self.driver.registry.adapter_class):
                 with self.subTest(bad=bad, call=call.__name__):
                     self.refused(
-                        f"unsafe runtime name {bad!r}: want a lowercase identifier",
+                        f"unsafe client name {bad!r}: want a lowercase identifier",
                         lambda *, bad=bad, call=call: call(bad),
                     )
 
@@ -552,7 +552,7 @@ class Committed(Case):
             )
         )
 
-    def test_the_committed_adapters_configure_agent_runtimes(self):
+    def test_the_committed_adapters_configure_agent_clients(self):
         self.driver = Driver(**settings(committed()))
         self.assertEqual(self.driver.registry.configured(), ["claude", "codex"])
         for name, table in committed().items():

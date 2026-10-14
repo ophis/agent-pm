@@ -1,4 +1,4 @@
-"""Recorded quota limits gate recovery using the saved Delegate kind and runtime."""
+"""Recorded quota limits gate recovery using the saved Delegate kind and client."""
 
 import os
 from datetime import UTC, datetime, timedelta
@@ -12,15 +12,15 @@ NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
 
 
 class RecordedQuotaKeys(Case):
-    def test_saved_kind_and_runtime_limit_blocks_drifted_resume_without_probing(self):
-        provider = quota_provider("current-runtime", 10)
+    def test_saved_kind_and_client_limit_blocks_drifted_resume_without_probing(self):
+        provider = quota_provider("current-client", 10)
         cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
             issue="TASK-1",
             sid="saved-sid",
-            runtime="saved-runtime",
+            client="saved-client",
             delegate_kind="saved-kind",
             resets_at=(NOW + timedelta(hours=1)).isoformat(),
         )
@@ -32,7 +32,7 @@ class RecordedQuotaKeys(Case):
             cfg=cfg,
             dry=False,
         )
-        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-runtime")))
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
         self.assertEqual((provider.queried, gate.seen), ([], {}))
         self.assertEqual(
             events,
@@ -42,7 +42,7 @@ class RecordedQuotaKeys(Case):
                     ("TASK-1",),
                     {
                         "once": True,
-                        "runtime": "saved-runtime",
+                        "client": "saved-client",
                         "reason": "limit",
                         "until": (NOW + timedelta(hours=1)).isoformat(),
                     },
@@ -52,15 +52,15 @@ class RecordedQuotaKeys(Case):
         self.assertFalse(gate.blocked("engineer", "TASK-2"))
         self.assertEqual(provider.queried, ["engineer"])
 
-    def test_limit_in_one_kind_does_not_block_another_kind_with_the_same_runtime(self):
-        provider = quota_provider("shared-runtime", 10)
+    def test_limit_in_one_kind_does_not_block_another_kind_with_the_same_client(self):
+        provider = quota_provider("shared-client", 10)
         cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
             issue="TASK-1",
             sid="saved-sid",
-            runtime="shared-runtime",
+            client="shared-client",
             delegate_kind="other-kind",
             resets_at=(NOW + timedelta(hours=1)).isoformat(),
         )
@@ -69,17 +69,17 @@ class RecordedQuotaKeys(Case):
         self.assertEqual(provider.queried, ["engineer"])
 
     def test_expired_saved_limit_releases_drift_without_caching_usage(self):
-        provider = quota_provider("current-runtime", 95)
+        provider = quota_provider("current-client", 95)
         cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
             issue="TASK-1",
             sid="saved-sid",
-            runtime="saved-runtime",
+            client="saved-client",
             delegate_kind="saved-kind",
             resets_at=(NOW - timedelta(seconds=1)).isoformat(),
         )
         gate = Gate(path, NOW, cfg=cfg, dry=False)
-        self.assertFalse(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-runtime")))
+        self.assertFalse(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
         self.assertEqual((provider.queried, gate.seen), ([], {}))

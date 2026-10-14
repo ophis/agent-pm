@@ -1,4 +1,4 @@
-"""HostedSession, the session layer's one concrete Session: an Adapter's runtime in a Mode on a
+"""HostedSession, the session layer's one concrete Session: an Adapter's client in a Mode on a
 Host. events() yields its events, Stderr and IdleTimeout (none while Blocked) up to its Exited,
 recording `stderr` and each ClientBound as `client_session`, never yielded.
 """
@@ -47,7 +47,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.modes.base import RunningMode, child_env
+from agent_pm.session.modes.base import Runtime, child_env
 from agent_pm.utils import (
     STATE,
     Display,
@@ -65,18 +65,19 @@ def _request(spec: Spec, idle_timeout: float | None) -> tuple[str, Mode]:
     _idle(idle_timeout)
     if not isinstance(spec, Spec):
         raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
-    runtime, mode = spec.runtime, spec.mode
-    if runtime is None or mode is None:
-        raise ConfigError(f"spec.{'runtime' if runtime is None else 'mode'}: required to start")
-    return runtime, mode
+    client, mode = spec.client, spec.mode
+    if client is None or mode is None:
+        raise ConfigError(f"spec.{'client' if client is None else 'mode'}: required to start")
+    return client, mode
 
 
 POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
 PROBE_TIMEOUT = 120
 UNCONFIGURED = "session not configured: call Session.configure first"
-MODES: dict[Mode, type[RunningMode]] = {
-    mode.kind: mode for mode in (headless.HeadlessMode, tui.TuiMode, in_process.InProcessMode)
+MODES: dict[Mode, type[Runtime]] = {
+    mode.kind: mode
+    for mode in (headless.HeadlessRuntime, tui.TuiRuntime, in_process.InProcessRuntime)
 }
 
 HostFactory = Callable[[type[Host], str, Mapping], Host]
@@ -164,17 +165,17 @@ class HostedSession(Session):
 
     def __init__(
         self,
-        runtime: str,
+        client: str,
         mode: Mode,
         spec: Spec,
         *,
         info: SessionInfo,
-        running: RunningMode,
+        running: Runtime,
         host: Host,
         idle_timeout: float | None = None,
         adapter: Adapter,
     ):
-        self.sid, self.runtime, self.mode, self.name = info.sid, runtime, mode, spec.name
+        self.sid, self.client, self.mode, self.name = info.sid, client, mode, spec.name
         self._running, self._host, self._info, self._idle = running, host, info, idle_timeout
         self._adapter = adapter
         self._clock = type(self)._config().clock
@@ -235,8 +236,8 @@ class HostedSession(Session):
         idle_timeout: float | None = None,
     ) -> None:
         setup = cls._config()
-        runtime, mode = _request(spec, idle_timeout)
-        adapter = setup.registry.adapter(runtime)
+        client, mode = _request(spec, idle_timeout)
+        adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
         on.validate_display(display)
@@ -259,12 +260,12 @@ class HostedSession(Session):
     ) -> HostedSession:
         """spec.sid: its id, else a new one; display: kept by its Host."""
         setup = cls._config()
-        runtime, mode = _request(spec, idle_timeout)
-        adapter = setup.registry.adapter(runtime)
+        client, mode = _request(spec, idle_timeout)
+        adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
         on.validate_display(display)
-        name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
+        name = tui.TuiRuntime.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
             if any(
@@ -286,7 +287,7 @@ class HostedSession(Session):
             check_name=check_name,
         )
         return cls(
-            runtime,
+            client,
             mode,
             running.prepared.spec,
             info=running.prepared.info,
@@ -300,21 +301,21 @@ class HostedSession(Session):
     def attach(
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> HostedSession:
-        """Tui session `name`, from any process; its runtime record and hook log replayed into its
+        """Tui session `name`, from any process; its client record and hook log replayed into its
         reply and blocked, blocked too while its terminal is marked so.
         """
         setup = cls._config()
         tui.checked_name(name)
         _idle(idle_timeout)
         on = cls.host(host)
-        state = tui.TuiMode.snapshot(name)
+        state = tui.TuiRuntime.snapshot(name)
         try:
-            adapter = setup.registry.adapter(state["runtime"])
+            adapter = setup.registry.adapter(state["client"])
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
-        running = tui.TuiMode.attach(name, state, adapter, host=on)
+        running = tui.TuiRuntime.attach(name, state, adapter, host=on)
         session = cls(
-            state["runtime"],
+            state["client"],
             Mode.TUI,
             running.prepared.spec,
             info=running.prepared.info,
@@ -332,7 +333,7 @@ class HostedSession(Session):
 
     @classmethod
     def retire(cls, name: str, *, host: str | None = None) -> None:
-        tui.TuiMode.close(tui.checked_name(name), host=cls.host(host))
+        tui.TuiRuntime.close(tui.checked_name(name), host=cls.host(host))
 
     @classmethod
     def list(
@@ -359,9 +360,9 @@ class HostedSession(Session):
         )
 
     @classmethod
-    def usage(cls, runtime: str) -> Usage | None:
+    def usage(cls, client: str) -> Usage | None:
         setup = cls._config()
-        adapter = setup.registry.adapter(runtime)
+        adapter = setup.registry.adapter(client)
         launch = adapter.usage_probe()
         if launch is None or not launch.argv:
             return None
@@ -390,14 +391,14 @@ class HostedSession(Session):
         setup = cls._config()
         if not isinstance(spec, Spec):
             raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
-        runtime = spec.runtime
-        if runtime is None:
-            raise ConfigError("spec.runtime: required")
-        adapter = setup.registry.adapter(runtime)
+        client = spec.client
+        if client is None:
+            raise ConfigError("spec.client: required")
+        adapter = setup.registry.adapter(client)
         try:
             return tuple(adapter.writable_dirs(spec))
         except OSError as e:
-            raise ConfigError(f"{runtime}'s writable dirs: {e}") from e
+            raise ConfigError(f"{client}'s writable dirs: {e}") from e
 
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
@@ -419,11 +420,11 @@ class HostedSession(Session):
         return found
 
     @classmethod
-    def class_roots(cls, runtime: str) -> tuple[str, ...]:
+    def class_roots(cls, client: str) -> tuple[str, ...]:
         """Loads each class without building it; an unloadable one is a ConfigError."""
         setup = cls._config()
         loaded: list[tuple[str, type]] = [
-            (f"[adapters.{runtime}]", setup.registry.adapter_class(runtime))
+            (f"[adapters.{client}]", setup.registry.adapter_class(client))
         ]
         loaded += [(f"[hosts.{name}]", _host_class(setup, name)[0]) for name in setup.hosts.tables]
         return tuple(dict.fromkeys(_class_root(kind, table) for table, kind in loaded))
@@ -433,9 +434,9 @@ class HostedSession(Session):
         setup = cls._config()
         if not isinstance(spec, Spec):
             raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
-        runtime, sid = spec.runtime, spec.sid
-        if runtime is None or sid is None:
-            field = "runtime" if runtime is None else "sid"
+        client, sid = spec.client, spec.sid
+        if client is None or sid is None:
+            field = "client" if client is None else "sid"
             raise ConfigError(f"spec.{field}: required to inspect")
         try:
             info = RunLog(spec.workdir).session(sid)
@@ -443,7 +444,7 @@ class HostedSession(Session):
             raise DriverError(f"inspect session {sid}: {error}") from error
         if info is None:
             raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
-        return _resumable(lambda: setup.registry.adapter(runtime), info)
+        return _resumable(lambda: setup.registry.adapter(client), info)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
         last = self._clock()
@@ -503,7 +504,7 @@ class HostedSession(Session):
             self._reply = event.text
         elif isinstance(event, TurnEnd) and (event.reply or replayed):
             self._reply = event.reply
-        # a runtime record's Reply can land after the block it preceded
+        # a client record's Reply can land after the block it preceded
         self._blocked = (
             isinstance(event, Blocked) or self._blocked and isinstance(event, (Stderr, Reply))
         )
@@ -545,15 +546,15 @@ class HostedSession(Session):
     @property
     def reply(self) -> str | None:
         """The latest Reply or non-empty TurnEnd text, None before; attached, its hook log's last
-        TurnEnd reply, even "", comes first, else its runtime record's newest text.
+        TurnEnd reply, even "", comes first, else its client record's newest text.
         """
         return self._reply
 
     def close(self) -> None:
-        """Close its owned runtime and retire its state."""
+        """Close its owned client and retire its state."""
         running = self._running
-        if isinstance(running, tui.TuiMode):
-            tui.TuiMode.close(running.name, host=running.host)
+        if isinstance(running, tui.TuiRuntime):
+            tui.TuiRuntime.close(running.name, host=running.host)
         else:
             self.stop()
 

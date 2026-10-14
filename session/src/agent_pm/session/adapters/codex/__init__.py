@@ -26,7 +26,7 @@ class CodexAdapter(Adapter):
     )
     forbidden_selection = ("resume", "fork", "--last")
     keys = frozenset({"tiers", "efforts", "env"})
-    runtime_note = "Run each shell call separately."
+    client_note = "Run each shell call separately."
     session_env = "CODEX_THREAD_ID"
     identity_env = tuple(
         key for key in CodexCommon.UNSET if key != "CLAUDECODE" and key not in LOCAL_ENV_VARS

@@ -167,9 +167,9 @@ class Base(Case):
         self.adapter = TuiAdapter({"tui": True})
         self.run, self.recorded = self.adapter.run, []
 
-    def start(self, run=None, record=None, **fields) -> tui.TuiMode:
-        """A TuiMode started with self.adapter (its tui `run` if given) on Spec(workdir self.tmp,
-        name NAME, runtime fake, sid SID, events self.events, **fields), its Prepared in
+    def start(self, run=None, record=None, **fields) -> tui.TuiRuntime:
+        """A TuiRuntime started with self.adapter (its tui `run` if given) on Spec(workdir self.tmp,
+        name NAME, client fake, sid SID, events self.events, **fields), its Prepared in
         self.prepared; its session line given to record, else kept in self.recorded.
         """
         if run is not None:
@@ -178,13 +178,13 @@ class Base(Case):
             **{
                 "workdir": self.tmp,
                 "name": NAME,
-                "runtime": "fake",
+                "client": "fake",
                 "sid": SID,
                 "events": self.events,
                 **fields,
             }
         )
-        mode = tui.TuiMode.start(
+        mode = tui.TuiRuntime.start(
             spec,
             self.adapter,
             registry=self.driver.registry,
@@ -213,7 +213,7 @@ class Base(Case):
             None if process is None else process.session_identity()[1]
         ) or "fixture-generation"
         return {
-            "runtime": "fake",
+            "client": "fake",
             "sid": SID,
             "workdir": self.tmp,
             "cwd": self.tmp,
@@ -294,19 +294,19 @@ class AttachTest(Base):
         process.record.return_value = self.process.record()
         self.host.processes[NAME] = process
         with self.assertRaisesRegex(DriverError, "session w1 has no terminal"):
-            tui.TuiMode.attach(NAME, state, self.adapter, host=self.host)
+            tui.TuiRuntime.attach(NAME, state, self.adapter, host=self.host)
         process.close.assert_not_called()
 
-    def attach(self, *lines, adapter=None) -> tui.TuiMode:
-        """TuiMode.attach of self.adapter (else `adapter`) on a session dir with session.json and
+    def attach(self, *lines, adapter=None) -> tui.TuiRuntime:
+        """TuiRuntime.attach of self.adapter (else `adapter`) on a session dir with session.json and
         hooks.jsonl's lines, the host's calls cleared first.
         """
         self.write_state(self.state())
         self.append(*lines)
         self.host.calls.reset_mock()
-        return tui.TuiMode.attach(
+        return tui.TuiRuntime.attach(
             NAME,
-            tui.TuiMode.snapshot(NAME),
+            tui.TuiRuntime.snapshot(NAME),
             adapter or self.adapter,
             host=self.host,
         )
@@ -340,7 +340,7 @@ class AttachTest(Base):
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
-    def test_runtime_records_come_before_the_hook_events_attached_and_live(self):
+    def test_client_records_come_before_the_hook_events_attached_and_live(self):
         run = self.adapter.run = Observing(self.adapter)
         run.records = [Reply("before")]
         mode = self.attach(record("stop", last_message="r1"))
@@ -358,7 +358,7 @@ class AttachTest(Base):
             Prepared(
                 Spec(
                     workdir=self.tmp,
-                    runtime="fake",
+                    client="fake",
                     mode=Mode.TUI,
                     sid=SID,
                     name=NAME,
@@ -370,7 +370,7 @@ class AttachTest(Base):
 
     def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_host_access(self):
         with self.assertRaises(DriverError) as caught:
-            tui.TuiMode.attach(NAME, self.state(cwd=""), self.adapter, host=self.host)
+            tui.TuiRuntime.attach(NAME, self.state(cwd=""), self.adapter, host=self.host)
         path = os.path.join(self.dir, "session.json")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
         self.assertEqual(self.host.calls.mock_calls, [])
@@ -393,8 +393,8 @@ class AttachTest(Base):
                 self.write_state(self.state(**{field: value}))
                 path = os.path.join(self.dir, "session.json")
                 for call in (
-                    lambda: tui.TuiMode.snapshot(NAME),
-                    lambda *, field=field, value=value: tui.TuiMode.attach(
+                    lambda: tui.TuiRuntime.snapshot(NAME),
+                    lambda *, field=field, value=value: tui.TuiRuntime.attach(
                         NAME, self.state(**{field: value}), self.adapter, host=self.host
                     ),
                 ):
@@ -424,7 +424,7 @@ class AttachTest(Base):
         self.append(*lines)
         polled, _ = live.poll(0)
         fresh = FreshAdapter({"tui": True})
-        attached = tui.TuiMode.attach(NAME, tui.TuiMode.snapshot(NAME), fresh, host=self.host)
+        attached = tui.TuiRuntime.attach(NAME, tui.TuiRuntime.snapshot(NAME), fresh, host=self.host)
         self.assertEqual(attached.replayed, tuple(polled))
         self.assertEqual(len(polled), 6)
 
@@ -435,7 +435,9 @@ class AttachTest(Base):
                 adapter = FreshAdapter({"tui": True})
                 self.write_state(self.state(**extra))
                 self.append(record("tool"), record("stop"))
-                mode = tui.TuiMode.attach(NAME, tui.TuiMode.snapshot(NAME), adapter, host=self.host)
+                mode = tui.TuiRuntime.attach(
+                    NAME, tui.TuiRuntime.snapshot(NAME), adapter, host=self.host
+                )
                 self.assertEqual(adapter.made, [mode.run])
                 self.assertEqual(
                     adapter.calls,
@@ -460,7 +462,7 @@ class AttachTest(Base):
         self.adapter.run = None
         with self.assertRaises(DriverError) as caught:
             self.attach()
-        self.assertEqual(str(caught.exception), "no tui session w1: runtime 'fake' has no tui mode")
+        self.assertEqual(str(caught.exception), "no tui session w1: client 'fake' has no tui mode")
         self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_marked_blocked_is_its_terminals_activity(self):
@@ -529,8 +531,8 @@ class StartTest(Base):
         self.assertEqual(self.recorded, [])
 
     def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
-        mode = tui.TuiMode.start(
-            Spec(workdir=self.tmp, name=NAME, runtime="fake", sid=SID),
+        mode = tui.TuiRuntime.start(
+            Spec(workdir=self.tmp, name=NAME, client="fake", sid=SID),
             self.adapter,
             registry=self.driver.registry,
             record=self.recorded.append,
@@ -541,7 +543,7 @@ class StartTest(Base):
         self.assertEqual(call.kwargs["display"], "opaque-location")
         self.assertIsNone(call.kwargs["record"])
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
-        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(call.kwargs["metadata"]["client"], "fake")
         self.assertEqual(mode._terminal.display(), "opaque-location")
 
     def test_the_selected_host_receives_the_launch_and_identity_receipt(self):
@@ -560,7 +562,7 @@ class StartTest(Base):
         )
         self.assertEqual(call.kwargs["events"], self.events)
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
-        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(call.kwargs["metadata"]["client"], "fake")
         self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
             (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
@@ -577,7 +579,7 @@ class StartTest(Base):
             lines.append(
                 (
                     info,
-                    tui.TuiMode.snapshot(NAME)["sid"],
+                    tui.TuiRuntime.snapshot(NAME)["sid"],
                     self.host.calls.terminal.called,
                     self.locked(),
                 )
@@ -677,7 +679,7 @@ class StartTest(Base):
 
     def test_an_unsupported_tui_mode_is_refused_before_anything(self):
         self.adapter.run = None
-        with self.assertRaisesRegex(ConfigError, "runtime 'fake' does not support tui mode"):
+        with self.assertRaisesRegex(ConfigError, "client 'fake' does not support tui mode"):
             self.start()
         self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
@@ -759,7 +761,7 @@ class StartTest(Base):
 
     def test_start_returns_its_session_live_at_once_with_its_prepared(self):
         mode = self.start(events=None)
-        self.assertIsInstance(mode, tui.TuiMode)
+        self.assertIsInstance(mode, tui.TuiRuntime)
         self.assertEqual((mode.prepared.info, mode.prepared.spec.name), (self.recorded[0], NAME))
         self.assertEqual((mode.state(), mode.poll(0)), (Liveness.LIVE, ([], False)))
         process = mode._terminal
@@ -771,14 +773,14 @@ class StartTest(Base):
 class SnapshotTest(Base):
     def test_a_valid_state(self):
         self.start()
-        self.assertEqual(tui.TuiMode.snapshot(NAME), self.state())
+        self.assertEqual(tui.TuiRuntime.snapshot(NAME), self.state())
         self.write_state(
             self.state(events=None, transcript="/t", project=True, resume="r", words={}, later=1)
         )
-        self.assertEqual(tui.TuiMode.snapshot(NAME)["later"], 1)
+        self.assertEqual(tui.TuiRuntime.snapshot(NAME)["later"], 1)
 
-    def test_a_runtime_is_lowercase_word_characters_led_by_a_letter(self):
-        for runtime, ok in (
+    def test_a_client_is_lowercase_word_characters_led_by_a_letter(self):
+        for client, ok in (
             ("a", True),
             ("a_1", True),
             ("z9_", True),
@@ -790,26 +792,26 @@ class SnapshotTest(Base):
             ("a\n", False),
             (1, False),
         ):
-            with self.subTest(runtime=runtime):
-                self.write_state(self.state(runtime=runtime))
+            with self.subTest(client=client):
+                self.write_state(self.state(client=client))
                 if ok:
-                    self.assertEqual(tui.TuiMode.snapshot(NAME)["runtime"], runtime)
+                    self.assertEqual(tui.TuiRuntime.snapshot(NAME)["client"], client)
                 else:
                     with self.assertRaises(DriverError) as caught:
-                        tui.TuiMode.snapshot(NAME)
+                        tui.TuiRuntime.snapshot(NAME)
                     path = os.path.join(self.dir, "session.json")
                     self.assertEqual(
-                        str(caught.exception), f"no tui session w1: {path}: bad runtime"
+                        str(caught.exception), f"no tui session w1: {path}: bad client"
                     )
 
     def test_missing_or_invalid_is_a_driver_error(self):
         with self.assertRaisesRegex(DriverError, r"\Ano tui session w1: "):
-            tui.TuiMode.snapshot(NAME)
+            tui.TuiRuntime.snapshot(NAME)
         bad = {
             "words": {"stop": "dead"},
             "events": "rel",
             "sid": "a/b",
-            "runtime": "Fake",
+            "client": "Fake",
             "workdir": "rel",
             "generation": "",
         }
@@ -823,7 +825,7 @@ class SnapshotTest(Base):
                     with self.assertRaisesRegex(
                         DriverError, rf"\Ano tui session w1: .*bad {field}"
                     ):
-                        tui.TuiMode.snapshot(NAME)
+                        tui.TuiRuntime.snapshot(NAME)
         path = os.path.join(self.dir, "session.json")
         for state, field in (
             (self.state(cwd="rel"), "cwd"),
@@ -835,13 +837,13 @@ class SnapshotTest(Base):
             with self.subTest(state=state):
                 self.write_state(state)
                 with self.assertRaises(DriverError) as caught:
-                    tui.TuiMode.snapshot(NAME)
+                    tui.TuiRuntime.snapshot(NAME)
                 self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad {field}")
         for data in (b"", b"[]", b"not json"):
             with self.subTest(data):
                 self.write_state(data)
                 with self.assertRaisesRegex(DriverError, r"\Ano tui session w1: "):
-                    tui.TuiMode.snapshot(NAME)
+                    tui.TuiRuntime.snapshot(NAME)
 
     def test_a_session_json_that_is_no_regular_file_is_refused_without_blocking(self):
         path = os.path.join(self.dir, "session.json")
@@ -868,7 +870,7 @@ class SnapshotTest(Base):
 
     def refused(self) -> bool:
         try:
-            tui.TuiMode.snapshot(NAME)
+            tui.TuiRuntime.snapshot(NAME)
         except DriverError:
             return True
         return False
@@ -1126,14 +1128,14 @@ class CloseStopTest(Base):
         self.write_state(self.state())
         process = mock.create_autospec(HostProcess, instance=True)
         self.host.processes[NAME] = process
-        tui.TuiMode.close(NAME, host=self.host)
+        tui.TuiRuntime.close(NAME, host=self.host)
         process.close.assert_called_once_with()
         self.assertNoSessionDir()
 
     def test_close_kills_the_session_and_removes_its_dir(self):
         mode = self.started()
         self.append(record("tool"))
-        tui.TuiMode.close(NAME, host=self.host)
+        tui.TuiRuntime.close(NAME, host=self.host)
         mode._terminal.calls.close.assert_called_once_with()
         self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
@@ -1148,17 +1150,17 @@ class CloseStopTest(Base):
             "rmtree",
             lambda path, **kwargs: (held.append(self.locked()), remove(path, **kwargs)),
         ):
-            tui.TuiMode.close(NAME, host=self.host)
+            tui.TuiRuntime.close(NAME, host=self.host)
         self.assertEqual((held, self.locked()), ([True, True], False))
         self.assertNoSessionDir()
 
     def test_close_of_an_absent_session_removes_its_dir(self):
         mode = self.started()
         self.host.processes.clear()
-        tui.TuiMode.close(NAME, host=self.host)
+        tui.TuiRuntime.close(NAME, host=self.host)
         mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
-        tui.TuiMode.close(NAME, host=self.host)
+        tui.TuiRuntime.close(NAME, host=self.host)
 
     def test_a_kill_that_fails_on_a_live_or_unknown_session_is_a_driver_error(self):
         mode = self.started()
@@ -1169,7 +1171,7 @@ class CloseStopTest(Base):
                 with self.assertRaisesRegex(
                     DriverError, r"\Acannot close tui session w1: host close failed\Z"
                 ):
-                    tui.TuiMode.close(NAME, host=self.host)
+                    tui.TuiRuntime.close(NAME, host=self.host)
                 self.assertTrue(os.path.isdir(self.dir))
 
     def test_close_never_follows_a_symlink(self):
@@ -1179,7 +1181,7 @@ class CloseStopTest(Base):
         open(os.path.join(target, "keep"), "w").close()
         for make in (lambda: os.symlink(target, self.dir), lambda: open(self.dir, "w").close()):
             make()
-            tui.TuiMode.close(NAME, host=self.host)
+            tui.TuiRuntime.close(NAME, host=self.host)
             self.assertTrue(os.path.lexists(self.dir))
             os.unlink(self.dir)
         self.assertEqual(os.listdir(target), ["keep"])
@@ -1525,7 +1527,7 @@ class PrepareTest(Base):
     def test_its_identity_is_the_session_infos_persisted_fields_and_reads_back(self):
         self.run.launched = {"cwd": "/cwd", "project": True, "transcript": "/t", "resume": "r"}
         self.start()
-        state, info = tui.TuiMode.snapshot(NAME), self.prepared.info
+        state, info = tui.TuiRuntime.snapshot(NAME), self.prepared.info
         persisted = info.persisted()
         self.assertEqual({key: state[key] for key in persisted}, persisted)
         self.assertEqual(set(persisted) & set(tui_hook.SESSION_STATE), {"sid"})
@@ -1561,7 +1563,7 @@ class PrepareTest(Base):
 
         self.start(run=Labels(self.adapter), events=None)
         self.assertEqual(
-            tui.TuiMode.snapshot(NAME),
+            tui.TuiRuntime.snapshot(NAME),
             self.state(
                 events=None,
                 words={
@@ -1607,7 +1609,7 @@ class PrepareTest(Base):
             (ScanTui, {"transcript": "rel.jsonl"}, {}, "transcript 'rel.jsonl'\\Z"),
             (ScanTui, {"cwd": "rel"}, {}, "cwd 'rel'\\Z"),
             (BadLabel, {}, {}, "words "),
-            (ScanTui, {}, {"runtime": None}, "runtime None"),
+            (ScanTui, {}, {"client": None}, "client None"),
         ):
             with (
                 self.subTest(bad),
@@ -1663,7 +1665,7 @@ class PrepareTest(Base):
                 f.write("old")
         self.start()
         self.assertEqual(os.listdir(self.dir), ["session.json"])
-        self.assertEqual(tui.TuiMode.snapshot(NAME), self.state())
+        self.assertEqual(tui.TuiRuntime.snapshot(NAME), self.state())
 
     def test_an_old_entry_that_is_no_real_directory_is_refused(self):
         os.mkdir(self.root, 0o700)
@@ -1805,8 +1807,8 @@ class TransportErrorTest(TmuxBase):
         adapter = TuiAdapter({"tui": True})
         adapter.run = Launchable(adapter)
         with self.assertRaises(DriverError) as caught:
-            tui.TuiMode.start(
-                Spec(workdir=workdir, name=NAME, runtime="fake", sid=SID),
+            tui.TuiRuntime.start(
+                Spec(workdir=workdir, name=NAME, client="fake", sid=SID),
                 adapter,
                 registry=self.driver.registry,
                 record=lambda _info: None,
@@ -1819,5 +1821,5 @@ class TransportErrorTest(TmuxBase):
         self.tmux.listing.return_value = [{"name": NAME, "display": None}]
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaises(DriverError) as caught:
-            tui.TuiMode.close(NAME, host=self.host)
+            tui.TuiRuntime.close(NAME, host=self.host)
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

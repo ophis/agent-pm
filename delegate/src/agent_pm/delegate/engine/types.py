@@ -32,7 +32,7 @@ class Outer(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class Spec:
-    """One run to start: `resume` resumes session `sid`; runtime None: the role's; `out` None:
+    """One run to start: `resume` resumes session `sid`; client None: the role's; `out` None:
     nothing is saved; `team` None: the built-in one. name and events: tui only for plan();
     HarnessDelegate takes them in every mode (`name`: its agent session, `<name>-drive` its
     harness's; `events`: also the detached harness's outcome line).
@@ -42,7 +42,7 @@ class Spec:
     workdir: str
     task: str | None = None
     mode: str = "headless"
-    runtime: str | None = None
+    client: str | None = None
     sid: str | None = None
     resume: bool = False
     name: str | None = None
@@ -61,7 +61,7 @@ class DriverSpec:
 
 @dataclass(frozen=True)
 class Plan:
-    """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's
+    """`spec` resolved: its client, sid and team set, its paths absolute; `session` the session's
     Spec.
     """
 
@@ -89,8 +89,8 @@ class Plan:
         )
 
     @property
-    def runtime(self) -> str:
-        return self.spec.runtime or self.run.runtime
+    def client(self) -> str:
+        return self.spec.client or self.run.client
 
     @property
     def sid(self) -> str:

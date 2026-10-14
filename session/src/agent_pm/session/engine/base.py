@@ -26,14 +26,14 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Host
 from agent_pm.utils import Display, Record, load_class
 
-HOSTED = "agent_pm.session.engine.hosted:HostedSession"
+HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
 
 class Session(ABC):
     """show, attach_command, screen: NotDisplayable unless displayable (its Host is Displayable)."""
 
     sid: str
-    runtime: str
+    client: str
     mode: Mode
     name: str | None
 
@@ -109,7 +109,7 @@ class Session(ABC):
         host: str | None = None,
         idle_timeout: float | None = None,
     ) -> None:
-        """Validate a start without writing state or running the runtime."""
+        """Validate a start without writing state or running the client."""
         cls._hosted("preflight")(spec, display=display, host=host, idle_timeout=idle_timeout)
 
     @classmethod
@@ -136,7 +136,7 @@ class Session(ABC):
 
     @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:
-        """Historical status using spec.workdir, runtime and sid, without starting or attaching.
+        """Historical status using spec.workdir, client and sid, without starting or attaching.
         A missing record raises DriverError.
         """
         return cls._hosted("inspect")(spec)
@@ -146,8 +146,8 @@ class Session(ABC):
         return cls._hosted("list")(match, display=display)
 
     @classmethod
-    def usage(cls, runtime: str) -> Usage | None:
-        return cls._hosted("usage")(runtime)
+    def usage(cls, client: str) -> Usage | None:
+        return cls._hosted("usage")(client)
 
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
@@ -166,8 +166,8 @@ class Session(ABC):
         return cls._hosted("host")(name)
 
     @classmethod
-    def class_roots(cls, runtime: str) -> tuple[str, ...]:
-        """The import roots of the classes a `runtime` session loads by name: its Adapter's, then
+    def class_roots(cls, client: str) -> tuple[str, ...]:
+        """The import roots of the classes a `client` session loads by name: its Adapter's, then
         each configured Host's, without repeats.
         """
-        return cls._hosted("class_roots")(runtime)
+        return cls._hosted("class_roots")(client)

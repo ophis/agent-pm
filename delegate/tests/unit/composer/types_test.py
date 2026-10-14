@@ -13,7 +13,7 @@ def run_config(effort) -> RunConfig:
         role="writer",
         tier=2,
         effort=effort,
-        runtime="a",
+        client="a",
         output={"type": "local"},
         idle_timeout=60,
         show="",
@@ -39,7 +39,7 @@ class RunConfigEffort(Case):
 class RunConfigIdleTimeout(Case):
     def test_it_has_no_default(self):
         with self.assertRaisesRegex(TypeError, "idle_timeout"):
-            RunConfig(role="writer", tier=2, effort="high", runtime="a", output={"type": "local"})
+            RunConfig(role="writer", tier=2, effort="high", client="a", output={"type": "local"})
 
     def test_positive_integer_and_fractional_seconds_are_accepted(self):
         for seconds in (1, 0.3, 14400):

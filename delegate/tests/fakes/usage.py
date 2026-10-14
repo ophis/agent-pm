@@ -1,4 +1,4 @@
-"""A usage-only Adapter returns a caller-owned sentinel without selecting a runtime mode."""
+"""A usage-only Adapter returns a caller-owned sentinel without selecting a client mode."""
 
 import sys
 
@@ -22,12 +22,12 @@ class UsageAdapter(FakeAdapter):
 
     def headless(self):
         self.starts.append("headless")
-        raise AssertionError("usage started a headless runtime")
+        raise AssertionError("usage started a headless client")
 
     def tui(self):
         self.starts.append("tui")
-        raise AssertionError("usage started a TUI runtime")
+        raise AssertionError("usage started a TUI client")
 
     def in_process(self):
         self.starts.append("in_process")
-        raise AssertionError("usage started an in_process runtime")
+        raise AssertionError("usage started an in_process client")

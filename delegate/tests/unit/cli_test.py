@@ -167,7 +167,7 @@ class DryRun(Base):
         self.assertEqual(
             {k: v for k, v in shown.items() if k not in ("dirs", "reads", "commands", "prompt")},
             {
-                "runtime": "fake",
+                "client": "fake",
                 "mode": "headless",
                 "sid": SID,
                 "resume": False,
@@ -196,7 +196,7 @@ class DryRun(Base):
     def test_a_dry_run_configures_the_session(self):
         code, stdout, err = self.runs("--dry-run")
         self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(stdout)["runtime"], "fake")
+        self.assertEqual(json.loads(stdout)["client"], "fake")
 
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
         code, out, _ = self.runs("--dry-run", task=None)
@@ -214,7 +214,7 @@ class DryRun(Base):
 
 class InProcess(Base):
     """
-    The in_process-only fake, and RefusingAdapter (runtime `refusing`); no child process starts.
+    The in_process-only fake, and RefusingAdapter (client `refusing`); no child process starts.
     """
 
     def setUp(self):
@@ -273,7 +273,7 @@ class InProcess(Base):
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
-        spec = Spec("Hello.", self.work, task="echo", mode="in_process", runtime="fake", sid=SID)
+        spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
         with RunState(self.work).run_lock():
             code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
@@ -284,8 +284,8 @@ class InProcess(Base):
 
     def test_headless_and_tui_exit_2_and_nothing_runs(self):
         for mode, want in (
-            ("headless", "runtime 'fake' does not support headless mode"),
-            ("tui", "runtime 'fake' does not support tui mode"),
+            ("headless", "client 'fake' does not support headless mode"),
+            ("tui", "client 'fake' does not support tui mode"),
         ):
             with self.subTest(mode=mode):
                 code, out, err = self.runs("--mode", mode)
@@ -294,12 +294,12 @@ class InProcess(Base):
 
     def test_claude_and_codex_refuse_it_with_exit_2(self):
         self.configure_session(committed())
-        for runtime in ("claude", "codex"):
-            with self.subTest(runtime=runtime):
-                code, out, err = self.runs("--mode", "in_process", runtime=runtime)
+        for client in ("claude", "codex"):
+            with self.subTest(client=client):
+                code, out, err = self.runs("--mode", "in_process", client=client)
                 self.assertEqual(
                     (code, out, err.splitlines()[-1]),
-                    (2, "", f"delegate: runtime {runtime!r} does not support in_process mode"),
+                    (2, "", f"delegate: client {client!r} does not support in_process mode"),
                 )
                 self.assertFalse(os.path.exists(self.work))
 
@@ -309,7 +309,7 @@ class InProcess(Base):
         self.assertFalse(os.path.exists(self.work))
 
     def test_a_check_refusal_exits_2_with_no_record(self):
-        code, out, err = self.runs("--mode", "in_process", runtime="refusing")
+        code, out, err = self.runs("--mode", "in_process", client="refusing")
         self.assertEqual((code, out, err.splitlines()[-1]), (2, "", "delegate: refused by check"))
         self.assertEqual(
             (os.path.exists(os.path.join(self.work, "run.jsonl")), self.launches()), (False, [])
@@ -336,15 +336,15 @@ class Tui(Base):
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 spec = start.call_args.args[0].session
                 self.assertEqual(
-                    ((spec.runtime, spec.mode), spec.name, spec.events),
+                    ((spec.client, spec.mode), spec.name, spec.events),
                     (("fake", "tui"), f"dummy-tester-{spec.sid[:8]}", None),
                 )
 
-    def test_a_runtime_without_tui_exits_2_and_a_dry_run_plans_it(self):
+    def test_a_client_without_tui_exits_2_and_a_dry_run_plans_it(self):
         self.configure_fake()
         code, out, err = self.runs("--mode", "tui")
         self.assertEqual((code, out), (2, ""))
-        self.assertEqual(err.splitlines()[-1], "delegate: runtime 'fake' does not support tui mode")
+        self.assertEqual(err.splitlines()[-1], "delegate: client 'fake' does not support tui mode")
         self.assertFalse(os.path.exists(self.work))
         code, out, _ = self.runs("--mode", "tui", "--dry-run")
         self.assertEqual((code, json.loads(out)["mode"], self.launches()), (0, "tui", []))
@@ -372,7 +372,7 @@ class List(Base):
             (["--list", "--role", "pm"], "--role"),
             (["--li", "--rol", "pm"], "--rol"),
             (["--list", "--dry-run"], "--dry-run"),
-            (["--list", "--runtime=fake"], "--runtime=fake"),
+            (["--list", "--client=fake"], "--client=fake"),
         ):
             with self.subTest(argv=argv):
                 code, out, err = self.cli("run", *argv)
@@ -420,7 +420,7 @@ class Configures(Base):
                 self.assertEqual((code, out, err), (2, "", f"{want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
-    def test_list_works_without_a_runtime(self):
+    def test_list_works_without_a_client(self):
         self.configure_session({})
         code, _, err = self.cli("run", "--list")
         self.assertEqual((code, err), (0, ""))
@@ -435,7 +435,7 @@ class Usage(Base):
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(
-                    self.cli("run", "--role", "dummy-tester", "--runtime", "fake", *argv),
+                    self.cli("run", "--role", "dummy-tester", "--client", "fake", *argv),
                     (2, "", "delegate: --input, --out and --workdir are required\n"),
                 )
         self.assertEqual(self.launches(), [])
@@ -454,12 +454,12 @@ class Usage(Base):
         )
         self.assertEqual(self.launches(), [])
 
-    def test_runtime_given_twice_exits_2(self):
-        for extra in (("--runtime", "fake"), ("--runtime=fake",)):
+    def test_client_given_twice_exits_2(self):
+        for extra in (("--client", "fake"), ("--client=fake",)):
             with self.subTest(extra=extra):
                 code, out, err = self.runs(*extra)
                 self.assertEqual((code, out), (2, ""))
-                self.assertIn("--runtime given twice", err)
+                self.assertIn("--client given twice", err)
         self.assertEqual(self.launches(), [])
 
     def test_out_or_workdir_given_twice_exits_2_before_anything_starts(self):
@@ -499,11 +499,11 @@ class Usage(Base):
                 "[roles.dummy-tester]\ntier = 9\n",
                 "tier must be an integer 1–4, got 9",
             ),
-            ("an unknown runtime", {"runtime": "nope"}, "", "no [adapters.nope] table"),
+            ("an unknown client", {"client": "nope"}, "", "no [adapters.nope] table"),
         ]
         for name, kw, local, want in cases:
             self.local(local)
-            for dry in ((), ("--dry-run",)) if name != "an unknown runtime" else ((),):
+            for dry in ((), ("--dry-run",)) if name != "an unknown client" else ((),):
                 with self.subTest(name, dry=dry):
                     code, out, err = self.runs(*dry, **kw)
                     self.assertEqual((code, out), (2, ""), err)
@@ -574,7 +574,7 @@ class Prompt(Case):
 
     def test_runtime_execution_options_are_usage_errors_before_writes(self):
         for argv in (
-            ("--runtime", "claude"),
+            ("--client", "claude"),
             ("--mode", "tui"),
             ("--detach",),
             ("--sid", "11111111-2222-3333-4444-555555555555"),

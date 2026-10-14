@@ -32,7 +32,7 @@ class RunConfig:
     task: str = ""
     tier: int
     effort: Effort
-    runtime: str = ""  # opaque: never compared with an Adapter's name
+    client: str = ""  # opaque: never compared with an Adapter's name
     output: dict
     read: list[str] = field(default_factory=list)
     write: list[str] = field(default_factory=list)
@@ -68,13 +68,11 @@ class RunConfig:
                 f"effort must be one of {', '.join(Effort)}, got {self.effort!r}"
             ) from None
         if (
-            not isinstance(self.runtime, str)
-            or not self.runtime.strip()
-            or not self.runtime.isprintable()
+            not isinstance(self.client, str)
+            or not self.client.strip()
+            or not self.client.isprintable()
         ):
-            raise ConfigError(
-                f"runtime must be a non-empty one-line name, got {self.runtime!r:.80}"
-            )
+            raise ConfigError(f"client must be a non-empty one-line name, got {self.client!r:.80}")
         if "type" not in self.output:
             raise ConfigError("output.type is not set")
         if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:

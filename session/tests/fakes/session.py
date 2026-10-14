@@ -43,7 +43,7 @@ class FakeSession(Session):
 
     def __init__(self, spec, sid, name, *, display) -> None:
         self.spec, self.sid, self.name = spec, sid, name
-        self.runtime, self.mode = spec.runtime, spec.mode
+        self.client, self.mode = spec.client, spec.mode
         self.display_value = display
         self.sent: list[str] = []
         self._state, self._reply = Liveness.LIVE, None
@@ -113,14 +113,14 @@ class FakeSession(Session):
 
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None) -> FakeSession:
-        for field in ("runtime", "mode"):
+        for field in ("client", "mode"):
             if getattr(spec, field) is None:
                 raise ConfigError(f"spec.{field}: required to start")
         cls.started.append(
             {"spec": spec, "display": display, "host": host, "idle_timeout": idle_timeout}
         )
         sid = spec.sid or str(uuid.uuid4())
-        name = spec.name or f"{spec.runtime}-{sid[:8]}"
+        name = spec.name or f"{spec.client}-{sid[:8]}"
         if name in cls.live:
             raise DriverError(f"session {name} is live")
         cls.live[name] = cls(spec, sid, name, display=display)
@@ -138,7 +138,7 @@ class FakeSession(Session):
             SessionRow(
                 name=name,
                 sid=s.sid,
-                runtime=s.runtime,
+                client=s.client,
                 state="working",
                 display=None,
                 shown=None,
@@ -151,7 +151,7 @@ class FakeSession(Session):
         ]
 
     @classmethod
-    def usage(cls, runtime):
+    def usage(cls, client):
         return cls.usage_result
 
     @classmethod

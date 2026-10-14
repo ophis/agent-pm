@@ -447,7 +447,7 @@ class LimitTest(Case):
 
 
 class SuppliedPolicy(Base):
-    def test_a_policy_reaches_both_runtime_launches(self):
+    def test_a_policy_reaches_both_client_launches(self):
         flags = CLAUDE
         adapter = ClaudeAdapter({})
         spec = Spec(workdir=str(self.work), sid=SID, flags=flags, prompt="hi")

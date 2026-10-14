@@ -21,7 +21,7 @@ from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, note
 
 from delegate.tests.plans import SID, TASKS, Base, write_team
-from delegate.tests.unit.engine.instruction import GITHUB, ROLES, RUNTIMES, InstructionCase
+from delegate.tests.unit.engine.instruction import CLIENTS, GITHUB, ROLES, InstructionCase
 from utils.tests.case import local_section
 
 
@@ -38,7 +38,7 @@ class ReplyTags(Base):
 class Configures(Base):
     def test_plan_keeps_resolved_data_and_not_the_session_owner(self):
         got, _ = self.planned()
-        self.assertEqual(got.spec.runtime, "fake")
+        self.assertEqual(got.spec.client, "fake")
         self.assertNotIn("driver", vars(got))
 
     def test_configure_hands_the_driver_the_parsed_hosts_and_the_harness_host(self):
@@ -213,7 +213,7 @@ class Refusals(Base):
             role="nope",
             tier=2,
             effort="high",
-            runtime="fake",
+            client="fake",
             output={"type": "local"},
             idle_timeout=60,
             show="",
@@ -312,7 +312,7 @@ class Planned(Base):
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
         self.assertEqual(
-            (got.spec.runtime, got.spec.mode, got.run.task), ("fake", "headless", "light-research")
+            (got.spec.client, got.spec.mode, got.run.task), ("fake", "headless", "light-research")
         )
         self.assertEqual((got.spec.name, got.spec.events), (None, None))
         self.assertEqual(
@@ -320,9 +320,9 @@ class Planned(Base):
         )
         self.assertEqual(self.planned(task=None)[0].run.task, "")
 
-    def test_without_a_runtime_the_runs_own(self):
-        got = self.planned(runtime=None)[0]
-        self.assertEqual(got.spec.runtime, got.run.runtime)
+    def test_without_a_client_the_runs_own(self):
+        got = self.planned(client=None)[0]
+        self.assertEqual(got.spec.client, got.run.client)
 
     def test_in_process_is_planned_as_headless(self):
         got = self.planned(mode="in_process", sid=SID)[0]
@@ -395,18 +395,18 @@ class ConfiguredTeamDirs(Base):
         for home in (os.path.join(self.team, "codex"), self.tmp):
             with self.subTest(home=home), mock.patch.dict(os.environ, {"CODEX_HOME": home}):
                 self.assertEqual(
-                    self.refused(runtime="codex"),
+                    self.refused(client="codex"),
                     f"team_dirs: {self.team} overlaps a dir codex can write {home}: the agent "
                     "run can write there",
                 )
 
-    def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
+    def test_the_clients_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
         with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
             asked.assert_called_once_with(replace(got.session, prompt=""))
             asked.reset_mock()
             self.local("")
-            self.planned(runtime="codex")
+            self.planned(client="codex")
             asked.assert_not_called()
 
     def test_a_symlink_in_one_is_checked_by_its_real_path(self):
@@ -438,7 +438,7 @@ class ConfiguredTeamDirs(Base):
 
 
 class Policy(Base):
-    """plan's Spec.flags/env: the selected runtime's [policy.<runtime>], the local overlay's
+    """plan's Spec.flags/env: the selected client's [policy.<client>], the local overlay's
     replacing the core's.
     """
 
@@ -467,15 +467,15 @@ class Policy(Base):
         "fake": ((), {}),
     }
 
-    def test_the_default_config_gives_each_runtime_its_shipped_policy(self):
-        for runtime, want in self.SHIPPED.items():
-            with self.subTest(runtime=runtime):
-                got, _ = self.planned(runtime=runtime)
+    def test_the_default_config_gives_each_client_its_shipped_policy(self):
+        for client, want in self.SHIPPED.items():
+            with self.subTest(client=client):
+                got, _ = self.planned(client=client)
                 self.assertEqual((got.session.flags, dict(got.session.env)), want)
 
     def test_a_local_policy_replaces_the_shipped_one(self):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
-        got, _ = self.planned(runtime="codex")
+        got, _ = self.planned(client="codex")
         self.assertEqual(
             (got.session.flags, dict(got.session.env)), (("-s", "workspace-write"), {"K": "v"})
         )
@@ -492,12 +492,12 @@ class Policy(Base):
         ):
             with self.subTest(text=text), mock.patch.object(self.driver, "start") as start:
                 self.local(text)
-                self.assertIn("policy", self.refused(runtime="claude"))
+                self.assertIn("policy", self.refused(client="claude"))
                 start.assert_not_called()
 
 
 class InstructionPlans(InstructionCase):
-    def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
+    def test_each_roles_destination_and_prompt_are_the_same_under_any_client(self):
         for local in ("", GITHUB):
             with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
                 f.write(local_section(local, "delegate"))
@@ -506,39 +506,37 @@ class InstructionPlans(InstructionCase):
                     first, *others = (
                         plan(*args, driver=self.driver)
                         for args in (
-                            self.given(role, runtime=runtime, mode=mode)
-                            for runtime, mode in RUNTIMES
+                            self.given(role, client=client, mode=mode) for client, mode in CLIENTS
                         )
                     )
                     for p in others:
                         self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
                     agent = AgentDriver(configure().session_cls)
-                    for runtime, mode in RUNTIMES:
-                        run, spec = self.given(role, runtime=runtime, mode=mode)
+                    for client, mode in CLIENTS:
+                        run, spec = self.given(role, client=client, mode=mode)
                         got = plan(run, spec, driver=agent)
                         self.assertEqual(
                             (got.run.output, got.prompt), (first.run.output, first.prompt)
                         )
                         self.assertEqual(
                             (got.session.flags, dict(got.session.env)),
-                            Policy.SHIPPED[runtime or run.runtime],
+                            Policy.SHIPPED[client or run.client],
                         )
         self.assertEqual(composer.resolve("researcher").output["type"], "github")
 
-    def test_agent_plans_apply_runtime_policy_and_check_its_writable_dirs(self):
+    def test_agent_plans_apply_client_policy_and_check_its_writable_dirs(self):
         team = os.path.join(self.tmp, "team")
         write_team(team)
         local = os.path.join(self.agent_pm, "config.local.toml")
-        for runtime in ("claude", "codex"):
-            flags, env = ["--add-dir", team], {"POLICY": runtime}
+        for client in ("claude", "codex"):
+            flags, env = ["--add-dir", team], {"POLICY": client}
             policy = (
-                f"[policy.{runtime}]\nflags = {json.dumps(flags)}\n"
-                f'env = {{ POLICY = "{runtime}" }}\n'
+                f'[policy.{client}]\nflags = {json.dumps(flags)}\nenv = {{ POLICY = "{client}" }}\n'
             )
-            with self.subTest(runtime=runtime):
+            with self.subTest(client=client):
                 with open(local, "w", encoding="utf-8") as stream:
                     stream.write(local_section(policy, "delegate"))
-                run, spec = self.given("researcher", runtime=runtime)
+                run, spec = self.given("researcher", client=client)
                 agent = AgentDriver(configure().session_cls)
                 got, instruction = (
                     plan(run, spec, driver=agent),
@@ -558,6 +556,6 @@ class InstructionPlans(InstructionCase):
                     plan(run, spec, driver=agent)
                 self.assertEqual(
                     str(caught.exception),
-                    f"team_dirs: {team} overlaps a dir {runtime} can write {team}: the agent "
+                    f"team_dirs: {team} overlaps a dir {client} can write {team}: the agent "
                     "run can write there",
                 )

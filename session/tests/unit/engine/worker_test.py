@@ -23,7 +23,7 @@ def state(**fields) -> WorkerState:
         **{
             "name": "w1",
             "sid": SID,
-            "runtime": "claude",
+            "client": "claude",
             "cwd": "/work",
             "host": "tmux",
             "flags": ("-m", "x"),
@@ -80,7 +80,7 @@ class StateTest(Case):
             ("name", "a b"),
             ("sid", ".."),
             ("sid", SID.upper()),
-            ("runtime", "Bad"),
+            ("client", "Bad"),
             ("cwd", "rel"),
             ("host", "X"),
             ("flags", ["-m"]),
@@ -124,7 +124,7 @@ class StateTest(Case):
     def test_its_spec_is_an_interactive_tui_in_its_cwd(self):
         spec = state().spec(prompt="hi", resume=True)
         self.assertEqual(
-            (spec.mode, spec.sid, spec.name, spec.runtime, spec.prompt, spec.resume, spec.events),
+            (spec.mode, spec.sid, spec.name, spec.client, spec.prompt, spec.resume, spec.events),
             (Mode.TUI, SID, "w1", "claude", "hi", True, "/events"),
         )
         self.assertEqual((spec.access.cwd, spec.access.project), ("/work", True))
@@ -252,7 +252,7 @@ class ResumeTest(Base):
 
     def test_a_group_that_outlives_its_kill_starts_nothing(self):
         self.handle.wait_exit.return_value = False
-        with self.assertRaisesRegex(DriverError, "old runtime did not exit; nothing started"):
+        with self.assertRaisesRegex(DriverError, "old client did not exit; nothing started"):
             self.worker().resume()
         self.session_cls.start.assert_not_called()
 
@@ -272,8 +272,8 @@ class ResumeTest(Base):
         self.host.reclaim.assert_not_called()
 
     def test_a_start_it_cannot_make_is_refused_before_the_old_one_is_touched(self):
-        self.session_cls.preflight.side_effect = ConfigError("unknown runtime claude")
-        with self.assertRaisesRegex(ConfigError, "unknown runtime"):
+        self.session_cls.preflight.side_effect = ConfigError("unknown client claude")
+        with self.assertRaisesRegex(ConfigError, "unknown client"):
             self.worker().resume()
         self.assertEqual(self.calls(), ["preflight"])
 
@@ -298,13 +298,13 @@ class RestartTest(Base):
     def test_a_start_refused_once_the_old_session_is_gone_is_no_longer_a_config_error(self):
         self.handle.alive.return_value = True
         self.handle.wait_exit.return_value = True
-        self.session_cls.start.side_effect = ConfigError("unknown runtime claude")
+        self.session_cls.start.side_effect = ConfigError("unknown client claude")
         for call in ("restart", "resume"):
             with self.subTest(call=call):
                 if call == "resume":
                     self.handle.alive.return_value = False
                 with self.assertRaisesRegex(
-                    DriverError, "^w1: old session closed, none started: unknown runtime claude$"
+                    DriverError, "^w1: old session closed, none started: unknown client claude$"
                 ):
                     getattr(self.worker(), call)()
 

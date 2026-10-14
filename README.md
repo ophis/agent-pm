@@ -2,7 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Runtime policy. Developers: `AGENTS.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Client policy. Developers: `AGENTS.md`.
 
 ```mermaid
 flowchart LR
@@ -44,14 +44,14 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
+    DR["engine/: base · hosted_session · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
     end
   end
   U[agent_pm.utils]
-  subgraph RT[agent runtimes]
+  subgraph RT[clients]
     P1[Claude Code]
     P2[Codex CLI]
   end
@@ -133,6 +133,8 @@ account = "engineer@example.com"
 max_runs = 1
 ```
 
+The run key `runtime` is renamed to `client`: set `client` wherever a local file sets `runtime` (`[delegate]`, `[delegate.roles.<role>]`, `[linear_orchestrator.core]` and its role tables); a `runtime` key left there is a config error naming `client`. `--runtime` options are `--client`, and `runs.jsonl` rows, worker states and tmux sessions recorded with `runtime` are not read.
+
 ## Using the board
 
 ```mermaid
@@ -183,7 +185,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | Log | Contents |
 |---|---|
 | `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
-| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and runtime; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
+| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and client; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
 
 An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 
@@ -203,7 +205,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 
 ```text
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and config.py
-session/              the session: an Adapter per runtime, Modes, Hosts (tmux); cli.py: agent-pm-session
+session/              the session: an Adapter per client, Runtimes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
@@ -218,24 +220,24 @@ Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package 
 ## agent-pm-session
 
 `bin/agent-pm-session` is the session layer's command (`--help` lists its subcommands and each Host's
-`--display` format). `start NAME --runtime R [--cwd D] [--resume SID] [--prompt T] [--env K=V]…
-[--display D] [-- FLAGS…]` starts a worker, a plain tui session of runtime R with its state in
-`~/.agent-pm/workers/<sid>/worker.json`; it prints the worker's Record once the runtime has run 5 s
+`--display` format). `start NAME --client R [--cwd D] [--resume SID] [--prompt T] [--env K=V]…
+[--display D] [-- FLAGS…]` starts a worker, a plain tui session of client R with its state in
+`~/.agent-pm/workers/<sid>/worker.json`; it prints the worker's Record once the client has run 5 s
 without exiting. Its session id is `--resume SID`, else `$AGENT_PM_SID`, else a new one; the two
-must agree. There is no default runtime. `resume NAME` prints a live worker's Record and starts
-nothing, else resumes it; `restart NAME` restarts it in place; both wait for the old runtime's
+must agree. There is no default client. `resume NAME` prints a live worker's Record and starts
+nothing, else resumes it; `restart NAME` restarts it in place; both wait for the old client's
 process group to exit first (10 s, then a kill). `send NAME --key K…` takes keys as one character
 or `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`,
 `PageUp`, `PageDown`, `F1`–`F12`, after any of `C-`, `M-`, `S-`.
 
 Plain `ls` prints a header line, then one tab-separated row per session: `name`, `state`
-(`working`, `done`, `blocked` or `dead`), `runtime`, `sid` and `display`, `-` for none. `ls
+(`working`, `done`, `blocked` or `dead`), `client`, `sid` and `display`, `-` for none. `ls
 --records` prints only the Records sessions hold, one JSON line each; `--here` lists the sessions
 the caller opened (`--descendants`: and those they opened, transitively).
 
-## Runtime policy
+## Client policy
 
-Delegate reads `[policy.<runtime>]` `flags` (an argv list) and `env` (a string table) from core config with the local overlay, then supplies them as `Spec.flags/env`. Plain workers use their session Spec's flags and env. Every session then takes the same path: Adapters add runtime dialogue options, `[adapters.<runtime>]` keys and Access grants (workers included; a Claude worker's Access gives it `--setting-sources user,project,local`, Claude's default); the session layer owns session selection and the child env: the caller's, minus Git's repository selectors (`git rev-parse --local-env-vars`), minus every Adapter's identity markers, and minus an Adapter's injected defaults (Codex: `NO_COLOR`, `CODEX_CI`, `PAGER`, `GIT_PAGER`, `GH_PAGER`) only inside that runtime and at the injected value (`session/src/agent_pm/session/modes/base.py` `identity_drop`), under the Launch env.
+Delegate reads `[policy.<client>]` `flags` (an argv list) and `env` (a string table) from core config with the local overlay, then supplies them as `Spec.flags/env`. Plain workers use their session Spec's flags and env. Every session then takes the same path: Adapters add client dialogue options, `[adapters.<client>]` keys and Access grants (workers included; a Claude worker's Access gives it `--setting-sources user,project,local`, Claude's default); the session layer owns session selection and the child env: the caller's, minus Git's repository selectors (`git rev-parse --local-env-vars`), minus every Adapter's identity markers, and minus an Adapter's injected defaults (Codex: `NO_COLOR`, `CODEX_CI`, `PAGER`, `GIT_PAGER`, `GH_PAGER`) only inside that client and at the injected value (`session/src/agent_pm/session/modes/base.py` `identity_drop`), under the Launch env.
 
 The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` and a `--settings` turning this core's plugin off (the tui hooks merge into it), and Codex `-s danger-full-access`, `approval_policy="on-request"`, `approvals_reviewer="auto_review"`. To use Codex `workspace-write`, replace its policy flags with `-s workspace-write`, the approval options, `-c sandbox_workspace_write.network_access=false`, and `-c sandbox_workspace_write.writable_roots=[]`. Full access does not enforce writable-root or team-dir boundaries.
 
@@ -245,7 +247,7 @@ Codex snapshots save flags and the merged Adapter, Access and Spec environment. 
 
 ## Access
 
-A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
+A run's `read` dirs and its role's tasks dir are never `--add-dir`: no client is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Client policy, above) it can write them too. Each client's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
 
 ## Tests
 

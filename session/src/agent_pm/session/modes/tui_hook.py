@@ -1,4 +1,4 @@
-"""A standalone tui hook drains stdin, checks callback sources, binds runtime identity,
+"""A standalone tui hook drains stdin, checks callback sources, binds client identity,
 and appends one hooks.jsonl record before notifying its optional Host callback.
 Never stdout, always exits 0; failures retain a traceback and one stderr line.
 session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is
@@ -304,7 +304,7 @@ def run(argv: list[str], stdin) -> None:
 
         types_loaded = True
         _dispatch(folder, label, payload, state)
-    except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
+    except Exception as e:  # noqa: BLE001  # the hook must never fail the client
         if argv and _abs(argv[0]):
             with (
                 suppress(OSError),

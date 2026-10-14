@@ -128,7 +128,7 @@ class Instruction(Case):
     def test_session_options_exit_2_without_writes(self):
         for extra in (
             ("--mode", "tui"),
-            ("--runtime", "claude"),
+            ("--client", "claude"),
             ("--sid", SID),
             ("--resume",),
             ("--detach",),

@@ -102,7 +102,7 @@ def _start_agent(record, display):
     session_cls = load_class(state["session_cls"], Session)
     spec = SessionSpec(
         workdir=record.workdir,
-        runtime=state["plan"]["session"]["runtime"],
+        client=state["plan"]["session"]["client"],
         mode=Mode.TUI,
         sid=record.sid,
         name=record.sessions[1],
@@ -163,7 +163,7 @@ class HarnessSession(SessionClass):
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None):
         session = super().start(spec, display=display, host=host, idle_timeout=idle_timeout)
-        name = spec.name or f"{spec.runtime}-{session.sid[:8]}"
+        name = spec.name or f"{spec.client}-{session.sid[:8]}"
         cls.host_names[name] = host or "agent"
         cls.host(host).detach(name, Launch(("fake-agent",), cwd=spec.workdir), display=display)
         return session

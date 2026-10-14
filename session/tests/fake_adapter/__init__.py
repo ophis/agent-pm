@@ -1,6 +1,6 @@
-"""The test-only Adapter, runtime `fake`, importing only agent_pm.session.extension; caller-owned
+"""The test-only Adapter, client `fake`, importing only agent_pm.session.extension; caller-owned
 loader tables supply it; its mode objects keep it. Config keys: scenario, log, tui (true: a Tui).
-Its runtime is runtime.py (RUNTIME), run by this Python; a limit record {resets_at} parses to
+Its client is client.py (CLIENT), run by this Python; a limit record {resets_at} parses to
 LimitHit, an exit record to Exited(99), which the session drops. InProcessFakeAdapter, in_process
 only, logs {prompt, sid, resume, pid, thread} and runs out, err, sleep, exit and raise steps.
 """
@@ -32,12 +32,12 @@ from agent_pm.session.extension import (
     TurnEnd,
 )
 
-RUNTIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime.py")
+CLIENT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.py")
 
 
 class FakeAdapter(Adapter):
     keys = frozenset({"scenario", "log", "tui"})
-    runtime_note = "FAKE NOTE"
+    client_note = "FAKE NOTE"
 
     def headless(self):
         return FakeHeadless(self)
@@ -67,7 +67,7 @@ def _argv(adapter, spec) -> tuple[str, ...]:
         sys.executable,
         "-I",
         "-S",
-        RUNTIME,
+        CLIENT,
         "--scenario",
         adapter.config["scenario"],
         "--log",

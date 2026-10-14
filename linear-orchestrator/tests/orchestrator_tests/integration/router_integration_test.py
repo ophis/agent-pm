@@ -1,5 +1,5 @@
 """router.py as a subprocess on the Driver: run.py in its detached session on a private tmux server,
-fake_claude as runtime claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear
+fake_claude as client claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear
 failure mid write-back resumes the same session; a Linear outage stops a tick and --issue; a tick's
 usage gate; a long description reaches the run; a SIGTERM'd run.py ends its run; the researcher's
 gate runs on a session's PYTHONPATH.
@@ -90,7 +90,7 @@ class Router(TmuxFlow):
         self.assertEqual(res.returncode, 0, res.stderr)
         last = self.runs()[-1]
         self.assertEqual(
-            (last["kind"], last["issue"], last["role"], last["runtime"]),
+            (last["kind"], last["issue"], last["role"], last["client"]),
             (mode, ID, "engineer", "claude"),
         )
         return last["sid"]
@@ -140,7 +140,7 @@ class Router(TmuxFlow):
                     "issue": ID,
                     "sid": sid,
                     "role": "engineer",
-                    "runtime": "claude",
+                    "client": "claude",
                     "delegate_kind": "harness",
                 }
             ],
@@ -275,7 +275,7 @@ class Router(TmuxFlow):
         self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
         self.assertEqual(
             self.said(),
-            [f"router usage-skip {ID} runtime=claude reason=usage usage=five_hour=95% weekly=none"],
+            [f"router usage-skip {ID} client=claude reason=usage usage=five_hour=95% weekly=none"],
         )
         self.assertEqual((self.state(ID), self.runs()), ("todo", []))
         self.assertEqual(len(self.calls()), 1)
@@ -292,7 +292,7 @@ class Router(TmuxFlow):
             [
                 "router plan mode=new queue=1",
                 f"router pick {ID} queue=1",
-                f"router claim {ID} role=engineer runtime=claude",
+                f"router claim {ID} role=engineer client=claude",
                 f"router launch {ID} exit=0",
             ],
         )

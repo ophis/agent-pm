@@ -17,7 +17,7 @@ from delegate.tests.harness import SID, HarnessCase
 
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
-        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
         record = self.make(spec=spec, host="agent", harness_host="harness").detach()
         name = self.metadata()["harness_name"]
         process = RecordingHost.processes["harness", name]
@@ -33,7 +33,7 @@ class PreviewTest(HarnessCase):
     def test_preview_names_the_sessions_hosts_and_callback_and_writes_nothing(self):
         for mode, agent in (("tui", f"dummy-tester-{SID[:8]}"), ("headless", None)):
             with self.subTest(mode=mode):
-                spec = Spec("input", self.work, task="echo", mode=mode, runtime="fake", sid=SID)
+                spec = Spec("input", self.work, task="echo", mode=mode, client="fake", sid=SID)
                 preview = HarnessDelegate.preview(
                     "dummy-tester",
                     spec,
@@ -67,7 +67,7 @@ class PreviewTest(HarnessCase):
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
     def test_preview_refuses_an_unknown_role_like_the_constructor(self):
-        spec = Spec("input", self.work, runtime="fake", sid=SID)
+        spec = Spec("input", self.work, client="fake", sid=SID)
         with self.assertRaisesRegex(ConfigError, "absent-role"):
             HarnessDelegate.preview("absent-role", spec, session_cls=HarnessSession)
         self.assertFalse(os.path.exists(self.work))
@@ -93,20 +93,20 @@ class InstructTest(HarnessCase):
 
 
 class UsageSession(HarnessSession):
-    runtimes = []
+    clients = []
 
     @classmethod
-    def usage(cls, runtime):
-        cls.runtimes.append(runtime)
+    def usage(cls, client):
+        cls.clients.append(client)
 
 
 class OverlayTest(HarnessCase):
-    def test_usage_reads_the_runtime_the_owner_overlays_resolve(self):
-        UsageSession.runtimes = []
-        overlays = ({"roles": {"dummy-tester": {"runtime": "claude"}}},)
+    def test_usage_reads_the_client_the_owner_overlays_resolve(self):
+        UsageSession.clients = []
+        overlays = ({"roles": {"dummy-tester": {"client": "claude"}}},)
         HarnessDelegate.usage("dummy-tester", session_cls=UsageSession)
         HarnessDelegate.usage("dummy-tester", overlays=overlays, session_cls=UsageSession)
-        self.assertEqual(UsageSession.runtimes, ["fake", "claude"])
+        self.assertEqual(UsageSession.clients, ["fake", "claude"])
 
     def test_owner_overlays_shape_the_persisted_run(self):
         self.make()

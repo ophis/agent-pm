@@ -125,7 +125,7 @@ class LaunchTest(Case):
         launched = self.host.terminal(
             "split",
             Launch((sys.executable, "-I", "-c", code, str(ready), str(received)), cwd=self.home),
-            metadata={"sid": "sid-1", "runtime": "tool", "generation": "generation-1"},
+            metadata={"sid": "sid-1", "client": "tool", "generation": "generation-1"},
         )
         self.handles.append(launched)
         self.poll(ready.exists)

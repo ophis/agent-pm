@@ -420,7 +420,7 @@ class HarnessDelegate(Delegate):
         composition = Composer()
         try:
             session_cls.configure_from(thaw(composition.config.values))
-            return session_cls.usage(composition.resolve(role, overlays=overlays).runtime)
+            return session_cls.usage(composition.resolve(role, overlays=overlays).client)
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
@@ -614,13 +614,13 @@ class HarnessDelegate(Delegate):
 
     def _harness_launch(self, state: _State) -> Launch:
         """The harness imports from the delegate, session and utils roots, then from its session
-        class's and the classes that session loads by name for the run's runtime.
+        class's and the classes that session loads by name for the run's client.
         """
         try:
             roots = (
                 *module_roots(),
                 *utils_package.module_roots(sys.modules[self.session_cls.__module__]),
-                *self.session_cls.class_roots(state.plan.runtime),
+                *self.session_cls.class_roots(state.plan.client),
             )
         except (ValueError, SessionConfigError) as error:
             raise ConfigError(str(error)) from None

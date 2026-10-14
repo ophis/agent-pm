@@ -199,7 +199,7 @@ class Commands(Case):
         self.succeeded("stop", "r", "--manager", "mgr")
         self.assertEqual(roster.entries(), {})
 
-    def test_resume_continues_after_runtime_failure_and_exits_one(self):
+    def test_resume_continues_after_client_failure_and_exits_one(self):
         roster = Roster(self.directory)
         first = replace(self.fake_record("a"), resume=("missing-resume-command", "resume", "a"))
         ctl.set_session(self.ctl_dir, "a", alive=False, sid=first.sid)

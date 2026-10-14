@@ -1,4 +1,4 @@
-"""HostedSession, through the Driver wrapper, over fake runtimes: events, idle timeouts, exits, stop, process groups,
+"""HostedSession, through the Driver wrapper, over fake clients: events, idle timeouts, exits, stop, process groups,
 inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
 """
 
@@ -71,7 +71,7 @@ LAUNCHING.LaunchingAdapter = LaunchingAdapter
 
 
 class ScriptAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter whose runtime is this Python running its config's `script`."""
+    """The fake adapter whose client is this Python running its config's `script`."""
 
     keys = fake_adapter.FakeAdapter.keys | {"script"}
 
@@ -114,7 +114,7 @@ class Base(Case):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.scenario = os.path.join(self.dir, "scenario.json")
-        self.log = os.path.join(self.dir, "runtime.log")
+        self.log = os.path.join(self.dir, "client.log")
         self.steps()
         self.driver_dependencies = {
             "class_loader": adapter_loader(
@@ -146,9 +146,9 @@ class Base(Case):
         tables["launching"].update(extra)
         self.configure_session(tables)
 
-    def start(self, runtime="fake", spec=None, **kwargs) -> Session:
+    def start(self, client="fake", spec=None, **kwargs) -> Session:
         handle = self.driver.start(
-            runtime, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
+            client, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
         )
         self.addCleanup(handle.stop)
         return handle
@@ -180,7 +180,7 @@ class Base(Case):
             return [json.loads(line) for line in f]
 
     def forget(self):
-        """Drops the runtime's log."""
+        """Drops the client's log."""
         if os.path.exists(self.log):
             os.unlink(self.log)
 
@@ -336,7 +336,7 @@ class ExitTest(Base):
 
 class ProcessGroupTest(Base):
     def script(self, code: str, **kwargs) -> Session:
-        """A started session of runtime `script` running `code`."""
+        """A started session of client `script` running `code`."""
         self.configure_session(
             {
                 "script": {
@@ -437,18 +437,18 @@ class LaunchEnvironmentTest(Base):
         os.mkdir(cwd)
         other = os.path.join(self.dir, "other")
         os.mkdir(other)
-        for runtime, extra, access, want in (
+        for client, extra, access, want in (
             ("launching", {"cwd": cwd}, Access(cwd=other), cwd),
             ("fake", {}, Access(cwd=other), other),
             ("fake", {}, Access(), self.workdir),
         ):
             with (
-                self.subTest(runtime=runtime, want=want),
+                self.subTest(client=client, want=want),
                 mock.patch.dict(os.environ, {"PWD": "/"}),
             ):
                 self.forget()
                 self.configure(**extra)
-                handle = self.start(runtime, Spec(workdir=self.workdir, access=access))
+                handle = self.start(client, Spec(workdir=self.workdir, access=access))
                 self.assertEqual(self.drain(handle), [Exited(0)])
                 (entry,) = self.logged()
                 self.assertEqual((entry["cwd"], entry["env"]["PWD"]), (want, want))

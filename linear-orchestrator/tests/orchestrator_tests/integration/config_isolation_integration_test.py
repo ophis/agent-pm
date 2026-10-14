@@ -202,7 +202,7 @@ class TeamDirectoryIsolation(ConfigFile, Case):
             delegate.Spec(
                 "x",
                 self.work,
-                runtime="claude",
+                client="claude",
                 sid=SID,
                 out=os.path.join(self.work, "out.md"),
                 cwd=self.work,

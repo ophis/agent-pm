@@ -25,7 +25,7 @@ class LegacyRunDelegate(Delegate):
 
     @classmethod
     def usage(cls, role, *, overlays=()):
-        return delegate.configure().session_cls.usage(cls.resolve(role, overlays=overlays).runtime)
+        return delegate.configure().session_cls.usage(cls.resolve(role, overlays=overlays).client)
 
     @classmethod
     def attach(cls, record_or_workdir):
@@ -40,7 +40,7 @@ class LegacyRunDelegate(Delegate):
         entries = runs.parse_log(path)
         entry = runs.latest(entries)[view.issue]
         view.sid, view.role = entry.sid, entry.role
-        view.runtime = runs.runtime_of(entries, entry.sid)
+        view.client = runs.client_of(entries, entry.sid)
         view.session_cls = delegate.configure().session_cls
         view.names = (
             f"agent-pm-{view.role}-{view.issue}",
@@ -69,7 +69,7 @@ class LegacyRunDelegate(Delegate):
     def session_info(self):
         try:
             return self.session_cls.inspect(
-                SessionSpec(workdir=self.workdir, runtime=self.runtime, sid=self.sid)
+                SessionSpec(workdir=self.workdir, client=self.client, sid=self.sid)
             )
         except NoRecordedSession:
             return SessionStatus("no", None, "")

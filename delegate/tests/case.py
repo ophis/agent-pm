@@ -100,8 +100,8 @@ class FakeDriver:
     def __init__(self, driver):
         self.driver = driver
 
-    def policy(self, runtime):
-        return AgentDriver(self.driver.session_cls).policy(runtime)
+    def policy(self, client):
+        return AgentDriver(self.driver.session_cls).policy(client)
 
     def start(self, spec, *, display=None, host=None, idle_timeout=None):
         self.session = AgentDriver(self.driver.session_cls).start(

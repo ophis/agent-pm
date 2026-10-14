@@ -126,7 +126,7 @@ class CliCase(Case):
         return self.session(
             "start",
             name,
-            "--runtime",
+            "--client",
             "claude",
             "--cwd",
             self.cwd,

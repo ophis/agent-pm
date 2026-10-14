@@ -1,4 +1,4 @@
-"""HostedSession's tui mode, through the Driver wrapper, with runtime claude end to end on a private tmux server, as
+"""HostedSession's tui mode, through the Driver wrapper, with client claude end to end on a private tmux server, as
 tui_integration_test sets it up: the real ClaudeAdapter runs
 session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its
 hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit

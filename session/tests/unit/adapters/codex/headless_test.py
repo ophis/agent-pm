@@ -280,7 +280,7 @@ class PolicyReplay(Base):
 
 
 class SuppliedPolicy(Base):
-    def test_a_policy_reaches_both_runtime_launches(self):
+    def test_a_policy_reaches_both_client_launches(self):
         flags = CODEX
         adapter = self.adapter
         spec = dataclasses.replace(self.spec, flags=flags)

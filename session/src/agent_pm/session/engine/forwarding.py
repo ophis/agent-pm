@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from agent_pm.session.adapters import registry
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,
@@ -143,7 +143,7 @@ class Driver:
 
     def start(
         self,
-        runtime: str,
+        client: str,
         mode: str,
         prompt: str,
         spec: Spec,
@@ -152,7 +152,7 @@ class Driver:
         events: str | None = None,
         idle_timeout: float | None = None,
     ) -> Handle:
-        """spec.sid: its id (None: resume, else a new one); tui: as TuiMode.start says."""
+        """spec.sid: its id (None: resume, else a new one); tui: as TuiRuntime.start says."""
         if mode not in tuple(Mode):
             raise ConfigError(f"mode must be one of {', '.join(Mode)}, got {mode!r}")
         if resume is not None and not (isinstance(resume, str) and resume):
@@ -162,7 +162,7 @@ class Driver:
         return self.session_cls.start(
             replace(
                 spec,
-                runtime=runtime,
+                client=client,
                 mode=mode,
                 prompt=prompt,
                 sid=resume or spec.sid,
@@ -189,37 +189,37 @@ class Driver:
         self.session_cls.host().tui_settings()
         return self._shown().show(name, display=display, command=command)
 
-    def usage(self, runtime: str) -> Usage | None:
-        return self.session_cls.usage(runtime)
+    def usage(self, client: str) -> Usage | None:
+        return self.session_cls.usage(client)
 
     @staticmethod
     def session_record(workdir: str, sid: str) -> dict | None:
         return session_record(workdir, sid)
 
-    def session_status(self, runtime: str, sid: str, cwd: str, *, workdir: str) -> SessionStatus:
+    def session_status(self, client: str, sid: str, cwd: str, *, workdir: str) -> SessionStatus:
         """cwd retains legacy validation; a missing historical record is not resumable."""
         if not printable_abs(cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
         try:
-            return self.session_cls.inspect(Spec(workdir=workdir, runtime=runtime, sid=sid))
+            return self.session_cls.inspect(Spec(workdir=workdir, client=client, sid=sid))
         except NoRecordedSession:
             return SessionStatus(Resumable.NO, None, "")
 
-    def writable_dirs(self, runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
+    def writable_dirs(self, client: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
         """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails
         closed.
         """
         if spec.sid is not None:
             raise ConfigError("spec.sid is set by writable_dirs(): pass resume=")
         return self.session_cls.writable_dirs(
-            replace(spec, runtime=runtime, sid=resume, resume=resume is not None)
+            replace(spec, client=client, sid=resume, resume=resume is not None)
         )
 
     def sessions(self, match: str | None = None) -> list[SessionRow]:
         return self.session_cls.list(match)
 
     def close(self, name: str) -> None:
-        tui.TuiMode.close(name, host=self.session_cls.host())
+        tui.TuiRuntime.close(name, host=self.session_cls.host())
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
         """Legacy layout completion, retained until TASK-375."""

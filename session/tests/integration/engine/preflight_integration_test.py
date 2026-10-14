@@ -10,7 +10,7 @@ from dataclasses import replace
 from unittest import mock
 
 from agent_pm.session import Access, ConfigError, DriverError, Effort, Host, Mode, Spec, read_config
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux.host import validate_events, validate_start
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 
@@ -47,9 +47,7 @@ class Preflight(Case):
         return kind(name, settings, tmux=self.tmux)
 
     def spec(self, mode=Mode.HEADLESS, **changes):
-        return Spec(
-            workdir=self.work, runtime="fake", mode=mode, prompt="input", sid=SID, **changes
-        )
+        return Spec(workdir=self.work, client="fake", mode=mode, prompt="input", sid=SID, **changes)
 
     def tree(self):
         return sorted(
@@ -59,7 +57,7 @@ class Preflight(Case):
         )
 
     @contextlib.contextmanager
-    def no_runtime(self):
+    def no_client(self):
         with contextlib.ExitStack() as stack:
             calls = [
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
@@ -79,7 +77,7 @@ class Preflight(Case):
         diagnostics = []
         for method in (self.session.preflight, self.session.start):
             with self.subTest(method=method.__name__):
-                with self.no_runtime(), self.assertRaises(ConfigError) as caught:
+                with self.no_client(), self.assertRaises(ConfigError) as caught:
                     method(spec, **placement)
                 self.assertIn(message, str(caught.exception))
                 diagnostics.append(str(caught.exception))
@@ -96,7 +94,7 @@ class Preflight(Case):
         for name in (None, "named-worker"):
             spec = Spec(
                 workdir=self.work,
-                runtime="claude",
+                client="claude",
                 mode=Mode.TUI,
                 sid=SID,
                 name=name,
@@ -104,7 +102,7 @@ class Preflight(Case):
                 env={"PATH": os.path.join(self.home, "missing-bin")},
             )
             before = self.tree()
-            with self.subTest(name=name), self.no_runtime():
+            with self.subTest(name=name), self.no_client():
                 with self.assertRaises(ConfigError) as refusal:
                     self.session.preflight(spec)
                 self.assertEqual(str(refusal.exception), "command not found: claude")
@@ -123,7 +121,7 @@ class Preflight(Case):
         self.tmux.events_file.side_effect = TuiError(message)
         spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
         before = self.tree()
-        with self.no_runtime():
+        with self.no_client():
             self.assertIsNone(self.session.preflight(spec))
             with self.assertRaises(DriverError) as failure:
                 self.session.start(spec)
@@ -138,7 +136,7 @@ class Preflight(Case):
             with self.subTest(mode=mode, resume=resume):
                 spec = self.spec(mode, resume=resume)
                 before = self.tree()
-                with self.no_runtime():
+                with self.no_client():
                     self.assertIsNone(self.session.preflight(spec))
                 self.unchanged(before)
                 self.assertEqual(PreflightAdapter.prepared[-1].sid, SID)
@@ -154,7 +152,7 @@ Session.configure(
     adapters={"fake": {"implementation": "session.tests.fakes.preflight:PreflightAdapter"}},
     hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
 )
-spec = Spec(workdir=sys.argv[1], runtime="fake", mode=Mode.HEADLESS, prompt="input", sid=sys.argv[2])
+spec = Spec(workdir=sys.argv[1], client="fake", mode=Mode.HEADLESS, prompt="input", sid=sys.argv[2])
 with contextlib.ExitStack() as stack:
     for target in (*SPAWNS, "threading.Thread.start"):
         stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
@@ -176,17 +174,17 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
     def test_missing_sid_can_be_prepared_without_mutating_the_callers_spec(self):
         spec = replace(self.spec(), sid=None)
         before = self.tree()
-        with self.no_runtime():
+        with self.no_client():
             self.session.preflight(spec)
         self.assertIsNone(spec.sid)
         self.assertTrue(PreflightAdapter.prepared[-1].sid)
         self.unchanged(before)
 
-    def test_missing_runtime_mode_unknown_runtime_and_host_have_startup_parity(self):
+    def test_missing_client_mode_unknown_client_and_host_have_startup_parity(self):
         for spec, message, placement in (
-            (replace(self.spec(), runtime=None), "spec.runtime", {}),
+            (replace(self.spec(), client=None), "spec.client", {}),
             (replace(self.spec(), mode=None), "spec.mode", {}),
-            (replace(self.spec(), runtime="absent"), "adapters.absent", {}),
+            (replace(self.spec(), client="absent"), "adapters.absent", {}),
             (self.spec(), "unknown host absent", {"host": "absent"}),
         ):
             with self.subTest(spec=spec, placement=placement):
@@ -227,7 +225,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         self.configure()
         self.refusal(self.spec(Mode.IN_PROCESS, tier=4), "tier 4 is unmapped")
 
-    def test_cwd_grants_and_runtime_dirs_over_state_and_hook_paths_preflight_in_all_modes(self):
+    def test_cwd_grants_and_client_dirs_over_state_and_hook_paths_preflight_in_all_modes(self):
         hook_root = os.path.join(self.agent_pm, "tui")
         alias = os.path.join(self.home, "alias")
         os.symlink(self.work, alias)
@@ -235,17 +233,17 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
             Mode,
             (False, True),
             (self.work, alias, hook_root, self.home),
-            ("cwd", "dirs", "runtime"),
+            ("cwd", "dirs", "client"),
         ):
             with self.subTest(mode=mode, resume=resume, path=path, field=field):
-                self.configure(writable=(path,) if field == "runtime" else ())
+                self.configure(writable=(path,) if field == "client" else ())
                 access = (
                     Access(cwd=path)
                     if field == "cwd"
                     else Access(cwd=self.work, dirs=(path,) if field == "dirs" else ())
                 )
                 before = self.tree()
-                with self.no_runtime():
+                with self.no_client():
                     self.session.preflight(self.spec(mode, resume=resume, access=access))
                 self.unchanged(before)
 
@@ -262,7 +260,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
                     env={"FROM_SPEC": "kept", "SHARED": "spec"},
                 )
                 before = self.tree()
-                with self.no_runtime():
+                with self.no_client():
                     self.session.preflight(spec)
                 prepared = PreflightAdapter.prepared[-1]
                 self.assertEqual(prepared.access.reads, (protected,))
@@ -274,7 +272,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
 
     def test_tui_preflight_validates_events_without_creating_the_file(self):
         before = self.tree()
-        with self.no_runtime():
+        with self.no_client():
             self.session.preflight(self.spec(Mode.TUI, events=self.events))
         self.unchanged(before)
         self.refusal(self.spec(Mode.TUI, events=self.events + "#bad"), "tmux would misread")
@@ -288,17 +286,17 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         spec = self.spec(Mode.TUI, name="worker", events=self.events)
         message = "tui session worker is running; tmux attach -t '=worker'"
         before = self.tree()
-        with self.no_runtime(), self.assertRaises(ConfigError) as refusal:
+        with self.no_client(), self.assertRaises(ConfigError) as refusal:
             self.session.preflight(spec)
         self.assertEqual(str(refusal.exception), message)
         self.unchanged(before)
         self.tmux.status.return_value = 0
-        with self.no_runtime():
+        with self.no_client():
             self.assertIsNone(self.session.preflight(spec))
         self.unchanged(before)
         self.tmux.kill.assert_not_called()
         self.tmux.status.return_value = PaneStatus.RUNNING
-        with self.no_runtime(), self.assertRaises(DriverError) as failure:
+        with self.no_client(), self.assertRaises(DriverError) as failure:
             self.session.start(spec)
         self.assertEqual(str(failure.exception), message)
 
@@ -317,7 +315,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         )
         spec = Spec(
             workdir=self.work,
-            runtime="codex",
+            client="codex",
             mode=Mode.HEADLESS,
             sid=SID,
             tier=2,

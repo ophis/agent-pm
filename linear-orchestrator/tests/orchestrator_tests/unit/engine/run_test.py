@@ -44,7 +44,7 @@ from orchestrator_tests.unit.run_fixtures import (
 
 from delegate.tests.fakes.delegate import FakeDelegate
 
-RUNTIME = "claude"
+CLIENT = "claude"
 
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
 
@@ -166,7 +166,7 @@ class Case(Base):
         CleanupDelegate.owners[workdir] = self
         self.addCleanup(CleanupDelegate.owners.pop, workdir, None)
         CleanupDelegate("engineer", Spec("", workdir, sid=SID)).detach()
-        runs.note(self.runs, "start", issue=issue, sid=SID, role="engineer", runtime=RUNTIME)
+        runs.note(self.runs, "start", issue=issue, sid=SID, role="engineer", client=CLIENT)
         with open(self.local) as stream:
             text = stream.read()
         self.write(
@@ -185,7 +185,7 @@ class Case(Base):
         mode="new",
         target="Ophis/Agent-PM",
         uuid=UUID,
-        runtime=RUNTIME,
+        client=CLIENT,
     ):
         return [
             "--uuid",
@@ -195,7 +195,7 @@ class Case(Base):
             f"--project={PROJECT}",
             f"--assignee={assignee}",
             f"--sid={SID}",
-            f"--runtime={runtime}",
+            f"--client={client}",
             *([f"--task={task}"] if task else []),
             f"--mode={mode}",
             *extra,
@@ -210,7 +210,7 @@ class Case(Base):
         mode="new",
         target="Ophis/Agent-PM",
         uuid=UUID,
-        runtime=RUNTIME,
+        client=CLIENT,
     ):
         err = io.StringIO()
         with redirect_stderr(err):
@@ -222,7 +222,7 @@ class Case(Base):
                     mode=mode,
                     target=target,
                     uuid=uuid,
-                    runtime=runtime,
+                    client=client,
                 ),
                 gql=self.gql,
                 run=self.delegate,
@@ -287,7 +287,7 @@ class RunExecution(Case):
                 Spec(
                     "Do it.\n",
                     self.rd,
-                    runtime=RUNTIME,
+                    client=CLIENT,
                     sid=SID,
                     out=os.path.join(self.rd, "out.md"),
                     cwd=self.rd,
@@ -295,7 +295,7 @@ class RunExecution(Case):
             ),
         )
         self.assertEqual(self.delegate.dirs, [True])
-        self.assertEqual(self.api.info, [(RUNTIME, SID, self.rd)] * 2)
+        self.assertEqual(self.api.info, [(CLIENT, SID, self.rd)] * 2)
         self.assertEqual(os.environ["PATH"], config.path())
         self.assertEqual([o for o in self.order if o[0] == "show"], [])
 
@@ -447,9 +447,9 @@ class RunExecution(Case):
                 ],
             ),
             (
-                dict(error=delegate.ConfigError("runtime 'x' is not configured")),
+                dict(error=delegate.ConfigError("client 'x' is not configured")),
                 [
-                    "run run-error TASK-7 error=ConfigError: runtime 'x' is not configured",
+                    "run run-error TASK-7 error=ConfigError: client 'x' is not configured",
                     "run end TASK-7 sid={} exit=1",
                     "run no-outcome TASK-7 error=no result",
                 ],
@@ -722,7 +722,7 @@ class RunUsageLimits(Case):
                         "kind": "limit",
                         "issue": ID,
                         "sid": SID,
-                        "runtime": RUNTIME,
+                        "client": CLIENT,
                         "resets_at": writeback.local_time(at),
                         "delegate_kind": "harness",
                     },
@@ -735,7 +735,7 @@ class RunUsageLimits(Case):
             issue=ID,
             sid=SID,
             role="engineer",
-            runtime=RUNTIME,
+            client=CLIENT,
             delegate_kind="saved",
         )
         self.done(result=Result(-9, None, "usage limit", Limit(T)))
@@ -821,7 +821,7 @@ class RunArguments(Case):
         self.done()
         self.assertEqual(self.main(), 0)
         role, spec = self.call()
-        self.assertEqual((spec.mode, spec.runtime), ("headless", RUNTIME))
+        self.assertEqual((spec.mode, spec.client), ("headless", CLIENT))
         self.assertEqual(role, config.load().roles["engineer"].run)
         self.assertIs(self.delegate.driver, self.api)
         self.assertEqual(event_log.LOGS_DIR, self.logs)
@@ -843,11 +843,11 @@ class RunArguments(Case):
 
     def test_argparse_errors(self):
         argv = self.argv()
-        no_runtime = [x for x in argv if not x.startswith("--runtime")]
+        no_client = [x for x in argv if not x.startswith("--client")]
         for bad in (
             argv[:-1],
             argv[2:],
-            no_runtime,
+            no_client,
             argv + ["--k", "1"],
             argv + ["--runner", "tui"],
             argv + ["--tui=1"],
@@ -881,9 +881,9 @@ class RunArguments(Case):
                 )
         self.nothing_ran()
 
-    def test_bad_runtime(self):
-        for runtime in ("", "cl\x07aude"):
-            with self.subTest(runtime=runtime):
-                self.assertEqual(self.main(runtime=runtime), 2)
-                self.assertEqual(self.err, f"run.py: bad runtime: {runtime!r}\n")
+    def test_bad_client(self):
+        for client in ("", "cl\x07aude"):
+            with self.subTest(client=client):
+                self.assertEqual(self.main(client=client), 2)
+                self.assertEqual(self.err, f"run.py: bad client: {client!r}\n")
         self.nothing_ran()

@@ -72,18 +72,18 @@ NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
         "BLE001",
-        "HeadlessMode._pump",
+        "HeadlessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{SESSION_SRC}modes/in_process.py",
         "BLE001",
-        "InProcessMode._pump",
+        "InProcessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{SESSION_SRC}modes/tui_hook.py",
         "BLE001",
         "run",
-    ): "the hook must never fail the client runtime",
+    ): "the hook must never fail the client",
 }
 
 

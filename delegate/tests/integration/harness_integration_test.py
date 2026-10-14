@@ -215,12 +215,12 @@ class Planning(HarnessCase):
     def test_in_process_and_instruction_detach_refused(self):
         for spec, driver, message in (
             (
-                Spec("input", self.work, mode="in_process", runtime="fake", sid=SID),
+                Spec("input", self.work, mode="in_process", client="fake", sid=SID),
                 None,
                 "detach: mode must be headless or tui, got 'in_process'",
             ),
             (
-                Spec("input", self.work, runtime="fake", sid=SID),
+                Spec("input", self.work, client="fake", sid=SID),
                 InstructionDriver(),
                 "instruction cannot detach",
             ),
@@ -251,7 +251,7 @@ class Planning(HarnessCase):
 
     def test_the_events_path_is_checked_at_construction_and_given_to_the_harness(self):
         HarnessSession.hosts["harness"] = RefusedEvents("harness")
-        spec = Spec("input", self.work, runtime="fake", sid=SID, events="ev#1")
+        spec = Spec("input", self.work, client="fake", sid=SID, events="ev#1")
         with self.assertRaises(ConfigError) as caught:
             self.make(spec=spec, harness_host="harness")
         self.assertIn("tmux would misread it", str(caught.exception))
@@ -262,14 +262,14 @@ class Planning(HarnessCase):
         self.stop(record)
 
     def test_a_foreground_headless_run_refuses_events(self):
-        spec = Spec("input", self.work, runtime="fake", sid=SID, events="events.log")
+        spec = Spec("input", self.work, client="fake", sid=SID, events="events.log")
         with self.assertRaises(ConfigError) as caught:
             self.make(spec=spec).run()
         self.assertIn("events", str(caught.exception))
         self.assertEqual(HarnessSession.started, [])
 
     def test_a_run_whose_cwd_is_the_agent_pm_checkout_starts(self):
-        self.make(spec=Spec("input", self.work, cwd=REPO, runtime="fake")).run()
+        self.make(spec=Spec("input", self.work, cwd=REPO, client="fake")).run()
         self.assertEqual(HarnessSession.started[0]["spec"].access.cwd, REPO)
         metadata = self.metadata()
         self.assertNotIn("protect", metadata["spec"])
@@ -277,22 +277,22 @@ class Planning(HarnessCase):
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
         delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
-        self.settings(language="French", runtime="another-runtime")
+        self.settings(language="French", client="another-client")
         delegate.run()
         launched = HarnessSession.started[-1]["spec"]
-        self.assertEqual(launched.runtime, "fake")
+        self.assertEqual(launched.client, "fake")
         self.assertIn("English", launched.prompt)
         self.assertNotIn("French", launched.prompt)
 
 
 class Views(HarnessCase):
-    def test_attach_keeps_identity_after_default_runtime_and_rules_change(self):
+    def test_attach_keeps_identity_after_default_client_and_rules_change(self):
         delegate = self.make(host="agent", harness_host="harness", display="original")
         record = delegate.detach(
             outer={"kind": "outer", "ctl": ["owner"], "resume": ["owner", "resume", "id"]}
         )
         before = self.metadata()
-        self.settings(language="French", runtime="changed-runtime", default="changed")
+        self.settings(language="French", client="changed-client", default="changed")
         view = HarnessDelegate.attach(record)
         self.assertTrue(view.alive())
         self.assertEqual(view.resume(), record)
@@ -334,7 +334,7 @@ class Views(HarnessCase):
         project = os.path.join(self.home, "project")
         os.mkdir(project)
         self.settings(trusted_dirs=(project,))
-        spec = Spec("input", self.work, task="echo", sid=SID, cwd=project, runtime="fake")
+        spec = Spec("input", self.work, task="echo", sid=SID, cwd=project, client="fake")
         record = self.make(spec=spec).detach()
         self.assertTrue(self.metadata()["plan"]["session"]["access"]["project"])
         self.stop(record)
@@ -350,7 +350,7 @@ class Views(HarnessCase):
 
     def test_a_completed_foreground_tui_left_open_is_not_alive(self):
         spec = Spec(
-            "input", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake", mode="tui"
+            "input", self.work, task="echo", sid=SID, cwd=self.work, client="fake", mode="tui"
         )
         delegate = self.make(spec=spec)
         self.assertEqual(delegate.run().outcome.status, "done")
@@ -427,26 +427,24 @@ class Views(HarnessCase):
     def test_resume_uses_attach_config_snapshot(self):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
-        self.make(
-            spec=Spec("input", self.work, task="echo", cwd=self.work, runtime="fake", sid=SID)
-        )
+        self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, client="fake", sid=SID))
         self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
         self.settings(
-            language="German", runtime="changed-runtime", default="changed", team_dirs=(team,)
+            language="German", client="changed-client", default="changed", team_dirs=(team,)
         )
         view.resume()
         view.close()
         view.run()
         launched = HarnessSession.started[-1]["spec"]
-        self.assertEqual((launched.sid, launched.runtime), (SID, "fake"))
+        self.assertEqual((launched.sid, launched.client), (SID, "fake"))
         self.assertIn("French", launched.prompt)
         self.assertNotIn("German", launched.prompt)
 
 
 class UsageQueries(HarnessCase):
-    def test_role_runtime_usage_preserves_sentinel_identity_and_none_without_starting(self):
-        self.settings(runtime="role_usage")
+    def test_role_client_usage_preserves_sentinel_identity_and_none_without_starting(self):
+        self.settings(client="role_usage")
         with open(self.local, "a", encoding="utf-8") as file:
             file.write(
                 "[session.adapters.role_usage]\n"
@@ -481,8 +479,8 @@ class UsageQueries(HarnessCase):
 
         class Probe(SessionClass):
             @classmethod
-            def usage(cls, runtime):
-                asked.append(runtime)
+            def usage(cls, client):
+                asked.append(client)
                 return sentinel
 
         self.assertIs(HarnessDelegate.usage("dummy-tester", session_cls=Probe), sentinel)
@@ -494,8 +492,8 @@ class UsageQueries(HarnessCase):
     def test_session_config_errors_are_the_delegates(self):
         class Refusing(SessionClass):
             @classmethod
-            def usage(cls, runtime):
-                raise SessionConfigError(f"[adapters.{runtime}]: no usage probe")
+            def usage(cls, client):
+                raise SessionConfigError(f"[adapters.{client}]: no usage probe")
 
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.usage("dummy-tester", session_cls=Refusing)
@@ -584,7 +582,7 @@ class Completion(HarnessCase):
         FailingSession.reset()
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, runtime="fake"),
+            Spec("input", self.work, cwd=self.work, client="fake"),
             session_cls=FailingSession,
         )
         seen = []
@@ -646,8 +644,8 @@ class RootedSession(HarnessSession):
     failure: Exception | None = None
 
     @classmethod
-    def class_roots(cls, runtime):
-        cls.asked.append(runtime)
+    def class_roots(cls, client):
+        cls.asked.append(client)
         if cls.failure is not None:
             raise cls.failure
         return ("/extra/root", SRC["session"])
@@ -672,7 +670,7 @@ class HarnessLaunch(HarnessCase):
     def test_the_harness_runs_in_the_agents_cwd_with_its_signals_blocked(self):
         project = os.path.join(self.home, "project")
         os.mkdir(project)
-        spec = Spec("input", self.work, runtime="fake", sid=SID, cwd=project)
+        spec = Spec("input", self.work, client="fake", sid=SID, cwd=project)
         self.make(spec=spec).detach()
         launch = RecordingHost.launches[0]
         self.assertEqual((launch["cwd"], launch["blocked_signals"]), (project, SIGNALS))
@@ -691,7 +689,7 @@ class DeadOnArrival(RecordingHost):
 
 class TuiStart(HarnessCase):
     def tui(self, **placement):
-        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
         return self.make(spec=spec, host="agent", **placement)
 
     def test_detach_returns_once_the_agent_session_is_live(self):
@@ -728,11 +726,11 @@ class TuiStart(HarnessCase):
         self.assertFalse(harness.alive())
 
     def test_an_unrelated_live_tui_of_the_same_name_does_not_stand_for_this_run(self):
-        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, name="X")
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, name="X")
         delegate = self.make(spec=spec, host="agent", harness_host="harness")
         other = "22222222-0000-4000-8000-000000000000"
         HarnessSession.start(
-            SessionSpec(workdir=self.home, runtime="fake", mode=Mode.TUI, sid=other, name="X"),
+            SessionSpec(workdir=self.home, client="fake", mode=Mode.TUI, sid=other, name="X"),
             host="agent",
         )
         RecordingHost.harness_starts_agent = False
@@ -758,7 +756,7 @@ class TuiStart(HarnessCase):
 class Announce(HarnessCase):
     def run_with_events(self):
         self.events = os.path.join(self.home, "events")
-        spec = Spec("input", self.work, runtime="fake", sid=SID, events=self.events)
+        spec = Spec("input", self.work, client="fake", sid=SID, events=self.events)
         return self.make(spec=spec)
 
     def test_one_outcome_line_for_the_harness_session_per_result(self):
@@ -802,7 +800,7 @@ class Names(HarnessCase):
             with self.subTest(mode=mode, name=name):
                 HarnessSession.reset()
                 self.work = os.path.join(self.home, f"{mode}-{name}")
-                spec = Spec("input", self.work, mode=mode, runtime="fake", sid=SID, name=name)
+                spec = Spec("input", self.work, mode=mode, client="fake", sid=SID, name=name)
                 record = self.make(spec=spec, host="agent", harness_host="harness").detach()
                 want = name or default
                 self.assertEqual(record.name, want)
@@ -828,7 +826,7 @@ class Names(HarnessCase):
         HarnessSession.hosts["harness"] = ValidatingHost("harness")
         for mode in ("headless", "tui"):
             with self.subTest(mode=mode):
-                spec = Spec("input", self.work, mode=mode, runtime="fake", sid=SID, name="bad name")
+                spec = Spec("input", self.work, mode=mode, client="fake", sid=SID, name="bad name")
                 with self.assertRaises(ConfigError) as caught:
                     self.make(spec=spec, host="agent", harness_host="harness")
                 self.assertIn("bad name", str(caught.exception))
@@ -836,7 +834,7 @@ class Names(HarnessCase):
                 self.assertFalse(os.path.lexists(self.work))
 
     def test_resume_reuses_the_recorded_names(self):
-        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, name="base")
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, name="base")
         record = self.make(spec=spec, host="agent", harness_host="harness").detach()
         self.stop(record)
         resumed = HarnessDelegate.attach(self.work).resume()
@@ -891,7 +889,7 @@ class Display(HarnessCase):
     def test_completed_once_in_the_caller_and_passed_unchanged(self):
         CountingDisplay.calls = []
         CountingDisplay.reset()
-        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
         record = HarnessDelegate(
             "dummy-tester",
             spec,
@@ -916,7 +914,7 @@ class Display(HarnessCase):
         CountingDisplay.reset()
         HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, runtime="fake", sid=SID, cwd=self.work),
+            Spec("input", self.work, client="fake", sid=SID, cwd=self.work),
             session_cls=CountingDisplay,
             display="given",
         ).run()
@@ -930,7 +928,7 @@ class ConcurrentDetach(HarnessCase):
             "from agent_pm.delegate import ConfigError, Spec\n"
             "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
             "from delegate.tests.fakes.harness_session import PersistentSession\n"
-            "spec = Spec('input', sys.argv[1], cwd=sys.argv[1], runtime='fake', sid=sys.argv[4])\n"
+            "spec = Spec('input', sys.argv[1], cwd=sys.argv[1], client='fake', sid=sys.argv[4])\n"
             "delegate = HarnessDelegate('dummy-tester', spec, session_cls=PersistentSession,\n"
             "                           host='agent', harness_host='harness')\n"
             "open(sys.argv[2] + str(os.getpid()), 'w').close()\n"
@@ -1126,7 +1124,7 @@ class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, runtime="fake", sid=SID),
+            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",
