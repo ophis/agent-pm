@@ -187,7 +187,7 @@ def _member(enum, field: str, value):
 TAG = re.compile(r"[A-Za-z0-9_-]+")
 
 
-COMMAND = "agent-pm-session"  # the layer's command; a plugin bin/ script puts its dir first on PATH
+COMMAND = "agent-pm-session"
 
 
 def _string_tuple(value) -> bool:
