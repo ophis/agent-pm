@@ -51,8 +51,7 @@ class CodexTui(Tui):
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
         unset = common.UNSET
-        effective_env = {key: value for key, value in os.environ.items() if key not in unset}
-        effective_env.update(env)
+        effective_env = common.environment(snapshot, interactive=True, ambient=True)
         store = self.store = common.store.root
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:

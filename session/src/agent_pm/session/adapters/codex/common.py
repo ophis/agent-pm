@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from functools import cached_property, wraps
@@ -162,11 +163,7 @@ def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = N
 
 
 def _config_home(cwd: str, config_home: str | None = None) -> str:
-    return os.path.abspath(
-        os.path.join(
-            cwd, os.path.expanduser(config_home or os.environ.get("CODEX_HOME") or "~/.codex")
-        )
-    )
+    return os.path.abspath(os.path.join(cwd, os.path.expanduser(config_home or "~/.codex")))
 
 
 def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
@@ -245,6 +242,22 @@ class CodexCommon:
             raise ConfigError(f"no mapping for {value!r} in {TABLE}.{name}")
         return result
 
+    def _explicit_environment(self, spec: Spec) -> dict[str, str]:
+        return {**self.config.get("env", {}), **spec.access.env, **spec.env}
+
+    def _environment(
+        self, supplied: Mapping[str, str], *, interactive: bool = False, ambient: bool = False
+    ) -> dict[str, str]:
+        inherited = (
+            {key: value for key, value in os.environ.items() if key not in self.UNSET}
+            if ambient
+            else {}
+        )
+        result = {**inherited, **({} if interactive else self.DEFAULTS), **supplied}
+        if ambient and not result.get("CODEX_HOME"):
+            result["CODEX_HOME"] = inherited.get("CODEX_HOME") or "~/.codex"
+        return result
+
     @_recover
     def prepare(self, spec: Spec, *, resume: bool = False, persist: bool = True) -> SessionState:
         if resume:
@@ -254,25 +267,19 @@ class CodexCommon:
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
             snapshot = self.store.validate_recovery(state)
-            refuse(tuple(snapshot.flags))
-            check_writable_roots(
-                self.store.root, implicit_writable_roots({**os.environ, **snapshot.env})
-            )
+            refuse(snapshot.flags)
+            environment = self.environment(snapshot, ambient=True)
+            check_writable_roots(self.store.root, implicit_writable_roots(environment))
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
             if not snapshot.project:
                 _guard_untrusted_project(state.workdir, snapshot.cwd, snapshot.codex_home)
             return state
         refuse(spec.flags)
-        environment = {
-            **os.environ,
-            **self.DEFAULTS,
-            **self.config.get("env", {}),
-            **spec.access.env,
-            **spec.env,
-        }
+        explicit = self._explicit_environment(spec)
+        environment = self._environment(explicit, ambient=True)
         check_writable_roots(self.store.root, implicit_writable_roots(environment))
-        roots = self._new_roots(spec)
+        roots = self._new_roots(spec, environment)
         workdir, sid = session_identity(spec.workdir, spec.sid)
         cwd, home, *_ = roots
         if not spec.access.project:
@@ -287,18 +294,16 @@ class CodexCommon:
                 "effort": self._mapped("efforts", spec.effort),
                 "codex_home": home,
                 "flags": list(spec.flags),
-                "env": {**self.config.get("env", {}), **spec.access.env, **spec.env},
+                "env": explicit,
             }
         )
         return self.store.create(workdir, sid, snapshot, roots, persist=persist)
 
-    def _new_roots(self, spec) -> list[str]:
+    def _new_roots(self, spec: Spec, environment: Mapping[str, str]) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")
         cwd = absolute_path(spec.access.cwd or workdir, "cwd")
         home = absolute_path(
-            _config_home(
-                cwd, {**self.config.get("env", {}), **spec.access.env, **spec.env}.get("CODEX_HOME")
-            ),
+            _config_home(cwd, environment.get("CODEX_HOME")),
             "codex_home",
         )
         added = [absolute_path(path, "dir") for path in added_dirs(spec.flags, cwd)]
@@ -316,17 +321,10 @@ class CodexCommon:
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
             roots = state.writable_roots
+            environment = self.environment(state.snapshot, ambient=True)
         else:
-            roots = self._new_roots(spec)
-        environment = {
-            **os.environ,
-            **self.DEFAULTS,
-            **(
-                state.snapshot.env
-                if resume
-                else {**self.config.get("env", {}), **spec.access.env, **spec.env}
-            ),
-        }
+            environment = self._environment(self._explicit_environment(spec), ambient=True)
+            roots = self._new_roots(spec, environment)
         implicit = map(os.path.realpath, implicit_writable_roots(environment))
         return tuple(dict.fromkeys([*roots, *implicit]))
 
@@ -342,18 +340,20 @@ class CodexCommon:
     def bind(self, workdir: str, sid: str, identifier: str) -> SessionState:
         return self.store.bind(workdir, sid, identifier)
 
-    def environment(self, snapshot: Snapshot, *, interactive: bool = False) -> dict[str, str]:
-        return {
-            **({} if interactive else self.DEFAULTS),
-            **snapshot.env,
-            "CODEX_HOME": snapshot.codex_home,
-        }
+    def environment(
+        self, snapshot: Snapshot, *, interactive: bool = False, ambient: bool = False
+    ) -> dict[str, str]:
+        return self._environment(
+            {**snapshot.env, "CODEX_HOME": snapshot.codex_home},
+            interactive=interactive,
+            ambient=ambient,
+        )
 
     def probe(self) -> Launch:
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_server.py")
         return Launch(
             (os.path.realpath(sys.executable), "-I", script),
-            env={**self.DEFAULTS, **self.config.get("env", {})},
+            env=self._environment(self.config.get("env", {})),
             unset=self.UNSET,
         )
 
@@ -383,7 +383,7 @@ class CodexCommon:
         ]
         env = {
             "CODEX_HOME": snapshot.codex_home,
-            **{k: v for k, v in snapshot.env.items() if k != "CODEX_HOME"},
+            **self.environment(snapshot, interactive=True),
         }
         return resume_command(snapshot.cwd, env, argv)
 

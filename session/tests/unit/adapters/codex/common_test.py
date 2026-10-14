@@ -398,6 +398,128 @@ class CommonTest(Base):
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
+class EnvironmentTest(Base):
+    def test_explicit_source_precedence_matches_snapshot_launch_and_inspection(self):
+        ambient_tmp, config_tmp, access_tmp, spec_tmp = (
+            str(self.root / name)
+            for name in ("ambient-tmp", "config-tmp", "access-tmp", "spec-tmp")
+        )
+        configured = {
+            "SOURCE": "config",
+            "CONFIG_ONLY": "config",
+            "CODEX_HOME": str(self.root / "config-home"),
+            "TMPDIR": config_tmp,
+            "PAGER": "configured",
+            "CODEX_SESSION_ID": "explicit-marker",
+        }
+        access = {
+            "SOURCE": "access",
+            "ACCESS_ONLY": "access",
+            "CODEX_HOME": str(self.root / "access-home"),
+            "TMPDIR": access_tmp,
+            "NO_COLOR": "access",
+        }
+        supplied = {
+            "SOURCE": "spec",
+            "SPEC_ONLY": "spec",
+            "CODEX_HOME": str(self.codex_home),
+            "TMPDIR": spec_tmp,
+            "CODEX_CI": "explicit",
+        }
+        adapter = CodexAdapter(self.adapter.config | {"env": configured})
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, env=access), env=supplied
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SOURCE": "ambient",
+                "AMBIENT_ONLY": "ambient",
+                "CODEX_HOME": str(self.root / "ambient-home"),
+                "TMPDIR": ambient_tmp,
+                "PAGER": "ambient",
+                "CODEX_THREAD_ID": NATIVE,
+                "CODEX_SESSION_ID": "ambient-marker",
+            },
+        ):
+            roots = adapter.writable_dirs(spec)
+            launch = adapter.headless().launch("hi", spec)
+            state = adapter.common.load(spec.workdir, spec.sid)
+            self.assertEqual(state.snapshot.env, {**configured, **access, **supplied})
+            self.assertEqual(state.snapshot.codex_home, str(self.codex_home))
+            self.assertEqual(launch.env["SOURCE"], "spec")
+            self.assertEqual(launch.env["PAGER"], "configured")
+            self.assertEqual(launch.env["NO_COLOR"], "access")
+            self.assertEqual(launch.env["CODEX_CI"], "explicit")
+            self.assertEqual(launch.env["GIT_PAGER"], "cat")
+            self.assertNotIn("AMBIENT_ONLY", launch.env)
+            self.assertIn(spec_tmp, roots)
+            for ignored in (ambient_tmp, config_tmp, access_tmp):
+                self.assertNotIn(ignored, roots)
+            effective = adapter.common.environment(state.snapshot, ambient=True)
+            self.assertEqual(effective["AMBIENT_ONLY"], "ambient")
+            self.assertEqual(effective["TMPDIR"], spec_tmp)
+            self.assertNotIn("CODEX_THREAD_ID", effective)
+            self.assertEqual(effective["CODEX_SESSION_ID"], "explicit-marker")
+            self.assertEqual(adapter.writable_dirs(spec, resume=True), roots)
+
+    def test_resume_replays_explicit_inputs_and_refreshes_ambient_values(self):
+        first_tmp, second_tmp, ignored_tmp = (
+            str(self.root / name) for name in ("first-tmp", "second-tmp", "ignored-tmp")
+        )
+        with mock.patch.dict(os.environ, {"TMPDIR": first_tmp, "PAGER": "first-pager"}):
+            inspected = self.adapter.writable_dirs(self.spec)
+            saved = self.prepare()
+            self.assertEqual(saved.snapshot.env, {})
+            self.assertIn(first_tmp, inspected)
+            self.assertEqual(self.common.environment(saved.snapshot)["PAGER"], "cat")
+            self.assertNotIn("PAGER", self.common.environment(saved.snapshot, interactive=True))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        changed = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": ignored_tmp}})
+        spec = dataclasses.replace(self.spec, env={"TMPDIR": ignored_tmp, "PAGER": "ignored"})
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TMPDIR": second_tmp,
+                "PAGER": "second-pager",
+                "CODEX_HOME": str(self.root / "changed-home"),
+                "CODEX_THREAD_ID": NATIVE,
+            },
+        ):
+            resumed = changed.common.prepare(spec, resume=True)
+            self.assertEqual(resumed.snapshot, saved.snapshot)
+            roots = changed.writable_dirs(spec, resume=True)
+            self.assertIn(second_tmp, roots)
+            self.assertNotIn(first_tmp, roots)
+            self.assertNotIn(ignored_tmp, roots)
+            launch = changed.headless().launch("again", spec, resume=True)
+            self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
+            self.assertEqual(launch.env["PAGER"], "cat")
+            self.assertNotIn("TMPDIR", launch.env)
+            effective = changed.common.environment(resumed.snapshot, ambient=True)
+            interactive = changed.common.environment(
+                resumed.snapshot, ambient=True, interactive=True
+            )
+            self.assertEqual(effective["TMPDIR"], second_tmp)
+            self.assertEqual(effective["PAGER"], "cat")
+            self.assertEqual(interactive["PAGER"], "second-pager")
+            self.assertEqual(interactive["CODEX_HOME"], str(self.codex_home))
+            self.assertNotIn("CODEX_THREAD_ID", interactive)
+
+    def test_empty_explicit_codex_home_preserves_the_ambient_fallback(self):
+        adapter = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": ""}})
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.codex_home)}):
+            inspected = adapter.writable_dirs(self.spec)
+            state = adapter.common.prepare(self.spec)
+            self.assertEqual(state.snapshot.env, {"CODEX_HOME": ""})
+            self.assertEqual(state.snapshot.codex_home, str(self.codex_home))
+            self.assertEqual(
+                adapter.common.environment(state.snapshot)["CODEX_HOME"], str(self.codex_home)
+            )
+            self.assertEqual(inspected[1], str(self.codex_home))
+
+
 class WritableDirsTest(Base):
     def new_launch(self, adapter, home):
         roots = [str(path) for path in (self.cwd, home, self.extra)]
