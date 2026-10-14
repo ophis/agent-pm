@@ -54,6 +54,6 @@ _ = Split.RIGHT, Split.BELOW
 _ = ClaudeAdapter, CodexAdapter
 # TASK-403's harness sets its PYTHONPATH from Session.class_roots (D16).
 _ = Session.class_roots
-# Only tests read it, but the session interface is frozen: tests/session_interface.json changes
-# only in TASK-369 and TASK-387 (TASK-396).
+# Only tests read it, but the session interface is frozen (tests/guards.py
+# session_interface_snapshot; TASK-396).
 _ = SessionRow.last_lines
