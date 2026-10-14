@@ -479,21 +479,25 @@ class AccessTest(Refusals):
                     lambda *, bad=bad: Access(reads=bad), "reads must be a tuple of strings"
                 )
 
-    def test_accepts_an_env_of_shell_names_to_strings(self):
-        env = {"PYTHONPATH": "/a b;c", "_x1": ""}
+    def test_accepts_an_env_of_exec_names_to_strings(self):
+        env = {
+            "PYTHONPATH": "/a b;c",
+            "_x1": "",
+            "A-B": "v",
+            "1A": "v",
+            "X;Y": "v",
+            "A B": "v",
+            "A\n": "v",
+            "Ä": "v",
+        }
         self.assertEqual(Access(env=MappingProxyType(env)).env, env)
 
-    def test_refuses_an_env_name_a_shell_assignment_cannot_hold_or_a_value_not_a_string_without_nul(
-        self,
-    ):
-        message = "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
+    def test_refuses_invalid_exec_env_names_and_values(self):
+        message = "access env must map variable names to strings without NUL"
         for bad in (
-            {"X;Y": "a"},
             {"A=B": "a"},
-            {"1A": "a"},
+            {"A\0": "a"},
             {"": "a"},
-            {"A B": "a"},
-            {"A\n": "a"},
             {1: "a"},
             {"A": 1},
             {"A": None},
@@ -571,13 +575,8 @@ class SpecTest(Refusals):
             {"A": "b\0"},
             {1: "a"},
             {"": "a"},
-            {"1A": "a"},
-            {"A-B": "a"},
-            {"A B": "a"},
             {"A=": "a"},
-            {"A\n": "a"},
             {"A\0": "a"},
-            {"Ä": "a"},
             [("A", "b")],
             "A=b",
             None,

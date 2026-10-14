@@ -11,6 +11,7 @@ from agent_pm.utils.config_file import (
     unset,
 )
 from agent_pm.utils.config_file import load as load_config
+from agent_pm.utils.environment import environment_ok
 from agent_pm.utils.files import (
     ConfinedFileError,
     ConfinedReason,
@@ -87,6 +88,7 @@ __all__ = [
     "checkout",
     "common_dir",
     "err_text",
+    "environment_ok",
     "fenced",
     "file_lock",
     "find_checkouts",

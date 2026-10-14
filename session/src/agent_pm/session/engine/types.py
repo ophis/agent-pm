@@ -10,6 +10,7 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from agent_pm.utils import (
+    environment_ok,
     freeze,
     printable_abs,
     sid_error,
@@ -57,13 +58,6 @@ __all__ = [
 
 def _clean_string(value) -> bool:
     return isinstance(value, str) and "\0" not in value
-
-
-def _environment_ok(env) -> bool:
-    return isinstance(env, Mapping) and all(
-        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
-        for k, v in env.items()
-    )
 
 
 class ConfigError(Exception):
@@ -159,10 +153,8 @@ class Access:
         for name in ("dirs", "commands", "reads"):
             if not _string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
-        if not _environment_ok(self.env):
-            raise ConfigError(
-                "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
-            )
+        if not environment_ok(self.env):
+            raise ConfigError("access env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
 
 
@@ -174,7 +166,7 @@ class ProcessOptions:
     def __post_init__(self):
         if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
             raise ConfigError("flags must be a tuple of strings without NUL")
-        if not _environment_ok(self.env):
+        if not environment_ok(self.env):
             raise ConfigError("env must map variable names to strings without NUL")
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
 
@@ -260,8 +252,7 @@ class Launch:
             ("argv", isinstance(self.argv, tuple) and all(map(_clean_string, self.argv))),
             (
                 "env",
-                isinstance(env, Mapping)
-                and all(_clean_string(k) and _clean_string(v) for k, v in env.items()),
+                environment_ok(env),
             ),
             ("unset", isinstance(self.unset, tuple) and all(map(_clean_string, self.unset))),
         ):

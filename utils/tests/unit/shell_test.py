@@ -48,6 +48,12 @@ class ResumeCommand(Case):
             "cd '/work dir' && LABEL='a b' EMPTY='' claude --resume 'a; echo bad' ''",
         )
 
+    def test_non_shell_names_are_quoted_env_operands(self):
+        self.assertEqual(
+            resume_command("/w", {"A-B": "a b", "X;Y": "$(bad)", "-x": ""}, ("tool",)),
+            "cd /w && env -- 'A-B=a b' 'X;Y=$(bad)' -x= tool",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
